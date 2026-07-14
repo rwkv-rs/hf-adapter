@@ -279,7 +279,13 @@ def fused_attn_shift_mix(
     return outs
 
 
-def fused_attn_sequence_shift_mix(x: Any, initial_prev: Any, *mixes: Any, block_size: int = 256):
+def fused_attn_sequence_shift_mix(
+    x: Any,
+    initial_prev: Any,
+    *mixes: Any,
+    block_size: int = 256,
+    workspace: Any | None = None,
+):
     """Shift-mix a full ``[B,T,C]`` sequence without materialising ``cat``."""
 
     if torch is None:
@@ -296,7 +302,23 @@ def fused_attn_sequence_shift_mix(x: Any, initial_prev: Any, *mixes: Any, block_
         prev = torch.cat([initial.reshape(batch, 1, hidden), x[:, :-1]], dim=1)
         return (*fused_attn_shift_mix(x, prev, *flat_mixes, force_fallback=True), x[:, -1].contiguous())
     source = x.contiguous()
-    outs = tuple(torch.empty_like(source) for _ in range(6))
+    # Keep the six mixed streams in one allocation.  This reduces allocator
+    # traffic and lets the prefill loop reuse one stable sequence workspace.
+    expected = (6, batch, tokens, hidden)
+    if (
+        workspace is not None
+        and tuple(workspace.shape) == expected
+        and workspace.device == x.device
+        and workspace.dtype == x.dtype
+        and workspace.is_contiguous()
+    ):
+        out_storage = workspace
+    else:
+        out_storage = torch.empty(expected, device=x.device, dtype=x.dtype)
+    # Physical order keeps R/K/V adjacent for the optional strided-batched
+    # projection, while the returned logical order remains R/W/K/V/A/G.
+    slots = tuple(out_storage.unbind(0))
+    outs = (slots[0], slots[3], slots[1], slots[2], slots[4], slots[5])
     next_state = torch.empty((batch, hidden), device=x.device, dtype=x.dtype)
     total = int(source.numel())
     _attn_sequence_shift_mix_kernel[(triton.cdiv(total, int(block_size)),)](
@@ -306,7 +328,13 @@ def fused_attn_sequence_shift_mix(x: Any, initial_prev: Any, *mixes: Any, block_
     return (*outs, next_state)
 
 
-def fused_ffn_sequence_shift_mix(x: Any, initial_prev: Any, mix: Any, block_size: int = 256):
+def fused_ffn_sequence_shift_mix(
+    x: Any,
+    initial_prev: Any,
+    mix: Any,
+    block_size: int = 256,
+    workspace: Any | None = None,
+):
     """Compute the full FFN shift-mix and next state in one launch."""
 
     if torch is None:
@@ -322,7 +350,16 @@ def fused_ffn_sequence_shift_mix(x: Any, initial_prev: Any, mix: Any, block_size
         prev = torch.cat([initial.reshape(batch, 1, hidden), x[:, :-1]], dim=1)
         return x + (prev - x) * flat_mix.reshape(1, 1, hidden), x[:, -1].contiguous()
     source = x.contiguous()
-    out = torch.empty_like(source)
+    if (
+        workspace is not None
+        and tuple(workspace.shape) == tuple(source.shape)
+        and workspace.device == source.device
+        and workspace.dtype == source.dtype
+        and workspace.is_contiguous()
+    ):
+        out = workspace
+    else:
+        out = torch.empty_like(source)
     next_state = torch.empty((batch, hidden), device=x.device, dtype=x.dtype)
     total = int(source.numel())
     _ffn_sequence_shift_mix_kernel[(triton.cdiv(total, int(block_size)),)](

@@ -1,0 +1,20 @@
+$ /data/venvs/rwkv3090/bin/python bench/compare_math500_summaries.py --hf-summary /data/logs/3090/math500_repeat/full_avg64/summary.json --albatross-summary /home/ubuntu/hf-adapter/bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/albatross_summary.json --require-compatible-shape --min-pass-at-rollout 0.37 --min-summary-speed-ratio 2.0 --json-output /data/logs/3090/math500_repeat/comparison/comparison.json --text-output /data/logs/3090/math500_repeat/comparison/comparison.txt --albatross-log /home/ubuntu/hf-adapter/bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/albatross_run.log --min-decode-speed-ratio 2.0
+MATH500 comparison
+  shape: tasks 500 vs 500, rollout 64 vs 64, generations 32000 vs 32000
+accuracy:
+  correct: HF 4,582.000 vs Albatross 4,670.000 (delta -88)
+  rollout_accuracy: HF 0.143187 vs Albatross 0.145937 (delta -0.00275)
+  pass@rollout: HF 0.368 vs Albatross 0.37 (delta -0.002)
+speed:
+  summary token/s: HF 8,770.458 vs Albatross 3,903.633 (ratio 2.24674)
+  summary timing: HF generation vs Albatross wall
+  generation token/s: HF 8,770.458 vs Albatross 0
+  wall token/s: HF 8,441.399 vs Albatross 0
+  steady decode token/s: HF 9,988.978 vs Albatross 3,970.135 (ratio 2.51603)
+  sample/s: HF 14.3797 vs Albatross 6.36156 (ratio 2.26041)
+gates:
+  compatible_shape: PASS (actual True)
+  pass_at_rollout: FAIL (actual 0.368, minimum 0.37)
+  summary_speed_ratio: PASS (actual 2.24674, minimum 2)
+  decode_speed_ratio: PASS (actual 2.51603, minimum 2)
+  overall: FAIL

@@ -1,0 +1,70 @@
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:07<00:07,  7.09s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:07<00:00,  3.30s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:07<00:00,  3.87s/it]
+{
+  "axis": "larger_model_smoke",
+  "backend": "hf_adapter",
+  "status": "pass",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_size_label": "2.9b",
+  "model_name": "rwkv7-g1g-2.9b-hf",
+  "hf_model_dir": "/data/models/rwkv7-g1g-2.9b-hf",
+  "checkpoint_path": "/home/ubuntu/official/rwkv7-g1g-2.9b-20260526-ctx8192.pth",
+  "checkpoint_sha256": "3d118ed77fe94e63e6fc0a6afd5a4fac49fe70da4e3d9d91b628951bb55dd798",
+  "checkpoint_size_bytes": 5896273469,
+  "fast_token_backend": "native_graph",
+  "fast_token_backend_effective": "native_graph",
+  "prompt_tokens": 8,
+  "max_new_tokens": 4,
+  "generated_tokens": 4,
+  "logits_shape": [
+    1,
+    1,
+    65536
+  ],
+  "generated_shape": [
+    1,
+    12
+  ],
+  "top5": [
+    36786,
+    3880,
+    33,
+    20039,
+    30031
+  ],
+  "generated_tail": [
+    36786,
+    34,
+    20063,
+    21413
+  ],
+  "decoded_preview": "User: Hello!\n\nAssistant: Hello! How can",
+  "load_s": 12.963,
+  "forward_s": 88.945,
+  "generate_s": 1.1112,
+  "generate_tokps": 3.6,
+  "model_footprint_mb": 5622.4,
+  "peak_vram_mb": 5888.0,
+  "torch_dtype": "torch.float16",
+  "vocab_size": 65536,
+  "hidden_size": 2560,
+  "intermediate_size": 10240,
+  "num_hidden_layers": 32,
+  "head_dim": 64,
+  "num_heads": 40,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "config_torch_dtype": "torch.float16",
+  "value_dim_first": 2560,
+  "value_dim_last": 2560,
+  "value_dim_unique": [
+    2560
+  ]
+}
+
+appended 1 row -> /data/logs/3090/larger_29.jsonl

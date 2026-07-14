@@ -714,6 +714,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "bench_case": os.environ.get("RWKV7_BENCH_CASE"),
         "status": "pass" if greedy_match else "fail",
         "dtype": args.dtype,
+        "blas_library": args.blas_library,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else args.device,
         "model_path": args.model,
         "effective_model_path": getattr(args, "effective_model_path", args.model),
@@ -724,6 +725,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "tokens_total": batch_size * prompt_tokens,
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "fused_scan_effective": native_jit._native_prefill_fused_scan_enabled(),
+        "self_chunk_requested": os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK"),
+        "self_chunk_effective": native_jit._native_prefill_self_chunk_enabled(prompt_tokens, int(model._rwkv7_native_jit_packs()[0][2])),
         "scan_block_m": scan_m,
         "scan_num_warps": scan_num_warps(model, scan_m),
         "fine_attention_breakdown": bool(args.fine_attn),
@@ -795,10 +798,16 @@ def main() -> int:
     ap.add_argument("--code-source", choices=["model", "repo"], default="model", help="load trust_remote_code from checkpoint files or overlay current repo rwkv7_hf/*.py")
     ap.add_argument("--fine-attn", action="store_true", help="split attn_lora_state_prep into LoRA/state-prep subcomponents")
     ap.add_argument("--layer-breakdown", action="store_true", help="also record per-layer component timings for bsz=1 bottleneck attribution")
+    ap.add_argument("--blas-library", choices=["default", "cublas", "cublaslt"], default="default")
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--steps", type=int, default=3)
     ap.add_argument("--results", default="")
     args = ap.parse_args()
+
+    if args.blas_library != "default" and args.device.startswith("cuda"):
+        preferred = getattr(getattr(torch.backends, "cuda", None), "preferred_blas_library", None)
+        if callable(preferred):
+            preferred(args.blas_library)
 
     if args.fused_scan != "auto":
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_SCAN"] = "1" if args.fused_scan == "true" else "0"

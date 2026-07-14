@@ -46,3 +46,19 @@ def test_torchao_w4_forwards_group_size(monkeypatch) -> None:
     model = TinyModel(torch.bfloat16)
     assert qao.quantize_model_torchao_w4(model, min_params=8, group_size=64) == 1
     assert calls == [(model.proj, ("w4", 64))]
+
+
+def test_torchao_w4_fp16_speed_policy_wraps_head(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(qao, "_torchao_api", lambda: fake_api(calls))
+    model = TinyModel(torch.float16)
+    model.lm_head = torch.nn.Linear(8, 8, bias=False, dtype=torch.float16)
+
+    replaced = qao.quantize_model_torchao_w4(model, min_params=8, policy="speed")
+
+    assert replaced == 1
+    assert isinstance(model.lm_head, qao.TorchAOW4FP16Linear)
+    assert model.lm_head.inner.weight.dtype == torch.bfloat16
+    assert model._rwkv7_native_mm_quantization == "torchao_w4_fp16_head"
+    x = torch.randn(2, 8, dtype=torch.float16)
+    assert model.lm_head(x).dtype == torch.float16

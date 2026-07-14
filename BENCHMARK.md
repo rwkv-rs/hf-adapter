@@ -25,6 +25,7 @@ Status vocabulary:
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
 | V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8 | greedy, cache handoff and focused regressions pass | dense decode `0.908x–1.248x`; prompt512 prefill `0.930x–1.047x` same-host Albatross | **PASS P1** |
+| RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 4090 | 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
@@ -72,7 +73,49 @@ is reported below; it does not retroactively upgrade the historical V100 rows.
 Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md).
 Design: [`docs/plans/2026-07-13-qwen35-5070-fla-design.md`](docs/plans/2026-07-13-qwen35-5070-fla-design.md).
 
-### RTX 5070 Laptop RWKV-7 vs verified Qwen3.5 FLA
+## RTX 3090 self-fused long-prefill rows
+
+The vendored sequence-mode DPLR kernel is now the measured production route
+for RWKV-7 7.2B long prefill on RTX 3090.  It computes the RWKV-specific DPLR
+A/B terms in-register, directly consumes/emits the native recurrent-state
+layout and removes standalone gate/residual work.  The effective HF backend is
+`native_graph`, not FLA.
+
+| Bsz | RWKV/Qwen prefill tok/s | Prefill ratio | RWKV/Qwen decode tok/s | Decode ratio | Result |
+|---:|---:|---:|---:|---:|---|
+| 1 | 4,536.404 / 4,182.369 | `1.0846x` | 49.922 / 23.283 | `2.1441x` | PASS |
+| 2 | 4,579.237 / 4,353.260 | `1.0519x` | 89.369 / 46.406 | `1.9258x` | PASS |
+
+Both rows use fp16, prompt 2048, decode 128 and three warmups/three measured
+runs.  All 24 Qwen GatedDeltaNet layers are fail-closed verified to bind FLA
+chunk/recurrent kernels and causal-conv1d; the recorded Qwen backend is
+`fla+causal_conv1d`.  RWKV also has the lower model footprint and peak VRAM in
+both rows.  This closes these two dense cells only; the full 3090 216-cell
+dense/W8/W4 matrix remains open.
+
+Evidence: [`bench/3090_self_fused_20260713/README.md`](bench/3090_self_fused_20260713/README.md).
+
+### RTX 3090 native quant production batch
+
+The 7.2B/9B broad matrix now also has a fail-closed `72/72` artifact with zero
+red or missing cells at the historical dense `1.05x` floor. The current
+acceptance policy is stricter and bsz8-only: dense RWKV is compared with dense
+Qwen using pair-specific active-parameter-normalized targets, while RWKV W8/W4
+is gated only against the same RWKV fp16 row. Quantized Qwen is not a quant
+acceptance dependency.
+
+At bsz8, dense decode is `>=1.8924x` Qwen and passes the new 7.2B/9B `1.50x`
+target. Dense prefill is `>=1.0537x`, so the normalized prefill target remains
+open. W8 and W4 are respectively `>=1.7970x/1.0900x` and
+`>=1.0018x/1.0179x` their matching RWKV dense prefill/decode rows, with both
+footprint and peak VRAM lower. External-token quality ratios are `1.001475`
+(W8), `1.001564` (BnB W4) and `1.004745` (TorchAO W4), all within the `1.01`
+gate.
+
+Evidence and exact reproduction:
+[`bench/3090_native_quant_20260713/README.md`](bench/3090_native_quant_20260713/README.md).
+
+## RTX 5070 Laptop RWKV-7 vs verified Qwen3.5 FLA
 
 The final exact-card 1.5B RWKV vs 2B Qwen matrix covers 144/144 passing raw
 rows and 72/72 joined cells across prompt128/512/2048, decode128/512,

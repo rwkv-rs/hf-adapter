@@ -29,7 +29,7 @@ Last updated: **2026-07-14**.
 
 | Platform | Status | Canonical evidence / boundary |
 |---|---|---|
-| V100 32GB | **Production-close for RWKV/Albatross lanes** | Dense Albatross P1 plus native W8/W4 speed lane; the Qwen3.5 Torch-fallback matrix is historical only; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md), [`bench/qwen35_v100_hf_matrix_20260712/`](bench/qwen35_v100_hf_matrix_20260712/README.md) |
+| V100 32GB | **Production-close for RWKV/Albatross lanes** | Dense Albatross P1 plus native W8/W4 speed lane; Qwen3.5 Torch-fallback matrices are historical diagnostics rather than optimized-Qwen acceptance; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md), [`bench/qwen35_v100_hf_matrix_20260712/`](bench/qwen35_v100_hf_matrix_20260712/README.md), [`bench/v100_qwen35_full_matrix_20260713/`](bench/v100_qwen35_full_matrix_20260713/README.md) |
 | RTX 4090 | **Production-close for measured lanes** | All measured 0.4B decode batches pass; current-session bsz4 prefill passes; historical high-water remains |
 | RTX 5070 Laptop | **Production-close for measured Qwen FLA performance lane** | 1.5B RWKV vs 2B Qwen: 144/144 raw rows and 72/72 strict cells pass; minimum prefill/decode speedups are `1.109682x`/`1.466175x`, and footprint/peak VRAM are no larger in 72/72; Qwen convolution remains Torch fallback and model quality is not covered; [`bench/5070_qwen35_fla_native_prefill_20260714/`](bench/5070_qwen35_fla_native_prefill_20260714/README.md) |
 | RTX 5090 | **Production-close** | Quant pressure, 13.3B low-memory conversion and full MATH500; [`bench/5090_blackwell_production_close_20260712/`](bench/5090_blackwell_production_close_20260712/README.md) |

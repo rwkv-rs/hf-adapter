@@ -147,6 +147,141 @@ def test_prefill_matches_token_loop() -> None:
     assert xpf[0].shape == (1, 8)
 
 
+def test_stacked_rkv_exact_shape_gate_does_not_alias_equal_row_counts() -> None:
+    from rwkv7_hf import native_jit
+
+    keys = (
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MIN_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MAX_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_EXTRA_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_SHAPES",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MODEL_SHAPES",
+    )
+    old = {key: os.environ.get(key) for key in keys}
+    try:
+        os.environ["RWKV7_NATIVE_PREFILL_STACKED_RKV"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_STACKED_RKV_MIN_ROWS"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_STACKED_RKV_MAX_ROWS"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_STACKED_RKV_EXTRA_ROWS"] = ""
+        os.environ["RWKV7_NATIVE_PREFILL_STACKED_RKV_SHAPES"] = ""
+        os.environ["RWKV7_NATIVE_PREFILL_STACKED_RKV_MODEL_SHAPES"] = "4096x32x1x512"
+        assert native_jit._native_prefill_stacked_rkv_enabled(512, 1, 512, 4096, 32)
+        assert not native_jit._native_prefill_stacked_rkv_enabled(512, 1, 512, 2560, 24)
+        assert not native_jit._native_prefill_stacked_rkv_enabled(512, 4, 128, 4096, 32)
+    finally:
+        for key, value in old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_self_chunk_exact_model_shape_can_lower_the_generic_token_floor(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(native_jit, "self_chunk_rwkv7", object())
+    monkeypatch.setattr(native_jit, "self_chunk_rwkv7_available", lambda: True)
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK", "1")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS", "1024")
+    monkeypatch.setenv(
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES",
+        "4096x32x8x512",
+    )
+    assert native_jit._native_prefill_self_chunk_enabled(512, 64, 8, 4096, 32)
+    assert not native_jit._native_prefill_self_chunk_enabled(512, 64, 4, 4096, 32)
+    assert not native_jit._native_prefill_self_chunk_enabled(512, 64, 8, 2560, 24)
+
+
+def test_self_chunk_safe_gate_is_explicitly_tunable(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SAFE_GATE", raising=False)
+    assert native_jit._native_prefill_self_chunk_safe_gate()
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SAFE_GATE", "0")
+    assert not native_jit._native_prefill_self_chunk_safe_gate()
+
+
+def test_self_chunk_size_can_be_exact_shape_specific(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    policy = types.SimpleNamespace(
+        prefill_self_chunk_size=32,
+        prefill_self_chunk_shape_sizes=((2, 512, 16), (2, 2048, 16), (8, 128, 16)),
+    )
+    monkeypatch.setattr(native_jit, "_kernel_policy", lambda: policy)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE", raising=False)
+    assert native_jit._native_prefill_self_chunk_size(2, 512) == 16
+    assert native_jit._native_prefill_self_chunk_size(2, 2048) == 16
+    assert native_jit._native_prefill_self_chunk_size(8, 128) == 16
+    assert native_jit._native_prefill_self_chunk_size(4, 2048) == 32
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE", "64")
+    assert native_jit._native_prefill_self_chunk_size(2, 512) == 64
+
+
+def test_sequence_ffn_exact_model_shape_does_not_alias_equal_rows(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(native_jit, "fused_sequence_ffn", object())
+    monkeypatch.setattr(native_jit, "fused_sequence_ffn_available", lambda: True)
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FUSED_SEQUENCE_FFN", "1")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MIN_ROWS", "1")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MAX_ROWS", "1")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_EXTRA_ROWS", "")
+    monkeypatch.setenv(
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MODEL_SHAPES",
+        "4096x32x8x512",
+    )
+    assert native_jit._native_prefill_fused_sequence_ffn_enabled(4096, 8, 512, 4096, 32)
+    assert not native_jit._native_prefill_fused_sequence_ffn_enabled(4096, 2, 2048, 4096, 32)
+    assert not native_jit._native_prefill_fused_sequence_ffn_enabled(4096, 8, 512, 2560, 24)
+
+
+_TorchModule = torch.nn.Module if torch is not None else object
+
+
+class _FakeQuantLinear(_TorchModule):
+    def __init__(self, weight: torch.Tensor):
+        super().__init__()
+        self.in_features = int(weight.shape[1])
+        self.out_features = int(weight.shape[0])
+        self.register_buffer("packed_weight", weight.detach().clone())
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.nn.functional.linear(x, self.packed_weight)
+
+
+def test_graph_quant_linear_promotes_scalar_activation_rank() -> None:
+    from rwkv7_hf import native_jit
+
+    operand = _FakeQuantLinear(torch.randn(5, 7, dtype=torch.float32))
+    x = torch.randn(7, dtype=torch.float32)
+    got = native_jit._graph_linear_call(x, operand)
+    expected = torch.nn.functional.linear(x, operand.packed_weight)
+    assert got.shape == (5,)
+    torch.testing.assert_close(got, expected)
+
+
+def test_prefill_accepts_quantized_projection_operands() -> None:
+    native_jit, model, packs = _build_fake_model_and_packs()
+    ids = torch.tensor([[1, 5, 4, 2]], dtype=torch.long)
+    quant_packs = []
+    quant_indices = {20, 21, 22, 23, 38, 39}
+    for pack in packs:
+        values = list(pack)
+        for index in quant_indices:
+            values[index] = _FakeQuantLinear(values[index])
+        quant_packs.append(tuple(values))
+
+    with torch.no_grad():
+        expected, *_ = native_jit.prefill(model, ids, packs, logits_to_keep=1)
+        actual, state, xpa, xpf = native_jit.prefill(model, ids, quant_packs, logits_to_keep=1)
+    torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
+    assert len(state) == len(packs)
+    assert xpa[0].shape == (1, 8)
+    assert xpf[0].shape == (1, 8)
+
+
 def test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop() -> None:
     native_jit, model, packs = _build_fake_model_and_packs()
     ids = torch.tensor([[1, 5, 4, 2]], dtype=torch.long)
@@ -189,6 +324,52 @@ def test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop() -> None:
     assert state[1].shape == (1, 2, 4, 4)
     assert xpa[1].shape == (1, 8)
     assert xpf[1].shape == (1, 8)
+
+
+def test_state_prep_deferred_sigmoid_fallback_matches_materialized() -> None:
+    from rwkv7_hf.fused_prefill import fused_prefill_state_prep
+
+    torch.manual_seed(17)
+    shape = (2, 3, 8)
+    w = torch.randn(shape)
+    k = torch.randn(shape)
+    v = torch.randn(shape)
+    a_raw = torch.randn(shape)
+    v_first = torch.randn(shape)
+    v_gate_raw = torch.randn(shape)
+    k_k = torch.randn(8)
+    k_a = torch.randn(8)
+    common = dict(
+        v_first=v_first,
+        num_heads=2,
+        head_dim=4,
+        w_transform="log_decay",
+        force_fallback=True,
+    )
+    expected = fused_prefill_state_prep(
+        w,
+        k,
+        v,
+        torch.sigmoid(a_raw),
+        k_k,
+        k_a,
+        v_gate=torch.sigmoid(v_gate_raw),
+        **common,
+    )
+    actual = fused_prefill_state_prep(
+        w,
+        k,
+        v,
+        a_raw,
+        k_k,
+        k_a,
+        v_gate=v_gate_raw,
+        a_is_raw=True,
+        v_gate_is_raw=True,
+        **common,
+    )
+    for got, ref in zip(actual, expected):
+        torch.testing.assert_close(got, ref, rtol=0.0, atol=0.0)
 
 
 def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
@@ -299,6 +480,7 @@ def main() -> int:
         return 0
     test_prefill_matches_token_loop()
     test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop()
+    test_state_prep_deferred_sigmoid_fallback_matches_materialized()
     test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop()
     test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch()
     test_callable_graph_linear_promotes_vector_input()

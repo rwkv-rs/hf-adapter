@@ -55,6 +55,7 @@ fi
   --decode-tokens 128 512 \
   --batch-sizes 1 2 4 8 \
   --quantizations none bnb8 bnb4 \
+  --benchmark-matrix qwen35_v100_hf \
   --dtype fp16 \
   --qwen-backend fla \
   --warmup "${WARMUP}" \
@@ -70,7 +71,8 @@ matrix_rc=$?
   --min-decode-speedup 1.05 \
   --required-reference-backend fla \
   --json-output "${OUT_DIR}/summary.json" \
-  --markdown-output "${OUT_DIR}/summary.md"
+  --markdown-output "${OUT_DIR}/summary.md" \
+  --fail-on-gate
 compare_rc=$?
 
 printf '%s\n' "${matrix_rc}" > "${OUT_DIR}/matrix_exit_code.txt"

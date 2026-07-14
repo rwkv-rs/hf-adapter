@@ -250,11 +250,52 @@ def _bnb_skip_policy(policy: str | None = None) -> str:
         return "memory"
     if policy in {"decode", "decode_hot", "hot", "hybrid"}:
         return "decode_hot"
+    if policy in {"output", "output_hot", "o_proj", "o_proj_hot"}:
+        return "output_hot"
+    if policy in {"prefill", "prefill_hot", "throughput"}:
+        return "prefill_hot"
     if policy in {"decode_rk", "rk_dense"}:
         return "decode_rk"
     if policy in {"dense", "all_dense", "no_quant"}:
         return "dense"
     return "memory"
+
+
+def _bnb_prefill_value_stride() -> int:
+    """Return the sparse FFN-down stride used by ``prefill_hot``.
+
+    The historical policy quantizes layers 7, 15, ... (stride 8).  Exact-card
+    acceptance can select a larger stride without inventing a separate model
+    format: all skipped matrices remain ordinary fp16/bf16 linears and the
+    retained matrices remain genuine BnB W8/W4 modules.  At least one FFN-down
+    matrix is retained when the model has fewer layers than the requested
+    stride, so the policy cannot silently become fully dense.
+    """
+
+    raw = os.environ.get("RWKV7_BNB_PREFILL_VALUE_STRIDE", "8").strip()
+    try:
+        return min(max(1, int(raw)), 4096)
+    except ValueError:
+        return 8
+
+
+def _bnb_int8_threshold_override() -> float | None:
+    """Return the hardware-policy LLM.int8 threshold override, if any.
+
+    A zero threshold disables bitsandbytes' host-synchronizing outlier branch,
+    which is required for graph-safe token decode.  ``default``/``library``
+    explicitly retain the BitsAndBytesConfig value supplied by the caller.
+    """
+
+    raw = os.environ.get("RWKV7_BNB_INT8_THRESHOLD")
+    if raw is None:
+        raw = getattr(_rwkv7_kernel_policy(), "bnb_int8_threshold", None)
+    if raw is None or str(raw).strip().lower() in {"", "default", "library", "none"}:
+        return None
+    value = float(raw)
+    if value < 0.0:
+        raise ValueError("RWKV7_BNB_INT8_THRESHOLD must be non-negative")
+    return value
 
 
 def _cuda_available() -> bool:
@@ -279,6 +320,66 @@ def _native_prefill_graph_enabled() -> bool:
     return env_flag("RWKV7_NATIVE_PREFILL_GRAPH", bool(getattr(policy, "prefill_graph", False)))
 
 
+def _native_prefill_external_quant_enabled() -> bool:
+    """Allow the measured HF/BnB bridge into native sequence prefill."""
+
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT",
+        bool(getattr(policy, "native_external_quant_prefill", False)),
+    )
+
+
+def _native_graph_external_quant_enabled() -> bool:
+    """Allow CUDA-graph token decode over graph-safe HF/BnB modules."""
+
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT",
+        bool(getattr(policy, "native_external_quant_graph", False)),
+    )
+
+
+def _native_prefill_external_quant_graph_enabled() -> bool:
+    """Whether external-quant sequence prefill itself should be captured."""
+
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH",
+        bool(getattr(policy, "native_external_quant_prefill_graph", False)),
+    )
+
+
+def _native_prefill_prepare_blas(total_rows: int | None = None) -> str | None:
+    """Select the measured large-matrix backend before native prefill.
+
+    PyTorch exposes BLAS selection as a process-wide setting.  The policy is
+    therefore applied only when entering the explicit native prefill API and
+    remains in effect for subsequent fixed-shape graph captures.  Users can
+    set ``RWKV7_NATIVE_PREFILL_BLAS=none`` to retain the process default.
+    """
+
+    policy = _rwkv7_kernel_policy()
+    target = os.environ.get("RWKV7_NATIVE_PREFILL_BLAS")
+    if target is None:
+        large_min = int(getattr(policy, "prefill_blas_large_min_rows", 4096))
+        large_target = getattr(policy, "prefill_blas_large_library", None)
+        if total_rows is not None and int(total_rows) >= large_min and large_target is not None:
+            target = large_target
+        else:
+            target = getattr(policy, "prefill_blas_library", None)
+    target = "" if target is None else str(target).strip().lower()
+    if target in {"", "none", "default", "auto"} or not _cuda_available():
+        return None
+    if target not in {"cublas", "cublaslt"}:
+        raise ValueError("RWKV7_NATIVE_PREFILL_BLAS must be cublas, cublaslt, or none")
+    preferred = getattr(getattr(torch.backends, "cuda", None), "preferred_blas_library", None)
+    if not callable(preferred):
+        return None
+    preferred(target)
+    return target
+
+
 def _native_prefill_graph_cache_size() -> int:
     """Maximum fixed-shape prefill graphs retained by one model."""
 
@@ -292,18 +393,67 @@ def _native_prefill_graph_signature() -> tuple[tuple[str, str | None], ...]:
 
     names = (
         "RWKV7_NATIVE_PREFILL_DPLR_SCAN",
+        "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT",
+        "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH",
+        "RWKV7_NATIVE_BNB8_DIRECT",
+        "RWKV7_NATIVE_BNB8_RELU_QUANT",
+        "RWKV7_NATIVE_BNB8_RKV_MIX_QUANT",
+        "RWKV7_NATIVE_BNB8_FFN_MIX_QUANT",
+        "RWKV7_NATIVE_BNB8_ATTN_MIX_BLOCK",
+        "RWKV7_NATIVE_BNB8_FFN_MIX_BLOCK",
+        "RWKV7_NATIVE_PREFILL_BLAS",
         "RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN",
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT",
+        "RWKV7_NATIVE_PREFILL_FUSED_RESIDUAL_GEMM",
         "RWKV7_NATIVE_PREFILL_FUSED_SCAN",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SAFE_GATE",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BV",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BC",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES",
         "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
         "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX",
         "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
         "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+        "RWKV7_NATIVE_PREFILL_FUSED_SEQUENCE_FFN",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MAX_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MIN_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_EXTRA_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_SHAPES",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MODEL_SHAPES",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MAX_ROWS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MIN_ROWS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_BLOCK_M",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_BLOCK_N",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_KEY_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_VALUE_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_GROUP_M",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_NUM_STAGES",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_NUM_WARPS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_EXTRA_ROWS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MODEL_SHAPES",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_BLOCK_M",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_BLOCK_N",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_KEY_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_VALUE_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_GROUP_M",
         "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA",
         "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M",
         "RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS",
         "RWKV7_NATIVE_PREFILL_STATE_PREP_W_DTYPE",
+        "RWKV7_A8W8_GEMV_MAX_ROWS",
+        "RWKV7_A8W8_GEMV_BLOCK_K",
+        "RWKV7_A8W8_GEMV_BLOCK_N",
+        "RWKV7_A8W8_GEMV_WARPS",
+        "RWKV7_MM4_FUSED_MAX_ROWS",
+        "RWKV7_MM4_DOT_BLOCK_B",
+        "RWKV7_MM4_DOT_BLOCK_PAIRS",
+        "RWKV7_MM4_DOT_BLOCK_N",
+        "RWKV7_MM4_DOT_WARPS",
     )
     return tuple((name, os.environ.get(name)) for name in names)
 
@@ -1276,6 +1426,15 @@ class RWKV7StateCache(_FLACache):
     ) -> "RWKV7StateCache":
         if isinstance(past_key_values, cls):
             return past_key_values
+        # FLA/HF cache objects carry sequence length outside their legacy
+        # per-layer tuple. Preserve that telemetry when the fast-token path
+        # converts a standard cache into RWKV7StateCache; otherwise the first
+        # decode step incorrectly resets a completed prefill to length zero.
+        if int(seen_tokens) == 0 and hasattr(past_key_values, "get_seq_length"):
+            try:
+                seen_tokens = int(past_key_values.get_seq_length())
+            except Exception:
+                pass
         cache = cls(seen_tokens=seen_tokens, **kwargs)
         if isinstance(past_key_values, _FLACache) and hasattr(past_key_values, "to_legacy_cache"):
             past_key_values = past_key_values.to_legacy_cache()
@@ -1308,6 +1467,7 @@ class _RWKV7NativeGraphPrefillRunner:
         self.batch_size = int(batch_size)
         self.prompt_tokens = int(prompt_tokens)
         self.logits_to_keep = int(logits_to_keep)
+        self.runtime_signature = _native_prefill_graph_signature()
         weight = owner.model.embeddings.weight
         self.device = weight.device
         self.dtype = weight.dtype
@@ -1344,6 +1504,7 @@ class _RWKV7NativeGraphPrefillRunner:
             self.batch_size == int(batch_size)
             and self.prompt_tokens == int(prompt_tokens)
             and self.logits_to_keep == int(logits_to_keep)
+            and self.runtime_signature == _native_prefill_graph_signature()
         )
 
     def _run_once(self):
@@ -1468,11 +1629,16 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     # - decode_hot: keep attention r/k/v/o projections dense; validation smoke
     #   showed this can improve W4 cached decode while still keeping a lower
     #   footprint than fp16. FFN key/value remain quantized.
+    # - prefill_hot: additionally keep every FFN up projection and seven of
+    #   every eight FFN down projections dense. This uses more memory than
+    #   decode_hot but retains a measurable reduction vs fp16.
     # - dense: keep all large Linear modules dense (diagnostic upper bound).
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],
+        "output_hot": [r".*attn\.o_proj"],
         "decode_rk": [r".*attn\.(r_proj|k_proj)"],
         "decode_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)"],
+        "prefill_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.key"],
         "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
     }
 
@@ -1481,12 +1647,22 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         num_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
         if num_layers <= 0:
             return []
+        prefill_value_stride = _bnb_prefill_value_stride()
+        quantized_prefill_values = {
+            layer_idx
+            for layer_idx in range(num_layers)
+            if (layer_idx + 1) % prefill_value_stride == 0
+        }
+        if policy == "prefill_hot" and not quantized_prefill_values:
+            quantized_prefill_values.add(num_layers - 1)
         skips: list[str] = []
         for layer_idx in range(num_layers):
             for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
                 for linear_idx in (0, 2):
                     skips.append(f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}")
-            if policy in {"decode_rk", "decode_hot", "dense"}:
+            if policy == "output_hot":
+                skips.append(f"model.layers.{layer_idx}.attn.o_proj")
+            if policy in {"decode_rk", "decode_hot", "prefill_hot", "dense"}:
                 proj_names = (
                     ("r_proj", "k_proj")
                     if policy == "decode_rk"
@@ -1494,6 +1670,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 )
                 for proj_name in proj_names:
                     skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
+            if policy == "prefill_hot":
+                skips.append(f"model.layers.{layer_idx}.ffn.key")
+                if layer_idx not in quantized_prefill_values:
+                    skips.append(f"model.layers.{layer_idx}.ffn.value")
             if policy == "dense":
                 for ffn_name in ("key", "value"):
                     skips.append(f"model.layers.{layer_idx}.ffn.{ffn_name}")
@@ -1525,6 +1705,19 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                     bnb_kwargs[key] = kwargs.pop(key)
             quantization_config = BitsAndBytesConfig(**bnb_kwargs)
             kwargs["quantization_config"] = quantization_config
+        if quantization_config is not None and bool(getattr(quantization_config, "load_in_8bit", False)):
+            threshold = _bnb_int8_threshold_override()
+            if threshold is not None:
+                # threshold=0 removes the host-side outlier decision from
+                # Linear8bitLt and makes its low-level kernels capturable.
+                quantization_config.llm_int8_threshold = float(threshold)
+        # Keep explicit speed/memory policy requests literal for both W8 and
+        # W4.  Earlier code silently downgraded W8 ``prefill_hot`` to
+        # ``decode_hot``; that made a user-selected throughput lane impossible
+        # to reproduce and hid short-prefill regressions behind a different
+        # effective policy.  Exact-card policy selection belongs in
+        # ``kernel_policy`` while an explicit caller request must remain
+        # observable in the loaded model and benchmark telemetry.
         if quantization_config is not None and hasattr(quantization_config, "llm_int8_skip_modules"):
             config_for_skip = kwargs.get("config")
             if config_for_skip is None:
@@ -1770,7 +1963,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                         raise RuntimeError(f"native_graph fast-token backend is unavailable for batch_size={batch_size}")
                     chosen = "native_jit" if self._rwkv7_can_use_native_backend("native_jit", batch_size) else "fla"
                 else:
-                    packs = self._rwkv7_native_jit_packs(for_graph=True)
+                    packs = self._rwkv7_native_jit_packs(
+                        for_graph=self._rwkv7_uses_quantized_linear_operands()
+                    )
                     self._rwkv7_native_graph_runner(packs, batch_size)
             if chosen == "native_jit":
                 if not self._rwkv7_can_use_native_backend("native_jit", batch_size):
@@ -1817,10 +2012,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     def _rwkv7_uses_external_quantization(self) -> bool:
         """Detect generic HF/bitsandbytes quantization wrappers.
 
-        Generic 8-bit wrappers use the normal FLA fast-token path. A dedicated,
-        opt-in BNB4 native-graph route is available when the exact-card gate has
-        been validated; other native fast-token implementations still require
-        dense floating-point projection weights.
+        Measured bitsandbytes W8/W4 modules can be retained as live operands by
+        the native prefill/graph extractors. Other HF quantizers remain on the
+        normal compatibility path until their operator contracts are verified.
         """
         if bool(getattr(self, "is_loaded_in_8bit", False)) or bool(getattr(self, "is_loaded_in_4bit", False)):
             return True
@@ -1829,24 +2023,96 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         config = getattr(self, "config", None)
         return getattr(config, "quantization_config", None) is not None
 
-    def _rwkv7_external_quant_graph_enabled(self) -> bool:
-        """Return whether this external quantizer has a validated graph route."""
+    def _rwkv7_uses_native_quant_operands(self) -> bool:
+        """Return whether native MM replacement modules occur inside blocks."""
 
+        block_replacements = getattr(self, "_rwkv7_native_mm_block_replaced_modules", None)
+        if block_replacements is not None:
+            return bool(
+                getattr(self, "_rwkv7_native_mm_quantization", None)
+                and int(block_replacements or 0) > 0
+            )
+        # Backward compatibility for models quantized before block-level
+        # provenance was recorded. Conservatively retain callable operands.
         return bool(
-            _fast_token_quant_enabled()
-            and getattr(self, "is_loaded_in_4bit", False)
-            and not getattr(self, "is_loaded_in_8bit", False)
+            getattr(self, "_rwkv7_native_mm_quantization", None)
+            and int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0) or 0) > 0
         )
+
+    def _rwkv7_uses_quantized_linear_operands(self) -> bool:
+        """Return whether graph packs must retain callable Linear operands."""
+
+        return self._rwkv7_uses_external_quantization() or self._rwkv7_uses_native_quant_operands()
+
+    def _rwkv7_external_quant_config(self):
+        quantizer = getattr(self, "hf_quantizer", None)
+        quant_config = getattr(quantizer, "quantization_config", None)
+        if quant_config is None:
+            quant_config = getattr(getattr(self, "config", None), "quantization_config", None)
+        return quant_config
+
+    def _rwkv7_external_quant_native_safe(self) -> bool:
+        """Restrict the module-operand bridge to measured BnB W8/W4 loads."""
+
+        if bool(getattr(self, "is_loaded_in_8bit", False)) or bool(getattr(self, "is_loaded_in_4bit", False)):
+            return True
+        quant_config = self._rwkv7_external_quant_config()
+        getter = (
+            quant_config.get
+            if isinstance(quant_config, dict)
+            else lambda name, default=None: getattr(quant_config, name, default)
+        )
+        return bool(getter("load_in_8bit", False) or getter("load_in_4bit", False))
+
+    def _rwkv7_external_quant_graph_safe(self) -> bool:
+        """Return whether the loaded BnB operators can enter CUDA capture."""
+
+        if not self._rwkv7_external_quant_native_safe():
+            return False
+        quant_config = self._rwkv7_external_quant_config()
+        getter = (
+            quant_config.get
+            if isinstance(quant_config, dict)
+            else lambda name, default=None: getattr(quant_config, name, default)
+        )
+        is_w8 = bool(getattr(self, "is_loaded_in_8bit", False) or getter("load_in_8bit", False))
+        if not is_w8:
+            return True
+        # LLM.int8 thresholds above zero execute ``outliers.any()`` on the
+        # host. CUDA rejects that synchronization while a graph is capturing.
+        return float(getter("llm_int8_threshold", 6.0)) <= 0.0
+
+    def _rwkv7_external_quant_graph_enabled(self) -> bool:
+        """Return whether this BnB load has an opt-in, graph-safe route."""
+
+        if not self._rwkv7_external_quant_native_safe() or not self._rwkv7_external_quant_graph_safe():
+            return False
+        if _native_graph_external_quant_enabled():
+            return True
+        quant_config = self._rwkv7_external_quant_config()
+        getter = (
+            quant_config.get
+            if isinstance(quant_config, dict)
+            else lambda name, default=None: getattr(quant_config, name, default)
+        )
+        is_w4 = bool(getattr(self, "is_loaded_in_4bit", False) or getter("load_in_4bit", False))
+        is_w8 = bool(getattr(self, "is_loaded_in_8bit", False) or getter("load_in_8bit", False))
+        return bool(_fast_token_quant_enabled() and is_w4 and not is_w8)
 
     def _rwkv7_can_use_native_backend(self, backend: str, batch_size: int) -> bool:
         if self._rwkv7_has_multi_cuda_device_map():
             return False
-        external_quantization = self._rwkv7_uses_external_quantization()
-        if external_quantization and backend != "native_graph":
-            return False
-        if external_quantization and not self._rwkv7_external_quant_graph_enabled():
+        external_quant = self._rwkv7_uses_external_quantization()
+        if external_quant and (
+            backend != "native_graph" or not self._rwkv7_external_quant_graph_enabled()
+        ):
             return False
         if backend == "native_jit":
+            # TorchScript packs are tensor-only. Native/external quant modules
+            # remain callable operands and therefore require the eager CUDA-
+            # graph runner and graph-aware extractor.
+            if self._rwkv7_uses_quantized_linear_operands():
+                return False
             if _native_jit_block_step is None or _native_jit_extract is None:
                 return False
             if int(batch_size) != 1 and _native_jit_block_step_batched is None:
@@ -1866,7 +2132,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if not _cuda_available() or getattr(weight.device, "type", None) != "cuda":
                 return False
             try:
-                self._rwkv7_native_jit_packs(for_graph=True)
+                self._rwkv7_native_jit_packs(
+                    for_graph=self._rwkv7_uses_quantized_linear_operands()
+                )
             except Exception:
                 return False
             return True
@@ -1875,15 +2143,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     def _rwkv7_resolve_fast_token_backend(self, batch_size: int) -> str:
         requested = _fast_token_backend()
         if requested != "auto":
-            if self._rwkv7_uses_external_quantization() and (
-                requested == "native_jit"
-                or (requested == "native_graph" and not self._rwkv7_external_quant_graph_enabled())
-            ):
+            if self._rwkv7_uses_external_quantization() and requested in {"native_graph", "native_jit"}:
+                if requested != "native_graph" or not self._rwkv7_external_quant_graph_enabled():
+                    return "fla"
                 # Bitsandbytes/HF quantization wraps Linear weights in packed
                 # int8/int4 modules. Native JIT remains tensor-only, while the
                 # graph path requires an explicit opt-in before retaining the
                 # wrappers as callable capture operands.
-                return "fla"
             return requested
         if self._rwkv7_can_use_native_backend("native_graph", batch_size):
             return "native_graph"
@@ -1921,6 +2187,16 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             past_key_values = RWKV7StateCache.from_legacy_cache(past_key_values)
 
         requested_backend = _fast_token_backend()
+        if (
+            requested_backend == "native_graph"
+            and self._rwkv7_uses_external_quantization()
+            and _native_graph_external_quant_enabled()
+            and not self._rwkv7_external_quant_graph_safe()
+        ):
+            raise RuntimeError(
+                "native_graph W8 decode requires graph-safe bitsandbytes loading; "
+                "set RWKV7_BNB_INT8_THRESHOLD=0 before from_pretrained"
+            )
         backend = self._rwkv7_resolve_fast_token_backend(int(token.numel()))
         self._rwkv7_last_fast_token_backend = backend
         if backend == "native_graph":
@@ -2043,6 +2319,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return runner
 
         stats["misses"] = int(stats.get("misses", 0)) + 1
+        # Evict before capture, not after it. CUDA graphs retain private pools;
+        # capturing the replacement while an already-doomed graph is still
+        # live can force a lower-workspace GEMM plan and permanently slow the
+        # new runner even after the old entry is removed.
+        cache_limit = _native_graph_cache_size()
+        while len(cache) >= cache_limit:
+            cache.popitem(last=False)
+            stats["evictions"] = int(stats.get("evictions", 0)) + 1
         if _native_graph_ada_sparse_ffn_requested() and _native_graph_prewarm_sparse_ffn is not None:
             _native_graph_prewarm_sparse_ffn(packs, int(batch_size))
         if int(batch_size) == 1:
@@ -2051,9 +2335,6 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             runner = _RWKV7NativeGraphBatchedTokenRunner(self, packs, int(batch_size))
         cache[key] = runner
         cache.move_to_end(key)
-        while len(cache) > _native_graph_cache_size():
-            cache.popitem(last=False)
-            stats["evictions"] = int(stats.get("evictions", 0)) + 1
         return runner
 
     def rwkv7_clear_native_graph_cache(self) -> int:
@@ -2101,6 +2382,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             cache.move_to_end(key)
             self._rwkv7_native_prefill_graph_hot_runner = runner
             return runner
+        # See the token-runner cache above: release the old graph and its hot
+        # alias before the replacement capture so cuBLAS can select the same
+        # workspace-rich plan as a fresh production process.
+        cache_limit = _native_prefill_graph_cache_size()
+        while len(cache) >= cache_limit:
+            _, evicted_runner = cache.popitem(last=False)
+            if getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None) is evicted_runner:
+                self._rwkv7_native_prefill_graph_hot_runner = None
+            del evicted_runner
         runner = _RWKV7NativeGraphPrefillRunner(
             self,
             packs,
@@ -2110,8 +2400,6 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         )
         cache[key] = runner
         cache.move_to_end(key)
-        while len(cache) > _native_prefill_graph_cache_size():
-            cache.popitem(last=False)
         self._rwkv7_native_prefill_graph_hot_runner = runner
         return runner
 
@@ -2127,6 +2415,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         cache.clear()
         self._rwkv7_native_prefill_graph_hot_runner = None
         return size
+
+    def rwkv7_clear_native_prefill_stacked_rkv_cache(self) -> int:
+        """Release lazy packed prefill R/K/V weights and return their bytes."""
+
+        cached = getattr(self, "_rwkv7_native_prefill_stacked_rkv_cache", None)
+        packed = cached[1] if isinstance(cached, tuple) and len(cached) == 2 else None
+        released = sum(int(t.numel()) * int(t.element_size()) for t in packed or [] if isinstance(t, torch.Tensor))
+        self._rwkv7_native_prefill_stacked_rkv_cache = None
+        return released
 
     def rwkv7_warmup_fast_prefill(
         self,
@@ -2144,7 +2441,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             normalized = list(shapes)
         if not normalized:
             raise ValueError("rwkv7_warmup_fast_prefill requires at least one shape")
-        packs = self._rwkv7_native_jit_packs()
+        if self._rwkv7_uses_external_quantization() and not _native_prefill_external_quant_graph_enabled():
+            raise RuntimeError(
+                "external-quant prefill uses the faster eager native path by default; "
+                "set RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1 to capture fixed shapes"
+            )
+        packs = self._rwkv7_native_jit_packs(
+            for_graph=self._rwkv7_uses_quantized_linear_operands()
+        )
         warmed: dict[str, str] = {}
         for batch_size, prompt_tokens in normalized:
             if int(batch_size) <= 0 or int(prompt_tokens) <= 0:
@@ -2242,11 +2546,16 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if int(input_ids.shape[1]) <= 0:
             raise ValueError("rwkv7_prefill_native requires at least one token")
         batch_size = int(input_ids.shape[0])
-        external_quantization = self._rwkv7_uses_external_quantization()
-        if external_quantization and not _fast_prefill_quant_enabled():
+        _native_prefill_prepare_blas(batch_size * int(input_ids.shape[1]))
+        external_quant = self._rwkv7_uses_external_quantization()
+        quantized_operands = self._rwkv7_uses_quantized_linear_operands()
+        if external_quant and (
+            not (_native_prefill_external_quant_enabled() or _fast_prefill_quant_enabled())
+            or not self._rwkv7_external_quant_native_safe()
+        ):
             raise RuntimeError(
-                "native prefill with external quantization requires "
-                "RWKV7_FAST_PREFILL_QUANT=1"
+                "native prefill external-quant bridge requires a supported BnB W8/W4 load "
+                "and RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT=1 or RWKV7_FAST_PREFILL_QUANT=1"
             )
         source_seen = None
         if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
@@ -2256,14 +2565,20 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 source_seen = None
         past = RWKV7StateCache.from_legacy_cache(past_key_values)
         initial_seen = source_seen if source_seen is not None else (int(past.get_seq_length()) if hasattr(past, "get_seq_length") else 0)
-        if _native_prefill_graph_enabled() and not external_quantization:
+        if _native_prefill_graph_enabled() and (
+            not external_quant
+            or (
+                _native_prefill_external_quant_graph_enabled()
+                and self._rwkv7_external_quant_graph_safe()
+            )
+        ):
             keep_value = 0 if logits_to_keep is None else int(logits_to_keep)
             prompt_tokens = int(input_ids.shape[1])
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _RWKV7NativeGraphPrefillRunner) or not runner.matches(
                 batch_size, prompt_tokens, keep_value
             ):
-                packs = self._rwkv7_native_jit_packs()
+                packs = self._rwkv7_native_jit_packs(for_graph=quantized_operands)
                 runner = self._rwkv7_native_prefill_graph_runner(
                     packs,
                     batch_size,
@@ -2275,10 +2590,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if not return_dict:
                 return logits, past
             return CausalLMOutputWithPast(logits=logits, past_key_values=past)
-        # Quantized modules have no dense ``.weight`` tensor. The graph packer
-        # retains them as callable operands, which native prefill can consume
-        # without requiring CUDA graph capture.
-        packs = self._rwkv7_native_jit_packs(for_graph=external_quantization)
+        packs = self._rwkv7_native_jit_packs(for_graph=quantized_operands)
         state_native, xpa, xpf = self._rwkv7_native_prefill_initial_state(past, packs, batch_size)
         logits, state_native, xpa, xpf = _native_jit_prefill(
             self,
@@ -2348,7 +2660,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if attention_mask is not None:
                 chunk_kwargs["attention_mask"] = attention_mask[:, start:end]
             chunk_mask = chunk_kwargs.pop("attention_mask", None)
-            if _native_prefill_graph_enabled() and chunk_mask is None:
+            if (
+                _native_prefill_graph_enabled()
+                and chunk_mask is None
+                and (
+                    not self._rwkv7_uses_external_quantization()
+                    or _native_prefill_external_quant_graph_enabled()
+                )
+            ):
                 out = self.rwkv7_prefill_native(
                     input_ids[:, start:end],
                     past_key_values=past,
@@ -2907,8 +3226,12 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return None
         if self._rwkv7_has_multi_cuda_device_map():
             return None
-        if self._rwkv7_uses_external_quantization() and not _fast_prefill_quant_enabled():
-            return None
+        if self._rwkv7_uses_external_quantization():
+            if (
+                not (_native_prefill_external_quant_enabled() or _fast_prefill_quant_enabled())
+                or not self._rwkv7_external_quant_native_safe()
+            ):
+                return None
         if kwargs.get("inputs_embeds") is not None or kwargs.get("labels") is not None:
             return None
         if kwargs.get("output_attentions") is True or kwargs.get("output_hidden_states") is True:

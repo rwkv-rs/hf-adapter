@@ -1,0 +1,2 @@
+{"route":"self16","batch_size":2,"prompt_tokens":2048,"median_ms":887.7916259765625,"prefill_tokps_total":4613.69524126164,"reference":"self16","max_abs":0.0,"min_cosine":0.9999954700469971,"greedy_equal":true,"logits_finite":true,"peak_vram_mb":15262.7041015625,"warmup":2,"runs":7}
+{"route":"recurrent","batch_size":2,"prompt_tokens":2048,"median_ms":899.8492431640625,"prefill_tokps_total":4551.873584510209,"reference":"self16","max_abs":0.0625,"min_cosine":0.9999954700469971,"greedy_equal":true,"logits_finite":true,"peak_vram_mb":15262.7041015625,"warmup":2,"runs":7}

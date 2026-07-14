@@ -1,0 +1,71 @@
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [00:56<00:00, 56.11s/it]                                             100%|██████████| 1/1 [00:56<00:00, 56.11s/it]                                             100%|██████████| 1/1 [00:56<00:00, 56.11s/it]100%|██████████| 1/1 [00:56<00:00, 56.12s/it]
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+{'loss': 1.9219, 'grad_norm': 8.657181739807129, 'learning_rate': 0.0001, 'epoch': 0.12}
+{'train_runtime': 56.1223, 'train_samples_per_second': 0.018, 'train_steps_per_second': 0.018, 'train_loss': 1.921875, 'epoch': 0.12}
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [00:01<00:00,  1.63s/it]                                             100%|██████████| 1/1 [00:01<00:00,  1.63s/it]                                             100%|██████████| 1/1 [00:01<00:00,  1.63s/it]100%|██████████| 1/1 [00:01<00:00,  1.64s/it]
+{'loss': 1.9219, 'grad_norm': 8.784618593216452, 'learning_rate': 0.0001, 'epoch': 0.12}
+{'train_runtime': 1.6392, 'train_samples_per_second': 0.61, 'train_steps_per_second': 0.61, 'train_loss': 1.921875, 'epoch': 0.12}
+{"axis": "deepspeed_training_smoke", "backend": "hf_adapter", "trainer_backend": "trainer_zero2", "zero_stage": 2, "status": "pass", "dtype": "bf16", "train_dtype": "bf16", "device": "NVIDIA GeForce RTX 3090", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "cuda_device_count": 1, "distributed_world_size": 1, "local_rank": 0, "attn_mode": "fused_recurrent", "batch_size": 1, "gradient_accumulation_steps": 1, "effective_batch_size": 1, "max_steps": 1, "dataset_repeats": 4, "max_length": 16, "deepspeed_config": "configs/deepspeed/zero2.json", "train_loss": 1.921875, "train_runtime_s": 56.1223, "train_samples_per_second": 0.018, "train_steps_per_second": 0.018, "max_trainable_delta": 0.00010013580322265625}
+{"axis": "deepspeed_training_smoke", "backend": "hf_adapter", "trainer_backend": "trainer_zero3", "zero_stage": 3, "status": "pass", "dtype": "bf16", "train_dtype": "bf16", "device": "NVIDIA GeForce RTX 3090", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "cuda_device_count": 1, "distributed_world_size": 1, "local_rank": 0, "attn_mode": "fused_recurrent", "batch_size": 1, "gradient_accumulation_steps": 1, "effective_batch_size": 1, "max_steps": 1, "dataset_repeats": 4, "max_length": 16, "deepspeed_config": "configs/deepspeed/zero3.json", "train_loss": 1.921875, "train_runtime_s": 1.6392, "train_samples_per_second": 0.61, "train_steps_per_second": 0.61, "max_trainable_delta": 0.00010000000474974513}
+PASS
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [00:55<00:00, 55.02s/it]                                             100%|██████████| 1/1 [00:55<00:00, 55.02s/it]                                             100%|██████████| 1/1 [00:55<00:00, 55.02s/it]100%|██████████| 1/1 [00:55<00:00, 55.51s/it]
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+{'loss': 1.9219, 'grad_norm': 8.561894416809082, 'learning_rate': 0.0001, 'epoch': 0.12}
+{'train_runtime': 55.5179, 'train_samples_per_second': 0.018, 'train_steps_per_second': 0.018, 'train_loss': 1.921875, 'epoch': 0.12}
+  0%|          | 0/2 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 2/2 [00:00<00:00,  5.82it/s]                                             100%|██████████| 2/2 [00:00<00:00,  5.82it/s]                                             100%|██████████| 2/2 [00:00<00:00,  5.82it/s]100%|██████████| 2/2 [00:00<00:00,  2.94it/s]
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+{'loss': 3.1719, 'grad_norm': 12.842375755310059, 'learning_rate': 0.0, 'epoch': 0.25}
+{'train_runtime': 0.6836, 'train_samples_per_second': 2.926, 'train_steps_per_second': 2.926, 'train_loss': 1.5859375, 'epoch': 0.25}
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [00:01<00:00,  1.63s/it]                                             100%|██████████| 1/1 [00:01<00:00,  1.63s/it]                                             100%|██████████| 1/1 [00:02<00:00,  1.63s/it]100%|██████████| 1/1 [00:02<00:00,  2.49s/it]
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+{'loss': 1.9219, 'grad_norm': 8.763831545073067, 'learning_rate': 0.0001, 'epoch': 0.12}
+{'train_runtime': 2.4889, 'train_samples_per_second': 0.402, 'train_steps_per_second': 0.402, 'train_loss': 1.921875, 'epoch': 0.12}
+  0%|          | 0/2 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 2/2 [00:01<00:00,  1.30it/s]                                             100%|██████████| 2/2 [00:01<00:00,  1.30it/s]                                             100%|██████████| 2/2 [00:02<00:00,  1.30it/s]100%|██████████| 2/2 [00:02<00:00,  1.19s/it]
+{'loss': 3.1562, 'grad_norm': 13.020114098152861, 'learning_rate': 0.0, 'epoch': 0.25}
+{'train_runtime': 2.3848, 'train_samples_per_second': 0.839, 'train_steps_per_second': 0.839, 'train_loss': 1.578125, 'epoch': 0.25}
+{"axis": "deepspeed_resume_smoke", "backend": "hf_adapter", "trainer_backend": "trainer_zero2_resume", "zero_stage": 2, "status": "pass", "dtype": "bf16", "train_dtype": "bf16", "device": "NVIDIA GeForce RTX 3090", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "cuda_device_count": 1, "distributed_world_size": 1, "local_rank": 0, "attn_mode": "fused_recurrent", "batch_size": 1, "gradient_accumulation_steps": 1, "effective_batch_size": 1, "first_steps": 1, "resume_steps": 2, "dataset_repeats": 4, "max_length": 16, "deepspeed_config": "configs/deepspeed/zero2.json", "checkpoint": "checkpoint-1", "first_loss": 1.921875, "resume_loss": 1.5859375, "train_runtime_s": 0.6836, "first_max_trainable_delta": 0.00010013580322265625, "resume_max_trainable_delta": 0.0625, "global_step": 2}
+{"axis": "deepspeed_resume_smoke", "backend": "hf_adapter", "trainer_backend": "trainer_zero3_resume", "zero_stage": 3, "status": "pass", "dtype": "bf16", "train_dtype": "bf16", "device": "NVIDIA GeForce RTX 3090", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "cuda_device_count": 1, "distributed_world_size": 1, "local_rank": 0, "attn_mode": "fused_recurrent", "batch_size": 1, "gradient_accumulation_steps": 1, "effective_batch_size": 1, "first_steps": 1, "resume_steps": 2, "dataset_repeats": 4, "max_length": 16, "deepspeed_config": "configs/deepspeed/zero3.json", "checkpoint": "checkpoint-1", "first_loss": 1.921875, "resume_loss": 1.578125, "train_runtime_s": 2.3848, "first_max_trainable_delta": 9.99999901978299e-05, "resume_max_trainable_delta": 9.99999901978299e-05, "global_step": 2}
+DEEPSPEED RESUME PASS
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+fast_cache_type RWKV7StateCache
+prefill_max_abs_diff 0.0
+decode_max_abs_diff 0.0
+greedy_equal 8 / 8
+seq_length 22
+PASS
