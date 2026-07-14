@@ -7,6 +7,7 @@ historical rows remain in platform documents and `bench/` artifacts.
 
 | Platform | Dense fp16/bf16 | Quant speed lane | Quality/correctness | Status |
 |---|---|---|---|---|
+| RTX 3090 | g1h 7.2B vs full-FLA Qwen3.5-9B bsz8 prefill/decode minimum `1.058907x/1.788418x`; decode active-work minimum `1.437946x` | W8 total/decode minimum `1.098658x/1.084305x`; W4 `1.014527x/1.025666x`; footprint and peak lower in 18/18 | finite logits, 24/24 Qwen FLA bindings and fail-closed route checks; task quality not measured | Production-close for measured bsz8 lane |
 | RTX 5070 Laptop | 1.5B RWKV vs full-FLA Qwen3.5 2B bsz8 prefill/decode minimum `1.082707x/1.795119x` | fp16/W8/W4 all pass; footprint and peak VRAM lower in 18/18 | Qwen full-FLA bindings; Qwen and RWKV greedy/cosine probes pass | Production-close for measured bsz8 lane |
 | V100 | Decode `0.908x–1.248x`, prompt-512 prefill `0.930x–1.047x` same-host Albatross | W8/W4 decode `1.006x–1.128x` fp16; paired prefill `0.996x–1.007x` | Greedy/cache handoff and focused regressions pass | Production-close for canonical matrix |
 | RTX 4090 | 0.4B decode bsz1/2/4/8 `1.007x–1.418x` matching Albatross | W8/W4 measured speed lanes are fp16/bf16 equivalent or faster | 32-step greedy and cache handoff pass | Production-close for measured lanes |

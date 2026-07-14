@@ -1,0 +1,16 @@
+START dense_candidate
+DONE dense_candidate rc=0
+START dense_reference
+DONE dense_reference rc=0
+START memory_candidate_bnb8
+DONE memory_candidate_bnb8 rc=0
+START memory_candidate_bnb4
+DONE memory_candidate_bnb4 rc=0
+START hybrid_speed_bnb8_a8w8_head
+DONE hybrid_speed_bnb8_a8w8_head rc=0
+START native_speed_a8w8
+DONE native_speed_a8w8 rc=0
+START native_speed_mm4
+DONE native_speed_mm4 rc=0
+START native_speed_torchao_w4
+DONE native_speed_torchao_w4 rc=0
