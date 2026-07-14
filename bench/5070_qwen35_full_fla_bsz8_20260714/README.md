@@ -30,7 +30,10 @@ default-off.
 
 The gate requires at least `1.05x` raw prefill and decode throughput, no-larger
 physical model footprint and peak allocated VRAM, full Qwen FLA bindings, and
-at least `1.0x` token throughput per active billion parameters.
+at least `1.0x` token throughput per active billion parameters. Cached decode
+also requires at least `1.0x` active-parameter work throughput
+(`tok/s * active_parameters`); this work gate is intentionally not applied to
+prefill.
 
 | Metric | Minimum | Median | Maximum | Passing cells |
 |---|---:|---:|---:|---:|
@@ -40,6 +43,7 @@ at least `1.0x` token throughput per active billion parameters.
 | Peak VRAM RWKV/Qwen | `0.605574x` | `0.845321x` | `0.955585x` | 18/18 |
 | Prefill tok/s per active-B | `1.333940x` | `1.694224x` | `2.080579x` | 18/18 |
 | Decode tok/s per active-B | `2.211641x` | `3.135530x` | `4.258556x` | 18/18 |
+| Decode active-parameter work | `1.457017x` | `2.065670x` | - | 18/18 |
 
 Per precision family, minimum prefill/decode speedups are `1.107277x/2.490276x`
 for fp16, `1.286450x/1.795119x` for W8, and `1.082707x/2.507579x` for W4.
@@ -49,9 +53,10 @@ RWKV has 1,527,404,544 logical and active parameters; Qwen has 1,881,825,088.
 Both checkpoints are dense, so active equals total and the RWKV/Qwen active
 ratio is `0.811661x`. Rows also record exact active-parameter applications.
 Model efficiency is `tok/s / active-B` and is an acceptance gate. Hardware
-logical work rate (`tok/s * active_parameters`) is reported separately and is
-not a model-efficiency gate; its minimum prefill ratio is `0.878791x` because
-RWKV executes fewer active parameters per token.
+logical work rate (`tok/s * active_parameters`) is a separate cached-decode
+gate and has minimum ratio `1.457017x`. Its minimum prefill ratio is
+`0.878791x`, reported without gating because RWKV executes fewer active
+parameters per token and the active-parameter multiplier is a decode policy.
 
 Runtime working set, defined as peak allocated VRAM minus physical model
 footprint, is lower in 8/18 cells (`0.546805x-1.915321x`). It is disclosed as
@@ -87,7 +92,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File bench/run_5070_qwen35_full_f
 
 The runner fails closed on any Qwen Torch fallback, runs Qwen and RWKV
 correctness probes, executes the fresh-process matrix, and applies the strict
-speed, parameter-efficiency, footprint, and peak-VRAM gates.
+speed, decode active-work, parameter-efficiency, footprint, and peak-VRAM
+gates.
 
 Canonical files:
 
