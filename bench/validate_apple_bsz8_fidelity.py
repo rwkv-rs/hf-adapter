@@ -51,8 +51,15 @@ def configure(args: argparse.Namespace, *, fused_scan_post: bool) -> None:
     os.environ["RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_G"] = "0"
     os.environ["RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_V"] = "0"
     os.environ["RWKV7_MLX_FUSED_LORA_UP"] = "0"
+    os.environ["RWKV7_MLX_FUSED_FFN_KEY_RELU2"] = "1" if args.fused_ffn_key_relu2 else "0"
     os.environ["RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION"] = "0"
     os.environ["RWKV7_MLX_FUSED_SCAN_POST"] = "1" if fused_scan_post else "0"
+    os.environ["RWKV7_MLX_FUSED_SCAN_PREP_POST"] = (
+        "1" if fused_scan_post and args.fused_scan_prep_post else "0"
+    )
+    os.environ["RWKV7_MLX_FUSED_SEQUENCE_MIX"] = "1" if args.fused_sequence_mix else "0"
+    os.environ["RWKV7_MLX_FUSED_ADD_LAYER_NORM"] = "1" if args.fused_add_layer_norm else "0"
+    os.environ["RWKV7_MLX_FUSED_SQUARE_QMM"] = "1" if args.fused_square_qmm else "0"
     os.environ["RWKV7_MLX_FLATTEN_WIDE_GROUPWISE_PREFILL"] = "1"
     os.environ["RWKV7_MLX_DECODE_FAST_GROUP_NORM"] = "1"
     os.environ["RWKV7_MLX_STEP_EVAL_INTERVAL"] = "64"
@@ -106,8 +113,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quant-min-params", type=int, default=1_000_000)
     parser.add_argument("--quant-group-size", type=int, choices=[32, 64, 128], default=128)
     parser.add_argument("--fused-lora-down", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fused-ffn-key-relu2", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--compare-fp16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--compare-fused-post", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--fused-scan-prep-post",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--fused-sequence-mix", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fused-add-layer-norm", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fused-square-qmm", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--compare-prefix-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prefix-unique-prompts", type=int, default=2)
     parser.add_argument("--draft-model", default="")
@@ -142,6 +158,11 @@ def main(argv: list[str] | None = None) -> int:
         "decode_tokens_per_sequence": int(args.decode_tokens),
         "quant_group_size": int(args.quant_group_size),
         "fused_lora_down": bool(args.fused_lora_down),
+        "fused_ffn_key_relu2": bool(args.fused_ffn_key_relu2),
+        "fused_scan_prep_post": bool(args.fused_scan_prep_post),
+        "fused_sequence_mix": bool(args.fused_sequence_mix),
+        "fused_add_layer_norm": bool(args.fused_add_layer_norm),
+        "fused_square_qmm": bool(args.fused_square_qmm),
     }
     gates: list[bool] = []
 
@@ -369,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
 
     telemetry = optimized.telemetry()
     result["quantized_embedding_footprint_ratio"] = telemetry.get("quantized_embedding_footprint_ratio")
+    result["fused_scan_prep_post_counts"] = telemetry.get("fused_scan_prep_post_counts")
+    result["fused_ffn_key_relu2_counts"] = telemetry.get("fused_ffn_key_relu2_counts")
+    result["fused_sequence_mix_counts"] = telemetry.get("fused_sequence_mix_counts")
+    result["fused_add_layer_norm_counts"] = telemetry.get("fused_add_layer_norm_counts")
     result["quantized_linear_footprint_ratio"] = (
         telemetry["quantized_linear_bytes"] / telemetry["quantized_dense_equivalent_bytes"]
     )

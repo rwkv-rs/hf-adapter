@@ -213,20 +213,22 @@ Remaining before this goal is complete:
 ## Current Apple M5 B8 Active-Parameter Milestone (2026-07-14)
 
 The current Apple acceptance axis is **true batch 8**, a 512-character prompt,
-64 generated tokens per sequence, group-128 W4 on both sides, and throughput
+64 generated tokens per sequence, group-128 RWKV W4 versus the published
+group-64 Qwen MLX W4 checkpoints, and throughput
 normalized as `aggregate tok/s * active text parameter count`. Treat cold
 prefill and prefix-state-cache prefill as different scenarios; never use the
 cache row to claim a universal cold-start win.
 
 - The production candidate uses a thread-local Metal WKV scan, fused
-  scan+GroupNorm+bonus+gate post-processing, quantized Metal embedding lookup,
-  guarded compiled zero-state prefill, fast LayerNorm/GroupNorm, exact lockstep
-  B8 speculative decode with the 0.1B RWKV draft, and native groupwise W4.
+  prep+scan+GroupNorm+bonus+gate, half-width shared K/R/A traffic, fused
+  sequence shift/mix, residual-add+LayerNorm, native NAX W4 square-QMM and
+  FFN-key+ReLU² kernels, quantized Metal embedding lookup, guarded compiled
+  zero-state prefill, exact lockstep B8 speculative decode, and groupwise W4.
 - 0.4B RWKV versus Qwen3.5 0.8B passes the **cold** row. Current tracked medians
-  are `7942.62 vs 4276.23 tok/s` prefill and
-  `781.66 vs 379.17 tok/s` decode. Active-parameter-normalized ratios are
-  `1.1128x` and `1.2351x`; raw peak memory is
-  `1.253 GB vs 1.644 GB`. Keep W/A LoRA-down double-GEMM fusion enabled for
+  are `11650.46 vs 5702.27 tok/s` prefill and
+  `992.30 vs 487.15 tok/s` decode. Active-parameter-normalized ratios are
+  `1.2241x` and `1.2204x`; raw peak memory is
+  `1.223 GB vs 1.642 GB`. Keep W/A LoRA-down double-GEMM fusion enabled for
   this profile.
 - 1.5B RWKV versus Qwen3.5 2B passes the separately labelled
   **87.5%-hit prefix-state coalescing** row. Current medians are
@@ -236,13 +238,11 @@ cache row to claim a universal cold-start win.
   `1.858 GB vs 2.152 GB`. W/A LoRA-down fusion is enabled; its packed base
   replaces the original W/A source matrices and releases `18,874,368` bytes,
   removing the prior duplicate-cache memory penalty.
-- The 1.5B **cold** row is not closed: the current tracked normalized prefill is
-  `0.8999x` Qwen2 (`2478.03 vs 2235.16 tok/s` raw). Decode passes by
-  `3.0567x`; isolated raw peak memory is `2.112 GB`, below the `2.152 GB`
-  Qwen row. The remaining
-  cold bottleneck is block compute, especially W4 FFN/projection and WKV/RKV
-  launch traffic; the next useful step is a native W4 FFN/block megakernel,
-  not another wrapper or cache-only optimization.
+- The 1.5B **cold, no-prefix-coalescing** ABBA row is closed. Current medians
+  are `3631.53 vs 2860.13 tok/s` prefill and `894.97 vs 235.01 tok/s` decode.
+  Active-normalized ratios are `1.0306x` and `3.0910x`; raw peak memory is
+  `2,150,971,348 vs 2,151,577,894` bytes. This is a narrow fixed-shape M5
+  result; do not generalize it to other Apple chips, batch sizes, or lengths.
 - Correctness gates pass at B8/T133/decode64 for both 0.4B and 1.5B: W4 and
   fp16 greedy tokens are exactly equal, and fused-post versus generic W4 keeps
   every token with bounded state/logit drift. A two-distinct-prefix B8 row
@@ -254,11 +254,11 @@ cache row to claim a universal cold-start win.
 - Reproduce with `scripts/run_apple_bsz8_active_acceptance.sh`. Permanent raw
   rows and methodology are under `bench/apple_bsz8_active_m5_20260714/`.
 
-Desktop load materially affects this fanless device. Do not classify an A/B
-from separated runs alone. The final order-balanced, same-process A/B shows
-fused scan/post at `1.0938x` the split path and two-GEMM LoRA-down at `1.0189x`
-the direct path; both preserve greedy tokens with bounded numeric drift. The
-permanent A/B summaries are stored beside the end-to-end evidence.
+Desktop load materially affects this fanless device. The final cold gate uses
+isolated child processes in ABBA order, a 60-second initial cooldown, and
+30-second inter-engine cooldowns. Retain all six samples per engine; do not
+replace this result with a best-sample or one-direction comparison. Older
+same-process A/B summaries remain candidate-selection evidence only.
 
 Rejected A/B routes must remain disabled by default: concatenating LoRA-down
 into one GEMM, adding G/V to the fused down path, fused LoRA-up, grouped RKV W4,
@@ -267,7 +267,8 @@ MXFP4/NVFP4, nested local FFN compilation inside the compiled prefill graph,
 fp16 recurrent state, and threadgroup-resident full state all regressed speed,
 memory, or both on this M5. The narrow exception is the exact wide-to-narrow
 groupwise FFN value projection: selective flattening is measured-positive and
-enabled for the Apple B8 candidate.
+enabled for the Apple B8 candidate. The M5/B8 NAX routes are exact-shape
+dispatches with public-MLX fallbacks.
 
 ## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
 

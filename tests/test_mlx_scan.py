@@ -130,6 +130,70 @@ def test_mlx_wkv_scan_fused_post_matches_generic_fp16_if_available():
     assert float(mx.max(mx.abs(fused_state - generic_state))) == 0.0
 
 
+def test_mlx_wkv_scan_fused_prep_post_matches_split_fp16_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_scan import metal_wkv_scan_available, wkv_scan_post_metal_fp16
+
+    if not metal_wkv_scan_available():
+        return
+    mx.random.seed(20260715)
+    batch, tokens, heads, head_dim = 2, 7, 3, 4
+    shape = (batch, tokens, heads, head_dim)
+    state = mx.random.normal((batch, heads, head_dim, head_dim)).astype(mx.float32) * 0.02
+    raw_w = mx.random.normal(shape).astype(mx.float16)
+    raw_k = mx.random.normal(shape).astype(mx.float16)
+    raw_a = mx.random.normal(shape).astype(mx.float16)
+    raw_v = mx.random.normal(shape).astype(mx.float16)
+    v_first = mx.random.normal(shape).astype(mx.float16)
+    raw_v_mix = mx.random.normal(shape).astype(mx.float16)
+    r = mx.random.normal(shape).astype(mx.float16)
+    g = mx.random.normal(shape).astype(mx.float16)
+    k_k = mx.random.normal((heads, head_dim)).astype(mx.float16)
+    k_a = mx.random.normal((heads, head_dim)).astype(mx.float16)
+    norm_weight = mx.random.normal((heads * head_dim,)).astype(mx.float16)
+    norm_bias = mx.random.normal((heads * head_dim,)).astype(mx.float16)
+    r_k = mx.random.normal((heads, head_dim)).astype(mx.float16)
+
+    a = mx.sigmoid(raw_a)
+    kk_pre = raw_k * k_k.reshape(1, 1, heads, head_dim)
+    kk_float = kk_pre.astype(mx.float32)
+    kk = (
+        kk_float
+        / mx.sqrt(mx.maximum(mx.sum(kk_float * kk_float, axis=-1, keepdims=True), 1e-12))
+    ).astype(mx.float16)
+    k = raw_k * (1 + (a - 1) * k_a.reshape(1, 1, heads, head_dim))
+    w = mx.exp(-0.606531 * mx.sigmoid(raw_w.astype(mx.float32)))
+    v_mix = mx.sigmoid(raw_v_mix)
+    v = raw_v + (v_first - raw_v) * v_mix
+    split_out, split_state = wkv_scan_post_metal_fp16(
+        state, w, v, k, kk, a, r, norm_weight, norm_bias, r_k, g
+    )
+    fused_out, fused_state = wkv_scan_post_metal_fp16(
+        state,
+        raw_w,
+        raw_v,
+        raw_k,
+        raw_k,
+        raw_a,
+        r,
+        norm_weight,
+        norm_bias,
+        r_k,
+        g,
+        preprocess=True,
+        k_k=k_k,
+        k_a=k_a,
+        v_first=v_first,
+        v_mix=raw_v_mix,
+    )
+    mx.eval(split_out, split_state, fused_out, fused_state)
+    assert float(mx.max(mx.abs(fused_out.astype(mx.float32) - split_out.astype(mx.float32)))) <= 0.25
+    assert float(mx.max(mx.abs(fused_state - split_state))) <= 0.1
+
+
 def test_mlx_model_scan_prefill_matches_token_path_if_available(monkeypatch):
     if importlib.util.find_spec("mlx") is None:
         return

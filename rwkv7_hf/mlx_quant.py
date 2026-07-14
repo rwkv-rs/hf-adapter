@@ -37,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 import os
+from pathlib import Path
 from typing import Any, Sequence
 
 from .mlx_bridge import mlx_array_nbytes, mlx_available, require_mlx
@@ -74,6 +75,13 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return int(default)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 def _select_auto_backend(bits: int, rows: int) -> str:
@@ -365,6 +373,236 @@ def groupwise_embedding(
     return out, "metal"
 
 
+def _clean_mlx_metal_header(source: str) -> str:
+    """Flatten MLX's installed Steel headers for the custom-kernel JIT."""
+
+    return "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.lstrip().startswith('#include "mlx/') and line.strip() != "#pragma once"
+    )
+
+
+@lru_cache(maxsize=1)
+def _groupwise_w4_relu2_nax_header() -> str:
+    """Build the MLX-0.31 NAX QMM header with a fused fp16 ReLU² store.
+
+    MLX's public ``quantized_matmul`` has no activation epilogue.  The wheel
+    ships the same Steel headers used by its Metal backend, so the exact-shape
+    Apple path reuses that loader/MMA implementation and only changes the
+    register-to-fp16 store.  Missing or incompatible headers leave callers on
+    the public primitive.
+    """
+
+    mx = require_mlx()
+    include_root = Path(mx.__file__).resolve().parent / "include" / "mlx" / "backend" / "metal" / "kernels"
+    paths = {
+        "defines": include_root / "steel" / "defines.h",
+        "integral": include_root / "steel" / "utils" / "integral_constant.h",
+        "types": include_root / "steel" / "utils" / "type_traits.h",
+        "utils": include_root / "steel" / "utils.h",
+        "nax": include_root / "steel" / "gemm" / "nax.h",
+        "quant": include_root / "quantized_nax.h",
+    }
+    if any(not path.is_file() for path in paths.values()):
+        raise RuntimeError("installed MLX wheel does not provide the NAX Metal headers")
+    quant_source = paths["quant"].read_text(encoding="utf-8")
+    marker = "METAL_FUNC void qmm_t_nax_tgp_impl("
+    marker_at = quant_source.index(marker)
+    helper_start = quant_source.rfind("template <", 0, marker_at)
+    helper_end = quant_source.index("\ntemplate <", marker_at + len(marker))
+    helper = quant_source[helper_start:helper_end]
+    helper = helper.replace("qmm_t_nax_tgp_impl", "rwkv7_qmm_t_nax_relu2_impl", 1)
+    helper = (
+        helper.replace("const constant int& K", "const int K")
+        .replace("const constant int& N", "const int N")
+        .replace("const constant int& M", "const int M")
+    )
+    old_store = """      // Store results to device memory
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      if constexpr (kAlignedM.value && kAlignedN.value) {"""
+    fused_store = """      // Preserve public QMM -> fp16 -> ReLU² rounding.
+      STEEL_PRAGMA_UNROLL
+      for (short elem = 0; elem < Dtile.kElemsPerTile; ++elem) {
+        half z = half(Dtile.elems()[elem]);
+        z = max(z, half(0.0h));
+        Dtile.elems()[elem] = float(half(z * z));
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+
+      if constexpr (kAlignedM.value && kAlignedN.value) {"""
+    if old_store not in helper:
+        raise RuntimeError("installed MLX NAX QMM helper has an unsupported store layout")
+    helper = helper.replace(old_store, fused_store)
+    pieces = [
+        _clean_mlx_metal_header(paths[name].read_text(encoding="utf-8"))
+        for name in ("defines", "integral", "types", "utils", "nax")
+    ]
+    pieces.append(_clean_mlx_metal_header(quant_source[:helper_start]))
+    pieces.append(helper)
+    return "\n".join(pieces)
+
+
+def groupwise_w4_relu2_metal_available() -> bool:
+    if not metal_quant_available():
+        return False
+    try:
+        _groupwise_w4_relu2_nax_header()
+        return True
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=1)
+def _groupwise_w4_raw_nax_header() -> str:
+    """Build the installed MLX NAX QMM helper without an epilogue."""
+
+    mx = require_mlx()
+    include_root = Path(mx.__file__).resolve().parent / "include" / "mlx" / "backend" / "metal" / "kernels"
+    paths = {
+        "defines": include_root / "steel" / "defines.h",
+        "integral": include_root / "steel" / "utils" / "integral_constant.h",
+        "types": include_root / "steel" / "utils" / "type_traits.h",
+        "utils": include_root / "steel" / "utils.h",
+        "nax": include_root / "steel" / "gemm" / "nax.h",
+        "quant": include_root / "quantized_nax.h",
+    }
+    if any(not path.is_file() for path in paths.values()):
+        raise RuntimeError("installed MLX wheel does not provide the NAX Metal headers")
+    quant_source = paths["quant"].read_text(encoding="utf-8")
+    marker = "METAL_FUNC void qmm_t_nax_tgp_impl("
+    marker_at = quant_source.index(marker)
+    helper_start = quant_source.rfind("template <", 0, marker_at)
+    helper_end = quant_source.index("\ntemplate <", marker_at + len(marker))
+    helper = quant_source[helper_start:helper_end]
+    helper = helper.replace("qmm_t_nax_tgp_impl", "rwkv7_qmm_t_nax_raw_impl", 1)
+    helper = (
+        helper.replace("const constant int& K", "const int K")
+        .replace("const constant int& N", "const int N")
+        .replace("const constant int& M", "const int M")
+    )
+    pieces = [
+        _clean_mlx_metal_header(paths[name].read_text(encoding="utf-8"))
+        for name in ("defines", "integral", "types", "utils", "nax")
+    ]
+    pieces.append(_clean_mlx_metal_header(quant_source[:helper_start]))
+    pieces.append(helper)
+    return "\n".join(pieces)
+
+
+def groupwise_w4_square_metal_available() -> bool:
+    if not metal_quant_available():
+        return False
+    try:
+        _groupwise_w4_raw_nax_header()
+        return True
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=1)
+def _metal_groupwise_w4_relu2_kernel():
+    mx = require_mlx()
+    source = r'''
+        constexpr int BM = 64;
+        constexpr int BK = 128;
+        constexpr int BN = 64;
+        constexpr int WM = 4;
+        constexpr int WN = 1;
+        constexpr int BK_padded = BK + 16 / sizeof(T);
+        threadgroup T Ws[BN * BK_padded];
+        int K = int(dims[0]);
+        int N = int(dims[1]);
+        int M = int(dims[2]);
+        rwkv7_qmm_t_nax_relu2_impl<T, 128, 4, true, BM, BK, BN, WM, WN>(
+            weight, scales, biases, x, out, Ws, K, N, M,
+            threadgroup_position_in_grid, thread_index_in_threadgroup,
+            simdgroup_index_in_threadgroup, thread_index_in_simdgroup);
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_groupwise_w4_qmm_relu2_nax",
+        input_names=["weight", "scales", "biases", "x", "dims"],
+        output_names=["out"],
+        source=source,
+        header=_groupwise_w4_relu2_nax_header(),
+        ensure_row_contiguous=True,
+    )
+
+
+def groupwise_w4_matmul_relu2_metal(x: Any, weight: MLXGroupwiseWeight) -> Any:
+    """Exact-shape NAX W4 QMM with the FFN ReLU² epilogue fused."""
+
+    mx = _mx()
+    if int(weight.bits) != 4 or int(weight.group_size) != 128:
+        raise ValueError("fused groupwise FFN requires W4 group-size 128")
+    if x.dtype != mx.float16 or weight.dense_dtype != mx.float16:
+        raise ValueError("fused groupwise FFN currently requires fp16 activations and weights")
+    rows = int(x.size) // int(weight.n)
+    if int(weight.n) % 64 or int(weight.m) % 64:
+        raise ValueError("fused groupwise FFN requires K and N divisible by 64")
+    dims = mx.array([int(weight.n), int(weight.m), rows], dtype=mx.uint32)
+    (out,) = _metal_groupwise_w4_relu2_kernel()(
+        inputs=[weight.w_q, weight.scales, weight.biases, x.reshape(rows, int(weight.n)), dims],
+        template=[("T", mx.float16)],
+        grid=(((int(weight.m) + 63) // 64) * 128, (rows + 63) // 64, 1),
+        threadgroup=(128, 1, 1),
+        output_shapes=[(*x.shape[:-1], int(weight.m))],
+        output_dtypes=[mx.float16],
+    )
+    return out
+
+
+@lru_cache(maxsize=1)
+def _metal_groupwise_w4_square_kernel():
+    mx = require_mlx()
+    source = r'''
+        constexpr int BM = 64;
+        constexpr int BK = 128;
+        constexpr int BN = 64;
+        constexpr int WM = 2;
+        constexpr int WN = 2;
+        constexpr int BK_padded = BK + 16 / sizeof(T);
+        threadgroup T Ws[BN * BK_padded];
+        int K = int(dims[0]);
+        int N = int(dims[1]);
+        int M = int(dims[2]);
+        rwkv7_qmm_t_nax_raw_impl<T, 128, 4, true, BM, BK, BN, WM, WN>(
+            weight, scales, biases, x, out, Ws, K, N, M,
+            threadgroup_position_in_grid, thread_index_in_threadgroup,
+            simdgroup_index_in_threadgroup, thread_index_in_simdgroup);
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_groupwise_w4_square_qmm_nax",
+        input_names=["weight", "scales", "biases", "x", "dims"],
+        output_names=["out"],
+        source=source,
+        header=_groupwise_w4_raw_nax_header(),
+        ensure_row_contiguous=True,
+    )
+
+
+def groupwise_w4_square_matmul_metal(x: Any, weight: MLXGroupwiseWeight) -> Any:
+    """NAX W4 QMM tuned for M5 B8 square sequence projections."""
+
+    mx = _mx()
+    if int(weight.bits) != 4 or int(weight.group_size) != 128:
+        raise ValueError("fused square QMM requires W4 group-size 128")
+    if x.dtype != mx.float16 or weight.dense_dtype != mx.float16:
+        raise ValueError("fused square QMM requires fp16 activations and weights")
+    rows = int(x.size) // int(weight.n)
+    dims = mx.array([int(weight.n), int(weight.m), rows], dtype=mx.uint32)
+    (out,) = _metal_groupwise_w4_square_kernel()(
+        inputs=[weight.w_q, weight.scales, weight.biases, x.reshape(rows, int(weight.n)), dims],
+        template=[("T", mx.float16)],
+        grid=(((int(weight.m) + 63) // 64) * 128, (rows + 63) // 64, 1),
+        threadgroup=(128, 1, 1),
+        output_shapes=[(*x.shape[:-1], int(weight.m))],
+        output_dtypes=[mx.float16],
+    )
+    return out
+
+
 @dataclass
 class MLXQuantizedLinear:
     """Quantized MLX Linear weight with reference, affine, Metal, and auto backends."""
@@ -459,15 +697,29 @@ class MLXQuantizedLinear:
                 and self.in_features > self.out_features
             )
             x_mat = x.reshape(-1, self.in_features) if flatten else x
-            y = mx.quantized_matmul(
-                x_mat,
-                self.weight.w_q,
-                scales=self.weight.scales,
-                biases=self.weight.biases,
-                transpose=True,
-                group_size=int(self.weight.group_size),
-                bits=int(self.weight.bits),
-                mode="affine",
+            square_m5_b8 = bool(
+                _env_flag("RWKV7_MLX_FUSED_SQUARE_QMM", False)
+                and original_shape == (8, 133, 2048)
+                and self.in_features == 2048
+                and self.out_features == 2048
+                and int(self.weight.bits) == 4
+                and int(self.weight.group_size) == 128
+                and x.dtype == mx.float16
+                and groupwise_w4_square_metal_available()
+            )
+            y = (
+                groupwise_w4_square_matmul_metal(x_mat, self.weight)
+                if square_m5_b8
+                else mx.quantized_matmul(
+                    x_mat,
+                    self.weight.w_q,
+                    scales=self.weight.scales,
+                    biases=self.weight.biases,
+                    transpose=True,
+                    group_size=int(self.weight.group_size),
+                    bits=int(self.weight.bits),
+                    mode="affine",
+                )
             )
             if flatten:
                 y = y.reshape(*original_shape[:-1], self.out_features)
@@ -475,8 +727,9 @@ class MLXQuantizedLinear:
             y = mm8_matmul_mlx(x, self.weight, backend=backend)
         else:
             y = mm4_matmul_mlx(x, self.weight, backend=backend)
-        self.last_backend = backend
-        self.backend_counts[backend] = int(self.backend_counts.get(backend, 0)) + 1
+        used_backend = "metal" if isinstance(self.weight, MLXGroupwiseWeight) and square_m5_b8 else backend
+        self.last_backend = used_backend
+        self.backend_counts[used_backend] = int(self.backend_counts.get(used_backend, 0)) + 1
         return y
 
     def relu2(self, x: Any) -> Any:
@@ -484,6 +737,11 @@ class MLXQuantizedLinear:
 
         mx = _mx()
         backend = self._selected_backend(x)
+        if isinstance(self.weight, MLXGroupwiseWeight):
+            y = groupwise_w4_matmul_relu2_metal(x, self.weight)
+            self.last_backend = "metal"
+            self.backend_counts["metal"] = int(self.backend_counts.get("metal", 0)) + 1
+            return y
         if isinstance(self.weight, MLXMM4Weight) and backend == "metal":
             y = mm4_matmul_relu2_metal(x, self.weight)
             self.last_backend = backend

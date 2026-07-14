@@ -131,6 +131,14 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
     os.environ["RWKV7_MLX_FUSED_LORA_UP"] = "1" if args.rwkv_fused_lora_up else "0"
     os.environ["RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION"] = "1" if args.rwkv_group_rkv else "0"
     os.environ["RWKV7_MLX_FUSED_SCAN_POST"] = "1" if args.rwkv_fused_scan_post else "0"
+    os.environ["RWKV7_MLX_FUSED_SCAN_PREP_POST"] = (
+        "1" if args.rwkv_fused_scan_prep_post else "0"
+    )
+    os.environ["RWKV7_MLX_FUSED_SEQUENCE_MIX"] = "1" if args.rwkv_fused_sequence_mix else "0"
+    os.environ["RWKV7_MLX_FUSED_ADD_LAYER_NORM"] = (
+        "1" if args.rwkv_fused_add_layer_norm else "0"
+    )
+    os.environ["RWKV7_MLX_FUSED_SQUARE_QMM"] = "1" if args.rwkv_fused_square_qmm else "0"
     os.environ["RWKV7_MLX_FLATTEN_WIDE_GROUPWISE_PREFILL"] = (
         "1" if args.rwkv_flatten_wide_groupwise_prefill else "0"
     )
@@ -375,6 +383,10 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "fused_lora_up_counts": telemetry.get("fused_lora_up_counts"),
             "fused_scan_post_counts": telemetry.get("fused_scan_post_counts"),
+            "fused_scan_prep_post_counts": telemetry.get("fused_scan_prep_post_counts"),
+            "fused_sequence_mix_counts": telemetry.get("fused_sequence_mix_counts"),
+            "fused_add_layer_norm_counts": telemetry.get("fused_add_layer_norm_counts"),
+            "fused_square_qmm": telemetry.get("fused_square_qmm"),
             "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
             "decode_backend": telemetry.get("decode_backend_last"),
             "compiled_decode_validation": compiled_decode_validation,
@@ -472,6 +484,26 @@ def child_command(args: argparse.Namespace, engine: str) -> list[str]:
     )
     command.append("--rwkv-fused-lora-up" if args.rwkv_fused_lora_up else "--no-rwkv-fused-lora-up")
     command.append("--rwkv-fused-scan-post" if args.rwkv_fused_scan_post else "--no-rwkv-fused-scan-post")
+    command.append(
+        "--rwkv-fused-scan-prep-post"
+        if args.rwkv_fused_scan_prep_post
+        else "--no-rwkv-fused-scan-prep-post"
+    )
+    command.append(
+        "--rwkv-fused-sequence-mix"
+        if args.rwkv_fused_sequence_mix
+        else "--no-rwkv-fused-sequence-mix"
+    )
+    command.append(
+        "--rwkv-fused-add-layer-norm"
+        if args.rwkv_fused_add_layer_norm
+        else "--no-rwkv-fused-add-layer-norm"
+    )
+    command.append(
+        "--rwkv-fused-square-qmm"
+        if args.rwkv_fused_square_qmm
+        else "--no-rwkv-fused-square-qmm"
+    )
     command.append("--rwkv-group-rkv" if args.rwkv_group_rkv else "--no-rwkv-group-rkv")
     command.append(
         "--rwkv-flatten-wide-groupwise-prefill"
@@ -533,8 +565,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--rwkv-fused-ffn-key-relu2",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Use the affine-MM4 FFN key/ReLU-squared Metal seam when its weight layout supports it.",
+        default=True,
+        help="Use the exact-shape native groupwise-W4/NAX FFN key+ReLU-squared Metal seam.",
     )
     parser.add_argument(
         "--rwkv-fused-lora-down-include-v",
@@ -549,6 +581,33 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Fuse FP16 WKV scan, per-head GroupNorm, bonus, and gate in one Metal kernel."
         ),
+    )
+    parser.add_argument(
+        "--rwkv-fused-scan-prep-post",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Fuse decay, receptance prep, K normalization/modulation, and V mix "
+            "into the FP16 Metal scan/post kernel."
+        ),
+    )
+    parser.add_argument(
+        "--rwkv-fused-sequence-mix",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fuse sequence shift plus R/K/V/G and FFN token mixes in Metal.",
+    )
+    parser.add_argument(
+        "--rwkv-fused-add-layer-norm",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fuse residual add with the following FP16 LayerNorm on M5 prefill.",
+    )
+    parser.add_argument(
+        "--rwkv-fused-square-qmm",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use the M5 B8 NAX W4 kernel for 2048x2048 sequence projections.",
     )
     parser.add_argument(
         "--rwkv-group-rkv",
@@ -573,7 +632,12 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="Coalesce identical B8 prompts through one recurrent prefix-state computation.",
     )
-    parser.add_argument("--order", choices=["qwen-first", "rwkv-first"], default="qwen-first")
+    parser.add_argument(
+        "--order",
+        choices=["qwen-first", "rwkv-first", "balanced"],
+        default="qwen-first",
+        help="Use balanced for an ABBA engine order on fanless Apple devices.",
+    )
     parser.add_argument(
         "--cooldown-seconds",
         type=float,
@@ -603,15 +667,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    order = ["qwen", "rwkv"] if args.order == "qwen-first" else ["rwkv", "qwen"]
-    payloads: dict[str, dict[str, Any]] = {}
+    if args.order == "qwen-first":
+        order = ["qwen", "rwkv"]
+    elif args.order == "rwkv-first":
+        order = ["rwkv", "qwen"]
+    else:
+        order = ["qwen", "rwkv", "rwkv", "qwen"]
+    payloads: dict[str, dict[str, Any]] = {
+        "qwen": {"engine": "qwen", "rows": []},
+        "rwkv": {"engine": "rwkv", "rows": []},
+    }
+    engine_run_counts = {"qwen": 0, "rwkv": 0}
     for engine_index, engine in enumerate(order):
         if engine_index and float(args.cooldown_seconds) > 0:
             time.sleep(float(args.cooldown_seconds))
         process = subprocess.run(child_command(args, engine), check=True, text=True, capture_output=True)
         payload = json.loads(process.stdout.strip().splitlines()[-1])
-        payloads[engine] = payload
+        engine_run_counts[engine] += 1
         for row in payload["rows"]:
+            row["engine_order"] = args.order
+            row["engine_run_index"] = int(engine_run_counts[engine])
+            payloads[engine]["rows"].append(row)
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(args.results, row)
 
