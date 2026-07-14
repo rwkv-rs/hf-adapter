@@ -32,6 +32,7 @@ ADAPTER_FILES = [
     "mlx_dplr_prefill.py",
     "mlx_model.py",
     "mlx_mix.py",
+    "mlx_norm.py",
     "mlx_policy.py",
     "mlx_quant.py",
     "mlx_scan.py",

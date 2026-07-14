@@ -210,6 +210,66 @@ Remaining before this goal is complete:
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
+## Current Apple M5 B8 Active-Parameter Milestone (2026-07-14)
+
+The current Apple acceptance axis is **true batch 8**, a 512-character prompt,
+64 generated tokens per sequence, group-128 RWKV W4 versus the published
+group-64 Qwen MLX W4 checkpoints, and throughput
+normalized as `aggregate tok/s * active text parameter count`. Treat cold
+prefill and prefix-state-cache prefill as different scenarios; never use the
+cache row to claim a universal cold-start win.
+
+- The production candidate uses a thread-local Metal WKV scan, fused
+  prep+scan+GroupNorm+bonus+gate, half-width shared K/R/A traffic, fused
+  sequence shift/mix, residual-add+LayerNorm, native NAX W4 square-QMM and
+  FFN-key+ReLU² kernels, quantized Metal embedding lookup, guarded compiled
+  zero-state prefill, exact lockstep B8 speculative decode, and groupwise W4.
+- 0.4B RWKV versus Qwen3.5 0.8B passes the **cold** row. Current tracked medians
+  are `11650.46 vs 5702.27 tok/s` prefill and
+  `992.30 vs 487.15 tok/s` decode. Active-parameter-normalized ratios are
+  `1.2241x` and `1.2204x`; raw peak memory is
+  `1.223 GB vs 1.642 GB`. Keep W/A LoRA-down double-GEMM fusion enabled for
+  this profile.
+- 1.5B RWKV versus Qwen3.5 2B passes the separately labelled
+  **87.5%-hit prefix-state coalescing** row. Current medians are
+  `13677.81 vs 2113.13 tok/s` prefill and
+  `686.01 vs 174.40 tok/s` decode. Active-parameter-normalized ratios are
+  `5.2537x` and `3.1928x`; raw peak memory is
+  `1.858 GB vs 2.152 GB`. W/A LoRA-down fusion is enabled; its packed base
+  replaces the original W/A source matrices and releases `18,874,368` bytes,
+  removing the prior duplicate-cache memory penalty.
+- The 1.5B **cold, no-prefix-coalescing** ABBA row is closed. Current medians
+  are `3631.53 vs 2860.13 tok/s` prefill and `894.97 vs 235.01 tok/s` decode.
+  Active-normalized ratios are `1.0306x` and `3.0910x`; raw peak memory is
+  `2,150,971,348 vs 2,151,577,894` bytes. This is a narrow fixed-shape M5
+  result; do not generalize it to other Apple chips, batch sizes, or lengths.
+- Correctness gates pass at B8/T133/decode64 for both 0.4B and 1.5B: W4 and
+  fp16 greedy tokens are exactly equal, and fused-post versus generic W4 keeps
+  every token with bounded state/logit drift. A two-distinct-prefix B8 row
+  proves 75% state-cache hits plus reorder/compact with exact greedy output.
+  A real 1.5B-target/0.1B-draft mismatch row reaches `0.116369` acceptance,
+  executes 56 target replays, and remains exactly target-greedy. Compiled
+  prefill is exact for validated shapes. Quantized linear and embedding payload
+  ratios are both `0.265625` of dense fp16 storage.
+- Reproduce with `scripts/run_apple_bsz8_active_acceptance.sh`. Permanent raw
+  rows and methodology are under `bench/apple_bsz8_active_m5_20260714/`.
+
+Desktop load materially affects this fanless device. The final cold gate uses
+isolated child processes in ABBA order, a 60-second initial cooldown, and
+30-second inter-engine cooldowns. Retain all six samples per engine; do not
+replace this result with a best-sample or one-direction comparison. Older
+same-process A/B summaries remain candidate-selection evidence only.
+
+Rejected A/B routes must remain disabled by default: concatenating LoRA-down
+into one GEMM, adding G/V to the fused down path, fused LoRA-up, grouped RKV W4,
+blanket rank-3 flattening, group sizes 32/64, SIMD/two-lane WKV state ownership,
+MXFP4/NVFP4, nested local FFN compilation inside the compiled prefill graph,
+fp16 recurrent state, and threadgroup-resident full state all regressed speed,
+memory, or both on this M5. The narrow exception is the exact wide-to-narrow
+groupwise FFN value projection: selective flattening is measured-positive and
+enabled for the Apple B8 candidate. The M5/B8 NAX routes are exact-shape
+dispatches with public-MLX fallbacks.
+
 ## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
 
 > **Historical checkpoint.** Apple M5 production-close and the current module map supersede this stage note. Use `docs/hardware/APPLE_PRODUCTION_CLOSE.md` and `docs/reference/MLX_RUNTIME_ARCHITECTURE.md` for active work; retain the measurements below only as provenance.

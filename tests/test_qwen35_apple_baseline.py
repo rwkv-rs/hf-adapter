@@ -783,7 +783,11 @@ def test_mlx_model_reset_telemetry_counters_without_mlx_runtime() -> None:
     assert model.wkv_backend_last is None
     assert model.wkv_backend_counts == {"reference": 0, "metal": 0}
     assert model.fused_ffn_key_relu2_counts == {"metal": 0, "fallback": 0}
-    assert model.group_rkv_quant_projection_counts == {"metal": 0, "fallback": 0}
+    assert model.group_rkv_quant_projection_counts == {
+        "groupwise": 0,
+        "metal": 0,
+        "fallback": 0,
+    }
     assert qlinear.last_backend is None
     assert qlinear.backend_counts == {
         "reference": 0,
