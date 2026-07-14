@@ -38,9 +38,18 @@ not evidence that cold 1.5B prefill beats Qwen2.
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | 0.4B vs 0.8B, cold | 11650.46 | 5702.27 | 1.2241x | 992.30 | 487.15 | 1.2204x | 1.223 / 1.642 GB | PASS |
 | 1.5B vs 2B, 87.5%-hit prefix cache | 13677.81 | 2113.13 | 5.2537x | 686.01 | 174.40 | 3.1928x | 1.858 / 2.152 GB | PASS |
-| 1.5B vs 2B, cold, ABBA | 3631.53 | 2860.13 | 1.0306x | 894.97 | 235.01 | 3.0910x | 2.1510 / 2.1516 GB | PASS |
+| 1.5B target-only vs 2B, cold, ABBA | 2146.21 | 1705.85 | 1.0212x | 161.87 | 136.93 | 0.9595x | 1.7902 / 2.1516 GB | **FAIL** |
+| 1.5B + 0.1B speculative vs 2B, cold, ABBA | 3631.53 | 2860.13 | 1.0306x | 894.97 | 235.01 | 3.0910x | 2.1510 / 2.1516 GB | PASS |
 
-The historical cold 1.5B pair retained validation/candidate allocations and
+The target-only row is a separate formal acceptance run with the same isolated
+child-process, B8/T133/decode64, warmup/repeat, initial-cooldown, and ABBA
+contract. It passes normalized prefill and raw memory but misses normalized
+decode by 4.05%. Therefore the closed production row below is explicitly
+**speculative-assisted**; it must not be cited as evidence that target-only
+1.5B passes the Qwen2 gate. The two rows were collected in separate thermal
+sessions, so their medians are not a direct speculative-vs-target-only A/B.
+
+The historical speculative cold 1.5B pair retained validation/candidate allocations and
 reported 2.468 GB. The release route releases validation state, evicts the
 W/A source matrices after packing, and closes the cold row with no prefix
 coalescing. The active-normalized prefill margin is `1.0306x`; raw peak memory
@@ -89,10 +98,20 @@ COOLDOWN_SECONDS=30 INITIAL_COOLDOWN_SECONDS=60 \
 scripts/run_apple_bsz8_active_acceptance.sh
 ```
 
-The one-click script removes only its four named prior JSONL outputs before a
+The one-click speculative-assisted script removes only its five named prior JSONL outputs before a
 run, validates fidelity, and then executes the isolated comparisons. It
 enables W/A LoRA-down double-GEMM fusion for both model sizes and evicts the
 now-redundant original W/A down-projection matrices.
+
+Run the stricter target-only gate separately. It exits non-zero on the current
+recorded candidate because normalized decode is `0.9595x`:
+
+```bash
+PYTHON_BIN=/path/to/python \
+MODEL_ROOT=/path/to/models \
+COOLDOWN_SECONDS=30 INITIAL_COOLDOWN_SECONDS=60 \
+scripts/run_apple_bsz8_target_only_acceptance.sh
+```
 
 ## Candidate and rejected A/B routes
 
