@@ -1,0 +1,14 @@
+generated_utc=2026-07-14T11:39:00Z
+base_git_head=047a5bcf2032f3ed772818ee1b5f00480aceda68
+code_state=base plus the benchmark-harness changes in this evidence commit
+python=Python 3.10.12
+torch=2.6.0+cu124
+cuda_runtime=12.4
+cuda_available=True
+gpu=NVIDIA GeForce RTX 3090
+transformers=5.12.1
+flash-linear-attention=0.5.1
+causal-conv1d=1.5.0.post8
+triton=3.2.0
+accelerate=1.14.0
+NVIDIA GeForce RTX 3090, 550.142, 24576 MiB, 8.6

@@ -26,6 +26,7 @@ Status vocabulary:
 |---|---|---|---|---|
 | V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8 | greedy, cache handoff and focused regressions pass | dense decode `0.908x–1.248x`; prompt512 prefill `0.930x–1.047x` same-host Albatross | **PASS P1** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
+| RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
 | RTX 4090 | 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
@@ -114,6 +115,27 @@ gate.
 
 Evidence and exact reproduction:
 [`bench/3090_native_quant_20260713/README.md`](bench/3090_native_quant_20260713/README.md).
+
+### RTX 3090 small-pair bsz8 acceptance
+
+The 1.5B/2B and 2.9B/4B matrices cover prompt 128/512/2048, decode 128/512,
+bsz8 and dense/W8/W4. Both pass `18/18`; all `36/36` Qwen reference rows
+satisfy the fail-closed FLA Gated DeltaNet operator contract and there are no
+red or missing cells.
+
+| Pair | Dense prefill min vs Qwen | Dense decode min vs Qwen | W8 total min vs fp16 | W4 prefill/decode/total min vs fp16 |
+|---|---:|---:|---:|---:|
+| RWKV 1.5B / Qwen 2B | `1.0306x` | `3.3828x` | `1.1929x` | `0.9835x / 1.0279x / 1.0107x` |
+| RWKV 2.9B / Qwen 4B | `1.3559x` | `2.9213x` | `1.1809x` | `0.9863x / 1.0198x / 1.0068x` |
+
+W4 is not described as faster in every phase: its minimum prefill ratios are
+shown above. The explicitly enabled non-inferiority gate uses the exact-cell
+`prefill + decode` latency, while retaining phase telemetry. Every W4 cell has
+lower total latency, model footprint and peak VRAM than its matching RWKV fp16
+cell. This is a scoped speed/memory result, not a model-quality claim.
+
+Evidence and reproduction:
+[`bench/3090_small_bsz8_20260714/README.md`](bench/3090_small_bsz8_20260714/README.md).
 
 ## RTX 5070 Laptop RWKV-7 vs verified Qwen3.5 FLA
 

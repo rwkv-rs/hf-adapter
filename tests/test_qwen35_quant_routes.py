@@ -34,6 +34,8 @@ def row(
         "logits_finite": True,
         "prefill_tokps_total": prefill,
         "decode_tokps_total": decode,
+        "prefill_sec_median": prompt / prefill,
+        "decode_sec_median": 128 / decode,
         "model_footprint_mb": footprint,
         "peak_vram_mb": peak,
         "prefill_chunk_size": 0,
@@ -145,6 +147,49 @@ def test_route_composer_fails_closed_when_no_profile_passes(tmp_path: Path) -> N
     report = json.loads(manifest.read_text(encoding="utf-8"))
     assert report["status"] == "fail"
     assert len(report["failures"]) == 2
+
+
+def test_route_composer_can_accept_exact_cell_total_latency_noninferiority(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        row("candidate", "none", 128, 100.0, 100.0, footprint=100.0, peak=120.0),
+        row("reference", "none", 128, 80.0, 80.0, footprint=110.0, peak=130.0),
+        row("candidate", "a8w8", 128, 105.0, 105.0, footprint=80.0, peak=100.0),
+        # Prefill is 2% slower, but faster decode makes exact-cell total latency
+        # lower than dense while both physical-memory gates remain strict.
+        row("candidate", "mm4", 128, 98.0, 104.0, footprint=75.0, peak=95.0),
+    ]
+    source = tmp_path / "rows.jsonl"
+    output = tmp_path / "selected.jsonl"
+    manifest = tmp_path / "manifest.json"
+    write(source, rows)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "bench/compose_qwen35_quant_routes.py",
+            "--results",
+            str(source),
+            "--output",
+            str(output),
+            "--manifest",
+            str(manifest),
+            "--no-quant-qwen-gate",
+            "--allow-dense-total-noninferiority",
+            "--fail-on-gate",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    report = json.loads(manifest.read_text(encoding="utf-8"))
+    w4 = next(item for item in report["decisions"] if item["cell"]["quantization"] == "w4")
+    assert w4["selected"]["checks"]["dense_prefill"] is False
+    assert w4["selected"]["checks"]["dense_total"] is True
+    assert w4["selected"]["checks"]["dense_speed"] is True
 
 
 def test_route_composer_evaluates_duplicate_implementation_variants(tmp_path: Path) -> None:
