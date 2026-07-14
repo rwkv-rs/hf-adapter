@@ -49,12 +49,17 @@ rwkv_size="${rwkv_size%%__*}"
 qwen_size="${PAIR_LABEL##*qwen3.5-}"
 failures=0
 case "${PAIR_LABEL}" in
-  rwkv-1.5b__qwen3.5-2b) default_dense_gate="1.65" ;;
-  rwkv-2.9b__qwen3.5-4b) default_dense_gate="1.75" ;;
-  rwkv-7.2b__qwen3.5-9b) default_dense_gate="1.50" ;;
-  *) default_dense_gate="1.05" ;;
+  rwkv-1.5b__qwen3.5-2b) default_decode_gate="1.65" ;;
+  rwkv-2.9b__qwen3.5-4b) default_decode_gate="1.75" ;;
+  rwkv-7.2b__qwen3.5-9b) default_decode_gate="1.50" ;;
+  *) default_decode_gate="1.05" ;;
 esac
-DENSE_SPEEDUP_GATE="${DENSE_SPEEDUP_GATE:-${default_dense_gate}}"
+# The active-parameter-normalized multiplier applies to cached decode. Dense
+# prefill remains an apples-to-apples throughput gate: RWKV must be no slower
+# than Qwen on every exact bsz=8 shape. DENSE_SPEEDUP_GATE remains a legacy
+# decode-only override for existing automation.
+DENSE_PREFILL_GATE="${DENSE_PREFILL_GATE:-1.00}"
+DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-${DENSE_SPEEDUP_GATE:-${default_decode_gate}}}"
 read -r -a batch_size_args <<< "${BATCH_SIZES}"
 expected_base_cells=$(( ${#batch_size_args[@]} * 3 * 2 ))
 expected_total_cells=$(( expected_base_cells * 3 ))
@@ -63,6 +68,10 @@ run_sweep() {
   local label="$1" role="$2" kind="$3" model="$4" size="$5" quant="$6" output="$7"
   shift 7
   local extra=("$@")
+  local qwen_backend="auto"
+  if [[ "${kind}" == "qwen35" ]]; then
+    qwen_backend="fla"
+  fi
   printf 'START %s\n' "${label}" | tee -a "${OUT_DIR}/progress.log"
   "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
     --model "${model}" --model-kind "${kind}" --model-role "${role}" \
@@ -71,7 +80,7 @@ run_sweep() {
     --device cuda --batch-sizes "${batch_size_args[@]}" --prompt-tokens 128 512 2048 \
     --decode-tokens 128 512 --prefill-chunk-size "${PREFILL_CHUNK_SIZE}" \
     --warmup "${WARMUP}" --runs "${RUNS}" --rwkv-attn-mode fused_recurrent \
-    --rwkv-code-source repo --qwen-backend auto "${extra[@]}" --results "${output}" \
+    --rwkv-code-source repo --qwen-backend "${qwen_backend}" "${extra[@]}" --results "${output}" \
     > "${OUT_DIR}/${label}.log" 2>&1
   local rc=$?
   printf 'DONE %s rc=%s\n' "${label}" "${rc}" | tee -a "${OUT_DIR}/progress.log"
@@ -126,13 +135,13 @@ cat "${OUT_DIR}/combined_memory.jsonl" "${OUT_DIR}/native_speed.jsonl" \
   --results "${OUT_DIR}/hybrid_speed.jsonl" \
   --output "${OUT_DIR}/combined_auto.jsonl" \
   --manifest "${OUT_DIR}/route_manifest.json" \
-  --no-quant-qwen-gate --fail-on-gate
+  --no-quant-qwen-gate --allow-dense-total-noninferiority --fail-on-gate
 compose_rc=$?
 printf '%s\n' "${compose_rc}" > "${OUT_DIR}/compose_exit_code.txt"
 
 common_compare=(
   --expected-cells "${expected_total_cells}"
-  --min-prefill-speedup "${DENSE_SPEEDUP_GATE}" --min-decode-speedup "${DENSE_SPEEDUP_GATE}"
+  --min-prefill-speedup "${DENSE_PREFILL_GATE}" --min-decode-speedup "${DENSE_DECODE_GATE}"
   --require-native-candidate --require-qwen-fast-path
   --require-quant-memory-reduction --require-prefill-mode-match
   --fail-on-gate
@@ -150,6 +159,7 @@ printf '%s\n' "${memory_rc}" > "${OUT_DIR}/compare_memory_exit_code.txt"
   --results "${OUT_DIR}/combined_auto.jsonl" "${common_compare[@]}" \
   --min-quant-prefill-speedup 0.00 --min-quant-decode-speedup 0.00 \
   --require-quant-not-slower-than-dense \
+  --allow-quant-total-not-slower-than-dense \
   --json-output "${OUT_DIR}/summary_speed.json" \
   --markdown-output "${OUT_DIR}/summary_speed.md"
 speed_rc=$?

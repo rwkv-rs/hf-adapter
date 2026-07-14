@@ -82,8 +82,14 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
-    ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
+    ap.add_argument("--qwen-backend", choices=["auto", "fla", "torch"], default="auto")
     ap.add_argument("--require-qwen-fast-path", action="store_true")
+    ap.add_argument(
+        "--probe-output",
+        default="",
+        help="Optional backend-probe output path forwarded to the shared worker.",
+    )
+    ap.add_argument("--probe-tokens", type=int, default=8)
     ap.add_argument("--results", required=True)
     ap.add_argument("--fail-fast", action="store_true")
     return ap.parse_args()
@@ -161,6 +167,8 @@ def cell_args(args: argparse.Namespace, batch_size: int, prompt_tokens: int, dec
         rwkv_code_source=args.rwkv_code_source,
         qwen_backend=args.qwen_backend,
         require_qwen_fast_path=args.require_qwen_fast_path,
+        probe_output=args.probe_output,
+        probe_tokens=args.probe_tokens,
         results=args.results,
         optional=False,
     )
@@ -220,6 +228,7 @@ def main() -> int:
         )
         speed.validate_args(seed_args)
         model = speed.load_model(seed_args, speed.DTYPES[args.dtype], effective_model_path)
+        qwen_contract = speed.enforce_qwen_backend(model, seed_args)
         speed.validate_loaded_model(seed_args, model)
         load_s = time.perf_counter() - started
 
@@ -237,6 +246,7 @@ def main() -> int:
                     tokenizer,
                     model,
                     load_s=load_s,
+                    qwen_contract=qwen_contract,
                 )
             except Exception as exc:
                 failures += 1
