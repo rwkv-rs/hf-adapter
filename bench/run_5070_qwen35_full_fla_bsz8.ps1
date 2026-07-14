@@ -214,6 +214,7 @@ $compareArgs = @(
     "--require-qwen-fast-path",
     "--require-qwen-full-fused",
     "--require-memory-not-larger",
+    "--min-decode-active-parameter-throughput-ratio", "1.0",
     "--min-active-parameter-efficiency-ratio", "1.0",
     "--json-output", (Join-Path $OutDir "summary.json"),
     "--markdown-output", (Join-Path $OutDir "summary.md"),

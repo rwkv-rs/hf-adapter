@@ -26,6 +26,7 @@ Status vocabulary:
 |---|---|---|---|---|
 | V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8 | greedy, cache handoff and focused regressions pass | dense decode `0.908x–1.248x`; prompt512 prefill `0.930x–1.047x` same-host Albatross | **PASS P1** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
+| RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
 | RTX 4090 | 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
@@ -115,6 +116,31 @@ gate.
 
 Evidence and exact reproduction:
 [`bench/3090_native_quant_20260713/README.md`](bench/3090_native_quant_20260713/README.md).
+
+### RTX 3090 g1h 7.2B bsz8 acceptance
+
+The latest g1h 7.2B checkpoint is now measured against official Qwen3.5-9B at
+bsz8, prompt 128/512/2048, decode 128/512, and fp16/W8/W4. All 18 joined cells
+pass with zero red or missing rows. The six dense Qwen rows verify all 24 FLA
+Gated DeltaNet and causal-conv1d bindings.
+
+| Family | RWKV/Qwen prefill min | RWKV/Qwen decode min | Quant/fp16 prefill min | Quant/fp16 decode min | Quant/fp16 total min | Footprint max | Peak max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fp16 | `1.058907x` | `1.788418x` | — | — | — | — | — |
+| W8 / BNB8 | `1.901037x` | `1.941481x` | `1.697094x` | `1.084305x` | `1.098658x` | `0.552555x` | `0.702992x` |
+| W4 / native MM4 | `1.052379x` | `1.838668x` | `0.988822x` | `1.025666x` | `1.014527x` | `0.972049x` | `0.981434x` |
+
+The dense RWKV/Qwen active-parameter ratio is `0.804032x`. Dense decode also
+passes the explicit active-parameter work gate in 6/6 cells, with a minimum
+`1.437946x` work rate. Prefill active work (`0.851395x–0.905145x`) remains
+disclosed telemetry; direct prefill token throughput is the acceptance gate.
+W4 is not faster in every prefill phase, so its exact-cell total-latency
+fallback is stated explicitly rather than hidden. Total peak VRAM is lower in
+18/18 cells, although runtime working set excluding model weights is larger.
+This is an inference speed/memory result, not a task-quality claim.
+
+Evidence and reproduction:
+[`bench/3090_g1h_7p2_bsz8_20260714/README.md`](bench/3090_g1h_7p2_bsz8_20260714/README.md).
 
 ### RTX 3090 small-pair bsz8 acceptance
 
