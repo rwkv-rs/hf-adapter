@@ -6,7 +6,23 @@ Native vLLM/SGLang scheduler work is out of scope for this file.
 
 Last updated: **2026-07-15**.
 
-## P0 — Final production gaps
+## Current milestone — COMPLETE
+
+The active V100/full-FLA/documentation milestone is complete:
+
+- V100 0.1B/0.4B/1.5B dense Albatross P1 and native W8/W4 speed lane;
+- V100 RWKV-7 1.5B versus full-FLA Qwen3.5-2B target-only B1/B8 raw and
+  active-parameter work gates;
+- RTX 4090 small-model and 7.2B bsz8 promoted matrices;
+- RTX 5070 full-FLA 1.5B/2B bsz8 promoted matrix;
+- PEFT/Trainer/TRL and current ZeRO-2/3 smoke/resume matrix;
+- canonical documentation refresh and full Markdown freshness audit.
+
+The unchecked items below are the **project-wide remaining roadmap** needed for
+universal “all cards/all shapes/upstream” claims. They are not unfinished work
+from the completed current milestone.
+
+## P0 — Remaining universal production gaps
 
 ### 1. Full-memory W8/W4 performance
 
@@ -120,11 +136,13 @@ snapshot is [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PROD
 
 ## PR completion checklist
 
-- [ ] Exact hardware/runtime/model/dtype recorded.
-- [ ] Reproduction command included.
-- [ ] Raw JSONL/log and concise README included.
-- [ ] Correctness, speed and memory reported together.
-- [ ] Negative or partial results described honestly.
-- [ ] Canonical status/benchmark/TODO documents updated only when status changes.
-- [ ] `python tests/test_markdown_links.py` passes.
-- [ ] Relevant unit/smoke tests pass.
+This is a per-PR template, not a list of outstanding project tasks:
+
+- Exact hardware/runtime/model/dtype recorded.
+- Reproduction command included.
+- Raw JSONL/log and concise README included.
+- Correctness, speed and memory reported together.
+- Negative or partial results described honestly.
+- Canonical status/benchmark/TODO documents updated only when status changes.
+- `python tests/test_markdown_links.py` passes.
+- Relevant unit/smoke tests pass.
