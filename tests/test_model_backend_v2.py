@@ -22,7 +22,7 @@ def _load_dense_backend(monkeypatch):
     return importlib.import_module("rwkv7_kernels.model.dense")
 
 
-def test_native_packer_recognizes_clean_linear_and_privately_casts_fp32_decay_bias(
+def test_native_packer_recognizes_clean_linear_and_preserves_fp32_decay_bias(
     tiny_config, monkeypatch
 ):
     _load_dense_backend(monkeypatch)
@@ -40,7 +40,7 @@ def test_native_packer_recognizes_clean_linear_and_privately_casts_fp32_decay_bi
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
 
     dense_packs, *_ = packing.extract_dense_packs(model, rkv_policy="linear")
-    assert dense_packs[0][26].dtype == torch.float16
+    assert dense_packs[0][26].dtype == torch.float32
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
 
     graph_packs, *_ = packing.extract_graph_packs(
@@ -53,8 +53,37 @@ def test_native_packer_recognizes_clean_linear_and_privately_casts_fp32_decay_bi
     )
     assert isinstance(graph_packs[0][24], torch.Tensor)
     assert isinstance(graph_packs[0][25], torch.Tensor)
-    assert graph_packs[0][26].dtype == torch.float16
+    assert graph_packs[0][26].dtype == torch.float32
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
+
+
+def test_native_decay_projection_adds_w0_only_after_fp32_promotion(
+    monkeypatch,
+):
+    _load_dense_backend(monkeypatch)
+    native_jit = importlib.import_module("rwkv7_kernels.nvidia.native_jit")
+    decode = importlib.import_module("rwkv7_kernels.nvidia.native_jit_decode")
+    prefill = importlib.import_module("rwkv7_kernels.nvidia.native_jit_prefill")
+    prefill.bind_runtime(vars(native_jit))
+
+    x = torch.tensor([[1.125, -0.375, 0.75, -1.5]], dtype=torch.float16)
+    down = torch.tensor(
+        [[0.25, -0.5, 0.75, 0.125], [-0.625, 0.5, 0.25, -0.375]],
+        dtype=torch.float16,
+    )
+    up = torch.tensor(
+        [[0.25, -0.5], [0.75, 0.125], [-0.625, 0.5]],
+        dtype=torch.float16,
+    )
+    w0 = torch.tensor([1.0003, -0.5002, 0.1251], dtype=torch.float32)
+    expected = F.linear(torch.tanh(F.linear(x, down)), up).float() + w0
+
+    decode_actual = decode._native_decay_projection(x, down, up, w0)
+    prefill_actual = prefill._native_prefill_decay_projection(x, down, up, w0)
+    assert decode_actual.dtype == torch.float32
+    assert prefill_actual.dtype == torch.float32
+    torch.testing.assert_close(decode_actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(prefill_actual, expected, rtol=0, atol=0)
 
 
 def test_migrated_dense_model_math_cache_padding_and_hidden_states(

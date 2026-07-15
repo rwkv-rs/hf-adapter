@@ -48,6 +48,16 @@ def bind_runtime(runtime: dict[str, object]) -> None:
             globals()[name] = runtime[name]
 
 
+def _native_decay_projection(x, down, up, bias):
+    """Match the clean HF ``project_without_bias(...).float() + w0`` rule."""
+
+    projected = _graph_linear_call(torch.tanh(_graph_linear_call(x, down)), up)
+    if _graph_linear_is_dense(up) and bias is not None:
+        return projected.float() + bias.float()
+    # Packed quantized modules retain and apply their own bias.
+    return projected
+
+
 def step(model, x, state, xpa, xpf, v_first, packs):
     for p in packs:
         x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]] = block_step(x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p)
@@ -154,7 +164,10 @@ def _block_ip(
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
     v_mixed = False
-    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+    lora_dense = bool(
+        _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+        and w0.dtype == x.dtype
+    )
     extension_rank = max(
         _graph_linear_shape(w1)[0],
         _graph_linear_shape(a1)[0],
@@ -323,10 +336,13 @@ def _block_ip(
         g = g.view(A)
     else:
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
-        w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
+        w = _native_decay_projection(xw, w1, w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
-    use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    use_fp16_recurrent = bool(
+        w.dtype == r.dtype
+        and _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    )
     use_kv_v2_recurrent = (
         str(getattr(state_layout, "value", state_layout)).strip().lower()
         == "kv_v2"
@@ -336,8 +352,16 @@ def _block_ip(
         or use_fp16_recurrent
         or _native_graph_fused_recurrent_output_enabled()
     )
-    use_fused_recurrent_raw = use_kv_v2_recurrent or use_fp16_recurrent or (
-        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled(1, D)
+    use_fused_recurrent_raw = bool(
+        w.dtype == r.dtype
+        and (
+            use_kv_v2_recurrent
+            or use_fp16_recurrent
+            or (
+                use_fused_recurrent_output
+                and _native_graph_fused_recurrent_raw_enabled(1, D)
+            )
+        )
     )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(A)
@@ -518,7 +542,10 @@ def _block_ip_batched(
     A = int(H * N)
     equal_width = D == A
     residual = F.layer_norm(x, [D], pre_w, pre_b, 1e-5) if has_pre else x
-    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+    lora_dense = bool(
+        _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+        and w0.dtype == x.dtype
+    )
     bmm_max_rank = (
         max(
             _graph_linear_shape(w1)[0],
@@ -755,10 +782,13 @@ def _block_ip_batched(
         a = torch.sigmoid(a)
     else:
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
-        w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
+        w = _native_decay_projection(xw, w1, w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
-    use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    use_fp16_recurrent = bool(
+        w.dtype == r.dtype
+        and _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    )
     use_kv_v2_recurrent = (
         str(getattr(state_layout, "value", state_layout)).strip().lower()
         == "kv_v2"
@@ -768,8 +798,16 @@ def _block_ip_batched(
         or use_fp16_recurrent
         or _native_graph_fused_recurrent_output_enabled()
     )
-    use_fused_recurrent_raw = use_kv_v2_recurrent or use_fp16_recurrent or (
-        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled(B, D)
+    use_fused_recurrent_raw = bool(
+        w.dtype == r.dtype
+        and (
+            use_kv_v2_recurrent
+            or use_fp16_recurrent
+            or (
+                use_fused_recurrent_output
+                and _native_graph_fused_recurrent_raw_enabled(B, D)
+            )
+        )
     )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, A)

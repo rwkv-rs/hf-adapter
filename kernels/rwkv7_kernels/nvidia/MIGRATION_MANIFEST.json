@@ -470,10 +470,11 @@
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_decode.py",
-      "destination_sha256": "94f1df350aba80df32ccaac6acfa6bdcef0397379b46954848e379c8e38d53c2",
+      "destination_sha256": "1a8969c19eea1ea790a2866fb44ead4da1736f85dc93e1c7aca663f342886e13",
       "git_blob": "9f253f5d205f5abd303ce718cf9f125eafeecb36",
       "source": "rwkv7_hf/native_jit_decode.py",
-      "transfer": "byte_identical"
+      "transfer": "adapted_clean_boundary",
+      "adaptation": "adapted native decode W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_dense_step.py",
@@ -498,19 +499,20 @@
       "transfer": "adapted_clean_boundary"
     },
     {
-      "adaptation": "adapted clean RWKV7Linear operands and the FP32 public decay bias into private native dense operands and activation-dtype bias views without mutating model parameters",
+      "adaptation": "adapted clean RWKV7Linear operands while retaining the decay bias as FP32 in private packs; ordinary LoRA biases remain activation dtype and public model parameters are never mutated",
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_packing.py",
-      "destination_sha256": "d730b6c09a0e4ad11767e82ed63584bc39254d55c4cc629b37b14aaed711f32f",
+      "destination_sha256": "99083329c84fda294a5df8128bb4ba7adb9b8e899485527dbcb99f30ea9a226c",
       "git_blob": "3a284bbcaa8b50230a25aa00705644af2a7cf071",
       "source": "rwkv7_hf/native_jit_packing.py",
       "transfer": "adapted_clean_boundary"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_prefill.py",
-      "destination_sha256": "fe0a54ffccbd66395a45b1456578f7a096aa6c88ac576fdef902b023b144f3d8",
+      "destination_sha256": "0f004caa95110034dd317aa58d64c016f22b9af95525ae1e59f30a43d6c8bf5d",
       "git_blob": "bb8f3141b60922a50b4caec363068f8670390e96",
       "source": "rwkv7_hf/native_jit_prefill.py",
-      "transfer": "byte_identical"
+      "transfer": "adapted_clean_boundary",
+      "adaptation": "adapted native prefill W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_prefill_policy.py",

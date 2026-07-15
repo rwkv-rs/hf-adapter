@@ -11,17 +11,25 @@ import torch
 
 
 def _kernel_bias(bias, reference: torch.Tensor):
-    """Return an internal bias in the native kernel's activation dtype.
-
-    The readable HF model deliberately stores the RWKV-7 decay bias in FP32.
-    Historical native kernels consume that bias from an internal FP16/BF16
-    pack, so convert only the private packed view and leave the public model
-    parameter untouched.
-    """
+    """Return an ordinary packed bias in the native activation dtype."""
 
     if bias is None:
         return None
     return bias.to(device=reference.device, dtype=reference.dtype)
+
+
+def _decay_bias(bias, reference: torch.Tensor):
+    """Keep RWKV-7's decay bias in FP32 inside private native packs.
+
+    The clean model adds ``w0`` after the low-rank projection has been
+    promoted to FP32.  Casting this particular bias to FP16/BF16 changes the
+    decay before every recurrent update and compounds across layers/tokens.
+    Other LoRA biases retain the historical activation-dtype packing.
+    """
+
+    if bias is None:
+        return None
+    return bias.to(device=reference.device, dtype=torch.float32)
 
 
 def extract_dense_packs(model, *, rkv_policy: str):
@@ -56,7 +64,7 @@ def extract_dense_packs(model, *, rkv_policy: str):
             a.k_k, a.k_a, a.r_k,
             a.r_proj.weight, a.k_proj.weight, a.v_proj.weight, a.o_proj.weight,
             a.w_lora.lora[0].weight, a.w_lora.lora[2].weight,
-            _kernel_bias(a.w_lora.lora[2].bias, ref),
+            _decay_bias(a.w_lora.lora[2].bias, ref),
             a.a_lora.lora[0].weight, a.a_lora.lora[2].weight,
             _kernel_bias(a.a_lora.lora[2].bias, ref),
             v1, v2, v0,
@@ -143,7 +151,7 @@ def extract_graph_packs(
             r_op, k_op, v_op, graph_linear_operand(a.o_proj),
             graph_linear_operand(a.w_lora.lora[0]),
             graph_linear_operand(a.w_lora.lora[2]),
-            _kernel_bias(a.w_lora.lora[2].bias, embed_ref),
+            _decay_bias(a.w_lora.lora[2].bias, embed_ref),
             graph_linear_operand(a.a_lora.lora[0]),
             graph_linear_operand(a.a_lora.lora[2]),
             _kernel_bias(a.a_lora.lora[2].bias, embed_ref),

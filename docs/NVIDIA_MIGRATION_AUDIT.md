@@ -10,8 +10,8 @@ boundary, without copying its duplicate Hugging Face model stack back into
 `kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json` records **102** files
 from `perf/native-kernels-v0.8`. Each row contains the old path, Git blob, new
 path, destination SHA256, and transfer kind. The wheel test recomputes every
-destination hash. For the **93 byte-identical** rows it also reconstructs the
-Git blob directly from the wheel bytes. Nine files require explicit
+destination hash. For the **91 byte-identical** rows it also reconstructs the
+Git blob directly from the wheel bytes. Eleven files require explicit
 clean-boundary adaptation rather than a false byte-identity claim:
 
 - `native_graph_runtime.py` now binds only canonical `RWKV7Cache` views rather
@@ -20,8 +20,11 @@ clean-boundary adaptation rather than a false byte-identity claim:
 - `native_jit_linear.py` recognizes `RWKV7Linear` as dense only when its
   weight is an ordinary `Parameter`, without misclassifying quantized tensor
   subclasses;
-- `native_jit_packing.py` creates private activation-dtype views of the
-  reference model's FP32 decay bias without mutating public model parameters;
+- `native_jit_packing.py` retains the reference model's decay bias as FP32 in
+  private packs without mutating public model parameters;
+- `native_jit_prefill.py` and `native_jit_decode.py` add that decay bias only
+  after promoting the low-rank projection to FP32 and bypass same-dtype fused
+  raw-decay lanes that cannot preserve the clean contract;
 - `train_temp_cuda.py` now owns only the leaf forward/backward autograd
   operators; whole-model/layer dispatch lives in `training_runtime.py` and no
   model `forward` method is replaced. Its accepted path preserves FP32 decay,
@@ -48,7 +51,7 @@ machine-checked rationale. The complete 102-file set includes:
 
 Source-tree presence is not enough: `scripts/audit_release_wheels.py` opens the
 actual kernel wheel, rejects unsafe/cross-package members, reads the embedded
-manifest, and recomputes all 102 destination hashes plus all 93 applicable
+manifest, and recomputes all 102 destination hashes plus all 91 applicable
 source Git blobs. It also requires the adapted
 dispatcher, dense/prefill/decode, graph/state-pool, quantization, recurrent and
 training runtime modules that were intentionally not byte-copied from the old
@@ -94,8 +97,8 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 
 | disposition | files |
 |---|---:|
-| byte-identical NVIDIA implementation | 93 |
-| adapted to the clean model-forward protocol | 19 |
+| byte-identical NVIDIA implementation | 91 |
+| adapted to the clean model-forward protocol | 21 |
 | replaced by canonical reference ownership | 7 |
 | tooling relocated or retired | 6 |
 | separate non-NVIDIA hardware distribution | 27 |
@@ -104,7 +107,7 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 Every row retains its historical Git mode and blob ID. The wheel audit rebuilds
 the Git tree object from all 153 rows and requires the result to equal frozen
 tree `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`. It then cross-checks all 102
-NVIDIA rows (93 exact transfers and nine clean adaptations) against
+NVIDIA rows (91 exact transfers and eleven clean adaptations) against
 `MIGRATION_MANIFEST.json` and requires every adapted kernel
 replacement to exist in the wheel. An omitted historical file, an
 `unclassified` row, or a relabelled blob changes the reconstructed tree and

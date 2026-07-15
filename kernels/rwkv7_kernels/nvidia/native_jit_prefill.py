@@ -79,6 +79,18 @@ def _native_prefill_linear_add_residual(x, weight, residual):
     )
     return out.view_as(residual)
 
+
+def _native_prefill_decay_projection(x, down, up, bias):
+    """Apply the W LoRA while preserving the clean model's FP32 bias add."""
+
+    hidden = _native_prefill_linear(x, down)
+    hidden.tanh_()
+    projected = _native_prefill_linear(hidden, up)
+    if _graph_linear_is_dense(up) and bias is not None:
+        return projected.float() + bias.float()
+    # Quantized operands retain and apply their own module bias.
+    return projected
+
 def _native_prefill_project_residual(x, operand, residual):
     """Use GEMM beta=1 for dense weights and a safe add for quant modules."""
 
@@ -443,7 +455,11 @@ def _prefill_current_device_impl(
         N = int(N)
         attention_hidden = H * N
         residual_hidden = int(an_w.numel())
-        use_fp16_recurrent = _native_prefill_fp16_recurrent_enabled(state[layer_idx])
+        decay_bias_matches_activation = bool(w0.dtype == x.dtype)
+        use_fp16_recurrent = bool(
+            decay_bias_matches_activation
+            and _native_prefill_fp16_recurrent_enabled(state[layer_idx])
+        )
         use_layer_state_prep = bool(
             use_prefill_state_prep
             and (
@@ -577,6 +593,7 @@ def _prefill_current_device_impl(
             and layer_idx > 0
             and _native_prefill_fused_wavg_lora_enabled(B * T)
             and _graph_linears_are_dense(w1, w2, a1, a2, g1, g2, v1, v2)
+            and decay_bias_matches_activation
         )
         if use_prefill_wavg_lora:
             wavg_lora_used = True
@@ -607,14 +624,8 @@ def _prefill_current_device_impl(
             g = g.view(B, T, attention_hidden)
             v_gate = v_gate.view(B, T, attention_hidden)
         else:
-            w_mid = _native_prefill_linear(xw, w1)
-            w_mid.tanh_()
-            if use_fp16_recurrent and T <= 16:
-                w = _native_prefill_linear(w_mid, w2)
-                fp16_w0 = w0.reshape(-1).contiguous()
-            else:
-                w = _native_prefill_linear(w_mid, w2, w0)
-                fp16_w0 = None
+            w = _native_prefill_decay_projection(xw, w1, w2, w0)
+            fp16_w0 = None
             a_mid = _native_prefill_linear(xa, a1)
             a = _native_prefill_linear(a_mid, a2, a0)
             if not defer_state_sigmoid:
@@ -632,18 +643,29 @@ def _prefill_current_device_impl(
         use_fused_scan_output = bool(
             not use_fp16_recurrent and _native_prefill_fused_scan_output_enabled()
         )
-        use_self_chunk = _native_prefill_self_chunk_enabled(
-            T,
-            N,
-            B,
-            attention_hidden,
-            len(packs),
-        ) and not use_fused_scan_output and not use_fp16_recurrent
+        raw_w_matches_activation = bool(w.dtype == r.dtype)
+        use_self_chunk = bool(
+            raw_w_matches_activation
+            and _native_prefill_self_chunk_enabled(
+                T,
+                N,
+                B,
+                attention_hidden,
+                len(packs),
+            )
+            and not use_fused_scan_output
+            and not use_fp16_recurrent
+        )
         self_chunk_used = bool(self_chunk_used or use_self_chunk)
         self_chunk_w_is_log = False
-        use_clampw_scan = use_clampw_scan_requested and not use_fused_scan_output
+        use_clampw_scan = bool(
+            raw_w_matches_activation
+            and use_clampw_scan_requested
+            and not use_fused_scan_output
+        )
         use_fused_state_scan = bool(
             not use_fp16_recurrent
+            and raw_w_matches_activation
             and _native_prefill_fused_state_scan_enabled(B)
             and not use_fused_scan_output
         )

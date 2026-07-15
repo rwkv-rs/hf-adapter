@@ -118,8 +118,10 @@ ADAPTED_MIGRATION_SOURCES = {
     "rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
     "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
     "rwkv7_hf/native_graph_runtime.py",
+    "rwkv7_hf/native_jit_decode.py",
     "rwkv7_hf/native_jit_linear.py",
     "rwkv7_hf/native_jit_packing.py",
+    "rwkv7_hf/native_jit_prefill.py",
     "rwkv7_hf/train_temp_cuda.py",
 }
 
@@ -735,7 +737,7 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
                     )
             transfers[transfer] += 1
             migrated.add(member)
-        if transfers != {"adapted_clean_boundary": 9, "byte_identical": 93}:
+        if transfers != {"adapted_clean_boundary": 11, "byte_identical": 91}:
             raise ValueError(f"NVIDIA migration transfer counts differ: {transfers}")
         capability_report = audit_capability_inventory(
             archive,
