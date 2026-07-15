@@ -137,12 +137,19 @@ class MLXRWKV7Model:
             "reference",
             {"reference", "fast"},
         )
+        self.decode_state_dtype = _env_choice(
+            "RWKV7_MLX_DECODE_STATE_DTYPE",
+            "fp32",
+            {"fp16", "fp32"},
+        )
         self.decode_compile_s_by_batch: dict[int, float] = {}
         self._compiled_decode_functions: dict[int, Any] = {}
+        self._compiled_greedy_decode_functions: dict[int, Any] = {}
         self._compiled_decode_norm_backend_by_batch: dict[int, str] = {}
         self._compiled_decode_validated_batches: set[int] = set()
         self._compiled_decode_rejected_batches: set[int] = set()
         self.decode_compiled_validation_by_batch: dict[int, dict[str, Any]] = {}
+        self.decode_compiled_greedy_validation_by_batch: dict[int, dict[str, Any]] = {}
         self.quantized_linears: dict[str, MLXQuantizedLinear] = {}
         self.quantized_embedding: MLXGroupwiseWeight | None = None
         self.quantized_embedding_dense_bytes = 0
@@ -195,6 +202,11 @@ class MLXRWKV7Model:
         self.wkv_scan_prefill_reason_counts: dict[str, int] = {}
         self.fused_scan_post = _env_flag("RWKV7_MLX_FUSED_SCAN_POST", False)
         self.fused_scan_post_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fused_decode_wkv_post = _env_flag(
+            "RWKV7_MLX_FUSED_DECODE_WKV_POST",
+            self.fused_scan_post,
+        )
+        self.fused_decode_wkv_post_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.fused_scan_prep_post = _env_flag("RWKV7_MLX_FUSED_SCAN_PREP_POST", False)
         self.fused_scan_prep_post_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.compiled_scan_prefill_mode = _env_choice(
@@ -456,6 +468,7 @@ class MLXRWKV7Model:
         self.wkv_scan_prefill_counts = {"reference": 0, "metal": 0, "fallback": 0}
         self.wkv_scan_prefill_reason_counts = {}
         self.fused_scan_post_counts = {"metal": 0, "fallback": 0}
+        self.fused_decode_wkv_post_counts = {"metal": 0, "fallback": 0}
         self.fused_scan_prep_post_counts = {"metal": 0, "fallback": 0}
         self.compiled_scan_prefill_backend_last = None
         self.compiled_scan_prefill_backend_counts = {"eager": 0, "compiled": 0}
@@ -482,7 +495,9 @@ class MLXRWKV7Model:
             "decode_backend_last": self.decode_backend_last,
             "decode_backend_counts": dict(self.decode_backend_counts),
             "decode_norm_backend": self.decode_norm_backend,
+            "decode_state_dtype": self.decode_state_dtype,
             "decode_compiled_batches": sorted(self._compiled_decode_functions),
+            "decode_compiled_greedy_batches": sorted(self._compiled_greedy_decode_functions),
             "decode_compiled_norm_backend_by_batch": dict(
                 self._compiled_decode_norm_backend_by_batch
             ),
@@ -490,6 +505,9 @@ class MLXRWKV7Model:
             "decode_compiled_rejected_batches": sorted(self._compiled_decode_rejected_batches),
             "decode_compile_s_by_batch": dict(self.decode_compile_s_by_batch),
             "decode_compiled_validation_by_batch": dict(self.decode_compiled_validation_by_batch),
+            "decode_compiled_greedy_validation_by_batch": dict(
+                self.decode_compiled_greedy_validation_by_batch
+            ),
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
             "step_eval_interval": int(self.step_eval_interval),
@@ -523,6 +541,8 @@ class MLXRWKV7Model:
             "wkv_scan_metal_available": metal_wkv_scan_available(),
             "fused_scan_post": bool(self.fused_scan_post),
             "fused_scan_post_counts": dict(self.fused_scan_post_counts),
+            "fused_decode_wkv_post": bool(self.fused_decode_wkv_post),
+            "fused_decode_wkv_post_counts": dict(self.fused_decode_wkv_post_counts),
             "fused_scan_prep_post": bool(self.fused_scan_prep_post),
             "fused_scan_prep_post_counts": dict(self.fused_scan_prep_post_counts),
             "compiled_scan_prefill_mode": self.compiled_scan_prefill_mode,
@@ -1095,35 +1115,71 @@ class MLXRWKV7Model:
             v = v + (v_first - v) * v_mix
         w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
 
-        out_heads, state, backend_used = wkv_update(
-            state,
-            w,
-            v,
-            k,
-            kk,
-            a,
-            r,
-            backend=self.wkv_backend,
+        can_fuse_decode_post = bool(
+            self.fused_decode_wkv_post
+            and B == 1
+            and N == 64
+            and self.wkv_backend in {"metal", "auto"}
+            and r.dtype == mx.float16
+            and g.dtype == mx.float16
+            and metal_wkv_scan_available()
         )
+        if can_fuse_decode_post:
+            out_heads, state = wkv_scan_post_metal_fp16(
+                state,
+                w.reshape(B, 1, H, N),
+                v.reshape(B, 1, H, N),
+                k.reshape(B, 1, H, N),
+                kk.reshape(B, 1, H, N),
+                a.reshape(B, 1, H, N),
+                r.reshape(B, 1, H, N),
+                self._get(f"{prefix}.g_norm.weight"),
+                self._get(f"{prefix}.g_norm.bias"),
+                self._get(f"{prefix}.r_k"),
+                g.reshape(B, 1, H, N),
+                preprocess=False,
+            )
+            out_heads = out_heads.reshape(B, H, N)
+            backend_used = "metal"
+            self.fused_decode_wkv_post_counts["metal"] = int(
+                self.fused_decode_wkv_post_counts.get("metal", 0)
+            ) + 1
+        else:
+            out_heads, state, backend_used = wkv_update(
+                state,
+                w,
+                v,
+                k,
+                kk,
+                a,
+                r,
+                backend=self.wkv_backend,
+            )
+            if self.fused_decode_wkv_post:
+                self.fused_decode_wkv_post_counts["fallback"] = int(
+                    self.fused_decode_wkv_post_counts.get("fallback", 0)
+                ) + 1
         self.wkv_backend_last = backend_used
         self.wkv_backend_counts[backend_used] = int(self.wkv_backend_counts.get(backend_used, 0)) + 1
         out = out_heads.reshape(B, hidden)
-        # Keep per-head GroupNorm on the reference formulation. The compiled
-        # parity issue comes from the three standard LayerNorm boundaries;
-        # forcing GroupNorm through a separate fast primitive adds launches
-        # without improving parity.
-        out = self._group_norm_heads(
-            out,
-            layer,
-            backend="fast" if self.decode_fast_group_norm else "reference",
-        )
-        sk = (
-            r.reshape(B, H, N)
-            * k.reshape(B, H, N)
-            * self._get(f"{prefix}.r_k").reshape(1, H, N)
-        ).sum(axis=-1, keepdims=True)
-        out = out + (sk * v.reshape(B, H, N)).reshape(B, hidden)
-        out = self._linear(out * g, f"{prefix}.o_proj.weight")
+        if not can_fuse_decode_post:
+            # Keep per-head GroupNorm on the reference formulation. The compiled
+            # parity issue comes from the three standard LayerNorm boundaries;
+            # forcing GroupNorm through a separate fast primitive adds launches
+            # without improving parity.
+            out = self._group_norm_heads(
+                out,
+                layer,
+                backend="fast" if self.decode_fast_group_norm else "reference",
+            )
+            sk = (
+                r.reshape(B, H, N)
+                * k.reshape(B, H, N)
+                * self._get(f"{prefix}.r_k").reshape(1, H, N)
+            ).sum(axis=-1, keepdims=True)
+            out = out + (sk * v.reshape(B, H, N)).reshape(B, hidden)
+            out = out * g
+        out = self._linear(out, f"{prefix}.o_proj.weight")
         return out, x, state, v_first
 
     def _ffn_step(self, layer: int, x, x_prev):
@@ -2234,8 +2290,17 @@ class MLXRWKV7Model:
             self._eval_step_state(last, state)
         return state
 
+    def prepare_decode_state(self, state: MLXRWKV7State) -> MLXRWKV7State:
+        """Apply the configured recurrent-cache dtype at a prefill/decode boundary."""
+
+        if self.decode_state_dtype == "fp16":
+            mx = _mx()
+            state.recurrent_state = [value.astype(mx.float16) for value in state.recurrent_state]
+        return state
+
     def prefill(self, input_ids: Iterable[Iterable[int]] | Any, state: MLXRWKV7State | None = None):
-        return self.forward(input_ids, state=state, collect_all=False)
+        logits, next_state = self.forward(input_ids, state=state, collect_all=False)
+        return logits, self.prepare_decode_state(next_state)
 
     def _flatten_compiled_decode_state(self, state: MLXRWKV7State) -> tuple[Any, ...]:
         return (
@@ -2316,6 +2381,180 @@ class MLXRWKV7Model:
             raise RuntimeError("this MLX runtime does not expose mx.compile")
         return compile_fn(pure_decode)
 
+    def _build_compiled_greedy_decode_function(self, batch_size: int):
+        """Compile the production greedy seam without exporting full logits."""
+
+        mx = _mx()
+        batch = int(batch_size)
+        if batch <= 0:
+            raise ValueError("compiled greedy decode batch size must be positive")
+        layers = self.num_hidden_layers
+
+        def pure_greedy_decode(token_ids, v_first, *flat_state):
+            state = MLXRWKV7State(
+                recurrent_state=list(flat_state[:layers]),
+                attn_x_prev=list(flat_state[layers : 2 * layers]),
+                ffn_x_prev=list(flat_state[2 * layers : 3 * layers]),
+                v_first=v_first,
+                seen_tokens=0,
+            )
+            hidden, state = self._step_token(
+                token_ids.reshape(batch),
+                state,
+                evaluate=False,
+                norm_backend=self.decode_norm_backend,
+            )
+            logits = self._logits_from_hidden(hidden)
+            next_token = mx.argmax(logits, axis=-1).astype(mx.int32)
+            return (next_token, *self._flatten_compiled_decode_state(state))
+
+        compile_fn = getattr(mx, "compile", None)
+        if not callable(compile_fn):
+            raise RuntimeError("this MLX runtime does not expose mx.compile")
+        return compile_fn(pure_greedy_decode)
+
+    def prepare_compiled_greedy_decode(self, batch_size: int = 1) -> None:
+        """Compile and warm the token-only greedy graph after parity gating."""
+
+        mx = _mx()
+        batch = int(batch_size)
+        if batch not in self._compiled_decode_validated_batches:
+            raise RuntimeError(
+                f"compiled greedy decode requires a passed logits/state gate for batch {batch}"
+            )
+        function = self._compiled_greedy_decode_functions.get(batch)
+        if function is not None:
+            return
+        counter_snapshot = self._decode_kernel_counter_snapshot()
+        try:
+            function = self._build_compiled_greedy_decode_function(batch)
+            self._compiled_greedy_decode_functions[batch] = function
+            state = self.init_state(batch)
+            outputs = function(
+                mx.zeros((batch,), dtype=mx.int32),
+                *self._flatten_compiled_decode_state(state),
+            )
+            mx.eval(*outputs)
+        finally:
+            self._restore_decode_kernel_counters(counter_snapshot)
+
+    def decode_greedy_step(self, token_ids: Iterable[int] | Any, state: MLXRWKV7State):
+        """Advance one token and return only the next greedy token plus state.
+
+        The token-only graph keeps the vocabulary logits inside the compiled
+        command graph.  Non-compiled callers retain the public logits API via
+        :meth:`decode_step` and use this method only as an explicit serving
+        optimization.
+        """
+
+        mx = _mx()
+        batch = int(state.batch_size)
+        if self.decode_backend != "compiled" or batch not in self._compiled_decode_validated_batches:
+            logits, next_state = self.decode_step(token_ids, state)
+            return mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32), next_state
+        self.prepare_compiled_greedy_decode(batch)
+        ids = mx.array(token_ids, dtype=mx.int32).reshape(-1)
+        if int(ids.shape[0]) != batch:
+            raise ValueError(f"token batch size {int(ids.shape[0])} does not match state batch size {batch}")
+        outputs = self._compiled_greedy_decode_functions[batch](
+            ids,
+            *self._flatten_compiled_decode_state(state),
+        )
+        next_token = outputs[0]
+        next_state = self._compiled_decode_state_from_outputs(
+            outputs[1:],
+            seen_tokens=int(state.seen_tokens) + 1,
+        )
+        if (
+            int(self.step_eval_interval) <= 1
+            or int(next_state.seen_tokens) % int(self.step_eval_interval) == 0
+        ):
+            mx.eval(next_token)
+        self.decode_backend_last = "compiled"
+        self.decode_backend_counts["compiled"] = int(
+            self.decode_backend_counts.get("compiled", 0)
+        ) + 1
+        return next_token, next_state
+
+    def validate_compiled_greedy_decode(
+        self,
+        logits: Any,
+        state: MLXRWKV7State,
+        *,
+        steps: int = 32,
+        state_atol: float = 1e-6,
+    ) -> dict[str, Any]:
+        """Gate token-only greedy decode against the validated logits graph."""
+
+        mx = _mx()
+        batch = int(state.batch_size)
+        count = int(steps)
+        if count <= 0 or state_atol < 0:
+            raise ValueError("greedy validation steps must be positive and state_atol non-negative")
+        if batch not in self._compiled_decode_validated_batches:
+            raise RuntimeError(
+                f"compiled logits decode must pass validation before greedy batch {batch}"
+            )
+        self.prepare_compiled_greedy_decode(batch)
+        logits_state = state.clone()
+        greedy_state = state.clone()
+        logits_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+        greedy_token = logits_token
+        logits_tokens: list[list[int]] = []
+        greedy_tokens: list[list[int]] = []
+        previous_backend = self.decode_backend
+        previous_last = self.decode_backend_last
+        previous_counts = dict(self.decode_backend_counts)
+        counter_snapshot = self._decode_kernel_counter_snapshot()
+        try:
+            self.decode_backend = "compiled"
+            for _ in range(count):
+                next_logits, logits_state = self._compiled_decode_step(logits_token, logits_state)
+                logits_token = mx.argmax(next_logits[:, -1, :], axis=-1).astype(mx.int32)
+                greedy_token, greedy_state = self.decode_greedy_step(greedy_token, greedy_state)
+                mx.eval(logits_token, greedy_token)
+                logits_tokens.append([int(value) for value in logits_token.tolist()])
+                greedy_tokens.append([int(value) for value in greedy_token.tolist()])
+            mx.eval(
+                *self._flatten_compiled_decode_state(logits_state),
+                *self._flatten_compiled_decode_state(greedy_state),
+            )
+        finally:
+            self.decode_backend = previous_backend
+            self.decode_backend_last = previous_last
+            self.decode_backend_counts = previous_counts
+            self._restore_decode_kernel_counters(counter_snapshot)
+        state_diff = max(
+            float(mx.max(mx.abs(left.astype(mx.float32) - right.astype(mx.float32))))
+            for left, right in zip(
+                self._flatten_compiled_decode_state(logits_state),
+                self._flatten_compiled_decode_state(greedy_state),
+                strict=True,
+            )
+        )
+        tokens_match = logits_tokens == greedy_tokens
+        passed = bool(tokens_match and state_diff <= float(state_atol))
+        result = {
+            "status": "pass" if passed else "fail",
+            "batch_size": batch,
+            "steps": count,
+            "generated_tokens_match": tokens_match,
+            "first_token_mismatch_step": next(
+                (
+                    index + 1
+                    for index, (left, right) in enumerate(
+                        zip(logits_tokens, greedy_tokens, strict=True)
+                    )
+                    if left != right
+                ),
+                None,
+            ),
+            "state_max_abs": state_diff,
+            "state_atol": float(state_atol),
+        }
+        self.decode_compiled_greedy_validation_by_batch[batch] = result
+        return result
+
     def prepare_compiled_decode(self, batch_size: int = 1) -> float:
         """Compile and warm a pure full-model decode graph for ``batch_size``.
 
@@ -2379,7 +2618,16 @@ class MLXRWKV7Model:
             outputs[1:],
             seen_tokens=int(state.seen_tokens) + 1,
         )
-        mx.eval(logits)
+        # A compiled decode invocation can consume the previous invocation's
+        # lazy argmax and recurrent outputs directly.  Synchronizing every
+        # token adds a large host/command-buffer tax at B1, so use the same
+        # bounded eval interval as eager decode and let the caller's final
+        # materialization close the last partial interval.
+        if (
+            int(self.step_eval_interval) <= 1
+            or int(next_state.seen_tokens) % int(self.step_eval_interval) == 0
+        ):
+            mx.eval(logits)
         if started is not None:
             self.decode_compile_s_by_batch[batch] = float(time.perf_counter() - started)
         self.decode_backend_last = "compiled"

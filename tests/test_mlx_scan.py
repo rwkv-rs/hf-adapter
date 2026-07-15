@@ -129,6 +129,24 @@ def test_mlx_wkv_scan_fused_post_matches_generic_fp16_if_available():
     assert float(mx.max(mx.abs(fused.astype(mx.float32) - generic.astype(mx.float32)))) <= 0.0078125
     assert float(mx.max(mx.abs(fused_state - generic_state))) == 0.0
 
+    fp16_fused, fp16_state = wkv_scan_post_metal_fp16(
+        state.astype(mx.float16),
+        w,
+        v,
+        k,
+        kk,
+        a,
+        r,
+        norm_weight,
+        norm_bias,
+        r_k,
+        g,
+    )
+    mx.eval(fp16_fused, fp16_state)
+    assert fp16_state.dtype == mx.float16
+    assert float(mx.max(mx.abs(fp16_fused.astype(mx.float32) - fused.astype(mx.float32)))) <= 0.015625
+    assert float(mx.max(mx.abs(fp16_state.astype(mx.float32) - fused_state))) <= 0.03125
+
 
 def test_mlx_wkv_scan_fused_prep_post_matches_split_fp16_if_available():
     if importlib.util.find_spec("mlx") is None:
