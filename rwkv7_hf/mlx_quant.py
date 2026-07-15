@@ -530,6 +530,37 @@ def _metal_groupwise_w4_relu2_kernel():
     )
 
 
+@lru_cache(maxsize=1)
+def _metal_groupwise_w4_relu2_decode_kernel():
+    """NAX W4 FFN-key kernel tiled for the Apple B8, T1 decode shape."""
+
+    mx = require_mlx()
+    source = r'''
+        constexpr int BM = 32;
+        constexpr int BK = 64;
+        constexpr int BN = 64;
+        constexpr int WM = 2;
+        constexpr int WN = 2;
+        constexpr int BK_padded = BK + 16 / sizeof(T);
+        threadgroup T Ws[BN * BK_padded];
+        int K = int(dims[0]);
+        int N = int(dims[1]);
+        int M = int(dims[2]);
+        rwkv7_qmm_t_nax_relu2_impl<T, 128, 4, true, BM, BK, BN, WM, WN>(
+            weight, scales, biases, x, out, Ws, K, N, M,
+            threadgroup_position_in_grid, thread_index_in_threadgroup,
+            simdgroup_index_in_threadgroup, thread_index_in_simdgroup);
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_groupwise_w4_qmm_relu2_decode_nax",
+        input_names=["weight", "scales", "biases", "x", "dims"],
+        output_names=["out"],
+        source=source,
+        header=_groupwise_w4_relu2_nax_header(),
+        ensure_row_contiguous=True,
+    )
+
+
 def groupwise_w4_matmul_relu2_metal(x: Any, weight: MLXGroupwiseWeight) -> Any:
     """Exact-shape NAX W4 QMM with the FFN ReLU² epilogue fused."""
 
@@ -542,10 +573,22 @@ def groupwise_w4_matmul_relu2_metal(x: Any, weight: MLXGroupwiseWeight) -> Any:
     if int(weight.n) % 64 or int(weight.m) % 64:
         raise ValueError("fused groupwise FFN requires K and N divisible by 64")
     dims = mx.array([int(weight.n), int(weight.m), rows], dtype=mx.uint32)
-    (out,) = _metal_groupwise_w4_relu2_kernel()(
+    decode_b8 = bool(
+        int(x.ndim) == 2
+        and tuple(int(dim) for dim in x.shape) == (8, 2048)
+        and int(weight.n) == 2048
+        and int(weight.m) == 8192
+    )
+    kernel = (
+        _metal_groupwise_w4_relu2_decode_kernel()
+        if decode_b8
+        else _metal_groupwise_w4_relu2_kernel()
+    )
+    block_m = 32 if decode_b8 else 64
+    (out,) = kernel(
         inputs=[weight.w_q, weight.scales, weight.biases, x.reshape(rows, int(weight.n)), dims],
         template=[("T", mx.float16)],
-        grid=(((int(weight.m) + 63) // 64) * 128, (rows + 63) // 64, 1),
+        grid=(((int(weight.m) + 63) // 64) * 128, (rows + block_m - 1) // block_m, 1),
         threadgroup=(128, 1, 1),
         output_shapes=[(*x.shape[:-1], int(weight.m))],
         output_dtypes=[mx.float16],

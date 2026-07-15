@@ -238,12 +238,14 @@ cache row to claim a universal cold-start win.
   `1.858 GB vs 2.152 GB`. W/A LoRA-down fusion is enabled; its packed base
   replaces the original W/A source matrices and releases `18,874,368` bytes,
   removing the prior duplicate-cache memory penalty.
-- A separate 1.5B **target-only, cold, no-prefix-coalescing** ABBA acceptance
-  row does not yet close: medians are `2146.21 vs 1705.85 tok/s` prefill and
-  `161.87 vs 136.93 tok/s` decode. Active-normalized ratios are `1.0212x` and
-  `0.9595x`; raw peak memory passes at `1,790,200,770 vs 2,151,577,894` bytes.
-  The remaining target-only gap is therefore normalized decode, short by
-  4.05%. Reproduce this fail-closed row with
+- The separate 1.5B **target-only, cold, no-prefix-coalescing** ABBA acceptance
+  row is now closed: medians are `2249.15 vs 1600.50 tok/s` prefill and
+  `185.59 vs 132.20 tok/s` decode. Active-normalized ratios are `1.1406x` and
+  `1.1394x`; raw peak memory passes at `1,790,200,768 vs 2,151,577,894` bytes.
+  The closing change is a B8/T1 `BM32/BK64/BN64/WM2/WN2` NAX W4 FFN-key
+  kernel with fused ReLU-squared. Its same-process alternating A/B is
+  `1.1549x`, with exact generated tokens and bounded final logits/state drift.
+  Reproduce the fail-closed target-only row with
   `scripts/run_apple_bsz8_target_only_acceptance.sh`.
 - The 1.5B **speculative-assisted cold, no-prefix-coalescing** ABBA row is
   closed. Current medians
