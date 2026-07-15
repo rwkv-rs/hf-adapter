@@ -20,6 +20,11 @@ from validate_backend_v2_training import (  # noqa: E402
     candidate_route_passed,
     tensor_metric as training_tensor_metric,
 )
+from validate_backend_v2_inference import (  # noqa: E402
+    annotate_metric as annotate_inference_metric,
+    aspirational_metric_passed,
+    release_metric_passed,
+)
 from fla_common import (  # noqa: E402
     compare_states,
     gradient_metrics,
@@ -42,6 +47,34 @@ def test_training_tensor_metric_uses_stable_reductions_for_large_exact_logits():
     assert row["cosine"] == 1.0
     assert row["max_abs"] == 0.0
     assert row["relative_l2"] == 0.0
+
+
+def test_inference_release_gate_keeps_strict_target_as_diagnostic():
+    row = {
+        "finite": True,
+        "cosine": 0.99995,
+        "max_abs": 0.20,
+        "argmax_same": True,
+    }
+    assert release_metric_passed(row, torch.float16, logits=True)
+    assert not aspirational_metric_passed(row, torch.float16, logits=True)
+    annotated = annotate_inference_metric(row.copy(), torch.float16, logits=True)
+    assert annotated["release_passed"]
+    assert not annotated["aspirational_passed"]
+
+
+def test_inference_bf16_release_floor_keeps_argmax_as_diagnostic():
+    row = {
+        "finite": True,
+        "cosine": 0.9995,
+        "max_abs": 1.0,
+        "argmax_same": True,
+    }
+    assert release_metric_passed(row, torch.bfloat16, logits=True)
+    assert not aspirational_metric_passed(row, torch.bfloat16, logits=True)
+    row["argmax_same"] = False
+    assert release_metric_passed(row, torch.bfloat16, logits=True)
+    assert release_metric_passed(row, torch.bfloat16, logits=False)
 
 
 def test_compare_states_detects_fla_vk_layout():

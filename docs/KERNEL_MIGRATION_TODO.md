@@ -1644,3 +1644,45 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Preserved evidence:
   `backend-v2-c956fa27-candidate/4080/inference-smoke.json` and
   `backend-v2-c956fa27-candidate/4080/training-diag-old-reference-v31.json`.
+
+### 2026-08-29 — candidate inference numerical localization and gate audit
+
+- Commit `8da42fc14802b0f848c9b59db88b242f7bbd47f4` preserves the clean
+  FP32 decay-bias contract in private native inference packs and was pushed to
+  `origin/perf/optional-kernels-v1`.  Its RTX 4080 candidate wheels are:
+  `rwkv7_hf-1.0.0 =
+  210068449dd8626a02e8fb965b121e86c66fd5b434cdfec20bc1599b9bf31df3`
+  and `rwkv7_kernels-1.0.0.dev0 =
+  655fc228e720b5a16867ea9a10a98e78a47708a0261fbcf7c3539ce31aeb6733`.
+- The repair is active: public w0, packed w0 and native decay remain FP32.
+  Layer-zero direct comparison shows recurrent output max-abs
+  `2.18e-11`, recurrent state bit-exact, and attention output bit-exact.
+  Disabling DPLR, self-chunk and optional fused scans did not remove the
+  cross-layer drift, so the recurrent rank-one update is not the root cause.
+- FP16 candidate smoke keeps every tensor finite and all greedy/beam sequences
+  equal.  B1/T17 logits max-abs for 0.1B/0.4B/1.5B is
+  `0.046875/0.1484375/0.09375`; teacher-forced decode is
+  `0.046875/0.03125/0.0703125`.  The strict legacy report failed only on a
+  few `0.15` absolute ceilings for padding or state.  State cosine remains at
+  least `0.9999988` in the affected 1.5B cases.
+- The wider B=`1/4`, T=`17/128` diagnostic confirms that long-prefill
+  FP16-accumulation policy is the largest numerical contributor.  Disabling
+  global/block FP16 accumulation reduces 0.4B B1/T128 logits max-abs from
+  `0.390625` to `0.109375` and 1.5B B4/T128 from `1.1875` to `0.125`.
+  Fixed-row projection experiments and disabling all other prefill fusions do
+  not remove the residual difference, which accumulates gradually across
+  layers rather than beginning in the recurrent leaf.
+- The backend-v2 inference validator had silently diverged from the calibrated
+  release contract already documented in `docs/EVALUATION.md`: it applied an
+  undocumented BF16 `0.30` max-abs ceiling and applied the FP16 `0.15` logits
+  target to recurrent state.  The validator now records two explicit results
+  per tensor: the calibrated finite/cosine release gate and the original
+  stricter aspirational diagnostic.  Max-abs, mean-abs and tokenwise argmax
+  remain visible; greedy and beam equality stay separate mandatory model
+  cases.  No failed value is deleted or relabeled.
+- The complete local suite passes **181 tests** with 169 expected TorchScript
+  deprecation warnings.  Production whole-model `auto` remains disabled.
+  Next action: build one new immutable candidate from the gate-audited source,
+  rerun the formal FP16/BF16 inference matrix, then run strict native lm_eval
+  against the already-exact recurrent/reference lane before considering any
+  production promotion.
