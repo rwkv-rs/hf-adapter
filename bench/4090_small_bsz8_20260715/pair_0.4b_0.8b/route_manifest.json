@@ -1,0 +1,1658 @@
+{
+  "axis": "qwen35_quant_route_composition",
+  "status": "pass",
+  "inputs": [
+    "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/dense.jsonl",
+    "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+    "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+    "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/hybrid_speed.jsonl"
+  ],
+  "thresholds": {
+    "min_qwen_prefill": 1.0,
+    "min_qwen_decode": 1.0,
+    "min_dense_prefill": 1.0,
+    "min_dense_decode": 1.0,
+    "min_dense_total": 1.0,
+    "allow_dense_total_noninferiority": true,
+    "require_footprint_and_peak_reduction": true,
+    "require_native_candidate": true,
+    "require_qwen_fast_path": false,
+    "quant_qwen_gate": false
+  },
+  "output_rows": 36,
+  "decisions": [
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 1,
+          "metrics": {
+            "qwen_prefill_speedup": 4.4119854214342915,
+            "qwen_decode_speedup": 10.263672972827301,
+            "dense_prefill_speedup": 1.1225603974165677,
+            "dense_decode_speedup": 0.8438098409263984,
+            "dense_total_speedup": 0.8522339372639318,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.6688797260465441
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8522339372639318
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 1,
+          "metrics": {
+            "qwen_prefill_speedup": 4.029936763093873,
+            "qwen_decode_speedup": 12.369926774618282,
+            "dense_prefill_speedup": 1.0253541166216358,
+            "dense_decode_speedup": 1.0169717967043297,
+            "dense_total_speedup": 1.0173023311884992,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9584177790201971
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0169717967043297
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 1,
+          "metrics": {
+            "qwen_prefill_speedup": 4.686334652281591,
+            "qwen_decode_speedup": 10.45452480500181,
+            "dense_prefill_speedup": 1.192364250374621,
+            "dense_decode_speedup": 0.8595003889956948,
+            "dense_total_speedup": 0.8691597207738201,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.6243622894681669
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8691597207738201
+        }
+      ],
+      "selected": {
+        "implementation": "a8w8",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 1,
+        "metrics": {
+          "qwen_prefill_speedup": 4.029936763093873,
+          "qwen_decode_speedup": 12.369926774618282,
+          "dense_prefill_speedup": 1.0253541166216358,
+          "dense_decode_speedup": 1.0169717967043297,
+          "dense_total_speedup": 1.0173023311884992,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9584177790201971
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0169717967043297
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 7,
+          "metrics": {
+            "qwen_prefill_speedup": 3.5233739434902667,
+            "qwen_decode_speedup": 10.936472553956557,
+            "dense_prefill_speedup": 0.8964671630682355,
+            "dense_decode_speedup": 0.8991228764285067,
+            "dense_total_speedup": 0.8990150800879982,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.5809630302606751
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8990150800879982
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 7,
+          "metrics": {
+            "qwen_prefill_speedup": 4.0435602567926665,
+            "qwen_decode_speedup": 12.709150477774442,
+            "dense_prefill_speedup": 1.0288204006275672,
+            "dense_decode_speedup": 1.0448604774676855,
+            "dense_total_speedup": 1.044209679664661,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9331190160039136
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0288204006275672
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 13,
+          "metrics": {
+            "qwen_prefill_speedup": 4.003011003749741,
+            "qwen_decode_speedup": 12.673246171259615,
+            "dense_prefill_speedup": 1.0185032800428817,
+            "dense_decode_speedup": 1.041908667988851,
+            "dense_total_speedup": 1.0409540315666768,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9350059403172828
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0185032800428817
+        }
+      ],
+      "selected": {
+        "implementation": "mm4",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 7,
+        "metrics": {
+          "qwen_prefill_speedup": 4.0435602567926665,
+          "qwen_decode_speedup": 12.709150477774442,
+          "dense_prefill_speedup": 1.0288204006275672,
+          "dense_decode_speedup": 1.0448604774676855,
+          "dense_total_speedup": 1.044209679664661,
+          "footprint_ratio": 0.8885787392416842,
+          "peak_vram_ratio": 0.9331190160039136
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0288204006275672
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 2,
+          "metrics": {
+            "qwen_prefill_speedup": 4.575067377691326,
+            "qwen_decode_speedup": 10.292572484694468,
+            "dense_prefill_speedup": 1.164265934512908,
+            "dense_decode_speedup": 0.8442463403718672,
+            "dense_total_speedup": 0.8466259615957633,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.6335632491796692
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8466259615957633
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 2,
+          "metrics": {
+            "qwen_prefill_speedup": 4.028835375285102,
+            "qwen_decode_speedup": 12.385907358207232,
+            "dense_prefill_speedup": 1.025260481643871,
+            "dense_decode_speedup": 1.015951743347071,
+            "dense_total_speedup": 1.0160467175437222,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9573427978303087
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.015951743347071
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 2,
+          "metrics": {
+            "qwen_prefill_speedup": 4.682132710952602,
+            "qwen_decode_speedup": 10.478067844903933,
+            "dense_prefill_speedup": 1.1915119857713437,
+            "dense_decode_speedup": 0.859461562732038,
+            "dense_total_speedup": 0.8619176087560069,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.5908390812294917
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8619176087560069
+        }
+      ],
+      "selected": {
+        "implementation": "a8w8",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 2,
+        "metrics": {
+          "qwen_prefill_speedup": 4.028835375285102,
+          "qwen_decode_speedup": 12.385907358207232,
+          "dense_prefill_speedup": 1.025260481643871,
+          "dense_decode_speedup": 1.015951743347071,
+          "dense_total_speedup": 1.0160467175437222,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9573427978303087
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.015951743347071
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 8,
+          "metrics": {
+            "qwen_prefill_speedup": 3.394988787732764,
+            "qwen_decode_speedup": 10.97226906934658,
+            "dense_prefill_speedup": 0.863958815750847,
+            "dense_decode_speedup": 0.8999983260886661,
+            "dense_total_speedup": 0.8996143460781069,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.5486506395232036
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8996143460781069
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 8,
+          "metrics": {
+            "qwen_prefill_speedup": 4.04426468970062,
+            "qwen_decode_speedup": 12.699853682954066,
+            "dense_prefill_speedup": 1.029186942979604,
+            "dense_decode_speedup": 1.0417031321407715,
+            "dense_total_speedup": 1.041573328296847,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9359137480747338
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.029186942979604
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 14,
+          "metrics": {
+            "qwen_prefill_speedup": 4.04789053808115,
+            "qwen_decode_speedup": 12.709083208193755,
+            "dense_prefill_speedup": 1.0301096510852252,
+            "dense_decode_speedup": 1.042460182228936,
+            "dense_total_speedup": 1.0423325403591432,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9370521663429987
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0301096510852252
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 14,
+        "metrics": {
+          "qwen_prefill_speedup": 4.04789053808115,
+          "qwen_decode_speedup": 12.709083208193755,
+          "dense_prefill_speedup": 1.0301096510852252,
+          "dense_decode_speedup": 1.042460182228936,
+          "dense_total_speedup": 1.0423325403591432,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.9370521663429987
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0301096510852252
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 5,
+          "metrics": {
+            "qwen_prefill_speedup": 2.063022828039451,
+            "qwen_decode_speedup": 10.263055607072207,
+            "dense_prefill_speedup": 1.1805420624099707,
+            "dense_decode_speedup": 0.8438837211740474,
+            "dense_total_speedup": 0.9231812584400672,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.7303684731358053
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9231812584400672
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 5,
+          "metrics": {
+            "qwen_prefill_speedup": 1.7472699531199674,
+            "qwen_decode_speedup": 12.362601230217608,
+            "dense_prefill_speedup": 0.999855961847735,
+            "dense_decode_speedup": 1.0165196729868495,
+            "dense_total_speedup": 1.0114407129480367,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9628616333896035
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0114407129480367
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 5,
+          "metrics": {
+            "qwen_prefill_speedup": 2.0600556468741216,
+            "qwen_decode_speedup": 10.464465102621169,
+            "dense_prefill_speedup": 1.1788441257100697,
+            "dense_decode_speedup": 0.8604446949318554,
+            "dense_total_speedup": 0.9366451929615606,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.693230106525409
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9366451929615606
+        }
+      ],
+      "selected": {
+        "implementation": "a8w8",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 5,
+        "metrics": {
+          "qwen_prefill_speedup": 1.7472699531199674,
+          "qwen_decode_speedup": 12.362601230217608,
+          "dense_prefill_speedup": 0.999855961847735,
+          "dense_decode_speedup": 1.0165196729868495,
+          "dense_total_speedup": 1.0114407129480367,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9628616333896035
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": false,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0114407129480367
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 11,
+          "metrics": {
+            "qwen_prefill_speedup": 1.7501707704880238,
+            "qwen_decode_speedup": 10.927875401829873,
+            "dense_prefill_speedup": 1.001515922596504,
+            "dense_decode_speedup": 0.8985487862179963,
+            "dense_total_speedup": 0.927263275512826,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.6564992141568193
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.927263275512826
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 11,
+          "metrics": {
+            "qwen_prefill_speedup": 1.7496641650840514,
+            "qwen_decode_speedup": 12.706389867705244,
+            "dense_prefill_speedup": 1.0012260232409054,
+            "dense_decode_speedup": 1.044787826820149,
+            "dense_total_speedup": 1.031271390122609,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9442342394784329
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0012260232409054
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 17,
+          "metrics": {
+            "qwen_prefill_speedup": 1.7544928978771392,
+            "qwen_decode_speedup": 12.667922385014839,
+            "dense_prefill_speedup": 1.0039892123306722,
+            "dense_decode_speedup": 1.0416248231612182,
+            "dense_total_speedup": 1.0299936946205155,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9452820303859363
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0039892123306722
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 17,
+        "metrics": {
+          "qwen_prefill_speedup": 1.7544928978771392,
+          "qwen_decode_speedup": 12.667922385014839,
+          "dense_prefill_speedup": 1.0039892123306722,
+          "dense_decode_speedup": 1.0416248231612182,
+          "dense_total_speedup": 1.0299936946205155,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.9452820303859363
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0039892123306722
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 6,
+          "metrics": {
+            "qwen_prefill_speedup": 2.0718499825916257,
+            "qwen_decode_speedup": 10.231328339105268,
+            "dense_prefill_speedup": 1.1819700497184356,
+            "dense_decode_speedup": 0.8431430371475241,
+            "dense_total_speedup": 0.8674051849121216,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.7328873767372125
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8674051849121216
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 6,
+          "metrics": {
+            "qwen_prefill_speedup": 1.7529331661625156,
+            "qwen_decode_speedup": 12.33862480637437,
+            "dense_prefill_speedup": 1.0000311407539733,
+            "dense_decode_speedup": 1.0168010690955924,
+            "dense_total_speedup": 1.0151392655680382,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9632662476212446
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0000311407539733
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 6,
+          "metrics": {
+            "qwen_prefill_speedup": 2.073695414302038,
+            "qwen_decode_speedup": 10.433721417397289,
+            "dense_prefill_speedup": 1.1830228503694649,
+            "dense_decode_speedup": 0.8598218406296236,
+            "dense_total_speedup": 0.8833701585491438,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.6961536243584568
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8833701585491438
+        }
+      ],
+      "selected": {
+        "implementation": "a8w8",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 6,
+        "metrics": {
+          "qwen_prefill_speedup": 1.7529331661625156,
+          "qwen_decode_speedup": 12.33862480637437,
+          "dense_prefill_speedup": 1.0000311407539733,
+          "dense_decode_speedup": 1.0168010690955924,
+          "dense_total_speedup": 1.0151392655680382,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9632662476212446
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0000311407539733
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 12,
+          "metrics": {
+            "qwen_prefill_speedup": 1.755453095441203,
+            "qwen_decode_speedup": 10.905945027616879,
+            "dense_prefill_speedup": 1.0014687356376972,
+            "dense_decode_speedup": 0.8987368315024639,
+            "dense_total_speedup": 0.9078235414092213,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.6597658727870365
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9078235414092213
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 12,
+          "metrics": {
+            "qwen_prefill_speedup": 1.7578243203762742,
+            "qwen_decode_speedup": 12.676015789858054,
+            "dense_prefill_speedup": 1.0028214961550845,
+            "dense_decode_speedup": 1.0446047764043835,
+            "dense_total_speedup": 1.0403741518012533,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.944812871230033
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0028214961550845
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 18,
+          "metrics": {
+            "qwen_prefill_speedup": 1.7592184461104492,
+            "qwen_decode_speedup": 12.637409817540274,
+            "dense_prefill_speedup": 1.0036168311828046,
+            "dense_decode_speedup": 1.041423336451212,
+            "dense_total_speedup": 1.0376087449172984,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.945793206850816
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0036168311828046
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 18,
+        "metrics": {
+          "qwen_prefill_speedup": 1.7592184461104492,
+          "qwen_decode_speedup": 12.637409817540274,
+          "dense_prefill_speedup": 1.0036168311828046,
+          "dense_decode_speedup": 1.041423336451212,
+          "dense_total_speedup": 1.0376087449172984,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.945793206850816
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0036168311828046
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 3,
+          "metrics": {
+            "qwen_prefill_speedup": 1.5647298072953502,
+            "qwen_decode_speedup": 10.20802219805306,
+            "dense_prefill_speedup": 1.140626491562832,
+            "dense_decode_speedup": 0.8412487620348268,
+            "dense_total_speedup": 0.8654835948916856,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.7251527917878122
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8654835948916856
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 3,
+          "metrics": {
+            "qwen_prefill_speedup": 1.3755074905820033,
+            "qwen_decode_speedup": 12.30684888337183,
+            "dense_prefill_speedup": 1.0026908644457109,
+            "dense_decode_speedup": 1.0142142313974256,
+            "dense_total_speedup": 1.0129744389601476,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9621432385925355
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0026908644457109
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 3,
+          "metrics": {
+            "qwen_prefill_speedup": 1.5933222849451667,
+            "qwen_decode_speedup": 10.43546769253237,
+            "dense_prefill_speedup": 1.1614692832798066,
+            "dense_decode_speedup": 0.8599926711828313,
+            "dense_total_speedup": 0.8844838255429248,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.6872960303803477
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8844838255429248
+        }
+      ],
+      "selected": {
+        "implementation": "a8w8",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 3,
+        "metrics": {
+          "qwen_prefill_speedup": 1.3755074905820033,
+          "qwen_decode_speedup": 12.30684888337183,
+          "dense_prefill_speedup": 1.0026908644457109,
+          "dense_decode_speedup": 1.0142142313974256,
+          "dense_total_speedup": 1.0129744389601476,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9621432385925355
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0026908644457109
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 9,
+          "metrics": {
+            "qwen_prefill_speedup": 1.280691911794348,
+            "qwen_decode_speedup": 10.87601603363528,
+            "dense_prefill_speedup": 0.9335740364324457,
+            "dense_decode_speedup": 0.8962985039268082,
+            "dense_total_speedup": 0.9001351267588172,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.6499139619058921
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9001351267588172
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 9,
+          "metrics": {
+            "qwen_prefill_speedup": 1.3822572560562536,
+            "qwen_decode_speedup": 12.685434064941605,
+            "dense_prefill_speedup": 1.0076111780205343,
+            "dense_decode_speedup": 1.0454136458521714,
+            "dense_total_speedup": 1.0412487631394032,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.943155521272177
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0076111780205343
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 15,
+          "metrics": {
+            "qwen_prefill_speedup": 1.379285597807575,
+            "qwen_decode_speedup": 12.630165678335763,
+            "dense_prefill_speedup": 1.0054449560271204,
+            "dense_decode_speedup": 1.0408589475071095,
+            "dense_total_speedup": 1.0369660530412306,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9442235803714473
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0054449560271204
+        }
+      ],
+      "selected": {
+        "implementation": "mm4",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 9,
+        "metrics": {
+          "qwen_prefill_speedup": 1.3822572560562536,
+          "qwen_decode_speedup": 12.685434064941605,
+          "dense_prefill_speedup": 1.0076111780205343,
+          "dense_decode_speedup": 1.0454136458521714,
+          "dense_total_speedup": 1.0412487631394032,
+          "footprint_ratio": 0.8885787392416842,
+          "peak_vram_ratio": 0.943155521272177
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0076111780205343
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 4,
+          "metrics": {
+            "qwen_prefill_speedup": 1.563306429319369,
+            "qwen_decode_speedup": 10.171546790350803,
+            "dense_prefill_speedup": 1.1407924002495513,
+            "dense_decode_speedup": 0.8404974311408739,
+            "dense_total_speedup": 0.8469541369943516,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.727769615045548
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8469541369943516
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 4,
+          "metrics": {
+            "qwen_prefill_speedup": 1.3750312196363756,
+            "qwen_decode_speedup": 12.290729038518846,
+            "dense_prefill_speedup": 1.0034022351907015,
+            "dense_decode_speedup": 1.0156101521868293,
+            "dense_total_speedup": 1.0152523003100624,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9625624449015574
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0034022351907015
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 4,
+          "metrics": {
+            "qwen_prefill_speedup": 1.5884256419774616,
+            "qwen_decode_speedup": 10.37653108786515,
+            "dense_prefill_speedup": 1.1591226561502326,
+            "dense_decode_speedup": 0.8574357374807186,
+            "dense_total_speedup": 0.8639477716808119,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.6903320599471054
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8639477716808119
+        }
+      ],
+      "selected": {
+        "implementation": "a8w8",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 4,
+        "metrics": {
+          "qwen_prefill_speedup": 1.3750312196363756,
+          "qwen_decode_speedup": 12.290729038518846,
+          "dense_prefill_speedup": 1.0034022351907015,
+          "dense_decode_speedup": 1.0156101521868293,
+          "dense_total_speedup": 1.0152523003100624,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9625624449015574
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0034022351907015
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 10,
+          "metrics": {
+            "qwen_prefill_speedup": 1.2796274687898794,
+            "qwen_decode_speedup": 10.84268478119675,
+            "dense_prefill_speedup": 0.9337832072894539,
+            "dense_decode_speedup": 0.8959550492272585,
+            "dense_total_speedup": 0.8970070956190918,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.6532471348809874
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.8970070956190918
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 10,
+          "metrics": {
+            "qwen_prefill_speedup": 1.3764550814962022,
+            "qwen_decode_speedup": 12.600492087628274,
+            "dense_prefill_speedup": 1.0044412706339334,
+            "dense_decode_speedup": 1.0412065587516424,
+            "dense_total_speedup": 1.0401036919359135,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.943755509844255
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0044412706339334
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 16,
+          "metrics": {
+            "qwen_prefill_speedup": 1.3694706051567738,
+            "qwen_decode_speedup": 12.604603006013555,
+            "dense_prefill_speedup": 0.9993444851424211,
+            "dense_decode_speedup": 1.0415462530394115,
+            "dense_total_speedup": 1.0402735051815375,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9447546282691742
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0402735051815375
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/results/4090_small_bsz8_20260715/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 16,
+        "metrics": {
+          "qwen_prefill_speedup": 1.3694706051567738,
+          "qwen_decode_speedup": 12.604603006013555,
+          "dense_prefill_speedup": 0.9993444851424211,
+          "dense_decode_speedup": 1.0415462530394115,
+          "dense_total_speedup": 1.0402735051815375,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.9447546282691742
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": false,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0402735051815375
+      }
+    }
+  ],
+  "failures": []
+}

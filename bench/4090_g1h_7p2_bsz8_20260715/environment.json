@@ -1,0 +1,82 @@
+{
+  "artifact_date": "2026-07-15",
+  "hardware": {
+    "device": "NVIDIA GeForce RTX 4090",
+    "compute_capability": "sm_89",
+    "memory_mib": 24564,
+    "power_limit_w": 450.0,
+    "driver_version": "550.142"
+  },
+  "host": {
+    "os": "Linux 5.15.0-128-generic x86_64",
+    "cpu_count": 10,
+    "system_memory_gib": 31,
+    "swap_gib": 0,
+    "python": "3.10.12"
+  },
+  "software": {
+    "torch": "2.6.0+cu124",
+    "torch_cuda": "12.4",
+    "triton": "3.2.0",
+    "transformers": "5.12.1",
+    "bitsandbytes": "0.49.2",
+    "flash_linear_attention": "0.5.1",
+    "causal_conv1d": "1.5.0.post8",
+    "torchao": "0.9.0",
+    "accelerate": "1.14.0",
+    "peft": "0.19.1",
+    "safetensors": "0.8.0"
+  },
+  "source": {
+    "base_commit": "3a66888ea26ea8cffe64ebef9b5effff7dc8980a",
+    "benchmark_patch_commit": "3b51048935a0c33b826f8b72df73fa0aeafd244e",
+    "snapshot_check": "Every implementation, test and runner file changed by benchmark_patch_commit was SHA-256 compared with the remote benchmark source after the final test run; no differences were found."
+  },
+  "models": {
+    "rwkv": {
+      "source": "Blink_DL/rwkv7-g1 on ModelScope",
+      "checkpoint": "rwkv7-g1h-7.2b-20260710-ctx10240.pth",
+      "checkpoint_sha256": "1fe61e5c4b9037ffd4723a11c4de146d99c26bcd89e00a61afa67ef653d215e8",
+      "converted_model": "rwkv7-g1h-7.2b-hf",
+      "converted_safetensors_sha256": "725a8604f1129f6dbb595595e01aadf4006bdea99de3a47a3dc1be3ff21225d7",
+      "logical_parameters": 7199141888,
+      "active_parameters": 7199141888
+    },
+    "qwen": {
+      "source": "Qwen/Qwen3.5-9B",
+      "checkpoint": "official four-shard safetensors snapshot",
+      "logical_parameters": 8953803264,
+      "active_parameters": 8953803264
+    }
+  },
+  "matrix": {
+    "batch_sizes": [8],
+    "prompt_tokens": [128, 512, 2048],
+    "decode_tokens": [128, 512],
+    "prefill_chunk_size": 512,
+    "dtype": "fp16",
+    "precision_families": ["none", "w8", "w4"],
+    "warmup": 1,
+    "runs": 3,
+    "dense_prompt_128_rerun": {"warmup": 2, "runs": 5},
+    "resident_sweep": true,
+    "expected_cells": 18
+  },
+  "routes": {
+    "dense": "native_prefill_graph + native_graph decode",
+    "w8": "bnb8_a8w8_head",
+    "w4": "per-cell selection between native MM4 and TorchAO W4",
+    "qwen": "FLA Gated DeltaNet + causal-conv1d + fused gated norm"
+  },
+  "exit_codes": {
+    "pipeline": 0,
+    "route_composition": 0,
+    "speed_comparison": 0,
+    "memory_comparison": 0,
+    "active_work_comparison": 0,
+    "quant_correctness_bnb8": 0,
+    "quant_correctness_mm4": 0,
+    "focused_tests": 0,
+    "matrix_failures": 0
+  }
+}

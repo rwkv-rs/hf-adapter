@@ -428,19 +428,23 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
     try:
         os.environ.pop(key, None)
         native_jit.torch.cuda.is_available = lambda: True
-        native_jit.torch.cuda.get_device_capability = lambda: (7, 0)
+        native_jit.torch.cuda.get_device_capability = lambda *_args: (7, 0)
         assert native_jit._native_prefill_scan_block_m(64, 1) == 16
         assert native_jit._native_prefill_scan_block_m(64, 4) == 32
-        native_jit.torch.cuda.get_device_capability = lambda: (7, 5)
+        native_jit.torch.cuda.get_device_capability = lambda *_args: (7, 5)
         assert native_jit._native_prefill_scan_block_m(64, 1) == 64
-        native_jit.torch.cuda.get_device_capability = lambda: (8, 9)
-        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 4090"
+        native_jit.torch.cuda.get_device_capability = lambda *_args: (8, 9)
+        native_jit.torch.cuda.get_device_name = lambda *_args: "NVIDIA GeForce RTX 4090"
         assert native_jit._native_prefill_scan_block_m(64, 1) == 4
         assert native_jit._native_prefill_scan_block_m(64, 4) == 8
-        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 4070"
+        assert native_jit._native_prefill_scan_block_m(64, 8, 128) == 32
+        assert native_jit._native_prefill_scan_block_m(64, 8, 512) == 8
+        assert native_jit._native_prefill_scan_block_m(64, 8, 512, 2048) == 32
+        assert native_jit._native_prefill_scan_block_m(64, 8, 512, 4096) == 8
+        native_jit.torch.cuda.get_device_name = lambda *_args: "NVIDIA GeForce RTX 4070"
         assert native_jit._native_prefill_scan_block_m(64, 1) == 64
-        native_jit.torch.cuda.get_device_capability = lambda: (12, 0)
-        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 5070 Laptop GPU"
+        native_jit.torch.cuda.get_device_capability = lambda *_args: (12, 0)
+        native_jit.torch.cuda.get_device_name = lambda *_args: "NVIDIA GeForce RTX 5070 Laptop GPU"
         assert native_jit._native_prefill_scan_block_m(64, 1) == 8
         assert native_jit._native_prefill_scan_block_m(64, 2) == 16
         assert native_jit._native_prefill_scan_block_m(64, 4) == 32

@@ -708,7 +708,7 @@ def save_backend_probe(args: argparse.Namespace, model, ids) -> dict[str, Any]:
     }
 
 
-def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
+def environment_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]:
     qwen_fast_path = None
     if args.model_kind == "qwen35":
         try:
@@ -719,9 +719,13 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
             qwen_fast_path = False
     self_chunk_h_bv_effective = None
     self_chunk_h_bc_effective = None
+    scan_block_m_effective = None
     if args.model_kind == "rwkv" and str(args.device).startswith("cuda"):
         try:
-            from rwkv7_hf.native_jit import _native_prefill_self_chunk_size
+            from rwkv7_hf.native_jit import (
+                _native_prefill_scan_block_m,
+                _native_prefill_self_chunk_size,
+            )
             from rwkv7_hf.self_chunk_h_fwd import resolve_chunk_h_tiles
 
             self_chunk_size = _native_prefill_self_chunk_size(
@@ -732,6 +736,18 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
                 self_chunk_size,
                 batch_size=int(args.batch_size),
                 tokens=int(args.prompt_tokens),
+            )
+            config = getattr(model, "config", None)
+            hidden_size = int(getattr(config, "hidden_size"))
+            num_heads = getattr(config, "num_attention_heads", None)
+            if num_heads is None:
+                num_heads = getattr(config, "num_heads")
+            num_heads = int(num_heads)
+            scan_block_m_effective = _native_prefill_scan_block_m(
+                hidden_size // num_heads,
+                int(args.batch_size),
+                int(args.prompt_tokens),
+                hidden_size,
             )
         except Exception:
             pass
@@ -787,6 +803,7 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
         "rwkv_prefill_self_chunk_h_bv_effective": self_chunk_h_bv_effective,
         "rwkv_prefill_self_chunk_h_bc_effective": self_chunk_h_bc_effective,
         "rwkv_prefill_scan_block_m_requested": os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M"),
+        "rwkv_prefill_scan_block_m_effective": scan_block_m_effective,
         "rwkv_prefill_scan_num_warps_requested": os.environ.get(
             "RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS"
         ),
@@ -1091,7 +1108,7 @@ def benchmark_loaded(
     row = {
         **base_row(args),
         **model_metadata(args, model),
-        **environment_metadata(args),
+        **environment_metadata(args, model),
         **effective_quantization_metadata(model, args),
         **parameter_metadata,
         **qwen_contract,
