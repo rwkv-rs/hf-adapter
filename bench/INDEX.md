@@ -14,16 +14,12 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 | RTX 4090 | [`4090_small_bsz8_20260715/`](4090_small_bsz8_20260715/README.md) | 0.4B/0.8B, 1.5B/2B and 2.9B/4B bsz8 dense, active-work, W8/W4 speed and physical-memory gates pass 54/54 |
 | RTX 4090 | [`4090_validation_summary.md`](4090_validation_summary.md) | Measured dense decode/current-session prefill and quant speed lanes pass |
 | RTX 5090 | [`5090_blackwell_production_close_20260712/`](5090_blackwell_production_close_20260712/README.md) | Quant pressure, 13.3B conversion and full MATH500 pass |
+| RTX 5090 | [`5090_g1h_qwen35_b1_b8_20260715/`](5090_g1h_qwen35_b1_b8_20260715/README.md) | Current-main 0.4B/0.8B through 7.2B/9B B1/B8 matrix passes 8/8 batch-pairs and 144/144 full-FLA cells |
+| RTX 5090 | [`5090_g1h_13p3_20260715/`](5090_g1h_13p3_20260715/README.md) | Latest official g1h 13.3B load/generate plus B8 paired-fp16 MM8/MM4 speed-policy gate pass |
 | Apple M5 | [`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md) | Selected MLX/Qwen3.5 production pairs pass |
 
 Canonical cross-platform summary: [`../BENCHMARK.md`](../BENCHMARK.md) and
 [`../docs/HARDWARE_MATRIX.md`](../docs/HARDWARE_MATRIX.md).
-
-## Staged in-review artifacts
-
-| Platform | Artifact | Current conclusion |
-|---|---|---|
-| RTX 5090 | [`5090_g1h_qwen35_b1_b8_20260715/`](5090_g1h_qwen35_b1_b8_20260715/README.md) | Six checked 0.4B/1.5B/2.9B B1/B8 batch-pairs pass 108 candidate and 108 full-FLA Qwen reference rows; 7.2B/9B and fresh 13.3B remain open |
 
 ## Apple M5 production-close evidence
 

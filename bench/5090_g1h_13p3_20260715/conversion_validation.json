@@ -1,0 +1,23 @@
+{
+  "status": "pass",
+  "source_checkpoint": "rwkv7-g1h-13.3b-20260710-ctx10240.pth",
+  "source_size_bytes": 26540868485,
+  "source_sha256": "5bd705d13497d23530e544d5afb45bdf542b5f67dffee31e3e2b35e4042cfcfb",
+  "hf_shards": 6,
+  "hf_shard_bytes": 26538708952,
+  "hf_index_total_size": 26538491904,
+  "tensor_keys": 2016,
+  "model_type": "rwkv7_hf_adapter",
+  "num_hidden_layers": 61,
+  "hidden_size": 4096,
+  "head_dim": 64,
+  "vocab_size": 65536,
+  "tokenizer_class": "RWKV7Tokenizer",
+  "tokenizer_length": 65538,
+  "validation": [
+    "safetensors.safe_open for every shard",
+    "index key and shard coverage equality",
+    "AutoConfig local load",
+    "AutoTokenizer local load"
+  ]
+}
