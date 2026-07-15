@@ -32,6 +32,7 @@ Status vocabulary:
 | RTX 4090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/full-FLA/route contracts; quality is a separate axis | dense prefill min `1.3704x/1.0420x/1.3051x`, decode min `12.1018x/5.6368x/4.2144x`; W8/W4 total latency and physical-memory gates pass | **PASS 54/54** |
 | RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
+| RTX 5090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, B1/B8, dense/W8/W4 | 108/108 Qwen references verify full FLA plus Triton conv; 24/24 greedy checks pass; task quality is separate | dense prefill/decode minima `1.0191x/3.9869x`; active-work decode min `2.7943x`; W8/W4 total-latency and footprint gates pass | **PARTIAL 6/8 batch-pairs** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
 ## V100 production-close
@@ -310,6 +311,22 @@ Quant speed lanes:
 
 Environment and full evidence:
 [`bench/5090_blackwell_production_close_20260712/README.md`](bench/5090_blackwell_production_close_20260712/README.md).
+
+### Full-FLA Qwen3.5 B1/B8 staged matrix
+
+The in-review artifact at
+[`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
+covers the completed 0.4B/0.8B, 1.5B/2B and 2.9B/4B pairs at B1 and B8,
+prompt 128/512/2048 and decode 128/512. Its explicit partial summary passes
+6/6 selected batch-pairs with 108 candidate and 108 joined Qwen reference rows;
+all Qwen rows verify FLA chunk prefill, fused-recurrent decode, fused gated norm
+and the FLA Triton causal-convolution bridge. Across the checked scope, minimum
+dense raw prefill/decode ratios are `1.019050x/3.986873x`, and minimum
+active-parameter-normalized decode is `2.794330x`. W8 and W4 pass paired-fp16
+total-latency and footprint gates. Some B8 active-normalized prefill cells are
+below `1.0x`, so no all-cell active-prefill lead is claimed. The 7.2B/9B pair,
+latest-main rerun and separate 13.3B validation remain open; the full matrix is
+not promoted as complete.
 
 ### Quant pressure matrix
 

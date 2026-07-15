@@ -234,7 +234,29 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.fused_output
     assert blackwell.fused_recurrent_output
     assert not blackwell.fused_projection
+    assert blackwell.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 8),)
+    assert not blackwell.fused_prefill_clampw_scan
+    assert blackwell.prefill_clampw_scan_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.fused_prefill_residual_gemm
+    assert blackwell.fused_prefill_stacked_rkv
+    assert blackwell.prefill_stacked_rkv_min_rows == 1
+    assert blackwell.prefill_stacked_rkv_max_rows == 1
+    assert blackwell.prefill_stacked_rkv_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.fused_prefill_sequence_ffn
+    assert blackwell.prefill_sequence_ffn_min_rows == 1
+    assert blackwell.prefill_sequence_ffn_max_rows == 1
+    assert blackwell.prefill_sequence_ffn_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.prefill_sequence_ffn_large_blocks == (64, 128, 32, 64, 8)
+    assert blackwell.prefill_sequence_ffn_num_stages == 3
+    assert blackwell.prefill_sequence_ffn_num_warps == 8
     assert "triton_compat" in blackwell.notes
+    other_blackwell = policy_for_profile(
+        classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0))
+    )
+    assert other_blackwell.prefill_scan_block_m_model_shapes == ()
+    assert other_blackwell.prefill_clampw_scan_model_shapes == ()
+    assert not other_blackwell.fused_prefill_stacked_rkv
+    assert not other_blackwell.fused_prefill_sequence_ffn
 
     apple = policy_for_profile(classify_gpu("Apple M5", None, is_mps=True))
     assert apple.profile.family == "apple_mps"

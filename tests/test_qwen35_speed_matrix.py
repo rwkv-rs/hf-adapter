@@ -355,6 +355,7 @@ def test_resident_worker_forwards_probe_defaults_to_shared_worker() -> None:
         rwkv_attn_mode="fused_recurrent",
         rwkv_code_source="repo",
         qwen_backend="auto",
+        qwen_conv_backend="fla_triton",
         require_qwen_fast_path=False,
         probe_output="",
         probe_tokens=8,
@@ -363,6 +364,7 @@ def test_resident_worker_forwards_probe_defaults_to_shared_worker() -> None:
     forwarded = cell_args(args, 8, 128, 128)
     assert forwarded.probe_output == ""
     assert forwarded.probe_tokens == 8
+    assert forwarded.qwen_conv_backend == "fla_triton"
     validate_args(forwarded)
 
 
@@ -1439,7 +1441,15 @@ def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
         encoding="utf-8"
     )
     assert 'PREFILL_CHUNK_SIZE="${PREFILL_CHUNK_SIZE:-512}"' in script
-    assert '"${gpu_name}" != *"RTX 4090"*' in script
+    assert 'REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4090}"' in script
+    assert '"${gpu_name}" != *"${REQUIRED_GPU_SUBSTRING}"*' in script
+    assert 'BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_4090_hf_final}"' in script
+    assert 'QWEN_CONV_BACKEND="${QWEN_CONV_BACKEND:-auto}"' in script
+    assert 'REQUIRE_QWEN_FULL_FUSED="${REQUIRE_QWEN_FULL_FUSED:-0}"' in script
+    assert '--qwen-conv-backend "${QWEN_CONV_BACKEND}"' in script
+    assert 'common_compare+=(--require-qwen-full-fused)' in script
+    assert 'if [[ "${RUN_NATIVE_MM8:-0}" == "1" ]]' in script
+    assert "native_speed_mm8" in script
     assert "--require-qwen-fast-path" in script
     assert 'qwen_backend="fla"' in script
     assert 'DENSE_PREFILL_GATE="${DENSE_PREFILL_GATE:-1.00}"' in script
@@ -1449,6 +1459,84 @@ def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
     assert "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1" in script
     assert "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS=128" in script
     assert "--allow-quant-total-not-slower-than-dense" in script
+    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"' in script
+
+
+def test_5090_acceptance_reuses_contract_without_4090_policy_defaults() -> None:
+    script = (ROOT / "bench" / "run_5090_qwen35_pair_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'REQUIRED_GPU_SUBSTRING="RTX 5090"' in script
+    assert 'BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_5090_hf_final}"' in script
+    assert 'QWEN_CONV_BACKEND="fla_triton"' in script
+    assert "export RUN_NATIVE_MM8=1" in script
+    assert "export REQUIRE_QWEN_FULL_FUSED=1" in script
+    assert "unset ALLOW_NON_4090" in script
+    assert "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M" not in script
+    assert "export RWKV7_FAST_PREFILL=1" in script
+    assert "export RWKV7_FAST_PREFILL_QUANT=1" in script
+    assert "export RWKV7_NATIVE_PREFILL_FUSED_SCAN=1" in script
+    assert "export RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX=1" in script
+    assert "export RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1" in script
+    assert "export RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1" in script
+    assert "export RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=0" in script
+    assert 'run_4090_qwen35_pair_acceptance.sh" "$@"' in script
+
+
+def test_5090_correctness_entrypoint_checks_full_fla_and_native_prefill() -> None:
+    script = (ROOT / "bench" / "run_5090_qwen35_correctness.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'REQUIRED_GPU_SUBSTRING="RTX 5090"' in script
+    assert 'CORRECTNESS_PROMPT_TOKENS="${CORRECTNESS_PROMPT_TOKENS:-512}"' in script
+    assert 'CORRECTNESS_BATCH_SIZE="${CORRECTNESS_BATCH_SIZE:-8}"' in script
+    assert '--batch-size "${CORRECTNESS_BATCH_SIZE}"' in script
+    assert "--qwen-conv-backend fla_triton --require-qwen-fast-path" in script
+    assert "compare_qwen35_backend_probe.py" in script
+    assert "--min-cosine 0.999" in script
+    assert "for quantization in none bnb8 bnb4" in script
+    assert "compare_rwkv_prefill_probe.py" in script
+    assert "--min-cosine 0.9999" in script
+    assert "RWKV7_NATIVE_PREFILL_FUSED_SCAN=1" in script
+    assert "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1" in script
+    assert '[[ ${failures} -eq 0 ]]' in script
+
+
+def test_5090_full_matrix_entrypoint_runs_all_exact_pairs() -> None:
+    script = (ROOT / "bench" / "run_5090_qwen35_full_matrix.sh").read_text(
+        encoding="utf-8"
+    )
+    for pair in (
+        "rwkv-0.4b__qwen3.5-0.8b",
+        "rwkv-1.5b__qwen3.5-2b",
+        "rwkv-2.9b__qwen3.5-4b",
+        "rwkv-7.2b__qwen3.5-9b",
+    ):
+        assert pair in script
+    assert "run_5090_qwen35_correctness.sh" in script
+    assert "run_5090_qwen35_pair_acceptance.sh" in script
+    assert 'ACCEPTANCE_BATCH_SIZES="${ACCEPTANCE_BATCH_SIZES:-1 8}"' in script
+    assert 'for batch_size in ${ACCEPTANCE_BATCH_SIZES}' in script
+    assert 'out_dir="${OUT_ROOT}/b${batch_size}/${out_name}"' in script
+    assert 'CORRECTNESS_BATCH_SIZE="${batch_size}"' in script
+    assert 'BATCH_SIZES="${batch_size}"' in script
+    assert "summarize_5090_qwen35_acceptance.py" in script
+    assert 'printf \'%s\\n\' "${summary_rc}" > "${OUT_ROOT}/summary-exit-code.txt"' in script
+    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_ROOT}/pipeline-exit-code.txt"' in script
+
+
+def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
+    script = (ROOT / "bench" / "run_5090_g1h_13b_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'REQUIRED_GPU_SUBSTRING="RTX 5090"' in script
+    assert "bench_larger_model_smoke.py" in script
+    assert "--fast-token-backend native_jit" in script
+    assert "--quantizations none mm8 mm4" in script
+    assert "--paired-baseline --fail-fast" in script
+    assert "--gate --expected-rows 3 --min-speed-ratio 0.98" in script
+    assert "smoke_rc" in script and "quant_rc" in script and "gate_rc" in script
+    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline-exit-code.txt"' in script
 
 
 def test_hardware_entrypoints_are_fail_closed() -> None:
