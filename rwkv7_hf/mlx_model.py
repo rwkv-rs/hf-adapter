@@ -137,6 +137,11 @@ class MLXRWKV7Model:
             "reference",
             {"reference", "fast"},
         )
+        self.decode_state_dtype = _env_choice(
+            "RWKV7_MLX_DECODE_STATE_DTYPE",
+            "fp32",
+            {"fp16", "fp32"},
+        )
         self.decode_compile_s_by_batch: dict[int, float] = {}
         self._compiled_decode_functions: dict[int, Any] = {}
         self._compiled_greedy_decode_functions: dict[int, Any] = {}
@@ -490,6 +495,7 @@ class MLXRWKV7Model:
             "decode_backend_last": self.decode_backend_last,
             "decode_backend_counts": dict(self.decode_backend_counts),
             "decode_norm_backend": self.decode_norm_backend,
+            "decode_state_dtype": self.decode_state_dtype,
             "decode_compiled_batches": sorted(self._compiled_decode_functions),
             "decode_compiled_greedy_batches": sorted(self._compiled_greedy_decode_functions),
             "decode_compiled_norm_backend_by_batch": dict(
@@ -2284,8 +2290,17 @@ class MLXRWKV7Model:
             self._eval_step_state(last, state)
         return state
 
+    def prepare_decode_state(self, state: MLXRWKV7State) -> MLXRWKV7State:
+        """Apply the configured recurrent-cache dtype at a prefill/decode boundary."""
+
+        if self.decode_state_dtype == "fp16":
+            mx = _mx()
+            state.recurrent_state = [value.astype(mx.float16) for value in state.recurrent_state]
+        return state
+
     def prefill(self, input_ids: Iterable[Iterable[int]] | Any, state: MLXRWKV7State | None = None):
-        return self.forward(input_ids, state=state, collect_all=False)
+        logits, next_state = self.forward(input_ids, state=state, collect_all=False)
+        return logits, self.prepare_decode_state(next_state)
 
     def _flatten_compiled_decode_state(self, state: MLXRWKV7State) -> tuple[Any, ...]:
         return (

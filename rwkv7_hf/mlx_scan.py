@@ -513,7 +513,12 @@ def wkv_scan_post_metal_fp16(
         grid=(rows, 1, 1),
         threadgroup=(min(256, max(1, N)), 1, 1),
         output_shapes=[state.shape, (B, T, H, N)],
-        output_dtypes=[mx.float32, mx.float16],
+        # Decode may deliberately keep its recurrent cache in FP16.  The
+        # kernel still widens the complete state row to float registers for
+        # recurrence math; matching the cache input dtype only halves the
+        # boundary read/write traffic.  FP32 prefill/state callers retain the
+        # historical FP32 output unchanged.
+        output_dtypes=[state.dtype, mx.float16],
     )
     return out, state_out
 

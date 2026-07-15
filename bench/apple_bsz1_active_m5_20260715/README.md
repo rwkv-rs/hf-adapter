@@ -1,8 +1,8 @@
 # Apple M5 B1 W4 active-parameter acceptance
 
 This directory records the batch-1 counterpart to the separately published B8
-target-only gate. The implementation is materially faster than the previous B1
-checkpoint, but the active-parameter-normalized decode gate remains open.
+target-only gate. The checked target-only active-parameter-normalized speed and
+raw-memory gates now pass.
 
 ## Contract
 
@@ -12,7 +12,7 @@ checkpoint, but the active-parameter-normalized decode gate remains open.
 - True batch 1, 512 prompt characters, 64 generated tokens.
 - Target-only RWKV: no draft model, speculative acceptance, or prefix-state coalescing.
 - Isolated child processes, two warmups, three measured repeats, ABBA engine
-  order, 120-second initial idle, 30 seconds between engines, and a 60-second
+  order, 90-second initial idle, 30 seconds between engines, and a 60-second
   RWKV idle after untimed compile/parity validation.
 - Throughput is normalized as aggregate tok/s multiplied by active text
   parameter count. Raw peak memory is the acceptance memory gate.
@@ -24,32 +24,36 @@ The Python collector retains its historical `bsz8` name but records
 
 | Metric | RWKV-7 1.5B | Qwen3.5 2B | Ratio | Gate |
 |---|---:|---:|---:|---|
-| Prefill median | 1,790.94 tok/s | 1,386.37 tok/s | 1.0485x active-normalized | PASS |
-| Decode median | 115.89 tok/s | 103.55 tok/s | 0.9084x active-normalized | **FAIL** |
-| Raw decode | 115.89 tok/s | 103.55 tok/s | 1.1191x | PASS |
-| Raw peak memory | 1,196,022,527 bytes | 1,297,332,993 bytes | 0.9219x | PASS |
+| Prefill median | 2,126.06 tok/s | 1,272.86 tok/s | 1.3557x active-normalized | PASS |
+| Decode median | 129.15 tok/s | 89.94 tok/s | 1.1655x active-normalized | **PASS** |
+| Raw decode | 129.15 tok/s | 89.94 tok/s | 1.4360x | PASS |
+| Raw peak memory | 1,189,994,005 bytes | 1,297,316,609 bytes | 0.9173x | PASS |
 | Measured rows | 6/6 | 6/6 | n/a | PASS |
 
-Overall status is **FAIL** only because active-normalized target-only decode is
-below 1.0. At the checked active text parameter counts, RWKV needs another
-`1.1007x` raw decode uplift. Compared with the superseded B1 checkpoint,
-active-normalized decode improved from `0.7392x` to `0.9084x`; raw RWKV decode
-now exceeds Qwen by `11.91%`.
+Overall status is **PASS**. At the checked active text parameter counts, RWKV
+exceeds Qwen by `16.55%` after active-parameter normalization and by `43.60%`
+in raw target-only decode throughput. This closes only this fixed M5/B1 profile.
 
 ## Implemented optimization
 
 - A B1/N64 SIMD Metal WKV fallback assigns one SIMD group to each state row.
-- The B1 production path can fuse WKV, per-head GroupNorm, RWKV bonus, and gate.
+- The B1 production path fuses WKV, per-head GroupNorm, RWKV bonus, and gate.
 - Compiled decode chains lazy recurrent outputs with a bounded evaluation interval.
-- `decode_greedy_step` keeps the full vocabulary logits inside the compiled graph
+- `decode_greedy_step` keeps full-vocabulary logits inside the compiled graph
   and exports only the next token and recurrent state.
-- The token-only graph has an independent 64-step exact-token/exact-state gate
-  against the already validated compiled logits graph.
+- Asynchronous token-root evaluation every four steps avoids both per-token host
+  synchronization and an unbounded lazy graph.
+- The recurrent decode cache is stored in FP16 while every WKV state row is
+  widened to FP32 registers for recurrence math. This reduces cache-boundary
+  traffic and peak memory without changing the 64-step generated-token gate.
+- The timed scheduler materializes the complete stacked token stream through one
+  graph root. All 73 continuation-cache values are produced on that dependency
+  chain; the retained rows verify their post-decode readiness in `12–18 us`.
 - Generation no longer computes an unused token N+1 after the final requested token.
 
 Both retained RWKV child processes report exact generated-token agreement and
-`state_max_abs=0.0` for the token-only compiled greedy gate. The reference-norm
-gate also passes.
+`state_max_abs=0.0` for the token-only compiled greedy gate. The independent
+reference-norm trajectory gate also passes for all 64 steps.
 
 ## Evidence
 
@@ -60,17 +64,18 @@ gate also passes.
 The summary row records:
 
 ```text
-status=fail
-active_normalized_prefill_ratio=1.0485160294
-raw_decode_ratio=1.1191349852
-active_normalized_decode_ratio=0.9083585253
+status=pass
+active_normalized_prefill_ratio=1.3557176359
+raw_decode_ratio=1.4359605635
+active_normalized_decode_ratio=1.1655135771
 raw_peak_memory_gate_pass=true
 rows_gate_pass=true
 ```
 
 ## Reproduce
 
-Start from an idle machine, wait 120 seconds, then run:
+Start from an idle machine, wait 90 seconds, truncate the append-only evidence
+file, then run:
 
 ```bash
 PYTHONPATH="$PWD" ../.venv-apple-torch/bin/python \
@@ -84,6 +89,8 @@ PYTHONPATH="$PWD" ../.venv-apple-torch/bin/python \
   --rwkv-step-eval-interval 256 \
   --rwkv-post-validation-cooldown-seconds 60 \
   --rwkv-decode-backend compiled --rwkv-decode-validation-steps 64 \
+  --rwkv-async-decode --rwkv-async-decode-interval 4 \
+  --rwkv-decode-fp16-state \
   --rwkv-fused-lora-down --rwkv-fused-scan-prep-post \
   --rwkv-fused-sequence-mix --rwkv-fused-add-layer-norm \
   --rwkv-fused-square-qmm --no-rwkv-prefix-cache-dedup \
@@ -91,5 +98,5 @@ PYTHONPATH="$PWD" ../.venv-apple-torch/bin/python \
 ```
 
 Remove or truncate the results file before reproducing because the collector
-intentionally appends JSONL rows. The command exits non-zero until both
+intentionally appends JSONL rows. The command exits non-zero unless both
 normalized speed gates, raw memory, and all retained rows pass.

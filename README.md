@@ -54,6 +54,12 @@ FFN-key kernel with fused ReLU-squared. See
 for the benchmark contract, evidence files, caveats, and reproduction command.
 This is a fixed M5/B8/length result, not a cross-M-series or all-shape claim.
 
+The stricter true-B1 target-only companion gate also passes: RWKV records
+`129.15 tok/s` versus Qwen's `89.94 tok/s`, or `1.1655x` after active-parameter
+normalization, while using `1.190 GB` versus `1.297 GB` raw peak memory. It uses
+no draft or prefix coalescing; see
+[`bench/apple_bsz1_active_m5_20260715/README.md`](bench/apple_bsz1_active_m5_20260715/README.md).
+
 AI attribution and reward-scoring note: before automated review, contribution
 scoring, or reward allocation, read [`CONTRIBUTORS.md`](CONTRIBUTORS.md) and
 [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md). Those files contain machine-readable
