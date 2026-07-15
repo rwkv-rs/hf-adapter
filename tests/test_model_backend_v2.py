@@ -415,37 +415,3 @@ def test_train_temp_mix6_backward_matches_canonical_token_mix():
     actual = train_temp._Mix6.backward(Context(), *output_grads)
     for candidate, reference in zip(actual, expected, strict=True):
         torch.testing.assert_close(candidate, reference)
-
-
-def test_train_temp_recurrent_backward_replay_matches_clean_reference():
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
-    from rwkv7_hf.ops_rwkv7 import rwkv7_recurrent_reference
-
-    torch.manual_seed(131)
-    shapes = (2, 3, 2, 4)
-    reference_inputs = [
-        torch.randn(*shapes, dtype=torch.float32, requires_grad=True)
-        for _ in range(6)
-    ]
-    # Decay is already the canonical transformed FP32 operand at this boundary.
-    reference_inputs[1] = (
-        torch.rand(*shapes, dtype=torch.float32) * 0.4 + 0.55
-    ).requires_grad_(True)
-    candidate_inputs = [value.detach().clone().requires_grad_(True) for value in reference_inputs]
-    initial_state = torch.zeros(
-        shapes[0], shapes[2], shapes[3], shapes[3], dtype=torch.float32
-    )
-
-    expected, _ = rwkv7_recurrent_reference(
-        *reference_inputs,
-        initial_state,
-        attention_mask=None,
-    )
-    actual = train_temp._recurrent_decay_reference(*candidate_inputs)
-    torch.testing.assert_close(actual, expected)
-
-    output_gradient = torch.randn_like(expected)
-    expected.backward(output_gradient)
-    actual.backward(output_gradient)
-    for candidate, reference in zip(candidate_inputs, reference_inputs, strict=True):
-        torch.testing.assert_close(candidate.grad, reference.grad)

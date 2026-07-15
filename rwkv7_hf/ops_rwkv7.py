@@ -109,39 +109,20 @@ def rwkv7_recurrent_reference(
             b_t = b[batch_idx : batch_idx + 1, token_idx]
 
             # Evaluate the canonical [K,V] state in the official [V,K]
-            # presentation, then transpose it back.  Keep the rank-one
-            # ``a @ b`` update factorized: this is the direct RWKV-7 equation,
-            # avoids materializing a KxK temporary, and matches the official
-            # linear-time CUDA recurrence's BF16 accumulation order.
+            # presentation, then transpose it back. Multiplication order is
+            # important for long-sequence numerical parity.
             state_vk = state.transpose(-1, -2)
+            ab = a_t.unsqueeze(-1) @ b_t.unsqueeze(-2)
             vk = v_t.unsqueeze(-1) @ k_t.unsqueeze(-2)
-            state_a = torch.zeros_like(state_vk[..., 0])
-            for key_idx in range(key_dim):
-                state_a = state_a + (
-                    state_vk[..., key_idx]
-                    * a_t[..., key_idx].unsqueeze(-1).to(dtype=state.dtype)
-                )
             candidate_vk = (
                 state_vk * w_t.unsqueeze(-2)
-                + (
-                    state_a.unsqueeze(-1)
-                    * b_t.unsqueeze(-2).to(dtype=state.dtype)
-                    + vk.to(dtype=state.dtype)
-                )
+                + state_vk @ ab.to(dtype=state.dtype)
+                + vk.to(dtype=state.dtype)
             )
             candidate = candidate_vk.transpose(-1, -2)
-            candidate_output = candidate_vk.to(dtype=r_t.dtype)
-            output_fp32 = torch.zeros(
-                candidate_output.shape[:-1],
-                dtype=state.dtype,
-                device=candidate_output.device,
-            )
-            for key_idx in range(key_dim):
-                output_fp32 = output_fp32 + (
-                    candidate_output[..., key_idx].to(dtype=state.dtype)
-                    * r_t[..., key_idx].unsqueeze(-1).to(dtype=state.dtype)
-                )
-            output = output_fp32.to(dtype=r_t.dtype)
+            output = (
+                candidate_vk.to(dtype=r_t.dtype) @ r_t.unsqueeze(-1)
+            ).squeeze(-1)
 
             if sample_mask is not None:
                 active = sample_mask[:, token_idx]

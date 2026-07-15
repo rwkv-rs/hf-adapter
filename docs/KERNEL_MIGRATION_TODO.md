@@ -1610,3 +1610,37 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   The next step is to commit this accepted source, build an immutable two-wheel
   pair from that commit, then use only that pair for the remaining 4080
   ecosystem, quantization, FLA, benchmark and formal lm_eval gates.
+
+### 2026-08-28 — candidate-wheel inference exposed a reference-boundary regression
+
+- Built candidate wheels from commit `c956fa274e1b238a6c6cca2753ab253b4387463b`:
+  HF SHA256 `f0d107de31b08a4438447ce0e29bc3d1eb4ac0408adb49a2d491e72d6f9acea0`
+  and kernel SHA256
+  `b0dc3bb07be536d09ecb77dc30e4b1601cc458f603d36456bb787c6b20df9b0e`.
+  Installation from those wheels and all three staged model-code hashes were
+  verified before GPU execution.
+- The candidate inference smoke correctly failed.  Native prefill/decode stayed
+  finite, cache lifecycle and 16-token greedy/beam generation passed, and the
+  reported routes were the intended native implementations, but BF16 logits
+  exceeded the existing max-abs gate.  The failure was caused by changing the
+  *public* clean recurrence's reduction order to match the private train-temp
+  leaf: all existing inference/Graph/prefill kernels and the earlier 144-unit
+  reference baseline implement the original readable `state @ (a @ b)` and
+  `state @ r` boundary.
+- A controlled diagnostic restored only the original clean recurrence while
+  keeping the repaired native training leaf.  Dense BF16 native training then
+  failed its unchanged gate (`logits max_abs=0.375`, worst gradient cosine
+  `0.9871`, worst relative-L2 `0.1649`).  Therefore the apparent 8/8 result
+  above is valid evidence for the train-temp leaf's own sequential numerical
+  contract, but it is **not** a release acceptance result for the established
+  HF reference contract.
+- Release decision: restore the original clean/vectorized recurrence and keep
+  it as the single public source of truth.  Do not weaken inference or gradient
+  thresholds and do not redefine the HF model around one private training
+  kernel.  Native train-temp remains explicit diagnostic capability until it
+  can match the clean reference; production training continues through the
+  already-defined reference fallback.  Rebuild the candidate wheels after the
+  restoration and rerun only the affected inference/training gates.
+- Preserved evidence:
+  `backend-v2-c956fa27-candidate/4080/inference-smoke.json` and
+  `backend-v2-c956fa27-candidate/4080/training-diag-old-reference-v31.json`.
