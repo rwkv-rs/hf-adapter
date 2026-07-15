@@ -177,6 +177,72 @@ def test_stacked_rkv_exact_shape_gate_does_not_alias_equal_row_counts() -> None:
                 os.environ[key] = value
 
 
+def test_clampw_scan_exact_shape_policy_and_env_override(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    env_name = "RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN"
+    monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            fused_prefill_clampw_scan=False,
+            prefill_clampw_scan_model_shapes=((2048, 24, 8, 512),),
+        ),
+    )
+    monkeypatch.setattr(native_jit, "_native_prefill_fused_scan_enabled", lambda: True)
+    monkeypatch.setattr(native_jit, "fused_recurrent_scan_clampw", object())
+    monkeypatch.setattr(native_jit, "fused_recurrent_scan_clampw_available", lambda: True)
+
+    assert native_jit._native_prefill_fused_clampw_scan_enabled(8, 512, 2048, 24)
+    assert not native_jit._native_prefill_fused_clampw_scan_enabled(8, 512, 2560, 24)
+    monkeypatch.setenv(env_name, "1")
+    assert native_jit._native_prefill_fused_clampw_scan_enabled(8, 128, 2560, 32)
+    monkeypatch.setenv(env_name, "0")
+    assert not native_jit._native_prefill_fused_clampw_scan_enabled(8, 512, 2048, 24)
+
+
+def test_native_prefill_scan_passes_model_layers_to_clampw_gate(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    calls = []
+
+    def clampw_enabled(batch_size, prompt_tokens, hidden_size, num_layers):
+        calls.append((batch_size, prompt_tokens, hidden_size, num_layers))
+        return num_layers == 7
+
+    def clampw_scan(r, w, k, v, kk, a, state, **kwargs):
+        return torch.zeros_like(r), state
+
+    monkeypatch.setattr(native_jit, "_native_prefill_fused_clampw_scan_enabled", clampw_enabled)
+    monkeypatch.setattr(native_jit, "_native_prefill_scan_block_m", lambda *args: 1)
+    monkeypatch.setattr(native_jit, "_native_prefill_scan_num_warps", lambda *args: 1)
+    monkeypatch.setattr(native_jit, "fused_recurrent_scan_clampw", clampw_scan)
+
+    B, T, H, N = 1, 2, 2, 2
+    token_tensor = torch.zeros(B, T, H * N)
+    state = torch.zeros(B, H, N, N)
+    out, new_state = native_jit._native_prefill_scan(
+        token_tensor,
+        token_tensor,
+        token_tensor,
+        token_tensor,
+        token_tensor,
+        token_tensor,
+        state,
+        B,
+        T,
+        H,
+        N,
+        w_is_raw=True,
+        num_layers=7,
+    )
+
+    assert calls == [(B, T, H * N, 7)]
+    assert out.shape == token_tensor.shape
+    assert new_state is state
+
+
 def test_self_chunk_exact_model_shape_can_lower_the_generic_token_floor(monkeypatch) -> None:
     from rwkv7_hf import native_jit
 
@@ -452,6 +518,9 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
         assert native_jit._native_prefill_scan_num_warps(64, 8) == 1
         assert native_jit._native_prefill_scan_num_warps(64, 32) == 1
         assert native_jit._native_prefill_scan_num_warps(64, 64) == 4
+        native_jit.torch.cuda.get_device_name = lambda *_args: "NVIDIA GeForce RTX 5090"
+        assert native_jit._native_prefill_scan_block_m(64, 8, 512, 2048) == 8
+        assert native_jit._native_prefill_scan_block_m(64, 8, 512, 4096) == 64
         os.environ[key] = "8"
         assert native_jit._native_prefill_scan_block_m(64, 4) == 8
     finally:

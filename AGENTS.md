@@ -910,6 +910,15 @@ Run this checklist for every new GPU before marking it as supported:
     and no-larger footprint/peak-VRAM gates. Minimum RWKV/Qwen speedups are
     `1.082707x` prefill and `1.795119x` decode. The broader 72-cell FLA-core-only
     artifact remains historical coverage because its convolution uses Torch.
+  - RTX 5090 staged B1/B8 evidence exists under
+    `bench/5090_g1h_qwen35_b1_b8_20260715/` for the 0.4B/0.8B, 1.5B/2B and
+    2.9B/4B pairs. The six checked batch-pairs contain 108 candidate and 108
+    full-FLA Qwen rows and pass their raw speed, active-work decode, quant total
+    latency, footprint and greedy gates. The exact B8 1.5B prompt-512 policy may
+    opt into clampw scan, stacked RKV and sequence-FFN fusion with the recorded
+    Blackwell tiles. Do not generalize that shape policy to another model,
+    prompt, batch or card. The 7.2B/9B and fresh 13.3B rows remain mandatory
+    before calling the new matrix complete.
   - The validated Blackwell scan defaults are batch-local: `block_m` 8/16/32/64
     for bsz 1/2/4/8+, with 1 warp below 64 and 4 warps at 64. Explicit
     environment overrides still win, and these tiles must not be projected to

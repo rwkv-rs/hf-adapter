@@ -1,0 +1,21 @@
+{
+  "axis": "rwkv7_native_prefill_correctness",
+  "status": "pass",
+  "min_cosine_required": 0.9999,
+  "input_ids_match": true,
+  "greedy_tokens_match": true,
+  "greedy_tokens": [
+    47253,
+    47,
+    29894,
+    57192,
+    4600,
+    57093,
+    31581,
+    4811
+  ],
+  "prompt_logits_cosine": 0.9999955296516418,
+  "prompt_logits_max_abs": 0.0625,
+  "final_logits_cosine": 0.9999961853027344,
+  "final_logits_max_abs": 0.09375
+}

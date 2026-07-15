@@ -1073,6 +1073,11 @@ def benchmark_loaded(
         torch.cuda.reset_peak_memory_stats(cuda_device_index(args.device))
     prefill_s, prefill_tokps = timed_prefill(args, model, ids)
     prefill_backend = last_rwkv_prefill_backend(model) if args.model_kind == "rwkv" else None
+    prefill_clampw_scan = (
+        bool(getattr(model, "_rwkv7_native_prefill_clampw_scan_effective", False))
+        if args.model_kind == "rwkv"
+        else None
+    )
     prefill_stacked_rkv = (
         bool(getattr(model, "_rwkv7_native_prefill_stacked_rkv_effective", False))
         if args.model_kind == "rwkv"
@@ -1132,6 +1137,7 @@ def benchmark_loaded(
         "step_backend": step_backend,
         "prefill_effective_backend": prefill_backend or ("module_call" if args.model_kind == "qwen35" else None),
         "prefill_backend_effective": prefill_backend or ("module_call" if args.model_kind == "qwen35" else None),
+        "rwkv_prefill_clampw_scan_effective": prefill_clampw_scan,
         "rwkv_prefill_stacked_rkv_effective": prefill_stacked_rkv,
         "rwkv_prefill_self_chunk_effective": prefill_self_chunk,
         "rwkv_prefill_sequence_ffn_effective": prefill_sequence_ffn,

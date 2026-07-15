@@ -1,0 +1,1844 @@
+{
+  "axis": "qwen35_quant_route_composition",
+  "status": "pass",
+  "inputs": [
+    "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/dense.jsonl",
+    "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+    "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+    "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/hybrid_speed.jsonl"
+  ],
+  "thresholds": {
+    "min_qwen_prefill": 1.0,
+    "min_qwen_decode": 1.0,
+    "min_dense_prefill": 1.0,
+    "min_dense_decode": 1.0,
+    "min_dense_total": 1.0,
+    "allow_dense_total_noninferiority": true,
+    "require_footprint_and_peak_reduction": true,
+    "require_native_candidate": true,
+    "require_qwen_fast_path": false,
+    "quant_qwen_gate": false
+  },
+  "output_rows": 36,
+  "decisions": [
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 1,
+          "metrics": {
+            "qwen_prefill_speedup": 5.851330292326521,
+            "qwen_decode_speedup": 6.869212030129864,
+            "dense_prefill_speedup": 1.1652798557565005,
+            "dense_decode_speedup": 0.9650634499885706,
+            "dense_total_speedup": 0.9690510701824431,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.837057078024088
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9690510701824431
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 1,
+          "metrics": {
+            "qwen_prefill_speedup": 4.997793164442236,
+            "qwen_decode_speedup": 7.1158896854301625,
+            "dense_prefill_speedup": 0.9952997706178858,
+            "dense_decode_speedup": 0.9997194757474227,
+            "dense_total_speedup": 0.9996150101283673,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9480712166172107
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9996150101283673
+        },
+        {
+          "implementation": "mm8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 7,
+          "metrics": {
+            "qwen_prefill_speedup": 5.406273076915614,
+            "qwen_decode_speedup": 7.2066792308764445,
+            "dense_prefill_speedup": 1.0766476675415353,
+            "dense_decode_speedup": 1.0124746027644624,
+            "dense_total_speedup": 1.013924079371566,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9444056554372491
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0124746027644624
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 1,
+          "metrics": {
+            "qwen_prefill_speedup": 6.091351349565428,
+            "qwen_decode_speedup": 6.855974160551209,
+            "dense_prefill_speedup": 1.2130795336049147,
+            "dense_decode_speedup": 0.9632036465598746,
+            "dense_total_speedup": 0.9679798684775212,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.7814627334613371
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9679798684775212
+        }
+      ],
+      "selected": {
+        "implementation": "mm8",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 7,
+        "metrics": {
+          "qwen_prefill_speedup": 5.406273076915614,
+          "qwen_decode_speedup": 7.2066792308764445,
+          "dense_prefill_speedup": 1.0766476675415353,
+          "dense_decode_speedup": 1.0124746027644624,
+          "dense_total_speedup": 1.013924079371566,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9444056554372491
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0124746027644624
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 7,
+          "metrics": {
+            "qwen_prefill_speedup": 4.91087509997757,
+            "qwen_decode_speedup": 6.847626636932716,
+            "dense_prefill_speedup": 0.977990224828812,
+            "dense_decode_speedup": 0.9620308934250479,
+            "dense_total_speedup": 0.962408170038165,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.7263920404957235
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.962408170038165
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 13,
+          "metrics": {
+            "qwen_prefill_speedup": 5.056982350612364,
+            "qwen_decode_speedup": 7.220680648894976,
+            "dense_prefill_speedup": 1.0070871698718846,
+            "dense_decode_speedup": 1.0144416779862533,
+            "dense_total_speedup": 1.0142648848997984,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9164775702565893
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0070871698718846
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 19,
+          "metrics": {
+            "qwen_prefill_speedup": 5.479801135167262,
+            "qwen_decode_speedup": 7.24718668759355,
+            "dense_prefill_speedup": 1.091290622362578,
+            "dense_decode_speedup": 1.0181655416608315,
+            "dense_total_speedup": 1.0198026584703634,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9188340024437075
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0181655416608315
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 19,
+        "metrics": {
+          "qwen_prefill_speedup": 5.479801135167262,
+          "qwen_decode_speedup": 7.24718668759355,
+          "dense_prefill_speedup": 1.091290622362578,
+          "dense_decode_speedup": 1.0181655416608315,
+          "dense_total_speedup": 1.0198026584703634,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.9188340024437075
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0181655416608315
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 2,
+          "metrics": {
+            "qwen_prefill_speedup": 4.8717944473730626,
+            "qwen_decode_speedup": 6.890554813645745,
+            "dense_prefill_speedup": 1.1845001157930508,
+            "dense_decode_speedup": 0.9652763280468408,
+            "dense_total_speedup": 0.9663467584472316,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.7855784338046804
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9663467584472316
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 2,
+          "metrics": {
+            "qwen_prefill_speedup": 4.373930429502818,
+            "qwen_decode_speedup": 7.137622920966371,
+            "dense_prefill_speedup": 1.0634523184799924,
+            "dense_decode_speedup": 0.9998873284469311,
+            "dense_total_speedup": 1.000245493201551,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9473248987017282
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.000245493201551
+        },
+        {
+          "implementation": "mm8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 8,
+          "metrics": {
+            "qwen_prefill_speedup": 4.364272390495643,
+            "qwen_decode_speedup": 7.226605560276799,
+            "dense_prefill_speedup": 1.0611041183566265,
+            "dense_decode_speedup": 1.0123526287974034,
+            "dense_total_speedup": 1.0126312601436174,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9473248987017282
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0123526287974034
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 2,
+          "metrics": {
+            "qwen_prefill_speedup": 4.914778760704129,
+            "qwen_decode_speedup": 6.87489377200437,
+            "dense_prefill_speedup": 1.194951074811937,
+            "dense_decode_speedup": 0.963082421579536,
+            "dense_total_speedup": 0.9642024554057892,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.7329033325064087
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9642024554057892
+        }
+      ],
+      "selected": {
+        "implementation": "mm8",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 8,
+        "metrics": {
+          "qwen_prefill_speedup": 4.364272390495643,
+          "qwen_decode_speedup": 7.226605560276799,
+          "dense_prefill_speedup": 1.0611041183566265,
+          "dense_decode_speedup": 1.0123526287974034,
+          "dense_total_speedup": 1.0126312601436174,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9473248987017282
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0123526287974034
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 128,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 8,
+          "metrics": {
+            "qwen_prefill_speedup": 3.959847124430794,
+            "qwen_decode_speedup": 6.8696005827364335,
+            "dense_prefill_speedup": 0.9627744823963587,
+            "dense_decode_speedup": 0.962340915207641,
+            "dense_total_speedup": 0.9623434961292173,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.6808070784751509
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9623434961292173
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 14,
+          "metrics": {
+            "qwen_prefill_speedup": 4.376249794252619,
+            "qwen_decode_speedup": 7.247052931892679,
+            "dense_prefill_speedup": 1.0640162355016118,
+            "dense_decode_speedup": 1.015217037299386,
+            "dense_total_speedup": 1.0154961162623146,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9208633093525179
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.015217037299386
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 20,
+          "metrics": {
+            "qwen_prefill_speedup": 4.426335951231848,
+            "qwen_decode_speedup": 7.267042005584557,
+            "dense_prefill_speedup": 1.0761938959883994,
+            "dense_decode_speedup": 1.0180172442749031,
+            "dense_total_speedup": 1.0183470400903025,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9222690812866948
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0180172442749031
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 20,
+        "metrics": {
+          "qwen_prefill_speedup": 4.426335951231848,
+          "qwen_decode_speedup": 7.267042005584557,
+          "dense_prefill_speedup": 1.0761938959883994,
+          "dense_decode_speedup": 1.0180172442749031,
+          "dense_total_speedup": 1.0183470400903025,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.9222690812866948
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0180172442749031
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 5,
+          "metrics": {
+            "qwen_prefill_speedup": 2.2576722579354582,
+            "qwen_decode_speedup": 6.85965853791648,
+            "dense_prefill_speedup": 1.3991324029570333,
+            "dense_decode_speedup": 0.9626198683904851,
+            "dense_total_speedup": 1.0289884125036297,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.878255434405167
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0289884125036297
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 5,
+          "metrics": {
+            "qwen_prefill_speedup": 1.613811644985041,
+            "qwen_decode_speedup": 7.109257557979121,
+            "dense_prefill_speedup": 1.000116893331872,
+            "dense_decode_speedup": 0.9976462439039333,
+            "dense_total_speedup": 0.9981553939733178,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9556913674560732
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9981553939733178
+        },
+        {
+          "implementation": "mm8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 11,
+          "metrics": {
+            "qwen_prefill_speedup": 1.615382270419028,
+            "qwen_decode_speedup": 7.193734707428665,
+            "dense_prefill_speedup": 1.0010902467182528,
+            "dense_decode_speedup": 1.0095009713711438,
+            "dense_total_speedup": 1.0077521086652979,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9556913674560732
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0010902467182528
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 5,
+          "metrics": {
+            "qwen_prefill_speedup": 2.2520861705485022,
+            "qwen_decode_speedup": 6.858730750689019,
+            "dense_prefill_speedup": 1.3956705737028674,
+            "dense_decode_speedup": 0.9624896714697702,
+            "dense_total_speedup": 1.0284816526474265,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.8340162511285506
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0284816526474265
+        }
+      ],
+      "selected": {
+        "implementation": "bnb8",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+        "source_line": 5,
+        "metrics": {
+          "qwen_prefill_speedup": 2.2576722579354582,
+          "qwen_decode_speedup": 6.85965853791648,
+          "dense_prefill_speedup": 1.3991324029570333,
+          "dense_decode_speedup": 0.9626198683904851,
+          "dense_total_speedup": 1.0289884125036297,
+          "footprint_ratio": 0.6650383810188416,
+          "peak_vram_ratio": 0.878255434405167
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": false,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0289884125036297
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 11,
+          "metrics": {
+            "qwen_prefill_speedup": 1.8552057668721906,
+            "qwen_decode_speedup": 6.851942137609645,
+            "dense_prefill_speedup": 1.1497144873265472,
+            "dense_decode_speedup": 0.9615370214518574,
+            "dense_total_speedup": 0.9952127274045082,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.7901937634557955
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9952127274045082
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 17,
+          "metrics": {
+            "qwen_prefill_speedup": 1.6152262579488106,
+            "qwen_decode_speedup": 7.216204743842797,
+            "dense_prefill_speedup": 1.0009935621345718,
+            "dense_decode_speedup": 1.0126542046372229,
+            "dense_total_speedup": 1.0102229252501473,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9334676019167997
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0009935621345718
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 23,
+          "metrics": {
+            "qwen_prefill_speedup": 1.6163039752292767,
+            "qwen_decode_speedup": 7.243762450085956,
+            "dense_prefill_speedup": 1.0016614487877507,
+            "dense_decode_speedup": 1.0165213935665702,
+            "dense_total_speedup": 1.0134140761078145,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9347176887283839
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0016614487877507
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 23,
+        "metrics": {
+          "qwen_prefill_speedup": 1.6163039752292767,
+          "qwen_decode_speedup": 7.243762450085956,
+          "dense_prefill_speedup": 1.0016614487877507,
+          "dense_decode_speedup": 1.0165213935665702,
+          "dense_total_speedup": 1.0134140761078145,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.9347176887283839
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0016614487877507
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 6,
+          "metrics": {
+            "qwen_prefill_speedup": 2.25240686578914,
+            "qwen_decode_speedup": 6.86525880067757,
+            "dense_prefill_speedup": 1.3962702259736144,
+            "dense_decode_speedup": 0.9625917743031952,
+            "dense_total_speedup": 0.9812604967736233,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.8798436321239971
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9812604967736233
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 6,
+          "metrics": {
+            "qwen_prefill_speedup": 1.6160099594554398,
+            "qwen_decode_speedup": 7.11338381772287,
+            "dense_prefill_speedup": 1.0017668768177566,
+            "dense_decode_speedup": 0.9973818830727397,
+            "dense_total_speedup": 0.9976493823439985,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9563130100816132
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9976493823439985
+        },
+        {
+          "implementation": "mm8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 12,
+          "metrics": {
+            "qwen_prefill_speedup": 1.6137295836876697,
+            "qwen_decode_speedup": 7.199819395581253,
+            "dense_prefill_speedup": 1.0003532686295868,
+            "dense_decode_speedup": 1.0095011896668933,
+            "dense_total_speedup": 1.0089363121766233,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9563130100816132
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0003532686295868
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 6,
+          "metrics": {
+            "qwen_prefill_speedup": 2.2532356390082233,
+            "qwen_decode_speedup": 6.863158819768305,
+            "dense_prefill_speedup": 1.3967839836731966,
+            "dense_decode_speedup": 0.9622973317471107,
+            "dense_total_speedup": 0.9809884140872422,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.8360880598038544
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9809884140872422
+        }
+      ],
+      "selected": {
+        "implementation": "mm8",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 12,
+        "metrics": {
+          "qwen_prefill_speedup": 1.6137295836876697,
+          "qwen_decode_speedup": 7.199819395581253,
+          "dense_prefill_speedup": 1.0003532686295868,
+          "dense_decode_speedup": 1.0095011896668933,
+          "dense_total_speedup": 1.0089363121766233,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9563130100816132
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0003532686295868
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 2048,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 12,
+          "metrics": {
+            "qwen_prefill_speedup": 1.854975050937571,
+            "qwen_decode_speedup": 6.858489165250013,
+            "dense_prefill_speedup": 1.1499016775730642,
+            "dense_decode_speedup": 0.9616425900747791,
+            "dense_total_speedup": 0.9713840333668678,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.7928811466977573
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9713840333668678
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 18,
+          "metrics": {
+            "qwen_prefill_speedup": 1.614862576951963,
+            "qwen_decode_speedup": 7.220834356051308,
+            "dense_prefill_speedup": 1.0010556127687338,
+            "dense_decode_speedup": 1.0124477396329028,
+            "dense_total_speedup": 1.0117428438889948,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9343666415197861
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0010556127687338
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 24,
+          "metrics": {
+            "qwen_prefill_speedup": 1.6182415661001956,
+            "qwen_decode_speedup": 7.249649245612919,
+            "dense_prefill_speedup": 1.0031502529570695,
+            "dense_decode_speedup": 1.016487933378654,
+            "dense_total_speedup": 1.0156611502557689,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9355325423496331
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0031502529570695
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 24,
+        "metrics": {
+          "qwen_prefill_speedup": 1.6182415661001956,
+          "qwen_decode_speedup": 7.249649245612919,
+          "dense_prefill_speedup": 1.0031502529570695,
+          "dense_decode_speedup": 1.016487933378654,
+          "dense_total_speedup": 1.0156611502557689,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.9355325423496331
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0031502529570695
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 3,
+          "metrics": {
+            "qwen_prefill_speedup": 1.919194853704088,
+            "qwen_decode_speedup": 6.851447063871446,
+            "dense_prefill_speedup": 1.3761649297612575,
+            "dense_decode_speedup": 0.964672152315021,
+            "dense_total_speedup": 0.9844391277311103,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.8750801681750161
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9844391277311103
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 3,
+          "metrics": {
+            "qwen_prefill_speedup": 1.4248188541486877,
+            "qwen_decode_speedup": 7.086615339058334,
+            "dense_prefill_speedup": 1.0216710067545693,
+            "dense_decode_speedup": 0.9977834475006775,
+            "dense_total_speedup": 0.9993558934677754,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9545357371909072
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9993558934677754
+        },
+        {
+          "implementation": "mm8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 9,
+          "metrics": {
+            "qwen_prefill_speedup": 1.428235759393572,
+            "qwen_decode_speedup": 7.184250602817378,
+            "dense_prefill_speedup": 1.0241211098054668,
+            "dense_decode_speedup": 1.0115303274158616,
+            "dense_total_speedup": 1.0123670085929575,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9545357371909072
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0115303274158616
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 3,
+          "metrics": {
+            "qwen_prefill_speedup": 1.9151433901043342,
+            "qwen_decode_speedup": 6.83794637191566,
+            "dense_prefill_speedup": 1.3732598145722372,
+            "dense_decode_speedup": 0.9627712777340283,
+            "dense_total_speedup": 0.9824944144538367,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.8296871659659374
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9824944144538367
+        }
+      ],
+      "selected": {
+        "implementation": "mm8",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 9,
+        "metrics": {
+          "qwen_prefill_speedup": 1.428235759393572,
+          "qwen_decode_speedup": 7.184250602817378,
+          "dense_prefill_speedup": 1.0241211098054668,
+          "dense_decode_speedup": 1.0115303274158616,
+          "dense_total_speedup": 1.0123670085929575,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9545357371909072
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0115303274158616
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 128,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 9,
+          "metrics": {
+            "qwen_prefill_speedup": 1.5440352865311624,
+            "qwen_decode_speedup": 6.83038924779269,
+            "dense_prefill_speedup": 1.1071555384473122,
+            "dense_decode_speedup": 0.9617072474459657,
+            "dense_total_speedup": 0.9702694448426524,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.7847929879569586
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9702694448426524
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 15,
+          "metrics": {
+            "qwen_prefill_speedup": 1.4186064903774416,
+            "qwen_decode_speedup": 7.202540595746738,
+            "dense_prefill_speedup": 1.017216411049288,
+            "dense_decode_speedup": 1.014105527469297,
+            "dense_total_speedup": 1.0143151282953464,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9317323451863465
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.014105527469297
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 21,
+          "metrics": {
+            "qwen_prefill_speedup": 1.4289264906465078,
+            "qwen_decode_speedup": 7.225018583092105,
+            "dense_prefill_speedup": 1.0246164009033696,
+            "dense_decode_speedup": 1.0172703900494235,
+            "dense_total_speedup": 1.0177635105979574,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.933015035986603
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0172703900494235
+        }
+      ],
+      "selected": {
+        "implementation": "torchao_w4",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 21,
+        "metrics": {
+          "qwen_prefill_speedup": 1.4289264906465078,
+          "qwen_decode_speedup": 7.225018583092105,
+          "dense_prefill_speedup": 1.0246164009033696,
+          "dense_decode_speedup": 1.0172703900494235,
+          "dense_total_speedup": 1.0177635105979574,
+          "footprint_ratio": 0.8906722493603163,
+          "peak_vram_ratio": 0.933015035986603
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0172703900494235
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w8"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 4,
+          "metrics": {
+            "qwen_prefill_speedup": 1.8721795631203535,
+            "qwen_decode_speedup": 6.88019163520221,
+            "dense_prefill_speedup": 1.3468346733526426,
+            "dense_decode_speedup": 0.9644982052207896,
+            "dense_total_speedup": 0.9692713944139363,
+            "footprint_ratio": 0.6650383810188416,
+            "peak_vram_ratio": 0.8767499120647203
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9692713944139363
+        },
+        {
+          "implementation": "a8w8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 4,
+          "metrics": {
+            "qwen_prefill_speedup": 1.391202472695335,
+            "qwen_decode_speedup": 7.1156417233834945,
+            "dense_prefill_speedup": 1.0008226586754796,
+            "dense_decode_speedup": 0.9975047258979205,
+            "dense_total_speedup": 0.9975617231090961,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9551881814984171
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9975617231090961
+        },
+        {
+          "implementation": "mm8",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 10,
+          "metrics": {
+            "qwen_prefill_speedup": 1.390210463722941,
+            "qwen_decode_speedup": 7.214110823570765,
+            "dense_prefill_speedup": 1.000109013410562,
+            "dense_decode_speedup": 1.0113085958242176,
+            "dense_total_speedup": 1.0111121516460375,
+            "footprint_ratio": 0.9257966969062573,
+            "peak_vram_ratio": 0.9551881814984171
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.000109013410562
+        },
+        {
+          "implementation": "bnb8_a8w8_head",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/hybrid_speed.jsonl",
+          "source_line": 4,
+          "metrics": {
+            "qwen_prefill_speedup": 1.8627568590751626,
+            "qwen_decode_speedup": 6.865022030169514,
+            "dense_prefill_speedup": 1.3400560369575034,
+            "dense_decode_speedup": 0.9623716573564707,
+            "dense_total_speedup": 0.9671003799702119,
+            "footprint_ratio": 0.5908350779250989,
+            "peak_vram_ratio": 0.8318677453394302
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9671003799702119
+        }
+      ],
+      "selected": {
+        "implementation": "mm8",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 10,
+        "metrics": {
+          "qwen_prefill_speedup": 1.390210463722941,
+          "qwen_decode_speedup": 7.214110823570765,
+          "dense_prefill_speedup": 1.000109013410562,
+          "dense_decode_speedup": 1.0113085958242176,
+          "dense_total_speedup": 1.0111121516460375,
+          "footprint_ratio": 0.9257966969062573,
+          "peak_vram_ratio": 0.9551881814984171
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": true,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.000109013410562
+      }
+    },
+    {
+      "cell": {
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "prompt_tokens": 512,
+        "decode_tokens": 512,
+        "batch_size": 8,
+        "dtype": "fp16",
+        "quantization": "w4"
+      },
+      "alternatives": [
+        {
+          "implementation": "bnb4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/memory.jsonl",
+          "source_line": 10,
+          "metrics": {
+            "qwen_prefill_speedup": 1.5110188310019916,
+            "qwen_decode_speedup": 6.859416003539373,
+            "dense_prefill_speedup": 1.0870178233814172,
+            "dense_decode_speedup": 0.9615857777022577,
+            "dense_total_speedup": 0.9635140400098382,
+            "footprint_ratio": 0.4975575715282624,
+            "peak_vram_ratio": 0.7875483644037988
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": false,
+            "dense_total": false,
+            "dense_speed": false,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": false,
+          "score": 0.9635140400098382
+        },
+        {
+          "implementation": "mm4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 16,
+          "metrics": {
+            "qwen_prefill_speedup": 1.3437690265788562,
+            "qwen_decode_speedup": 7.234592517621104,
+            "dense_prefill_speedup": 0.9666993239458767,
+            "dense_decode_speedup": 1.01417981776088,
+            "dense_total_speedup": 1.0133167298643835,
+            "footprint_ratio": 0.8885787392416842,
+            "peak_vram_ratio": 0.9326767499120647
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": false,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0133167298643835
+        },
+        {
+          "implementation": "torchao_w4",
+          "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+          "source_line": 22,
+          "metrics": {
+            "qwen_prefill_speedup": 1.3965645748899902,
+            "qwen_decode_speedup": 7.255716632020412,
+            "dense_prefill_speedup": 1.0046801226175524,
+            "dense_decode_speedup": 1.0171410972579171,
+            "dense_total_speedup": 1.016921936262334,
+            "footprint_ratio": 0.8906722493603163,
+            "peak_vram_ratio": 0.9338726697150896
+          },
+          "checks": {
+            "status": true,
+            "finite": true,
+            "native_candidate": true,
+            "qwen_fast_path": true,
+            "prefill_mode": true,
+            "qwen_prefill": true,
+            "qwen_decode": true,
+            "dense_prefill": true,
+            "dense_decode": true,
+            "dense_total": true,
+            "dense_speed": true,
+            "footprint": true,
+            "peak_vram": true
+          },
+          "eligible": true,
+          "score": 1.0046801226175524
+        }
+      ],
+      "selected": {
+        "implementation": "mm4",
+        "source_file": "/home/ubuntu/bench/rtx5090_qwen35_20260715/full_matrix_b1_b8/b8/pair_0.4b_0.8b/native_speed.jsonl",
+        "source_line": 16,
+        "metrics": {
+          "qwen_prefill_speedup": 1.3437690265788562,
+          "qwen_decode_speedup": 7.234592517621104,
+          "dense_prefill_speedup": 0.9666993239458767,
+          "dense_decode_speedup": 1.01417981776088,
+          "dense_total_speedup": 1.0133167298643835,
+          "footprint_ratio": 0.8885787392416842,
+          "peak_vram_ratio": 0.9326767499120647
+        },
+        "checks": {
+          "status": true,
+          "finite": true,
+          "native_candidate": true,
+          "qwen_fast_path": true,
+          "prefill_mode": true,
+          "qwen_prefill": true,
+          "qwen_decode": true,
+          "dense_prefill": false,
+          "dense_decode": true,
+          "dense_total": true,
+          "dense_speed": true,
+          "footprint": true,
+          "peak_vram": true
+        },
+        "eligible": true,
+        "score": 1.0133167298643835
+      }
+    }
+  ],
+  "failures": []
+}

@@ -821,11 +821,36 @@ def _native_prefill_dplr_chunk_size() -> int:
     return env_int("RWKV7_NATIVE_PREFILL_DPLR_CHUNK_SIZE", 64, lower=1, upper=4096)
 
 
-def _native_prefill_fused_clampw_scan_enabled() -> bool:
+def _native_prefill_fused_clampw_scan_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for raw-W clampw native prefill recurrent scan."""
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN", False):
-        return False
+    env_name = "RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN"
+    raw_enabled = os.environ.get(env_name)
+    if raw_enabled is not None:
+        if not env_flag(env_name, False):
+            return False
+    else:
+        policy = _kernel_policy()
+        exact_model_shape = (
+            (int(hidden_size), int(num_layers), int(batch_size), int(prompt_tokens))
+            if None not in (hidden_size, num_layers, batch_size, prompt_tokens)
+            else None
+        )
+        model_shapes = {
+            tuple(int(v) for v in shape)
+            for shape in getattr(policy, "prefill_clampw_scan_model_shapes", ())
+            if len(shape) == 4
+        }
+        if not (
+            bool(getattr(policy, "fused_prefill_clampw_scan", False))
+            or exact_model_shape in model_shapes
+        ):
+            return False
     if not _native_prefill_fused_scan_enabled():
         return False
     if fused_recurrent_scan_clampw is None or fused_recurrent_scan_clampw_available is None:
@@ -2338,10 +2363,11 @@ def _native_prefill_scan(
     w_is_raw: bool = False,
     w_is_log: bool = False,
     use_self_chunk: bool | None = None,
+    num_layers: int | None = None,
 ):
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
 
-    if w_is_raw and _native_prefill_fused_clampw_scan_enabled():
+    if w_is_raw and _native_prefill_fused_clampw_scan_enabled(B, T, H * N, num_layers):
         scan_block_m = _native_prefill_scan_block_m(N, B, T, H * N)
         out, new_state = fused_recurrent_scan_clampw(
             r.view(B, T, H, N),
@@ -2474,6 +2500,13 @@ def prefill(
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden)
     v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
+    use_clampw_scan_requested = _native_prefill_fused_clampw_scan_enabled(
+        B,
+        T,
+        hidden,
+        len(packs),
+    )
+    clampw_scan_used = False
     use_prefill_sequence_ffn = _native_prefill_fused_sequence_ffn_enabled(
         B * T,
         B,
@@ -2516,7 +2549,7 @@ def prefill(
         defer_state_sigmoid = bool(
             _native_prefill_fused_state_prep_enabled()
             and not _native_prefill_fused_state_scan_enabled(B)
-            and not _native_prefill_fused_clampw_scan_enabled()
+            and not use_clampw_scan_requested
         )
         state_sigmoid_is_raw = False
         use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled()
@@ -2669,7 +2702,7 @@ def prefill(
         ) and not use_fused_scan_output
         self_chunk_used = bool(self_chunk_used or use_self_chunk)
         self_chunk_w_is_log = False
-        use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
+        use_clampw_scan = use_clampw_scan_requested and not use_fused_scan_output
         use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
         if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
@@ -2799,11 +2832,13 @@ def prefill(
             )
             out = out.reshape(B, T, hidden)
         elif not state_scan_done:
+            clampw_scan_used = bool(clampw_scan_used or use_clampw_scan)
             out, new_state = _native_prefill_scan(
                 r, w, k, v, kk, a, state[layer_idx], B, T, H, N,
                 w_is_raw=use_clampw_scan,
                 w_is_log=self_chunk_w_is_log,
                 use_self_chunk=use_self_chunk,
+                num_layers=len(packs),
             )
         out_projected = False
         if use_fused_scan_output:
@@ -2949,6 +2984,11 @@ def prefill(
     x_for_logits = x if keep == T else x[:, -keep:, :]
     x_for_logits = F.layer_norm(x_for_logits, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     logits = _lm_head(model, x_for_logits)
+    setattr(
+        model,
+        "_rwkv7_native_prefill_clampw_scan_effective",
+        bool(clampw_scan_used),
+    )
     setattr(model, "_rwkv7_native_prefill_stacked_rkv_effective", bool(stacked_rkv_used))
     setattr(model, "_rwkv7_native_prefill_self_chunk_effective", bool(self_chunk_used))
     setattr(model, "_rwkv7_native_prefill_sequence_ffn_effective", bool(sequence_ffn_used))
