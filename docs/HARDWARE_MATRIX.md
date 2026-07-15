@@ -16,7 +16,7 @@ Last updated: **2026-07-15**.
 
 | Platform | Status | Models / scope | Strongest current evidence | Open work |
 |---|---|---|---|---|
-| Tesla V100 32GB, sm70 | **Production-close** | 0.1B/0.4B/1.5B performance; larger inference/training smoke | Dense decode/prefill Albatross P1; native W8/W4 speed lane; cache/correctness gates | Larger-model P2/P3 and full-memory quant |
+| Tesla V100 32GB, sm70 | **Production-close** | 0.1B/0.4B/1.5B performance; 1.5B/Qwen3.5-2B B1/B8; larger inference/training smoke | Albatross P1; native W8/W4 speed lane; full-FLA Qwen raw and active-work gates pass at B1/B8 | Larger-model P2/P3, full-memory quant and broader optimized-Qwen shapes |
 | RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
 | RTX 4090 24GB, sm89 | **Production-close for measured bsz8 lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B, dense/W8/W4 | Small-model matrix passes 54/54 and 7.2B passes 18/18; dense prefill/decode, active-work, full Qwen FLA, quant speed and quant-local memory gates pass | bsz1/2/4 latest matrix, task quality, full-memory W4, other Ada cards |
 | RTX 5090, sm120 | **Production-close** | 0.4B MATH500; 1.5B/2.9B/7.2B quant pressure; 13.3B inference | Full MATH500 gate; 2.9B/7.2B quant within 1% paired fp16; 13.3B low-memory conversion/load | Fresh same-card Albatross rerun; full-memory quant; one 1.5B W8 row at `0.9841x` |
@@ -34,6 +34,7 @@ Last updated: **2026-07-15**.
 ## Promoted artifacts
 
 - V100: [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md)
+- V100 full-FLA Qwen B1/B8: [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md)
 - RTX 3090 g1h 7.2B: [`../bench/3090_g1h_7p2_bsz8_20260714/README.md`](../bench/3090_g1h_7p2_bsz8_20260714/README.md)
 - RTX 4090 g1h 7.2B: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md)
 - RTX 4090 small models: [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md)
