@@ -1,0 +1,11 @@
+timestamp=2026-07-13T06:45:20+08:00
+hostname=wzu-SYS-4029GP-TRT
+repo_commit=6a916852f4a367d2de06c93587d1631a2f56acf6
+repo_branch=wangyue/qwen35-v100-matrix
+python=Python 3.11.15
+torch=2.5.1+cu124
+cuda=12.4
+transformers=5.12.1
+bitsandbytes=0.49.2
+Tesla V100-PCIE-32GB, 7.0, 32768 MiB, 580.159.03
+Tesla V100-PCIE-32GB, 7.0, 32768 MiB, 580.159.03

@@ -1,5 +1,11 @@
 # RTX 4090 HF Fused Backend Validation Summary
 
+> **Dated 2026-07-02 validation snapshot.** Preserve these rows as historical
+> evidence. Current 4090 promoted results are
+> [`4090_small_bsz8_20260715/README.md`](4090_small_bsz8_20260715/README.md) and
+> [`4090_g1h_7p2_bsz8_20260715/README.md`](4090_g1h_7p2_bsz8_20260715/README.md);
+> later quant conclusions supersede “still slower” statements in this file.
+
 Date: 2026-07-02  
 GPU: NVIDIA GeForce RTX 4090 24GB, driver 570.124.06  
 Model: `rwkv7-g1d-0.4b-20260210-ctx8192.pth` / converted HF dir `rwkv7-g1d-0.4b-hf`  

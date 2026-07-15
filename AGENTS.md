@@ -1,5 +1,11 @@
 # AGENTS.md
 
+> **Lifecycle note:** the opening contracts and explicitly dated “Current”
+> milestones are active instructions. Later long-form sections also preserve
+> experiment chronology; their words “next”, “current” and “open” are scoped to
+> their recorded date. For present status use `HF_STATUS.md`, `HF_TODO.md`,
+> `BENCHMARK.md` and `docs/HARDWARE_MATRIX.md` before historical prose.
+
 ## Project Mission
 
 This repository is now scoped to the **RWKV-7 Hugging Face / Transformers adapter only**.
@@ -47,7 +53,11 @@ roadmap.
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
-## Current RTX 4090 Milestone (2026-07-10)
+## RTX 4090 Milestone Snapshot (2026-07-10)
+
+This is a dated checkpoint. Current promoted 4090 matrices live in
+`bench/4090_small_bsz8_20260715/` and
+`bench/4090_g1h_7p2_bsz8_20260715/`.
 
 - 0.4B dense fp16 native-graph decode now reaches
   `795.7/1469.5/2585.7/3185.3 tok/s` for bsz1/2/4/8, or
@@ -71,7 +81,7 @@ roadmap.
   `rwkv7_hf/native_quant_torchao.py` plus quant-aware native-graph operand
   extraction in `rwkv7_hf/native_jit.py`.
 
-## Current V100 Decode Milestone
+## V100 Decode Milestone Snapshot (2026-07-10)
 
 The 2026-07-10 sm70 pass adds decode norm/mix fusion, grouped shape-routed
 projection/FFN kernels, and raw recurrent-output preparation. Same-host
@@ -81,8 +91,9 @@ exceed Albatross. The raw recurrent A/B is 32-step greedy-exact at 0.4B and
 1.5B bsz2. Evidence is under
 `bench/v100_sm70_decode_gap_20260710/`.
 
-This closes the V100 decode P1 floor, not the final mission. The next workers
-must pursue, in order:
+At that checkpoint this closed the V100 decode P1 floor, not the final mission.
+The later production-close and optimized-Qwen milestones supersede the old
+priority ordering below; retain it as provenance:
 
 1. universal V100 P2/P3 for the remaining bsz1/2/4 rows;
 2. native fused W8/W4 with lower footprint and end-to-end speed >= fp16;
@@ -159,6 +170,29 @@ Q4_K_M-inspired mixed W4/W8 probe (`0.3955x`) are retained negative speed
 evidence. Keep groupwise MM4 and both fused FFN epilogues default-off. Do not
 reuse the group128 decision or Blackwell tensor-core path on V100 without
 independent exact-shape evidence; V100 MM4 quality and MM8 speed remain open.
+
+## Current V100 Active-Parameter B1/B8 Milestone (2026-07-15)
+
+- RWKV-7 1.5B versus official Qwen3.5-2B now has an exact-card dense-fp16,
+  target-only comparison at prompt 512, decode 64 and batch 1/8.
+- Qwen is not the historical Torch fallback: both reference rows fail closed on
+  FLA chunk prefill, fused-recurrent decode, fused gated norm and the repository
+  Triton causal-convolution kernels. The effective reference backend is
+  `qwen_fla_gated_delta_rule_fla_triton_conv`.
+- Active text parameters are 1,527,404,544/1,881,825,088 (`0.811661x`) for
+  RWKV/Qwen. The acceptance gate is `aggregate tok/s * active parameters >=
+  1.0x Qwen`, separately for prefill and decode. RWKV therefore needs at least
+  `1.232041x` raw speed merely to tie.
+- B1 raw prefill/decode is `2.815921x/5.913307x`; normalized active work is
+  `2.285574x/4.799514x`. B8 is `5.407762x/5.270432x` raw and
+  `4.389270x/4.277804x` normalized. All four phase gates pass.
+- Qwen full-FLA/Triton-conv versus its oracle and RWKV native graph versus its
+  FLA-backed HF route each preserve 32/32 greedy tokens and pass cosine gates.
+- Static RWKV footprint is `0.811662x` Qwen. Peak VRAM is `1.024885x` at B1
+  and `0.837248x` at B8, so do not claim a universal dense peak-memory win.
+- Evidence: `bench/v100_active_b1b8_20260715/README.md`. Quantized V100 claims
+  remain in `bench/v100_production_close_20260711/`; this new artifact does not
+  turn the dense Qwen comparison into a quantized-Qwen claim.
 
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
@@ -280,6 +314,78 @@ Remaining before this goal is complete:
   algorithmic route rather than deleting it because one fixed shape passes.
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
+
+## Apple M5 B8 Active-Parameter Measured Lane (2026-07-15)
+
+The current Apple acceptance axis is **true batch 8**, a 512-character prompt,
+64 generated tokens per sequence, group-128 RWKV W4 versus the published
+group-64 Qwen MLX W4 checkpoints, and throughput
+normalized as `aggregate tok/s * active text parameter count`. Treat cold
+prefill and prefix-state-cache prefill as different scenarios; never use the
+cache row to claim a universal cold-start win.
+
+- The production candidate uses a thread-local Metal WKV scan, fused
+  prep+scan+GroupNorm+bonus+gate, half-width shared K/R/A traffic, fused
+  sequence shift/mix, residual-add+LayerNorm, native NAX W4 square-QMM and
+  FFN-key+ReLU² kernels, quantized Metal embedding lookup, guarded compiled
+  zero-state prefill, exact lockstep B8 speculative decode, and groupwise W4.
+- 0.4B RWKV versus Qwen3.5 0.8B passes the **cold** row. Current tracked medians
+  are `11650.46 vs 5702.27 tok/s` prefill and
+  `992.30 vs 487.15 tok/s` decode. Active-parameter-normalized ratios are
+  `1.2241x` and `1.2204x`; raw peak memory is
+  `1.223 GB vs 1.642 GB`. Keep W/A LoRA-down double-GEMM fusion enabled for
+  this profile.
+- 1.5B RWKV versus Qwen3.5 2B passes the separately labelled
+  **87.5%-hit prefix-state coalescing** row. Current medians are
+  `13677.81 vs 2113.13 tok/s` prefill and
+  `686.01 vs 174.40 tok/s` decode. Active-parameter-normalized ratios are
+  `5.2537x` and `3.1928x`; raw peak memory is
+  `1.858 GB vs 2.152 GB`. W/A LoRA-down fusion is enabled; its packed base
+  replaces the original W/A source matrices and releases `18,874,368` bytes,
+  removing the prior duplicate-cache memory penalty.
+- The separate 1.5B **target-only, cold, no-prefix-coalescing** ABBA acceptance
+  row is now closed: medians are `2249.15 vs 1600.50 tok/s` prefill and
+  `185.59 vs 132.20 tok/s` decode. Active-normalized ratios are `1.1406x` and
+  `1.1394x`; raw peak memory passes at `1,790,200,768 vs 2,151,577,894` bytes.
+  The closing change is a B8/T1 `BM32/BK64/BN64/WM2/WN2` NAX W4 FFN-key
+  kernel with fused ReLU-squared. Its same-process alternating A/B is
+  `1.1549x`, with exact generated tokens and bounded final logits/state drift.
+  Reproduce the fail-closed target-only row with
+  `scripts/run_apple_bsz8_target_only_acceptance.sh`.
+- The 1.5B **speculative-assisted cold, no-prefix-coalescing** ABBA row is
+  closed. Current medians
+  are `3631.53 vs 2860.13 tok/s` prefill and `894.97 vs 235.01 tok/s` decode.
+  Active-normalized ratios are `1.0306x` and `3.0910x`; raw peak memory is
+  `2,150,971,348 vs 2,151,577,894` bytes. This is a narrow fixed-shape M5
+  result; do not describe it as target-only and do not generalize it to other
+  Apple chips, batch sizes, or lengths. The target-only and speculative rows
+  were recorded in separate thermal sessions and are not a direct A/B.
+- Correctness gates pass at B8/T133/decode64 for both 0.4B and 1.5B: W4 and
+  fp16 greedy tokens are exactly equal, and fused-post versus generic W4 keeps
+  every token with bounded state/logit drift. A two-distinct-prefix B8 row
+  proves 75% state-cache hits plus reorder/compact with exact greedy output.
+  A real 1.5B-target/0.1B-draft mismatch row reaches `0.116369` acceptance,
+  executes 56 target replays, and remains exactly target-greedy. Compiled
+  prefill is exact for validated shapes. Quantized linear and embedding payload
+  ratios are both `0.265625` of dense fp16 storage.
+- Reproduce with `scripts/run_apple_bsz8_active_acceptance.sh`. Permanent raw
+  rows and methodology are under `bench/apple_bsz8_active_m5_20260714/`.
+
+Desktop load materially affects this fanless device. The final cold gate uses
+isolated child processes in ABBA order, a 60-second initial cooldown, and
+30-second inter-engine cooldowns. Retain all six samples per engine; do not
+replace this result with a best-sample or one-direction comparison. Older
+same-process A/B summaries remain candidate-selection evidence only.
+
+Rejected A/B routes must remain disabled by default: concatenating LoRA-down
+into one GEMM, adding G/V to the fused down path, fused LoRA-up, grouped RKV W4,
+blanket rank-3 flattening, group sizes 32/64, SIMD/two-lane WKV state ownership,
+MXFP4/NVFP4, nested local FFN compilation inside the compiled prefill graph,
+fp16 recurrent state, and threadgroup-resident full state all regressed speed,
+memory, or both on this M5. The narrow exception is the exact wide-to-narrow
+groupwise FFN value projection: selective flattening is measured-positive and
+enabled for the Apple B8 candidate. The M5/B8 NAX routes are exact-shape
+dispatches with public-MLX fallbacks.
 
 ## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
 
@@ -885,6 +991,53 @@ Run this checklist for every new GPU before marking it as supported:
     greedy 7/7. This is not a default or a cross-card promotion. The 7.2B
     MM4/MM8 bsz1 rows remain 8GB feasibility evidence only: dense fp16 cannot
     fit, so same-card speed and logits acceptance are not evaluated.
+  - Qwen3.5 optimized-reference rows on the RTX 5070 Laptop must use
+    `--qwen-backend fla` and verify every Gated DeltaNet layer binds FLA chunk
+    prefill, fused-recurrent decode, FLA fused gated normalization, and an
+    accelerated causal-convolution prefill/update path. The Windows exact-card
+    route may use `bench/qwen35_fla_triton_conv.py`, which adapts FLA's Triton
+    convolution kernels without using the Transformers Torch fallback.
+    Performance rows with `torch_conv` are diagnostic only and cannot satisfy
+    the optimized-Qwen gate.
+  - Final bsz8 full-FLA evidence exists under
+    `bench/5070_qwen35_full_fla_bsz8_20260714/`: 36/36 raw rows pass, all 18/18
+    Qwen references verify the full FLA plus Triton-conv contract, and all
+    18/18 cells pass `>=1.05x` prefill/decode, `>=1.0x` tok/s per active-B,
+    and no-larger footprint/peak-VRAM gates. Minimum RWKV/Qwen speedups are
+    `1.082707x` prefill and `1.795119x` decode. The broader 72-cell FLA-core-only
+    artifact remains historical coverage because its convolution uses Torch.
+  - RTX 5090 current-main B1/B8 evidence under
+    `bench/5090_g1h_qwen35_b1_b8_20260715/` passes all eight 0.4B/0.8B through
+    7.2B/9B batch-pairs: 144 candidate rows, 144 full-FLA Qwen rows, 32
+    correctness reports and 144/144 dense/W8/W4 cells. Raw prefill/decode and
+    tokens/s per active billion lead in every cell. Active-parameter work-rate
+    prefill and dense peak-VRAM are not universal wins and must remain visible.
+    The exact B8 1.5B prompt-512 policy may use clampw scan, stacked RKV and
+    sequence-FFN fusion. The exact B8 7.2B prompt-128 policy may use stacked RKV
+    only; its formal full-FLA confirmation is `1.0251x` and the full-matrix
+    minimum is `1.0309x`. Do not generalize either shape policy to another
+    model, prompt, batch or card.
+  - Fresh official g1h 13.3B evidence under
+    `bench/5090_g1h_13p3_20260715/` passes load/forward/generate and the B8,
+    prompt128/decode128 speed-policy boundary. MM8/MM4 measure
+    `1.0013x/0.9845x` paired-fp16 decode, `0.9899x/0.9848x` footprint, cosine
+    above `0.99985`, and matching next tokens. Each quant row replaces only
+    `lm_head`; do not describe this as full-memory quantization.
+  - The validated Blackwell scan defaults are batch-local: `block_m` 8/16/32/64
+    for bsz 1/2/4/8+, with 1 warp below 64 and 4 warps at 64. Explicit
+    environment overrides still win, and these tiles must not be projected to
+    Ada, Volta, Ampere, Hopper, or another Blackwell card without exact-card
+    rows.
+  - External-quant native prefill is opt-in through
+    `RWKV7_FAST_PREFILL_QUANT=1`; BNB4 external-quant graph capture additionally
+    requires `RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1` and is validated for
+    the bsz8 matrix only. External BNB4 native-graph decode is opt-in through
+    `RWKV7_FAST_TOKEN_QUANT=1`. BNB8 uses the explicit `decode_rk` hybrid policy.
+    Keep all of these routes disabled by default.
+  - The 18/18 full-FLA close is an inference speed and memory result for the
+    exact bsz8 1.5B RWKV vs official 2B Qwen shapes. It is not evidence of
+    model-quality superiority; instruction, reasoning, math, code, multilingual,
+    and long-context claims still require separate evaluations.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,
@@ -1104,7 +1257,8 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
 
 ## Next Milestones
 
-1. Convert and validate larger RWKV-7 checkpoints, including the 13.3B gate.
+1. Extend the currently passing 13.3B conversion/inference gate to future
+   larger official checkpoints as they are released.
 2. Keep official RWKV vs HF logits/generation alignment tests green.
 3. Keep `save_pretrained` / reload roundtrip tests green.
 4. Expand PEFT / Trainer / TRL SFT/DPO/GRPO smoke tests into multi-batch and gradient-accumulation checks.

@@ -34,7 +34,7 @@ os.environ.setdefault("RWKV_V7_ON", "1")
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
@@ -186,26 +186,71 @@ class HFScorer:
         if not hf_dir:
             raise ValueError(f"--{prefix.replace('_', '-')}-hf-dir is required for HF scorer")
         dtype = DTYPES[getattr(args, f"{prefix}_dtype")]
+        self.quantization = getattr(args, f"{prefix}_quantization")
+        quant_policy = str(getattr(args, f"{prefix}_quant_policy"))
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = getattr(args, f"{prefix}_fast_token_backend")
-        self.model = AutoModelForCausalLM.from_pretrained(
-            hf_dir,
-            trust_remote_code=True,
-            torch_dtype=dtype,
-            device_map=args.device if args.device.startswith("cuda") else None,
-        ).eval()
+        load_kwargs: dict[str, Any] = {
+            "trust_remote_code": True,
+            "torch_dtype": dtype,
+            "device_map": args.device if args.device.startswith("cuda") else None,
+        }
+        if self.quantization in {"bnb8", "bnb8_a8w8_head"}:
+            os.environ["RWKV7_BNB_SKIP_POLICY"] = quant_policy
+            threshold = float(os.environ.get("RWKV7_BNB_INT8_THRESHOLD", "6.0"))
+            if threshold < 0.0:
+                raise ValueError("RWKV7_BNB_INT8_THRESHOLD must be non-negative")
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=threshold,
+            )
+        elif self.quantization == "bnb4":
+            os.environ["RWKV7_BNB_SKIP_POLICY"] = quant_policy
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=dtype,
+                bnb_4bit_use_double_quant=False,
+            )
+        self.model = AutoModelForCausalLM.from_pretrained(hf_dir, **load_kwargs).eval()
         self.device = args.device
         self.hf_dir = hf_dir
-        self.quantization = getattr(args, f"{prefix}_quantization")
-        if self.quantization != "none":
-            self._quantize(
-                self.quantization,
-                min_params=int(getattr(args, f"{prefix}_quant_min_params")),
-                policy=str(getattr(args, f"{prefix}_quant_policy")),
+        if self.quantization in {
+            "a8w8",
+            "mm8",
+            "mm4",
+            "torchao_w8",
+            "torchao_w4",
+            "bnb8_a8w8_head",
+        }:
+            native_quantization = (
+                "a8w8" if self.quantization == "bnb8_a8w8_head" else self.quantization
             )
-        self.name = f"hf:{Path(hf_dir).name}:{self.quantization}"
+            self._quantize(
+                native_quantization,
+                min_params=int(getattr(args, f"{prefix}_quant_min_params")),
+                policy="speed" if self.quantization == "bnb8_a8w8_head" else quant_policy,
+                group_size=int(getattr(args, f"{prefix}_quant_group_size")),
+            )
+        threshold_tag = (
+            f":threshold={float(os.environ.get('RWKV7_BNB_INT8_THRESHOLD', '6.0')):g}"
+            if self.quantization in {"bnb8", "bnb8_a8w8_head"}
+            else ""
+        )
+        self.name = f"hf:{Path(hf_dir).name}:{self.quantization}{threshold_tag}"
 
-    def _quantize(self, quantization: str, *, min_params: int, policy: str) -> None:
-        if quantization == "mm8":
+    def _quantize(
+        self,
+        quantization: str,
+        *,
+        min_params: int,
+        policy: str,
+        group_size: int,
+    ) -> None:
+        if quantization == "a8w8":
+            from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
+
+            quantize_model_a8w8(self.model, min_params=min_params, policy=policy)
+        elif quantization == "mm8":
             from rwkv7_hf.native_quant_mm8 import quantize_model_mm8
 
             quantize_model_mm8(self.model, min_params=min_params, fused=True, policy=policy)
@@ -213,6 +258,16 @@ class HFScorer:
             from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
 
             quantize_model_mm4(self.model, min_params=min_params, policy=policy)
+        elif quantization in {"torchao_w8", "torchao_w4"}:
+            from rwkv7_hf.native_quant_torchao import quantize_model_torchao
+
+            quantize_model_torchao(
+                self.model,
+                quantization,
+                min_params=min_params,
+                policy=policy,
+                group_size=group_size,
+            )
         else:  # pragma: no cover
             raise ValueError(f"unsupported quantization: {quantization}")
 
@@ -424,6 +479,39 @@ def compare_scores(reference: ScoreAggregate, candidate: ScoreAggregate) -> dict
     }
 
 
+def evaluate_quality_gates(
+    comparison: dict[str, Any],
+    *,
+    max_bits_ratio: float | None,
+    min_scored_tokens: int,
+) -> dict[str, Any]:
+    """Evaluate explicit, machine-readable quality acceptance gates."""
+
+    ratio = comparison.get("candidate_over_reference_bits_ratio")
+    tokens = int(comparison.get("tokens") or 0)
+    finite_ratio = ratio is not None and math.isfinite(float(ratio))
+    ratio_pass = bool(
+        finite_ratio
+        and (max_bits_ratio is None or float(ratio) <= float(max_bits_ratio))
+    )
+    token_pass = tokens >= int(min_scored_tokens)
+    return {
+        "max_candidate_over_reference_bits_ratio": {
+            "required": max_bits_ratio is not None,
+            "maximum": max_bits_ratio,
+            "actual": ratio,
+            "passed": ratio_pass,
+        },
+        "minimum_scored_tokens": {
+            "required": True,
+            "minimum": int(min_scored_tokens),
+            "actual": tokens,
+            "passed": token_pass,
+        },
+        "overall_pass": bool(ratio_pass and token_pass),
+    }
+
+
 def write_markdown(path: str | Path, report: dict[str, Any]) -> None:
     cmp = report["comparison"]
     lines: list[str] = []
@@ -440,6 +528,8 @@ def write_markdown(path: str | Path, report: dict[str, Any]) -> None:
     lines.append(f"| candidate/reference bits ratio | `{_fmt(cmp.get('candidate_over_reference_bits_ratio'))}` |")
     lines.append(f"| candidate-reference bits/token | `{_fmt(cmp.get('candidate_minus_reference_bits_per_token'))}` |")
     lines.append(f"| tokens scored | `{cmp.get('tokens')}` |")
+    gates = report.get("gates", {})
+    lines.append(f"| quality gate | `{'PASS' if gates.get('overall_pass') else 'FAIL'}` |")
     lines.append("")
     lines.append("## Compression ratio vs token position")
     lines.append("")
@@ -480,9 +570,28 @@ def add_scorer_args(ap: argparse.ArgumentParser, prefix: str) -> None:
     ap.add_argument(f"--{label}-hf-dir", default="")
     ap.add_argument(f"--{label}-dtype", choices=sorted(DTYPES), default="fp16")
     ap.add_argument(f"--{label}-fast-token-backend", default="native_graph")
-    ap.add_argument(f"--{label}-quantization", choices=("none", "mm8", "mm4"), default="none")
+    ap.add_argument(
+        f"--{label}-quantization",
+        choices=(
+            "none",
+            "bnb8",
+            "bnb4",
+            "bnb8_a8w8_head",
+            "a8w8",
+            "mm8",
+            "mm4",
+            "torchao_w8",
+            "torchao_w4",
+        ),
+        default="none",
+    )
     ap.add_argument(f"--{label}-quant-min-params", type=int, default=8_000_000)
-    ap.add_argument(f"--{label}-quant-policy", choices=("memory", "balanced", "speed", "dense"), default="speed")
+    ap.add_argument(f"--{label}-quant-group-size", type=int, default=128)
+    ap.add_argument(
+        f"--{label}-quant-policy",
+        choices=("memory", "decode_hot", "prefill_hot", "balanced", "speed", "dense"),
+        default="speed",
+    )
     ap.add_argument(f"--{label}-albatross-dir", default="")
     ap.add_argument(f"--{label}-albatross-model", default="")
     ap.add_argument(f"--{label}-albatross-module", default="rwkv7_fast_v3a")
@@ -509,11 +618,22 @@ def main() -> int:
     ap.add_argument("--position-bins", default="1,8,16,32,64,128,256,512,1024,2048,4096,8192")
     ap.add_argument("--logit-chunk-size", type=int, default=128)
     ap.add_argument("--progress-every", type=int, default=25)
+    ap.add_argument(
+        "--max-candidate-over-reference-bits-ratio",
+        type=float,
+        default=None,
+        help="Fail when candidate compression bits/token exceeds this ratio versus reference.",
+    )
+    ap.add_argument("--min-scored-tokens", type=int, default=1)
     ap.add_argument("--out-json", default="compression_alignment.json")
     ap.add_argument("--out-md", default="compression_alignment.md")
     add_scorer_args(ap, "reference")
     add_scorer_args(ap, "candidate")
     args = ap.parse_args()
+    if args.max_candidate_over_reference_bits_ratio is not None and args.max_candidate_over_reference_bits_ratio <= 0:
+        ap.error("--max-candidate-over-reference-bits-ratio must be positive")
+    if args.min_scored_tokens < 1:
+        ap.error("--min-scored-tokens must be at least 1")
 
     started = time.perf_counter()
     texts = load_texts(args)
@@ -546,9 +666,15 @@ def main() -> int:
     if args.device.startswith("cuda"):
         torch.cuda.empty_cache()
 
+    comparison = compare_scores(ref_score, cand_score)
+    gates = evaluate_quality_gates(
+        comparison,
+        max_bits_ratio=args.max_candidate_over_reference_bits_ratio,
+        min_scored_tokens=args.min_scored_tokens,
+    )
     report = {
         "axis": "uncheatable_logit_compression_alignment",
-        "status": "pass",
+        "status": "pass" if gates["overall_pass"] else "fail",
         "dataset": args.dataset,
         "num_texts": len(encoded),
         "max_tokens_per_text": args.max_tokens_per_text,
@@ -557,7 +683,8 @@ def main() -> int:
         "text_template": args.text_template if not args.text_field else None,
         "reference": compact_score(ref_score),
         "candidate": compact_score(cand_score),
-        "comparison": compare_scores(ref_score, cand_score),
+        "comparison": comparison,
+        "gates": gates,
         "elapsed_sec": time.perf_counter() - started,
         "config": vars(args),
     }
@@ -566,7 +693,7 @@ def main() -> int:
     out_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     write_markdown(args.out_md, report)
     print("LOGIT_COMPRESSION_ALIGNMENT_RESULT " + json.dumps(report["comparison"], ensure_ascii=False), flush=True)
-    return 0
+    return 0 if gates["overall_pass"] else 1
 
 
 if __name__ == "__main__":

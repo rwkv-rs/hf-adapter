@@ -18,6 +18,10 @@ runs rather than theoretical FLOP or package-size comparisons.
 This is an M5 gate, not a claim that every M-series generation or every prompt
 shape has already been measured.
 
+The original table below is the batch-1 production-close run. A newer,
+separately collected batch-8 target-only gate is recorded in the next section;
+the two thermal sessions must not be combined into a synthetic comparison.
+
 ## Result
 
 | Pair | Decode ratio | Prefill ratio | TTFT ratio | Peak-memory ratio | Gate |
@@ -41,6 +45,51 @@ Canonical evidence is in
 [`bench/apple_production_close_qwen35_gate_m5_20260711.jsonl`](../../bench/apple_production_close_qwen35_gate_m5_20260711.jsonl).
 The comparison summary has `status="pass"`, two passing comparisons, and no gap
 actions.
+
+## Batch-8 1.5B target-only close (2026-07-15)
+
+This is the stricter no-assistance lane for the 1.5B model:
+
+- true batch 8, 512 prompt characters, 133 RWKV target tokens, and 64 decoded
+  tokens per sequence;
+- RWKV-7 1.5B group-128 W4 versus Qwen3.5 2B MLX group-64 W4;
+- isolated child processes, one warmup and three retained repeats in ABBA
+  order, with an initial 60-second cooldown and 30 seconds between engines;
+- no draft model, no speculative acceptance, and no prefix-state coalescing;
+- throughput normalized as aggregate tok/s multiplied by active text parameter
+  count. Raw peak memory is used for the memory gate.
+
+| Metric | RWKV-7 1.5B | Qwen3.5 2B | Active-normalized ratio | Gate |
+|---|---:|---:|---:|---|
+| Prefill | 2,249.15 tok/s | 1,600.50 tok/s | 1.1406x | PASS |
+| Decode | 185.59 tok/s | 132.20 tok/s | 1.1394x | PASS |
+| Raw peak memory | 1,790,200,768 bytes | 2,151,577,894 bytes | n/a | PASS |
+
+The closing change is a specialized B8/T1 NAX W4 FFN-key kernel using
+`BM32/BK64/BN64/WM2/WN2` and fusing ReLU-squared into the quantized matmul.
+A same-process alternating A/B isolates that change at `1.1549x` median decode
+speedup, with exact generated tokens. The post-change fidelity suite passes W4
+versus fp16 greedy equality, fused-versus-generic greedy equality, prefix-cache
+exactness, and a real 1.5B-target/0.1B-draft mismatch oracle.
+
+Canonical evidence and reproduction instructions are in
+[`bench/apple_bsz8_active_m5_20260714/README.md`](../../bench/apple_bsz8_active_m5_20260714/README.md).
+The fail-closed entry point is:
+
+```bash
+scripts/run_apple_bsz8_target_only_acceptance.sh
+```
+
+This closes only the checked M5/B8/T133/decode64 target-only profile. It does
+not establish the same ratio on other M-series chips, batch sizes, prompt
+lengths, decode lengths, or thermal conditions.
+
+The matching B1 target-only run now also passes. Its isolated-process ABBA
+medians are `129.15 tok/s` RWKV versus `89.94 tok/s` Qwen (`1.4360x` raw and
+`1.1655x` active-normalized), with active-normalized prefill at `1.3557x` and
+raw peak memory at `1.190/1.297 GB`. The retained 64-step compiled-greedy and
+reference-norm gates pass without a draft or prefix-state coalescing. See
+[`bench/apple_bsz1_active_m5_20260715/README.md`](../../bench/apple_bsz1_active_m5_20260715/README.md).
 
 ## What changed
 

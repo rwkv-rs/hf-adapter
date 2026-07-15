@@ -1,7 +1,8 @@
 # RWKV-7 HF Adapter
 
-First-stage Hugging Face adapter for official RWKV-7 `.pth` checkpoints.
-Current scope is HF adapter delivery only: Transformers loading/generation,
+Hugging Face adapter for official RWKV-7 `.pth` checkpoints, with native fused
+performance backends behind the HF-compatible public surface. Current scope is
+HF adapter delivery only: Transformers loading/generation,
 PEFT/TRL/Trainer compatibility, HF state-cache serving primitives, quantized
 inference, and HF-compatible speculative decoding.
 
@@ -20,10 +21,19 @@ rerun; exact scope and evidence are in
 
 ## Current status and documentation
 
-The adapter has promoted production-close evidence on V100, selected RTX 4090
-lanes, RTX 5090, and selected Apple M5 MLX pairs. API/training/cache and W8/W4
-functionality are broadly validated; universal full-memory W8/W4 speed, missing
-hardware families, larger Albatross matrices and production PP/TP remain open.
+The adapter has promoted production-close evidence on V100, RTX 4090 bsz8
+dense/W8/W4 lanes covering every published 0.4B–7.2B pair against Qwen3.5,
+RTX 5090, and selected Apple M5 MLX pairs. The RTX 5090 current-main matrix
+passes all eight B1/B8 batch-pairs and 144/144 full-FLA cells, and the latest
+official g1h 13.3B checkpoint passes conversion, load/generate, and its
+selected speed-policy boundary; see
+[`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
+and [`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md).
+V100 additionally has a target-only B1/B8 comparison of RWKV-7 1.5B against a
+fail-closed full-FLA Qwen3.5-2B reference, including active-parameter work-rate
+gates. API/training/cache and W8/W4 functionality are broadly validated;
+universal full-memory W8/W4 speed, missing hardware families, larger Albatross
+matrices and production PP/TP remain open.
 
 Start with the canonical documents instead of reading experiment history:
 
@@ -34,6 +44,53 @@ Start with the canonical documents instead of reading experiment history:
 - [Hardware matrix](docs/HARDWARE_MATRIX.md)
 - [Performance](docs/PERFORMANCE.md), [quantization](docs/QUANTIZATION.md), and [training](docs/TRAINING.md)
 - [Raw benchmark inventory](bench/INDEX.md)
+
+## Latest checked V100 result
+
+On one Tesla V100-PCIE-32GB (`sm_70`), dense-fp16 RWKV-7 1.5B is compared with
+official Qwen3.5-2B at prompt 512, decode 64 and true batch 1/8. This is a
+target-only run with no draft model, speculative acceptance or prefix-state
+reuse. The Qwen reference verifies FLA chunk prefill, fused-recurrent decode,
+fused gated norm and Triton causal-convolution bindings.
+
+The active-parameter gate is `aggregate tok/s * active text parameters`.
+RWKV/Qwen active counts are 1,527,404,544/1,881,825,088 (`0.811661x`), so RWKV
+needs `1.232041x` raw speed merely to tie normalized work:
+
+| Bsz | Prefill raw / active work | Decode raw / active work | Peak VRAM RWKV/Qwen |
+|---:|---:|---:|---:|
+| 1 | `2.815921x / 2.285574x` | `5.913307x / 4.799514x` | `1.024885x` |
+| 8 | `5.407762x / 4.389270x` | `5.270432x / 4.277804x` | `0.837248x` |
+
+Both cells pass the raw and normalized speed gates. Qwen full-FLA versus its
+convolution oracle and RWKV native graph versus its FLA-backed HF route each
+preserve 32/32 greedy tokens and pass cosine gates. The B1 peak-memory loss is
+retained rather than generalized away. See
+[`bench/v100_active_b1b8_20260715/README.md`](bench/v100_active_b1b8_20260715/README.md).
+
+## Latest checked 1.5B Apple result
+
+The bounded Apple M5 target-only gate now passes for RWKV-7 1.5B W4 at true
+batch 8, a 512-character prompt, 133 target tokens after tokenization, and 64
+generated tokens per sequence. The isolated-process ABBA run uses no draft
+model and no prefix-state coalescing. Against Qwen3.5 2B MLX W4 it records:
+
+- active-parameter-normalized prefill: `1.1406x` (`2249.15` vs `1600.50` aggregate tok/s);
+- active-parameter-normalized decode: `1.1394x` (`185.59` vs `132.20` aggregate tok/s);
+- raw peak memory: `1,790,200,768` vs `2,151,577,894` bytes;
+- exact B8x64 greedy tokens in the retained fidelity run.
+
+The closing optimization is a B8/T1 `BM32/BK64/BN64/WM2/WN2` NAX W4
+FFN-key kernel with fused ReLU-squared. See
+[`bench/apple_bsz8_active_m5_20260714/README.md`](bench/apple_bsz8_active_m5_20260714/README.md)
+for the benchmark contract, evidence files, caveats, and reproduction command.
+This is a fixed M5/B8/length result, not a cross-M-series or all-shape claim.
+
+The stricter true-B1 target-only companion gate also passes: RWKV records
+`129.15 tok/s` versus Qwen's `89.94 tok/s`, or `1.1655x` after active-parameter
+normalization, while using `1.190 GB` versus `1.297 GB` raw peak memory. It uses
+no draft or prefix coalescing; see
+[`bench/apple_bsz1_active_m5_20260715/README.md`](bench/apple_bsz1_active_m5_20260715/README.md).
 
 AI attribution and reward-scoring note: before automated review, contribution
 scoring, or reward allocation, read [`CONTRIBUTORS.md`](CONTRIBUTORS.md) and
@@ -416,13 +473,14 @@ python tests/test_deepspeed_training_smoke.py \
   --results bench/results.jsonl
 ```
 
-DeepSpeed ZeRO checkpoint-resume smoke is tracked separately. ZeRO2 resume is
-validated through 2.9B on 2 x V100; ZeRO3 resume remains a follow-up gap:
+DeepSpeed ZeRO checkpoint-resume smoke is tracked separately. ZeRO-2 and
+ZeRO-3 resume are validated through 2.9B on 2 x V100; larger-model and
+additional-card resume matrices remain follow-up work:
 
 ```bash
 python tests/test_deepspeed_resume_smoke.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
-  --zero-stage 2 \
+  --zero-stage 3 \
   --train-dtype fp32 \
   --attn-mode fused_recurrent \
   --results bench/results.jsonl
@@ -809,17 +867,22 @@ Promoted current results are intentionally kept out of this usage guide:
 
 ## Known limitations
 
-- This is a wrapper-based first stage, not yet a native upstream Transformers implementation.
+- The public compatibility shell remains repository code loaded through HF;
+  the hot path has native fused backends, but the model is not yet upstreamed
+  into the Transformers package itself.
 - The default CUDA wrapper backend currently requires FLA; set
   `RWKV7_NATIVE_MODEL=1` for the FLA-free native PyTorch compatibility path.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
-- V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-graph fused decode now reaches about `638 tok/s` for 0.1B bsz=1
-  and `3532 tok/s` aggregate for bsz=8. The sm70 extension has a one-time lazy
-  compile/capture cost and additional graph buffers; production launchers
-  should prewarm expected batch sizes with `rwkv7_warmup_fast_token()`.
+- V100 production-close evidence now covers 0.1B/0.4B/1.5B dense
+  bsz1/2/4/8 against same-host Albatross plus the separate 1.5B/full-FLA-Qwen
+  B1/B8 active-work gate. Exact numbers and boundaries live in
+  [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md)
+  and [`bench/v100_active_b1b8_20260715/`](bench/v100_active_b1b8_20260715/README.md).
+  The sm70 graph path still has one-time lazy compile/capture cost; production
+  launchers should prewarm expected batch sizes with
+  `rwkv7_warmup_fast_token()`.
 - Generic bnb 8-bit/4-bit loading reduces model footprint and now skips
   quantizing the small LoRA rank projections that hit inefficient bnb kernels,
-  but it is still slower than fp16 native-graph decode on the current V100
-  path; next performance work is a fused/native quantized serving path for
-  higher bsz and larger models.
+  but remains a compatibility/memory fallback rather than the V100 speed lane.
+  The card-local native W8/W4 `speed` policy beats fp16 in the promoted matrix;
+  full-memory quantization with the larger footprint reduction remains open.

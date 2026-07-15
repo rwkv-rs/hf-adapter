@@ -1,0 +1,16 @@
+{
+  "matrix": 0,
+  "comparison": 0,
+  "qwen_full_fla_smoke": 0,
+  "qwen_transformers_conv_oracle": 0,
+  "qwen_correctness_comparison": 0,
+  "rwkv_reference_none": 0,
+  "rwkv_native_none": 0,
+  "rwkv_correctness_none": 0,
+  "rwkv_reference_bnb8": 0,
+  "rwkv_native_bnb8": 0,
+  "rwkv_correctness_bnb8": 0,
+  "rwkv_reference_bnb4": 0,
+  "rwkv_native_bnb4": 0,
+  "rwkv_correctness_bnb4": 0
+}

@@ -1,0 +1,16 @@
+{
+    "compare-exit-code.txt":  0,
+    "fla-smoke-exit-code.txt":  0,
+    "matrix-exit-code.txt":  0,
+    "probe-compare-exit-code.txt":  0,
+    "rwkv-prefill-compare-bnb4-exit-code.txt":  0,
+    "rwkv-prefill-compare-bnb8-exit-code.txt":  0,
+    "rwkv-prefill-compare-none-exit-code.txt":  0,
+    "rwkv-prefill-native-bnb4-exit-code.txt":  0,
+    "rwkv-prefill-native-bnb8-exit-code.txt":  0,
+    "rwkv-prefill-native-none-exit-code.txt":  0,
+    "rwkv-prefill-reference-bnb4-exit-code.txt":  0,
+    "rwkv-prefill-reference-bnb8-exit-code.txt":  0,
+    "rwkv-prefill-reference-none-exit-code.txt":  0,
+    "torch-smoke-exit-code.txt":  0
+}

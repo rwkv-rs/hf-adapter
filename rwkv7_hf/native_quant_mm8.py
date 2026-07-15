@@ -581,6 +581,11 @@ def quantize_model_mm8(
         setattr(parent, attr, MM8Linear(getattr(parent, attr), fused=fused))
     setattr(model, "_rwkv7_native_mm_quantization", "mm8")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_block_replaced_modules",
+        sum(name.startswith("model.layers.") for name in targets),
+    )
     for cache_attr in (
         "_rwkv7_native_jit_pack_cache",
         "_rwkv7_native_graph_pack_cache",

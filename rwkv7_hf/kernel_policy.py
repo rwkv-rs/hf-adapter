@@ -51,8 +51,45 @@ class KernelPolicy:
     fast_cache: bool = True
     fast_prefill: bool = False
     bnb_skip_policy: str = "memory"
+    bnb_int8_threshold: float | None = None
+    native_external_quant_prefill: bool = False
+    native_external_quant_graph: bool = False
+    native_external_quant_prefill_graph: bool = False
+    native_bnb8_direct: bool = False
+    native_bnb8_relu_quant: bool = False
+    native_bnb8_rkv_mix_quant: bool = False
+    native_bnb8_ffn_mix_quant: bool = False
+    native_bnb8_attn_mix_block: int = 1024
+    native_bnb8_ffn_mix_block: int = 1024
+    a8w8_gemv_max_rows: int = 1
+    mm4_fused_max_rows: int | None = None
+    mm4_gemv_block_pairs: int | None = None
+    mm4_gemv_block_n: int | None = None
+    mm4_dot_min_rows: int | None = None
+    mm4_dot_block_b: int | None = None
+    mm4_dot_block_pairs: int | None = None
+    mm4_dot_block_n: int | None = None
+    mm4_dot_warps: int | None = None
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
+    fused_prefill_self_chunk: bool = False
+    prefill_self_chunk_min_tokens: int = 1024
+    prefill_self_chunk_size: int = 16
+    prefill_self_chunk_shape_sizes: tuple[tuple[int, int, int], ...] = ()
+    prefill_self_chunk_h_tile_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_self_chunk_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_scan_block_m: int | None = None
+    prefill_scan_block_m_b2: int | None = None
+    prefill_scan_block_m_b4: int | None = None
+    prefill_scan_block_m_shapes: tuple[tuple[int, int, int], ...] = ()
+    # Exact HxBxTxM routes, where H is the model hidden size and M is
+    # the recurrent-scan row tile.  Keep model-specific wins out of the
+    # generic BxT table so a smaller checkpoint cannot regress a larger one.
+    prefill_scan_block_m_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_scan_num_warps: int | None = None
+    prefill_blas_library: str | None = None
+    prefill_blas_large_library: str | None = None
+    prefill_blas_large_min_rows: int = 4096
     prefill_graph: bool = False
     prefill_graph_cache_size: int = 2
     fused_prefill_shift_mix: bool = False
@@ -60,6 +97,25 @@ class KernelPolicy:
     fused_prefill_state_scan: bool = False
     fused_prefill_state_scan_max_batch: int | None = None
     fused_prefill_output: bool = False
+    fused_prefill_residual_gemm: bool = False
+    fused_prefill_clampw_scan: bool = False
+    prefill_clampw_scan_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    fused_prefill_stacked_rkv: bool = False
+    prefill_stacked_rkv_min_rows: int = 128
+    prefill_stacked_rkv_max_rows: int | None = None
+    prefill_stacked_rkv_extra_rows: tuple[int, ...] = ()
+    prefill_stacked_rkv_shapes: tuple[tuple[int, int], ...] = ()
+    prefill_stacked_rkv_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    fused_prefill_sequence_ffn: bool = False
+    prefill_sequence_ffn_min_rows: int = 128
+    prefill_sequence_ffn_max_rows: int | None = None
+    prefill_sequence_ffn_extra_rows: tuple[int, ...] = ()
+    prefill_sequence_ffn_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_sequence_ffn_blocks: tuple[int, int, int, int, int] = (128, 128, 32, 64, 8)
+    prefill_sequence_ffn_large_min_rows: int = 1024
+    prefill_sequence_ffn_large_blocks: tuple[int, int, int, int, int] = (128, 128, 32, 64, 8)
+    prefill_sequence_ffn_num_stages: int = 3
+    prefill_sequence_ffn_num_warps: int = 4
     fused_recurrent_output: bool = False
     fused_recurrent_raw: bool = False
     fused_output: bool = False
@@ -84,10 +140,8 @@ class KernelPolicy:
     mm8_block_n: int | None = None
     mm4_block_pairs: int | None = None
     mm4_block_n: int | None = None
-    mm4_dot_block_b: int | None = None
     mm4_dot_block_pairs_small: int | None = None
     mm4_dot_block_pairs_large: int | None = None
-    mm4_dot_block_n: int | None = None
     wavg_lora_bsz1_max_hidden: int | None = None
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
@@ -253,8 +307,8 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "ampere": GPUAdaptationRule(
         family="ampere",
         cards=("A100", "A800", "RTX A6000", "A10", "RTX 30-series"),
-        status="A100/A800/RTX A6000 validation rows exist; keep conservative Ampere defaults",
-        default_stance="stable output fusions; tune larger batch and training paths per card",
+        status="A100/A800/RTX A6000 rows exist; RTX 3090 native-prefill graph and quant-policy rows exist",
+        default_stance="stable family defaults with exact-card RTX 3090 prefill and decode-hot quant routing",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
@@ -267,18 +321,20 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "ada": GPUAdaptationRule(
         family="ada",
         cards=("RTX 4090", "RTX 4080/4070", "RTX 40-series"),
-        status="4090 decode optimized; exact-row B2 and grouped W/A/G/V B1/B2/B4 correctness/speed rows pass",
-        default_stance="high-end consumer path with shape-routed exact-row and grouped low-rank kernels",
+        status="RTX 4090 g1h 7.2B bsz8 dense/W8/W4 acceptance passes 18/18; smaller Ada cards remain card-local validation targets",
+        default_stance="exact RTX 4090 path with shape-routed prefill, grouped low-rank, BnB W8 and native W4 kernels; compatible fallbacks elsewhere",
         default_on=(
             "fast_cache", "fused_recurrent_output", "fused_recurrent_raw", "fused_output",
-            "fused_norm_mix", "ada_linear for rows=2 and rows=4 hidden projections", "ada_wagv_lora for rows<=4",
+            "fused_norm_mix", "exact-4090 prefill graph/scan policy",
+            "ada_linear for rows=1/2/4 hidden projections", "ada_wagv_lora for rows<=4",
+            "exact-4090 BnB W8 native bridge", "exact-4090 batched MM4 output head",
         ),
-        default_off=("fused_output_project", "generic Triton projection/LoRA fusions", "ada_sparse_ffn", "fused_prefill_scan by default"),
+        default_off=("fused_output_project", "generic Triton projection/LoRA fusions", "unmeasured Ada-card promotion"),
         required_functional=COMMON_FUNCTIONAL_SMOKES,
         required_benchmarks=COMMON_PERF_BENCHMARKS
-        + ("fast-prefill TTFT/TPOT rows when RWKV7_FAST_PREFILL is considered",),
-        quant_rule="bnb is compatibility/memory baseline; native quant speed needs end-to-end rows",
-        promotion_rule="4090 bsz=1/4 min speedup gates must pass before enabling a new fusion",
+        + ("fast-prefill TTFT/TPOT rows when RWKV7_FAST_PREFILL is considered", "exact-card W8/W4 footprint, peak-VRAM and end-to-end speed rows"),
+        quant_rule="RTX 4090 W8 hybrid and W4 native/TorchAO routes have exact bsz8 end-to-end rows; other Ada cards remain memory-first until their own speed matrix passes",
+        promotion_rule="do not generalize RTX 4090 shape/tile policy to another Ada card without its exact-card correctness and speed matrix",
     ),
     "hopper": GPUAdaptationRule(
         family="hopper",
@@ -481,19 +537,150 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
         )
     if family in {"turing", "ampere"}:
+        is_3090 = family == "ampere" and "3090" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
+            fast_prefill=is_3090,
+            bnb_skip_policy="memory",
+            bnb_int8_threshold=0.0 if is_3090 else None,
+            native_external_quant_prefill=is_3090,
+            native_external_quant_graph=is_3090,
+            # Threshold-zero BnB projection kernels and the fused activation
+            # preparation route are graph-safe on the exact RTX 3090 lane.
+            native_external_quant_prefill_graph=is_3090,
+            native_bnb8_direct=is_3090,
+            native_bnb8_relu_quant=is_3090,
+            native_bnb8_rkv_mix_quant=is_3090,
+            native_bnb8_ffn_mix_quant=is_3090,
+            native_bnb8_attn_mix_block=4096 if is_3090 else 1024,
+            native_bnb8_ffn_mix_block=2048 if is_3090 else 1024,
+            a8w8_gemv_max_rows=8 if is_3090 else 1,
+            # Exact 4096x65536 lm-head sweep at fixed 1800 MHz. B1 improves
+            # 0.640 -> 0.385 ms; B2 uses the tensor-core batch kernel at
+            # 0.238 ms instead of duplicating a GEMV launch per row.
+            mm4_fused_max_rows=16 if is_3090 else None,
+            mm4_gemv_block_pairs=128 if is_3090 else None,
+            mm4_gemv_block_n=128 if is_3090 else None,
+            mm4_dot_min_rows=2 if is_3090 else None,
+            mm4_dot_block_b=16 if is_3090 else None,
+            mm4_dot_block_pairs=64 if is_3090 else None,
+            mm4_dot_block_n=64 if is_3090 else None,
+            mm4_dot_warps=4 if is_3090 else None,
             fused_recurrent_output=True,
             fused_output=True,
-            fused_prefill_scan=False,
+            fused_prefill_scan=is_3090,
+            fused_prefill_self_chunk=is_3090,
+            prefill_self_chunk_min_tokens=1024,
+            # Exact RTX 3090 7.2B sweep: P2048/B2 favors chunk-16 while B4
+            # favors chunk-32; the short promoted shapes also retain chunk-16.
+            prefill_self_chunk_size=32,
+            prefill_self_chunk_shape_sizes=(
+                ((2, 512, 16), (2, 2048, 16), (8, 128, 16)) if is_3090 else ()
+            ),
+            prefill_self_chunk_h_tile_shapes=(
+                ((4, 2048, 16, 16),) if is_3090 else ()
+            ),
+            prefill_self_chunk_model_shapes=(
+                (
+                    (4096, 32, 1, 512),
+                    (4096, 32, 2, 512),
+                    (4096, 32, 4, 512),
+                    (4096, 32, 8, 512),
+                    (4096, 32, 8, 128),
+                )
+                if is_3090
+                else ()
+            ),
+            prefill_scan_block_m=8 if is_3090 else None,
+            prefill_scan_block_m_b2=8 if is_3090 else None,
+            prefill_scan_block_m_b4=8 if is_3090 else None,
+            prefill_scan_num_warps=4 if is_3090 else None,
+            prefill_blas_library="cublaslt" if is_3090 else None,
+            prefill_blas_large_library="cublas" if is_3090 else None,
+            prefill_blas_large_min_rows=4096,
+            prefill_graph=is_3090,
+            prefill_graph_cache_size=4 if is_3090 else 2,
+            fused_prefill_shift_mix=is_3090,
+            fused_prefill_state_prep=is_3090,
+            fused_prefill_output=is_3090,
+            fused_prefill_residual_gemm=is_3090,
+            fused_prefill_stacked_rkv=is_3090,
+            prefill_stacked_rkv_min_rows=192 if is_3090 else 128,
+            prefill_stacked_rkv_max_rows=384 if is_3090 else None,
+            prefill_stacked_rkv_extra_rows=(),
+            # Exact RTX 3090 7.2B/Qwen3.5-9B A/B. B8/P512 deliberately uses
+            # separate GEMMs: it is faster and avoids the 3 GiB R/K/V pack.
+            prefill_stacked_rkv_model_shapes=(
+                (
+                    (4096, 32, 1, 512),
+                    (4096, 32, 2, 512),
+                    (4096, 32, 4, 512),
+                    (4096, 32, 4, 128),
+                )
+                if is_3090
+                else ()
+            ),
+            fused_prefill_sequence_ffn=is_3090,
+            prefill_sequence_ffn_min_rows=192 if is_3090 else 128,
+            prefill_sequence_ffn_max_rows=384 if is_3090 else None,
+            prefill_sequence_ffn_extra_rows=(),
+            prefill_sequence_ffn_model_shapes=(
+                (
+                    (4096, 32, 2, 2048),
+                    (4096, 32, 8, 512),
+                )
+                if is_3090
+                else ()
+            ),
+            prefill_sequence_ffn_blocks=(64, 64, 32, 64, 8) if is_3090 else (128, 128, 32, 64, 8),
+            prefill_sequence_ffn_large_min_rows=1024,
+            prefill_sequence_ffn_large_blocks=(128, 128, 32, 64, 8),
+            prefill_sequence_ffn_num_stages=4 if is_3090 else 3,
+            prefill_sequence_ffn_num_warps=8 if is_3090 else 4,
             output_project_block_m=16,
-            notes="CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults",
+            notes=(
+                "RTX 3090: measured cublasLt + row-8 scan, sequence shift-mix, state-prep, "
+                "output-prep, row-8 scan, shape-routed DPLR/stacked R/K/V/sequence FFN, fused BnB W8 activation preparation, native quant prefill/decode, and memory-first bnb routing; "
+                "other CUDA tensor-core cards retain stable output fusions pending a local sweep"
+                if is_3090
+                else "CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults"
+            ),
         )
     if family == "ada":
         is_4090 = "4090" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
             fast_prefill=is_4090,
+            bnb_skip_policy="memory",
+            # The exact RTX 4090 W8 lane is graph-safe with threshold zero.
+            # It removes the host-synchronizing BnB outlier branch and is a
+            # prerequisite for the measured native prefill/decode bridge.
+            bnb_int8_threshold=0.0 if is_4090 else None,
+            native_external_quant_prefill=is_4090,
+            native_external_quant_graph=is_4090,
+            native_external_quant_prefill_graph=is_4090,
+            native_bnb8_direct=is_4090,
+            native_bnb8_relu_quant=is_4090,
+            native_bnb8_rkv_mix_quant=is_4090,
+            native_bnb8_ffn_mix_quant=is_4090,
+            native_bnb8_attn_mix_block=4096 if is_4090 else 1024,
+            native_bnb8_ffn_mix_block=2048 if is_4090 else 1024,
+            # Exact bsz8 4090 output-head route. One tensor-core batch launch
+            # avoids eight independently captured W4 GEMV kernels and their
+            # graph-pool pressure.
+            mm4_fused_max_rows=16 if is_4090 else None,
+            mm4_gemv_block_pairs=128 if is_4090 else None,
+            mm4_gemv_block_n=128 if is_4090 else None,
+            mm4_dot_min_rows=2 if is_4090 else None,
+            mm4_dot_block_b=16 if is_4090 else None,
+            mm4_dot_block_pairs=64 if is_4090 else None,
+            mm4_dot_block_n=64 if is_4090 else None,
+            mm4_dot_warps=4 if is_4090 else None,
+            # Exact 4090 sweeps: row-32 wins at B8/P128 across the measured
+            # models.  The 1.5B (hidden=2048) also needs row-32 at B8/P512;
+            # larger checkpoints retain row-8 for P512/chunk-512 P2048.
+            prefill_scan_block_m_shapes=((8, 128, 32),) if is_4090 else (),
+            prefill_scan_block_m_model_shapes=((2048, 8, 512, 32),) if is_4090 else (),
             fused_recurrent_output=True,
             fused_recurrent_raw=True,
             fused_output=True,
@@ -512,7 +699,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_sparse_ffn_inplace=is_4090,
             rkv_policy="vkwr_auto" if is_4090 else "manual",
             output_project_block_m=16,
-            notes="RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, stacked-copy-free R/K/V, grouped W/A/G/V including layer 0, and graph-safe one/two-row sparse FFN; other Ada cards retain the compatible fallback until measured",
+            notes="RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, stacked-copy-free R/K/V, grouped W/A/G/V including layer 0, graph-safe one/two-row sparse FFN, threshold-zero BnB W8 native prefill/decode, and bsz8 tensor-core MM4 output-head dispatch; other Ada cards retain the compatible fallback until measured",
         )
     if family == "hopper":
         return KernelPolicy(
@@ -525,6 +712,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         )
     if family == "blackwell":
         exact_5070 = "5070" in profile.name.lower()
+        is_5090 = "5090" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=True,
@@ -534,12 +722,40 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             mm8_block_n=256 if exact_5070 else None,
             mm4_block_pairs=64 if exact_5070 else None,
             mm4_block_n=256 if exact_5070 else None,
+            mm4_dot_min_rows=2 if exact_5070 else None,
             mm4_dot_block_b=16 if exact_5070 else None,
             mm4_dot_block_pairs_small=64 if exact_5070 else None,
             mm4_dot_block_pairs_large=128 if exact_5070 else None,
             mm4_dot_block_n=128 if exact_5070 else None,
+            # Exact RTX 5090 B8 sweeps on g1h 1.5B/P512 and 7.2B/P128. The
+            # fused prefill route remains opt-in globally; these shape gates
+            # only select combinations measured end to end on this card.
+            prefill_scan_block_m_model_shapes=((2048, 8, 512, 8),) if is_5090 else (),
+            fused_prefill_residual_gemm=is_5090,
+            prefill_clampw_scan_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
+            fused_prefill_stacked_rkv=is_5090,
+            prefill_stacked_rkv_min_rows=1,
+            prefill_stacked_rkv_max_rows=1,
+            prefill_stacked_rkv_model_shapes=(
+                (2048, 24, 8, 512),
+                (4096, 32, 8, 128),
+            ) if is_5090 else (),
+            fused_prefill_sequence_ffn=is_5090,
+            prefill_sequence_ffn_min_rows=1,
+            prefill_sequence_ffn_max_rows=1,
+            prefill_sequence_ffn_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
+            prefill_sequence_ffn_large_blocks=(64, 128, 32, 64, 8),
+            prefill_sequence_ffn_num_stages=3,
+            prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: use triton_compat for early sm_120 stacks; exact RTX 5070 uses measured MM8/MM4 decode tiles while other cards retain their defaults; keep quant FFN fusion and unvalidated projection/LoRA fusions off by default",
+            notes=(
+                "RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus "
+                "clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; "
+                "g1h-7.2B B8/P128 selects stacked R/K/V only. Exact RTX 5070 uses measured "
+                "MM8/MM4 decode tiles. Do not generalize either card's routes across Blackwell; "
+                "use triton_compat for early sm_120 stacks and keep quant FFN plus unvalidated "
+                "projection/LoRA fusions off by default"
+            ),
         )
     return KernelPolicy(profile=profile)
 

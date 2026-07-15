@@ -76,6 +76,27 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.fused_recurrent_raw
     assert ada.fused_norm_mix
     assert ada.fast_prefill
+    assert ada.bnb_skip_policy == "memory"
+    assert ada.bnb_int8_threshold == 0.0
+    assert ada.native_external_quant_prefill
+    assert ada.native_external_quant_graph
+    assert ada.native_external_quant_prefill_graph
+    assert ada.native_bnb8_direct
+    assert ada.native_bnb8_relu_quant
+    assert ada.native_bnb8_rkv_mix_quant
+    assert ada.native_bnb8_ffn_mix_quant
+    assert ada.native_bnb8_attn_mix_block == 4096
+    assert ada.native_bnb8_ffn_mix_block == 2048
+    assert ada.mm4_fused_max_rows == 16
+    assert ada.mm4_gemv_block_pairs == 128
+    assert ada.mm4_gemv_block_n == 128
+    assert ada.mm4_dot_min_rows == 2
+    assert ada.mm4_dot_block_b == 16
+    assert ada.mm4_dot_block_pairs == 64
+    assert ada.mm4_dot_block_n == 64
+    assert ada.mm4_dot_warps == 4
+    assert ada.prefill_scan_block_m_shapes == ((8, 128, 32),)
+    assert ada.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 32),)
     assert ada.prefill_graph
     assert ada.fused_prefill_scan
     assert ada.fused_prefill_state_prep
@@ -95,12 +116,121 @@ def test_policy_defaults_are_conservative() -> None:
 
     other_ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4070", (8, 9)))
     assert not other_ada.fast_prefill
+    assert other_ada.bnb_int8_threshold is None
+    assert not other_ada.native_external_quant_prefill
+    assert not other_ada.native_external_quant_graph
+    assert not other_ada.native_external_quant_prefill_graph
+    assert not other_ada.native_bnb8_direct
+    assert not other_ada.native_bnb8_relu_quant
+    assert not other_ada.native_bnb8_rkv_mix_quant
+    assert not other_ada.native_bnb8_ffn_mix_quant
+    assert other_ada.mm4_fused_max_rows is None
+    assert other_ada.mm4_dot_min_rows is None
+    assert other_ada.prefill_scan_block_m_shapes == ()
+    assert other_ada.prefill_scan_block_m_model_shapes == ()
     assert not other_ada.prefill_graph
     assert not other_ada.fused_prefill_scan
     assert not other_ada.ada_sparse_ffn
     assert other_ada.rkv_policy == "manual"
     assert other_ada.ada_linear_rows == "2 4"
     assert other_ada.norm_mix_num_warps == 4
+
+    rtx3090 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 3090", (8, 6)))
+    assert rtx3090.fast_prefill
+    assert rtx3090.fused_prefill_scan
+    assert rtx3090.fused_prefill_self_chunk
+    assert rtx3090.prefill_self_chunk_min_tokens == 1024
+    assert rtx3090.prefill_self_chunk_size == 32
+    assert rtx3090.prefill_graph
+    assert rtx3090.prefill_graph_cache_size == 4
+    assert rtx3090.bnb_skip_policy == "memory"
+    assert rtx3090.bnb_int8_threshold == 0.0
+    assert rtx3090.native_external_quant_prefill
+    assert rtx3090.native_external_quant_graph
+    assert rtx3090.native_external_quant_prefill_graph
+    assert rtx3090.native_bnb8_direct
+    assert rtx3090.native_bnb8_relu_quant
+    assert rtx3090.native_bnb8_rkv_mix_quant
+    assert rtx3090.native_bnb8_ffn_mix_quant
+    assert rtx3090.native_bnb8_attn_mix_block == 4096
+    assert rtx3090.native_bnb8_ffn_mix_block == 2048
+    assert rtx3090.a8w8_gemv_max_rows == 8
+    assert rtx3090.mm4_fused_max_rows == 16
+    assert rtx3090.mm4_gemv_block_pairs == 128
+    assert rtx3090.mm4_gemv_block_n == 128
+    assert rtx3090.mm4_dot_min_rows == 2
+    assert rtx3090.mm4_dot_block_b == 16
+    assert rtx3090.mm4_dot_block_pairs == 64
+    assert rtx3090.mm4_dot_block_n == 64
+    assert rtx3090.mm4_dot_warps == 4
+    assert rtx3090.prefill_scan_block_m == 8
+    assert rtx3090.prefill_scan_block_m_b2 == 8
+    assert rtx3090.prefill_scan_block_m_b4 == 8
+    assert rtx3090.prefill_scan_num_warps == 4
+    assert rtx3090.prefill_blas_library == "cublaslt"
+    assert rtx3090.prefill_blas_large_library == "cublas"
+    assert rtx3090.prefill_blas_large_min_rows == 4096
+    assert rtx3090.prefill_self_chunk_shape_sizes == (
+        (2, 512, 16),
+        (2, 2048, 16),
+        (8, 128, 16),
+    )
+    assert rtx3090.prefill_self_chunk_h_tile_shapes == ((4, 2048, 16, 16),)
+    assert rtx3090.prefill_self_chunk_model_shapes == (
+        (4096, 32, 1, 512),
+        (4096, 32, 2, 512),
+        (4096, 32, 4, 512),
+        (4096, 32, 8, 512),
+        (4096, 32, 8, 128),
+    )
+    assert rtx3090.fused_prefill_shift_mix
+    assert rtx3090.fused_prefill_state_prep
+    assert rtx3090.fused_prefill_output
+    assert rtx3090.fused_prefill_residual_gemm
+    assert rtx3090.fused_prefill_stacked_rkv
+    assert rtx3090.prefill_stacked_rkv_min_rows == 192
+    assert rtx3090.prefill_stacked_rkv_max_rows == 384
+    assert rtx3090.prefill_stacked_rkv_extra_rows == ()
+    assert rtx3090.prefill_stacked_rkv_shapes == ()
+    assert rtx3090.prefill_stacked_rkv_model_shapes == (
+        (4096, 32, 1, 512),
+        (4096, 32, 2, 512),
+        (4096, 32, 4, 512),
+        (4096, 32, 4, 128),
+    )
+    assert rtx3090.fused_prefill_sequence_ffn
+    assert rtx3090.prefill_sequence_ffn_min_rows == 192
+    assert rtx3090.prefill_sequence_ffn_max_rows == 384
+    assert rtx3090.prefill_sequence_ffn_extra_rows == ()
+    assert rtx3090.prefill_sequence_ffn_model_shapes == (
+        (4096, 32, 2, 2048),
+        (4096, 32, 8, 512),
+    )
+    assert rtx3090.prefill_sequence_ffn_blocks == (64, 64, 32, 64, 8)
+    assert rtx3090.prefill_sequence_ffn_large_blocks == (128, 128, 32, 64, 8)
+    assert rtx3090.prefill_sequence_ffn_num_stages == 4
+    assert rtx3090.prefill_sequence_ffn_num_warps == 8
+    assert not rtx3090.fused_prefill_state_scan
+
+    a6000 = policy_for_profile(classify_gpu("NVIDIA RTX A6000", (8, 6)))
+    assert not a6000.fast_prefill
+    assert not a6000.fused_prefill_scan
+    assert not a6000.fused_prefill_self_chunk
+    assert not a6000.prefill_graph
+    assert a6000.bnb_skip_policy == "memory"
+    assert a6000.bnb_int8_threshold is None
+    assert not a6000.native_external_quant_prefill
+    assert not a6000.native_external_quant_graph
+    assert not a6000.native_bnb8_direct
+    assert not a6000.native_bnb8_relu_quant
+    assert not a6000.native_bnb8_rkv_mix_quant
+    assert not a6000.native_bnb8_ffn_mix_quant
+    assert a6000.prefill_scan_block_m is None
+    assert a6000.prefill_scan_block_m_b2 is None
+    assert a6000.prefill_scan_block_m_b4 is None
+    assert not a6000.fused_prefill_sequence_ffn
+    assert not a6000.fused_prefill_stacked_rkv
+    assert a6000.prefill_blas_library is None
 
     blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)))
     assert blackwell.fused_output
@@ -115,13 +245,39 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.mm4_dot_block_pairs_small is None
     assert blackwell.mm4_dot_block_pairs_large is None
     assert blackwell.mm4_dot_block_n is None
+    assert blackwell.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 8),)
+    assert not blackwell.fused_prefill_clampw_scan
+    assert blackwell.prefill_clampw_scan_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.fused_prefill_residual_gemm
+    assert blackwell.fused_prefill_stacked_rkv
+    assert blackwell.prefill_stacked_rkv_min_rows == 1
+    assert blackwell.prefill_stacked_rkv_max_rows == 1
+    assert blackwell.prefill_stacked_rkv_model_shapes == (
+        (2048, 24, 8, 512),
+        (4096, 32, 8, 128),
+    )
+    assert blackwell.fused_prefill_sequence_ffn
+    assert blackwell.prefill_sequence_ffn_min_rows == 1
+    assert blackwell.prefill_sequence_ffn_max_rows == 1
+    assert blackwell.prefill_sequence_ffn_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.prefill_sequence_ffn_large_blocks == (64, 128, 32, 64, 8)
+    assert blackwell.prefill_sequence_ffn_num_stages == 3
+    assert blackwell.prefill_sequence_ffn_num_warps == 8
     assert "triton_compat" in blackwell.notes
+    other_blackwell = policy_for_profile(
+        classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0))
+    )
+    assert other_blackwell.prefill_scan_block_m_model_shapes == ()
+    assert other_blackwell.prefill_clampw_scan_model_shapes == ()
+    assert not other_blackwell.fused_prefill_stacked_rkv
+    assert not other_blackwell.fused_prefill_sequence_ffn
 
     rtx5070 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)))
     assert rtx5070.mm8_block_m == 64
     assert rtx5070.mm8_block_n == 256
     assert rtx5070.mm4_block_pairs == 64
     assert rtx5070.mm4_block_n == 256
+    assert rtx5070.mm4_dot_min_rows == 2
     assert rtx5070.mm4_dot_block_b == 16
     assert rtx5070.mm4_dot_block_pairs_small == 64
     assert rtx5070.mm4_dot_block_pairs_large == 128

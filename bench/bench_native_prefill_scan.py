@@ -24,7 +24,7 @@ os.environ.setdefault("RWKV_V7_ON", "1")
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from rwkv7_hf import native_jit
 
@@ -60,16 +60,21 @@ def prepare_model_dir(model_path: str, *, code_source: str) -> tuple[str, tempfi
     if not REPO_CODE_DIR.is_dir():
         raise ValueError(f"repo code directory not found: {REPO_CODE_DIR}")
 
-    tmp = tempfile.TemporaryDirectory(prefix="rwkv7_repo_code_model_")
+    # Keep the staging directory on the checkpoint volume so Windows can use
+    # hardlinks when developer-mode symlink privileges are unavailable.
+    tmp = tempfile.TemporaryDirectory(prefix="rwkv7_repo_code_model_", dir=src.parent)
     dst = Path(tmp.name)
     for item in src.iterdir():
         if item.name == "__pycache__" or item.suffix == ".py":
             continue
         target = dst / item.name
-        if item.is_dir():
-            target.symlink_to(item, target_is_directory=True)
-        else:
-            target.symlink_to(item)
+        try:
+            target.symlink_to(item, target_is_directory=item.is_dir())
+        except OSError:
+            if item.is_dir():
+                shutil.copytree(item, target)
+            else:
+                os.link(item, target)
     for py_file in REPO_CODE_DIR.glob("*.py"):
         shutil.copy2(py_file, dst / py_file.name)
     return str(dst), tmp
@@ -208,6 +213,15 @@ def model_payload_mb(model) -> float:
 
 def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
     nj = model_native_jit_module(model)
+    quantizer = getattr(model, "hf_quantizer", None)
+    quant_config = getattr(quantizer, "quantization_config", None)
+    if quant_config is None:
+        quant_config = getattr(getattr(model, "config", None), "quantization_config", None)
+    quant_get = (
+        quant_config.get
+        if isinstance(quant_config, dict)
+        else lambda name, default=None: getattr(quant_config, name, default)
+    )
     ids = build_ids(tok, batch_size, prompt_tokens, args.device)
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
@@ -247,12 +261,23 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         greedy_match = bool(torch.equal(ref_logits.argmax(dim=-1).detach().cpu(), native_logits.argmax(dim=-1).detach().cpu()))
 
         next_token = ref_logits.argmax(dim=-1, keepdim=True)
-        if args.reference_backend == "hf":
-            ref_next = model(next_token, past_key_values=ref.past_key_values, use_cache=True, logits_to_keep=1, return_dict=True)
-        else:
-            ref_next = model.rwkv7_forward_token(next_token, past_key_values=ref.past_key_values, return_dict=True)
-        native_next = model.rwkv7_forward_token(next_token, past_key_values=native.past_key_values, return_dict=True)
+        reference_decode_backend = "fla" if args.reference_backend == "hf" else "native_jit"
+        candidate_decode_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
+        with env_override(RWKV7_FAST_TOKEN_BACKEND=reference_decode_backend):
+            ref_next = model.rwkv7_forward_token(
+                next_token,
+                past_key_values=ref.past_key_values,
+                return_dict=True,
+            )
+            reference_decode_backend_effective = getattr(model, "rwkv7_last_fast_token_backend", lambda: None)()
+        with env_override(RWKV7_FAST_TOKEN_BACKEND=candidate_decode_backend):
+            native_next = model.rwkv7_forward_token(
+                next_token,
+                past_key_values=native.past_key_values,
+                return_dict=True,
+            )
         decode_max_abs = float((ref_next.logits[:, -1].float() - native_next.logits[:, -1].float()).abs().max().detach().cpu())
+        decode_min_cosine = cosine_min(ref_next.logits[:, -1], native_next.logits[:, -1])
         decode_greedy_match = bool(torch.equal(ref_next.logits[:, -1].argmax(dim=-1).detach().cpu(), native_next.logits[:, -1].argmax(dim=-1).detach().cpu()))
         decode_backend = getattr(model, "rwkv7_last_fast_token_backend", lambda: None)()
 
@@ -284,7 +309,14 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
         "bench_case": os.environ.get("RWKV7_BENCH_CASE"),
-        "status": "pass" if greedy_match and decode_greedy_match else "fail",
+        "status": (
+            "pass"
+            if greedy_match
+            and decode_greedy_match
+            and min_cos >= args.min_cosine
+            and decode_min_cosine >= args.min_cosine
+            else "fail"
+        ),
         "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else args.device,
         "model_path": args.model,
@@ -296,6 +328,52 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "model_size_label": infer_model_size_label(args.model),
         "quantization": args.quantization,
         "quant_policy": args.quant_policy,
+        "bnb_skip_policy_requested": (
+            os.environ.get("RWKV7_BNB_SKIP_POLICY") if args.quantization.startswith("bnb") else None
+        ),
+        "bnb_skip_policy": (
+            getattr(model, "_rwkv7_bnb_skip_policy", None) if args.quantization.startswith("bnb") else None
+        ),
+        "bnb_int8_threshold_requested": (
+            float(os.environ["RWKV7_BNB_INT8_THRESHOLD"])
+            if args.quantization == "bnb8" and "RWKV7_BNB_INT8_THRESHOLD" in os.environ
+            else None
+        ),
+        "bnb_int8_threshold": (
+            float(quant_get("llm_int8_threshold", 6.0))
+            if args.quantization == "bnb8"
+            else None
+        ),
+        "native_bnb8_direct_requested": os.environ.get("RWKV7_NATIVE_BNB8_DIRECT"),
+        "native_bnb8_relu_quant_requested": os.environ.get("RWKV7_NATIVE_BNB8_RELU_QUANT"),
+        "native_bnb8_rkv_mix_quant_requested": os.environ.get(
+            "RWKV7_NATIVE_BNB8_RKV_MIX_QUANT"
+        ),
+        "native_bnb8_ffn_mix_quant_requested": os.environ.get(
+            "RWKV7_NATIVE_BNB8_FFN_MIX_QUANT"
+        ),
+        "native_bnb8_direct_effective": bool(
+            nj._native_bnb8_policy_flag("RWKV7_NATIVE_BNB8_DIRECT", "native_bnb8_direct")
+        ) if args.quantization == "bnb8" else None,
+        "native_bnb8_relu_quant_effective": bool(
+            nj._native_bnb8_policy_flag("RWKV7_NATIVE_BNB8_RELU_QUANT", "native_bnb8_relu_quant")
+        ) if args.quantization == "bnb8" else None,
+        "native_bnb8_rkv_mix_quant_effective": bool(
+            nj._native_bnb8_policy_flag("RWKV7_NATIVE_BNB8_RKV_MIX_QUANT", "native_bnb8_rkv_mix_quant")
+        ) if args.quantization == "bnb8" else None,
+        "native_bnb8_ffn_mix_quant_effective": bool(
+            nj._native_bnb8_policy_flag("RWKV7_NATIVE_BNB8_FFN_MIX_QUANT", "native_bnb8_ffn_mix_quant")
+        ) if args.quantization == "bnb8" else None,
+        "native_bnb8_attn_mix_block_effective": int(
+            nj._native_bnb8_policy_block(
+                "RWKV7_NATIVE_BNB8_ATTN_MIX_BLOCK", "native_bnb8_attn_mix_block", 1024
+            )
+        ) if args.quantization == "bnb8" else None,
+        "native_bnb8_ffn_mix_block_effective": int(
+            nj._native_bnb8_policy_block(
+                "RWKV7_NATIVE_BNB8_FFN_MIX_BLOCK", "native_bnb8_ffn_mix_block", 1024
+            )
+        ) if args.quantization == "bnb8" else None,
         "quantized_modules": int(getattr(model, "_rwkv7_native_mm_replaced_modules", 0)),
         "model_payload_mb": model_payload_mb(model),
         "batch_size": batch_size,
@@ -348,6 +426,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_wavg_lora_block_r": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R"),
         "prefill_fused_wavg_lora_block_k": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K"),
         "fast_token_backend_after_native_prefill": decode_backend,
+        "reference_decode_backend": reference_decode_backend_effective,
+        "candidate_decode_backend": decode_backend,
         "reference_prefill_ms": round(ref_ms, 4),
         "hf_prefill_ms": round(ref_ms, 4) if args.reference_backend == "hf" else None,
         "native_prefill_ms": round(native_ms, 4),
@@ -360,7 +440,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "min_cosine": round(min_cos, 8),
         "greedy_match": greedy_match,
         "decode_after_prefill_max_abs_diff": round(decode_max_abs, 6),
+        "decode_after_prefill_min_cosine": round(decode_min_cosine, 8),
         "decode_after_prefill_greedy_match": decode_greedy_match,
+        "min_cosine_gate": args.min_cosine,
         "peak_vram_mb": peak,
     }
     return row
@@ -393,12 +475,17 @@ def main() -> int:
         default="hf",
         help="HF/FLA reference, or independent direct-native reference for cards where FLA cannot compile",
     )
-    ap.add_argument("--quantization", choices=["none", "a8w8", "mm4", "torchao_w8", "torchao_w4"], default="none")
+    ap.add_argument(
+        "--quantization",
+        choices=["none", "bnb8", "bnb4", "a8w8", "mm4", "torchao_w8", "torchao_w4"],
+        default="none",
+    )
     ap.add_argument("--quant-policy", choices=["memory", "speed"], default="speed")
     ap.add_argument("--quant-min-params", type=int, default=1)
     ap.add_argument("--code-source", choices=["model", "repo"], default="model", help="load trust_remote_code from checkpoint files or overlay current repo rwkv7_hf/*.py")
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--steps", type=int, default=5)
+    ap.add_argument("--min-cosine", type=float, default=0.999)
     ap.add_argument("--timing", choices=["cuda-event", "wall"], default="cuda-event")
     ap.add_argument("--results", default="")
     args = ap.parse_args()
@@ -410,12 +497,27 @@ def main() -> int:
     args.effective_model_path = effective_model_path
     try:
         tok = AutoTokenizer.from_pretrained(effective_model_path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            effective_model_path,
-            trust_remote_code=True,
-            torch_dtype=DTYPES[args.dtype],
-            device_map=args.device if args.device.startswith("cuda") else None,
-        ).eval()
+        load_kwargs: dict[str, Any] = {
+            "trust_remote_code": True,
+            "torch_dtype": DTYPES[args.dtype],
+            "device_map": args.device if args.device.startswith("cuda") else None,
+        }
+        if args.quantization == "bnb8":
+            threshold = float(os.environ.get("RWKV7_BNB_INT8_THRESHOLD", "6.0"))
+            if threshold < 0.0:
+                raise ValueError("RWKV7_BNB_INT8_THRESHOLD must be non-negative")
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=threshold,
+            )
+        elif args.quantization == "bnb4":
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=DTYPES[args.dtype],
+                bnb_4bit_use_double_quant=False,
+            )
+        model = AutoModelForCausalLM.from_pretrained(effective_model_path, **load_kwargs).eval()
         if args.quantization == "a8w8":
             from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
 

@@ -1,0 +1,10 @@
+{
+  "candidate_prefill_ms": 80.95700000000001,
+  "reference_prefill_ms": 82.986,
+  "prefill_speedup": 1.0250615748775795,
+  "decode_speedup": 2.621662779185475,
+  "stacked_rkv_effective": true,
+  "candidate_backend": "native_prefill_graph",
+  "reference_backend": "qwen_fla_gated_delta_rule_fla_triton_conv",
+  "reference_full_fused": true
+}

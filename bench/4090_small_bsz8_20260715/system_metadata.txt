@@ -1,0 +1,14 @@
+date=2026-07-15
+deepseek-r1-32gb-100m
+Linux deepseek-r1-32gb-100m 5.15.0-128-generic #138-Ubuntu SMP Sat Nov 30 22:28:23 UTC 2024 x86_64 x86_64 x86_64 GNU/Linux
+NVIDIA GeForce RTX 4090, 550.142, 24564 MiB, 8.9
+python=3.10.12
+torch=2.6.0+cu124
+transformers=5.12.1
+triton=3.2.0
+bitsandbytes=0.49.2
+flash-linear-attention=0.5.1
+causal-conv1d=1.5.0.post8
+torchao=0.9.0
+source_base_commit=1730d15
+source_has_small_policy_patch=true

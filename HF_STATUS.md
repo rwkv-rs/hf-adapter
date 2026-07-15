@@ -4,7 +4,7 @@ Canonical current snapshot. Scope: Transformers loading/generation/training,
 PEFT/TRL, recurrent cache helpers, quantized HF inference, hardware validation
 and reproducible performance evidence. Native vLLM/SGLang work is separate.
 
-Last updated: **2026-07-13**.
+Last updated: **2026-07-16**.
 
 ## Overall status
 
@@ -20,7 +20,8 @@ Last updated: **2026-07-13**.
 | Native/no-FLA backend | **PASS as opt-in compatibility path** | load/generate/cache/PEFT/Trainer/TRL smoke; not the default wrapper |
 | W8/W4 functionality and memory | **PASS** | bnb and native/MLX paths load/generate and reduce footprint |
 | Universal W8/W4 speed | **PARTIAL** | selected V100/4090/5090 speed lanes pass; full-memory quant remains open |
-| Production performance | **PARTIAL / strong card-local closes** | V100, measured 4090 lanes, RTX 5090 and Apple M5 have promoted artifacts; V100 Qwen3.5 HF fallback matrix has 216/216 coverage with 207/216 strict speed passes |
+| Production performance | **PARTIAL / strong card-local closes** | V100 Albatross/native-quant lanes plus 1.5B/full-FLA-Qwen B1/B8 active-work gates, RTX 4090 all published 0.4B–7.2B/Qwen3.5 bsz8 pairs, RTX 5090 and Apple M5 have promoted artifacts; RTX 5070 1.5B RWKV vs full-FLA Qwen3.5 2B also passes its bsz8 gates in 18/18 cells |
+| Apple M5 1.5B target-only | **PASS for checked B8 profile** | true B8, T133/decode64, no draft and no prefix coalescing; active-normalized prefill/decode=`1.1406x/1.1394x` Qwen3.5 2B, raw peak=`1.790/2.152GB`, fidelity passes |
 | Full common-card coverage | **PARTIAL** | H100, AMD/ROCm, Turing and broader Apple/50-series evidence remain open |
 | PP/TP | **PARTIAL** | HF multi-device/device-map smoke exists; production TP matrix is not closed |
 | Speculative decoding | **EXPERIMENTAL PASS** | HF-compatible harness and Apple target-greedy oracle evidence exist |
@@ -29,12 +30,13 @@ Last updated: **2026-07-13**.
 
 | Platform | Status | Canonical evidence / boundary |
 |---|---|---|
-| V100 32GB | **Production-close; full-memory quant open** | Dense Albatross P1 remains closed. The 126-row native quant matrix shows MM4 speed+footprint passing in 21/21 cells but greedy only 6/7, 6/7, and 4/7; MM8 speed passes 0/21 cells per lane. Official Qwen3.5 torch-fallback coverage is 216/216; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md), [`bench/v100_native_quant_full_matrix_20260713/`](bench/v100_native_quant_full_matrix_20260713/README.md), [`bench/qwen35_v100_hf_matrix_20260712/`](bench/qwen35_v100_hf_matrix_20260712/README.md) |
-| RTX 4090 | **Production-close for measured lanes** | All measured 0.4B decode batches pass; current-session bsz4 prefill passes; historical high-water remains |
-| RTX 5090 | **Production-close** | Quant pressure, 13.3B low-memory conversion and full MATH500; [`bench/5090_blackwell_production_close_20260712/`](bench/5090_blackwell_production_close_20260712/README.md) |
-| Apple M5 | **Production-close for measured MLX pairs** | Selected Qwen3.5 comparison gates and CoreML state correctness; [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
+| V100 32GB | **Production-close for measured dense/selected-quant lanes; full-memory quant open** | Dense Albatross P1 and the 1.5B/full-FLA-Qwen3.5-2B B1/B8 gates pass, with raw prefill/decode minima `2.815921x/5.270432x` and active-work minima `2.285574x/4.277804x`. The separate 126-row full-memory matrix is not accepted: MM4 speed+footprint passes 21/21 but greedy is only 6/7, 6/7 and 4/7; MM8 speed passes 0/21 per lane. The 216-cell Torch-fallback matrix is historical only; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md), [`bench/v100_active_b1b8_20260715/`](bench/v100_active_b1b8_20260715/README.md), [`bench/v100_native_quant_full_matrix_20260713/`](bench/v100_native_quant_full_matrix_20260713/README.md) |
+| RTX 4090 | **Production-close for measured 0.4B–7.2B bsz8 lanes** | Small pairs pass 54/54 with minimum dense prefill/decode `1.041959x`/`4.214362x` across the three pair minima, plus the separate 7.2B/9B 18/18 close; all use fail-closed native/full-FLA, active-work and quant-local speed/memory gates; task quality and other batches remain open; [`bench/4090_small_bsz8_20260715/`](bench/4090_small_bsz8_20260715/README.md), [`bench/4090_g1h_7p2_bsz8_20260715/`](bench/4090_g1h_7p2_bsz8_20260715/README.md) |
+| RTX 5070 Laptop | **Production-close for measured full-FLA and native-quant lanes** | The 1.5B RWKV vs 2B Qwen bsz8 matrix passes 18/18 strict cells with full FLA plus Triton conv. Exact-card 1.5B MM8/MM4 and 2.9B MM8 each pass 7/7 speed/footprint/greedy cells; default-off group128 MM4 fixes the 2.9B affine-quality failure and passes 7/7 at `1.0895x-1.1656x` fp16 and `0.5402x` footprint. The 7.2B quant-only bsz1 rows are feasibility evidence without a same-card fp16 gate; [`bench/5070_qwen35_full_fla_bsz8_20260714/`](bench/5070_qwen35_full_fla_bsz8_20260714/README.md), [`bench/5070_native_mm4_groupwise_20260713/`](bench/5070_native_mm4_groupwise_20260713/README.md) |
+| RTX 5090 | **Production-close for measured B1/B8 Qwen and g1h 13.3B lanes** | The current-main full-FLA Qwen3.5 matrix passes 8/8 batch-pairs from 0.4B/0.8B through 7.2B/9B: 144 candidate + 144 verified full-FLA references, 32/32 correctness reports, and 144/144 dense/W8/W4 cells. Raw prefill/decode and per-active-B throughput lead throughout; active-work prefill and peak-VRAM boundaries remain explicit. Fresh official g1h 13.3B load/generate passes, and its B8 speed-policy MM8/MM4 boundaries pass the `>=0.98x` paired-fp16 gate with lower footprint and matching next tokens; [`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md), [`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md), [`bench/5090_blackwell_production_close_20260712/`](bench/5090_blackwell_production_close_20260712/README.md) |
+| Apple M5 | **Production-close for measured MLX pairs** | B1 speculative gates plus the separate 1.5B B8 target-only cold gate; the latter uses no draft/cache and passes active-normalized prefill/decode at `1.1406x/1.1394x` Qwen3.5 2B with lower raw peak memory; [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
 | A100 40GB / A800 80GB / A6000 48GB | **Validated** | Large-model API/training/quant/ZeRO matrices; production performance remains card-specific |
-| GTX 1080 Ti / RTX 5070 Laptop | **Smoke / exact 1.5B and 2.9B native W8/W4 lanes closed** | RTX 5070 Laptop 1.5B tuned MM8/MM4 and 2.9B MM8 off/up/deep each pass 7/7 strict cells. The default-off 2.9B group128 MM4 follow-up also passes speed/footprint/greedy 7/7 at `1.0895x-1.1656x` fp16 and `0.5402x` footprint. Quant-only 7.2B MM4/MM8 bsz1 fits in 8GB without a same-card fp16 gate. Other cards remain independent; [`bench/5070_native_mm4_groupwise_20260713/`](bench/5070_native_mm4_groupwise_20260713/README.md) |
+| GTX 1080 Ti | **Smoke** | compatibility evidence, not full production-close |
 | H100 / AMD / Turing | **Open** | real-card matrix required |
 
 Full matrix: [`docs/HARDWARE_MATRIX.md`](docs/HARDWARE_MATRIX.md).

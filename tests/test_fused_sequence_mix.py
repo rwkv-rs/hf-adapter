@@ -50,12 +50,29 @@ def test_sequence_mix_and_relu_square_cuda_kernels_match_reference():
     mixes = [torch.randn(64, device=device, dtype=torch.float16) for _ in range(6)]
     previous = _shifted(x, initial)
 
-    *outputs, next_state = fused_attn_sequence_shift_mix(x, initial, *mixes)
+    attn_workspace = torch.empty((6, *x.shape), device=device, dtype=x.dtype)
+    *outputs, next_state = fused_attn_sequence_shift_mix(
+        x,
+        initial,
+        *mixes,
+        workspace=attn_workspace,
+    )
+    assert outputs[0].untyped_storage().data_ptr() == attn_workspace.untyped_storage().data_ptr()
+    assert outputs[2].storage_offset() == x.numel()
+    assert outputs[3].storage_offset() == 2 * x.numel()
+    assert outputs[1].storage_offset() == 3 * x.numel()
     for output, mix in zip(outputs, mixes):
         torch.testing.assert_close(output, x + (previous - x) * mix, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(next_state, x[:, -1], rtol=0, atol=0)
 
-    ffn_output, ffn_state = fused_ffn_sequence_shift_mix(x, initial, mixes[0])
+    ffn_workspace = torch.empty_like(x)
+    ffn_output, ffn_state = fused_ffn_sequence_shift_mix(
+        x,
+        initial,
+        mixes[0],
+        workspace=ffn_workspace,
+    )
+    assert ffn_output.data_ptr() == ffn_workspace.data_ptr()
     torch.testing.assert_close(ffn_output, x + (previous - x) * mixes[0], rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(ffn_state, x[:, -1], rtol=0, atol=0)
 

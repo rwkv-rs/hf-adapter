@@ -4,9 +4,26 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-12**.
+Last updated: **2026-07-16**.
 
-## P0 — Final production gaps
+## Current milestone — COMPLETE
+
+The active V100/full-FLA/documentation milestone is complete:
+
+- V100 0.1B/0.4B/1.5B dense Albatross P1 and native W8/W4 speed lane;
+- V100 RWKV-7 1.5B versus full-FLA Qwen3.5-2B target-only B1/B8 raw and
+  active-parameter work gates;
+- RTX 4090 small-model and 7.2B bsz8 promoted matrices;
+- RTX 5070 full-FLA 1.5B/2B bsz8 promoted matrix;
+- RTX 5090 full-FLA Qwen B1/B8 8/8 matrix and latest g1h 13.3B boundary;
+- PEFT/Trainer/TRL and current ZeRO-2/3 smoke/resume matrix;
+- canonical documentation refresh and full Markdown freshness audit.
+
+The unchecked items below are the **project-wide remaining roadmap** needed for
+universal “all cards/all shapes/upstream” claims. They are not unfinished work
+from the completed current milestone.
+
+## P0 — Remaining universal production gaps
 
 ### 1. Full-memory W8/W4 performance
 
@@ -31,6 +48,23 @@ the declared same-card fp16 equivalence/speed threshold. See
 - [ ] Recheck RTX 4090 prompt-512 historical high-water reference.
 - [ ] Add larger-model prefill/decode rows with explicit memory ceilings.
 - [ ] Keep shape, dtype, checkpoint and timing method identical.
+
+### 2a. Broaden optimized-Qwen exact-card coverage
+
+The initial optimized-reference milestones are closed: RTX 5070 bsz8 passes
+its 18-cell fp16/W8/W4 matrix, and V100 1.5B/2B target-only B1/B8 passes raw
+and active-work gates against full-FLA/Triton-conv Qwen. Remaining work:
+
+- [ ] Extend RTX 5070 full-FLA coverage to bsz1/2/4 and larger 4B/9B pairs.
+- [ ] Extend V100 beyond prompt512/decode64 and the 1.5B/2B pair.
+- [ ] Add optimized-Qwen exact-card matrices on Ampere and Hopper.
+- [ ] Keep raw throughput, `tok/s * active parameters`, correctness and memory
+      as separate fail-closed gates; never substitute Torch-fallback rows.
+
+Acceptance: every promoted Qwen reference row reports the full FLA core, norm
+and accelerated causal-convolution route. Historical
+`qwen_fla_gated_delta_rule_torch_conv` and forced-Torch V100 rows remain
+diagnostics only.
 
 ### 3. Missing hardware
 
@@ -103,11 +137,13 @@ snapshot is [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PROD
 
 ## PR completion checklist
 
-- [ ] Exact hardware/runtime/model/dtype recorded.
-- [ ] Reproduction command included.
-- [ ] Raw JSONL/log and concise README included.
-- [ ] Correctness, speed and memory reported together.
-- [ ] Negative or partial results described honestly.
-- [ ] Canonical status/benchmark/TODO documents updated only when status changes.
-- [ ] `python tests/test_markdown_links.py` passes.
-- [ ] Relevant unit/smoke tests pass.
+This is a per-PR template, not a list of outstanding project tasks:
+
+- Exact hardware/runtime/model/dtype recorded.
+- Reproduction command included.
+- Raw JSONL/log and concise README included.
+- Correctness, speed and memory reported together.
+- Negative or partial results described honestly.
+- Canonical status/benchmark/TODO documents updated only when status changes.
+- `python tests/test_markdown_links.py` passes.
+- Relevant unit/smoke tests pass.

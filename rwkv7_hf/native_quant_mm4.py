@@ -29,6 +29,11 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
+try:
+    from .kernel_policy import current_kernel_policy
+except Exception:  # pragma: no cover - remote-code fallback
+    current_kernel_policy = None  # type: ignore[assignment]
+
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
 
 try:
@@ -298,39 +303,163 @@ def mm4_gemv_available(device=None) -> bool:
     return torch.device(device).type == "cuda"
 
 
+def _mm4_policy_optional_int(x, name: str) -> int | None:
+    if current_kernel_policy is None or torch is None:
+        return None
+    try:
+        policy = current_kernel_policy(device=x.device, torch_module=torch)
+        value = getattr(policy, name, None)
+        return None if value is None else int(value)
+    except Exception:
+        return None
+
+
+def _mm4_policy_int(x, name: str, default: int) -> int:
+    value = _mm4_policy_optional_int(x, name)
+    if value is None:
+        return int(default)
+    return value
+
+
 def _mm4_decode_blocks(x, block_pairs, block_n):
     if block_pairs is not None and block_n is not None:
         return int(block_pairs), int(block_n)
     blackwell = bool(x.is_cuda and torch.cuda.get_device_capability(x.device)[0] >= 12)
-    device_name = torch.cuda.get_device_name(x.device).lower() if blackwell else ""
-    exact_5070 = "5070" in device_name
-    default_pairs = 64 if exact_5070 else 128 if blackwell else 64
-    default_n = 256 if exact_5070 else 128 if blackwell else 64
-    resolved_pairs = int(block_pairs or os.environ.get("RWKV7_NATIVE_MM4_BLOCK_PAIRS") or default_pairs)
-    resolved_n = int(block_n or os.environ.get("RWKV7_NATIVE_MM4_BLOCK_N") or default_n)
+    default = 128 if blackwell else 64
+    policy_pairs = _mm4_policy_optional_int(x, "mm4_block_pairs")
+    if policy_pairs is None:
+        policy_pairs = _mm4_policy_int(x, "mm4_gemv_block_pairs", default)
+    policy_n = _mm4_policy_optional_int(x, "mm4_block_n")
+    if policy_n is None:
+        policy_n = _mm4_policy_int(x, "mm4_gemv_block_n", default)
+    env_pairs = os.environ.get("RWKV7_NATIVE_MM4_BLOCK_PAIRS") or os.environ.get(
+        "RWKV7_MM4_GEMV_BLOCK_PAIRS"
+    )
+    env_n = os.environ.get("RWKV7_NATIVE_MM4_BLOCK_N") or os.environ.get(
+        "RWKV7_MM4_GEMV_BLOCK_N"
+    )
+    resolved_pairs = int(block_pairs or env_pairs or policy_pairs)
+    resolved_n = int(block_n or env_n or policy_n)
     if resolved_pairs not in {8, 16, 32, 64, 128, 256}:
         raise ValueError(
-            f"RWKV7_NATIVE_MM4_BLOCK_PAIRS must be a supported power of two; got {resolved_pairs}"
+            f"MM4 GEMV block pairs must be a supported power of two; got {resolved_pairs}"
         )
-    if resolved_n not in {32, 64, 128, 256}:
-        raise ValueError(f"RWKV7_NATIVE_MM4_BLOCK_N must be one of 32, 64, 128, or 256; got {resolved_n}")
+    if resolved_n not in {16, 32, 64, 128, 256}:
+        raise ValueError(f"MM4 GEMV block N must be one of 16, 32, 64, 128, or 256; got {resolved_n}")
     return resolved_pairs, resolved_n
+
+
+def mm4_effective_launch_config(device=None) -> dict[str, int]:
+    """Return the exact policy/env-resolved W4 launch signature."""
+
+    if torch is None:
+        return {}
+    if device is None:
+        resolved = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        resolved = torch.device(device)
+    probe = torch.empty((), device=resolved)
+    blackwell = bool(
+        resolved.type == "cuda"
+        and torch.cuda.is_available()
+        and torch.cuda.get_device_capability(resolved)[0] >= 12
+    )
+    pairs, block_n = _mm4_decode_blocks(probe, None, None)
+    defaults = {
+        "dot_min_rows": _mm4_policy_int(probe, "mm4_dot_min_rows", 4),
+        "dot_block_b": _mm4_policy_int(probe, "mm4_dot_block_b", 16),
+        "dot_block_pairs": _mm4_policy_int(probe, "mm4_dot_block_pairs", 128),
+        "dot_block_n": _mm4_policy_int(probe, "mm4_dot_block_n", 32),
+        "dot_warps": _mm4_policy_int(probe, "mm4_dot_warps", 8),
+        "fused_max_rows": _mm4_policy_int(
+            probe,
+            "mm4_fused_max_rows",
+            16 if blackwell or mm4_batched_dot_enabled(resolved) else 4,
+        ),
+    }
+    return {
+        "gemv_block_pairs": pairs,
+        "gemv_block_n": block_n,
+        "dot_min_rows": int(os.environ.get("RWKV7_MM4_DOT_MIN_ROWS", defaults["dot_min_rows"])),
+        "dot_block_b": int(os.environ.get("RWKV7_MM4_DOT_BLOCK_B", defaults["dot_block_b"])),
+        "dot_block_pairs": int(
+            os.environ.get("RWKV7_MM4_DOT_BLOCK_PAIRS", defaults["dot_block_pairs"])
+        ),
+        "dot_block_n": int(os.environ.get("RWKV7_MM4_DOT_BLOCK_N", defaults["dot_block_n"])),
+        "dot_warps": int(os.environ.get("RWKV7_MM4_DOT_WARPS", defaults["dot_warps"])),
+        "fused_max_rows": int(
+            os.environ.get("RWKV7_MM4_FUSED_MAX_ROWS", defaults["fused_max_rows"])
+        ),
+    }
+
+
+def _mm4_batched_dot_device_supported(major: int, minor: int, name: str) -> bool:
+    """Return whether exact-device tensor-core W4 batch evidence exists."""
+
+    return bool(
+        int(major) >= 12
+        or (int(major), int(minor)) == (8, 6)
+        or (
+            (int(major), int(minor)) == (8, 9)
+            and "4090" in str(name).lower()
+        )
+    )
+
+
+def mm4_batched_dot_enabled(device=None) -> bool:
+    """Whether the measured tensor-core W4 batch kernel is enabled.
+
+    The measured ``sm_120+``, consumer/workstation ``sm_86``, and exact RTX
+    4090 routes provide the fp16 tensor-core primitive used by
+    :func:`mm4_batched_dot_triton`.
+    Older code dispatched every ``sm_86`` batch row as a separate GEMV (or
+    materialized the dequantized weight above four rows), which made the 2.9B
+    lm-head speed-policy lane about 0.65x fp16 at bsz8.
+
+    Keep ``sm_80`` and non-4090 ``sm_89`` devices on their existing routes;
+    capability policy must not silently generalize one measured card to every
+    architecture peer.
+    """
+    if torch is None or not torch.cuda.is_available():
+        return False
+    dev = torch.device("cuda" if device is None else device)
+    if dev.type != "cuda":
+        return False
+    major, minor = torch.cuda.get_device_capability(dev)
+    try:
+        name = str(torch.cuda.get_device_name(dev))
+    except Exception:
+        name = ""
+    return _mm4_batched_dot_device_supported(major, minor, name)
 
 
 def _mm4_dot_blocks(x, block_b, block_pairs, block_n, m_orig=None):
     if block_b is not None and block_pairs is not None and block_n is not None:
         return int(block_b), int(block_pairs), int(block_n)
-    blackwell = bool(x.is_cuda and torch.cuda.get_device_capability(x.device)[0] >= 12)
-    device_name = torch.cuda.get_device_name(x.device).lower() if blackwell else ""
-    exact_5070 = "5070" in device_name
-    default_b = 16
-    default_pairs = 64 if exact_5070 and (m_orig is None or int(m_orig) < 4096) else 128
-    default_n = 128 if exact_5070 else 32
-    resolved_b = int(block_b or os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_B") or default_b)
-    resolved_pairs = int(
-        block_pairs or os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS") or default_pairs
+    device = getattr(x, "device", None)
+    launch = (
+        mm4_effective_launch_config(device)
+        if device is not None
+        else {"dot_block_b": 16, "dot_block_pairs": 128, "dot_block_n": 32}
     )
-    resolved_n = int(block_n or os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_N") or default_n)
+    small_pairs = _mm4_policy_optional_int(x, "mm4_dot_block_pairs_small")
+    large_pairs = _mm4_policy_optional_int(x, "mm4_dot_block_pairs_large")
+    shape_pairs = small_pairs if m_orig is None or int(m_orig) < 4096 else large_pairs
+    default_pairs = launch["dot_block_pairs"] if shape_pairs is None else shape_pairs
+    env_b = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_B") or os.environ.get(
+        "RWKV7_MM4_DOT_BLOCK_B"
+    )
+    env_pairs = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS") or os.environ.get(
+        "RWKV7_MM4_DOT_BLOCK_PAIRS"
+    )
+    env_n = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_N") or os.environ.get(
+        "RWKV7_MM4_DOT_BLOCK_N"
+    )
+    resolved_b = int(block_b or env_b or launch["dot_block_b"])
+    resolved_pairs = int(
+        block_pairs or env_pairs or default_pairs
+    )
+    resolved_n = int(block_n or env_n or launch["dot_block_n"])
     if resolved_b not in {16, 32, 64}:
         raise ValueError(f"RWKV7_NATIVE_MM4_DOT_BLOCK_B must be 16, 32, or 64; got {resolved_b}")
     if resolved_pairs not in {16, 32, 64, 128, 256}:
@@ -403,8 +532,20 @@ def mm4_batched_gemv_triton(
 
 
 def mm4_batched_dot_triton(
-    x, packed, mx, rx_s, my, ry_s, m_orig, *, block_b=None, block_pairs=None,
-    block_n=None, relu2=False, residual=None,
+    x,
+    packed,
+    mx,
+    rx_s,
+    my,
+    ry_s,
+    m_orig,
+    *,
+    block_b=None,
+    block_pairs=None,
+    block_n=None,
+    num_warps=None,
+    relu2=False,
+    residual=None,
 ):
     """Tensor-core fp16 W4 path for decode batches large enough to reuse weights."""
     if not (x.is_cuda and x.dim() == 2 and mm4_gemv_available(x.device)):
@@ -416,6 +557,19 @@ def mm4_batched_dot_triton(
     b, n = x.shape
     if int(n) != int(packed.shape[0]):
         raise ValueError(f"input width {n} does not match quantized weight width {packed.shape[0]}")
+    launch = mm4_effective_launch_config(x.device)
+    block_b = int(block_b or launch["dot_block_b"])
+    block_pairs = int(block_pairs or launch["dot_block_pairs"])
+    block_n = int(block_n or launch["dot_block_n"])
+    num_warps = int(num_warps or launch["dot_warps"])
+    if block_b not in {16, 32, 64}:
+        raise ValueError("RWKV7_MM4_DOT_BLOCK_B must be 16, 32, or 64")
+    if block_pairs not in {16, 32, 64, 128}:
+        raise ValueError("RWKV7_MM4_DOT_BLOCK_PAIRS must be 16, 32, 64, or 128")
+    if block_n not in {16, 32, 64, 128}:
+        raise ValueError("RWKV7_MM4_DOT_BLOCK_N must be 16, 32, 64, or 128")
+    if num_warps not in {1, 2, 4, 8}:
+        raise ValueError("RWKV7_MM4_DOT_WARPS must be 1, 2, 4, or 8")
     mh = packed.shape[1]
     m_padded = mh * 2
     y = torch.empty((b, m_padded), device=x.device, dtype=x.dtype)
@@ -424,8 +578,12 @@ def mm4_batched_dot_triton(
     _mm4_batched_dot_kernel[grid](
         x, packed, mx.reshape(-1), rx_s.reshape(-1), my.reshape(-1), ry_s.reshape(-1), residual_ptr, y,
         b, n, m_padded, mh,
-        BLOCK_B=block_b, BLOCK_PAIRS=block_pairs, BLOCK_N=block_n,
-        RELU2=bool(relu2), ADD_RESIDUAL=residual is not None, num_warps=8,
+        BLOCK_B=block_b,
+        BLOCK_PAIRS=block_pairs,
+        BLOCK_N=block_n,
+        RELU2=bool(relu2),
+        ADD_RESIDUAL=residual is not None,
+        num_warps=num_warps,
     )
     return y[:, :m_orig]
 
@@ -453,18 +611,26 @@ def mm4_matmul_triton(
             residual=None if residual is None else residual.reshape(1, -1)[0],
         ).unsqueeze(0)
     blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
-    row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell else 4)
+    batched_dot = mm4_batched_dot_enabled(x.device)
+    launch = mm4_effective_launch_config(x.device)
+    if max_gemv_rows is not None:
+        row_limit = int(max_gemv_rows)
+    else:
+        row_limit = int(launch["fused_max_rows"])
+        row_limit = min(max(1, row_limit), 65536)
     if int(x.shape[0]) > row_limit:
         out = mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
         out = torch.relu(out) ** 2 if relu2 else out
         return out + residual if residual is not None else out
-    exact_5070 = blackwell and "5070" in torch.cuda.get_device_name(x.device).lower()
-    dot_min_rows = 2 if exact_5070 else 4
-    if blackwell and int(x.shape[0]) >= dot_min_rows and x.dtype == torch.float16:
+    if (
+        batched_dot
+        and int(x.shape[0]) >= int(launch["dot_min_rows"])
+        and x.dtype == torch.float16
+    ):
         return mm4_batched_dot_triton(
             x, packed, mx, rx_s, my, ry_s, m_orig, relu2=relu2, residual=residual,
         )
-    if blackwell:
+    if blackwell or batched_dot:
         return mm4_batched_gemv_triton(
             x, packed, mx, rx_s, my, ry_s, m_orig, relu2=relu2, residual=residual,
         )
@@ -613,6 +779,11 @@ def quantize_model_mm4(
         setattr(parent, attr, MM4Linear(getattr(parent, attr), fused=fused))
     setattr(model, "_rwkv7_native_mm_quantization", "mm4")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_block_replaced_modules",
+        sum(name.startswith("model.layers.") for name in targets),
+    )
     for cache_attr in (
         "_rwkv7_native_jit_pack_cache",
         "_rwkv7_native_graph_pack_cache",

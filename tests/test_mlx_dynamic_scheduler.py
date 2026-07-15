@@ -60,6 +60,14 @@ def test_ragged_arrival_departure_true_batch_and_prefix_reuse() -> None:
         assert request.generated_ids == expected[request_id]
         assert request.final_seen_tokens == request.prompt_tokens + request.max_new_tokens
         assert request.session is None  # recurrent arrays were released
+        timing = request.telemetry()
+        assert timing["activated_s"] is not None
+        assert timing["first_token_s"] is not None
+        assert timing["completed_s"] is not None
+        assert timing["prefill_s"] >= 0
+        assert timing["queue_s"] >= 0
+        assert timing["ttft_s"] >= 0
+        assert timing["e2e_s"] >= timing["ttft_s"]
     assert scheduler.batch_size_history == [2, 2, 2]
     assert scheduler.batch_backend_history == ["batched", "batched", "batched"]
     assert set(scheduler.telemetry()["prepared_policy_batches"]) == {2}
@@ -126,5 +134,9 @@ def test_timeout_releases_state_without_decode() -> None:
     assert request.cancellation_reason == "timeout"
     assert request.generated_ids == []
     assert request.session is None
+    timing = request.telemetry()
+    assert timing["first_token_s"] is None
+    assert timing["ttft_s"] is None
+    assert timing["e2e_s"] == 2.0
     assert scheduler.in_flight == 0
     assert scheduler.telemetry()["timed_out_count"] == 1
