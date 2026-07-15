@@ -439,6 +439,8 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
         assert native_jit._native_prefill_scan_block_m(64, 4) == 8
         assert native_jit._native_prefill_scan_block_m(64, 8, 128) == 32
         assert native_jit._native_prefill_scan_block_m(64, 8, 512) == 8
+        assert native_jit._native_prefill_scan_block_m(64, 8, 512, 2048) == 32
+        assert native_jit._native_prefill_scan_block_m(64, 8, 512, 4096) == 8
         native_jit.torch.cuda.get_device_name = lambda *_args: "NVIDIA GeForce RTX 4070"
         assert native_jit._native_prefill_scan_block_m(64, 1) == 64
         native_jit.torch.cuda.get_device_capability = lambda *_args: (12, 0)

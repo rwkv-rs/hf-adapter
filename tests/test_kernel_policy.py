@@ -95,6 +95,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.mm4_dot_block_n == 64
     assert ada.mm4_dot_warps == 4
     assert ada.prefill_scan_block_m_shapes == ((8, 128, 32),)
+    assert ada.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 32),)
     assert ada.prefill_graph
     assert ada.fused_prefill_scan
     assert ada.fused_prefill_state_prep
@@ -124,6 +125,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_ada.mm4_fused_max_rows is None
     assert other_ada.mm4_dot_min_rows is None
     assert other_ada.prefill_scan_block_m_shapes == ()
+    assert other_ada.prefill_scan_block_m_model_shapes == ()
     assert not other_ada.prefill_graph
     assert not other_ada.fused_prefill_scan
     assert not other_ada.ada_sparse_ffn
