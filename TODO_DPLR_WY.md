@@ -1,5 +1,10 @@
 # Temporary TODO: DPLR/WY Compiled Prefill
 
+> **Branch-scoped historical working checklist.** Checked items and “current”
+> blockers below reflect the original native-fused branch chronology. Active
+> repository priorities live in `HF_TODO.md`; current promoted performance
+> lives in `BENCHMARK.md`. Keep this file as the DPLR/WY implementation ledger.
+
 This is a short-lived working TODO for the current `wangyue/native-fused-fp16-kernel` branch. Keep the default HF path unchanged unless a benchmark explicitly opts in.
 
 ## Temporary TODO: G1 MATH500 speed gate after seed43 accuracy pass

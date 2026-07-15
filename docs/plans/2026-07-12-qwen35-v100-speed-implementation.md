@@ -1,5 +1,11 @@
 # Qwen3.5 V100 Speed Matrix Implementation Plan
 
+> **Completed historical implementation plan.** The harness described here
+> exists, but the original V100 Qwen rows used a Torch fallback and are not the
+> current optimized-reference result. Use
+> [`../../bench/v100_active_b1b8_20260715/README.md`](../../bench/v100_active_b1b8_20260715/README.md)
+> for current V100/full-FLA acceptance and `HF_TODO.md` for remaining work.
+
 **Goal:** Add a resumable HF benchmark that compares RWKV-7 against official text-only Qwen3.5 models and run its complete 216-cell fp16/bnb8/bnb4 matrix on V100.
 
 **Architecture:** A single-row worker loads one model and precision in a fresh process, performs exact-shape prefill and cached decode, and appends one JSONL row.  An orchestrator expands model pairs and shape axes into candidate/reference subprocesses, while a pure-Python comparator joins rows and enforces coverage and minimum speed-ratio gates.

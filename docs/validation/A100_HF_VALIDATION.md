@@ -1,5 +1,10 @@
 # A100 HF validation matrix
 
+> **Exact-card snapshot dated 2026-07-02.** Results and open items below apply
+> to this A100 40GB environment and are not a repository-wide current verdict.
+> Use [`../HARDWARE_MATRIX.md`](../HARDWARE_MATRIX.md), `HF_STATUS.md` and
+> `HF_TODO.md` for current cross-card status.
+
 Validation date: 2026-07-02
 Base commit: `c09227a` (`docs: record 13.3B V100 official alignment + decode speed (#83)`)
 Server: `8 x NVIDIA A100-PCIE-40GB` on `gpu03`; validation used 1 GPU for inference and single-card training, 2 GPUs for DeepSpeed.

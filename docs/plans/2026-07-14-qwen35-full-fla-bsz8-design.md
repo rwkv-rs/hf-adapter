@@ -1,5 +1,10 @@
 # Qwen3.5 Full-FLA bsz8 Comparison Design
 
+> **Historical design, implemented and promoted.** Final evidence is
+> [`../../bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](../../bench/5070_qwen35_full_fla_bsz8_20260714/README.md).
+> This file preserves the design rationale; current status lives in
+> `HF_STATUS.md` and `BENCHMARK.md`.
+
 ## Goal
 
 Compare RWKV-7 1.5B with official Qwen3.5 2B on the RTX 5070 Laptop at
