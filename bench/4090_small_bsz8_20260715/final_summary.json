@@ -1,0 +1,303 @@
+{
+  "axis": "rtx4090_small_bsz8_qwen35_acceptance",
+  "date": "2026-07-15",
+  "hardware": {
+    "device": "NVIDIA GeForce RTX 4090",
+    "memory_mb": 24564,
+    "compute_capability": "sm_89"
+  },
+  "scope": {
+    "batch_size": [
+      8
+    ],
+    "prompt_tokens": [
+      128,
+      512,
+      2048
+    ],
+    "decode_tokens": [
+      128,
+      512
+    ],
+    "prefill_chunk_size": 512,
+    "dtype": "fp16",
+    "quantization_families": [
+      "none",
+      "w8",
+      "w4"
+    ]
+  },
+  "policy": {
+    "dense_prefill_min_vs_qwen": 1.0,
+    "dense_decode_min_vs_qwen": {
+      "rwkv-0.4b__qwen3.5-0.8b": 1.05,
+      "rwkv-1.5b__qwen3.5-2b": 1.65,
+      "rwkv-2.9b__qwen3.5-4b": 1.75
+    },
+    "qwen_backend": "full FLA operator contract required for dense active-work gate",
+    "quant_memory": "model footprint and peak VRAM must both be lower than matching RWKV fp16",
+    "quant_speed": "both phase ratios >=1, or explicit exact-cell prefill+decode total-latency ratio >=1; phase ratios remain reported"
+  },
+  "coverage": {
+    "expected_cells": 54,
+    "joined_cells": 54,
+    "qwen_fla_cells": 54,
+    "red_cells": 0
+  },
+  "pairs": {
+    "rwkv-0.4b__qwen3.5-0.8b": {
+      "overall_pass": true,
+      "coverage": {
+        "expected_cells": 18,
+        "joined_cells": 18,
+        "complete": true
+      },
+      "qwen_fla": {
+        "required": "fla",
+        "matching_cells": 18,
+        "total_cells": 18,
+        "complete": true
+      },
+      "red_cells": 0,
+      "exit_codes": {
+        "compose_exit_code.txt": 0,
+        "compare_memory_exit_code.txt": 0,
+        "compare_speed_exit_code.txt": 0,
+        "compare_active_work_exit_code.txt": 0
+      },
+      "dense": {
+        "cells": 6,
+        "min_prefill_speedup": 1.370369,
+        "median_prefill_speedup": 1.750201,
+        "min_decode_speedup": 12.101818,
+        "median_decode_speedup": 12.148221,
+        "min_prefill_speedup_vs_dense": null,
+        "median_prefill_speedup_vs_dense": null,
+        "min_decode_speedup_vs_dense": null,
+        "median_decode_speedup_vs_dense": null,
+        "min_total_speedup_vs_dense": null,
+        "median_total_speedup_vs_dense": null,
+        "max_footprint_ratio_vs_dense": null,
+        "max_peak_vram_ratio_vs_dense": null
+      },
+      "w8": {
+        "cells": 6,
+        "min_prefill_speedup": 1.375031,
+        "median_prefill_speedup": 1.750101,
+        "min_decode_speedup": 12.290729,
+        "median_decode_speedup": 12.350613,
+        "min_prefill_speedup_vs_dense": 0.999856,
+        "median_prefill_speedup_vs_dense": 1.003046,
+        "min_decode_speedup_vs_dense": 1.014214,
+        "median_decode_speedup_vs_dense": 1.016236,
+        "min_total_speedup_vs_dense": 1.011441,
+        "median_total_speedup_vs_dense": 1.015195,
+        "max_footprint_ratio_vs_dense": 0.925797,
+        "max_peak_vram_ratio_vs_dense": 0.963266
+      },
+      "w4": {
+        "cells": 6,
+        "min_prefill_speedup": 1.369471,
+        "median_prefill_speedup": 1.756855,
+        "min_decode_speedup": 12.604603,
+        "median_decode_speedup": 12.676678,
+        "min_prefill_speedup_vs_dense": 0.999344,
+        "median_prefill_speedup_vs_dense": 1.0058,
+        "min_decode_speedup_vs_dense": 1.041423,
+        "median_decode_speedup_vs_dense": 1.042042,
+        "min_total_speedup_vs_dense": 1.029994,
+        "median_total_speedup_vs_dense": 1.040761,
+        "max_footprint_ratio_vs_dense": 0.890672,
+        "max_peak_vram_ratio_vs_dense": 0.945793
+      },
+      "dense_active_work": {
+        "gate_enabled": true,
+        "prefill_gate": null,
+        "decode_gate": 1.0,
+        "min_active_parameter_ratio": 0.599112,
+        "median_active_parameter_ratio": 0.599112,
+        "max_active_parameter_ratio": 0.599112,
+        "min_prefill_throughput_ratio": 0.821005,
+        "median_prefill_throughput_ratio": 1.048566,
+        "min_decode_throughput_ratio": 7.250339,
+        "median_decode_throughput_ratio": 7.278135,
+        "passing_cells": 6,
+        "total_cells": 6
+      }
+    },
+    "rwkv-1.5b__qwen3.5-2b": {
+      "overall_pass": true,
+      "coverage": {
+        "expected_cells": 18,
+        "joined_cells": 18,
+        "complete": true
+      },
+      "qwen_fla": {
+        "required": "fla",
+        "matching_cells": 18,
+        "total_cells": 18,
+        "complete": true
+      },
+      "red_cells": 0,
+      "exit_codes": {
+        "compose_exit_code.txt": 0,
+        "compare_memory_exit_code.txt": 0,
+        "compare_speed_exit_code.txt": 0,
+        "compare_active_work_exit_code.txt": 0
+      },
+      "dense": {
+        "cells": 6,
+        "min_prefill_speedup": 1.041959,
+        "median_prefill_speedup": 1.114698,
+        "min_decode_speedup": 5.636846,
+        "median_decode_speedup": 5.658237,
+        "min_prefill_speedup_vs_dense": null,
+        "median_prefill_speedup_vs_dense": null,
+        "min_decode_speedup_vs_dense": null,
+        "median_decode_speedup_vs_dense": null,
+        "min_total_speedup_vs_dense": null,
+        "median_total_speedup_vs_dense": null,
+        "max_footprint_ratio_vs_dense": null,
+        "max_peak_vram_ratio_vs_dense": null
+      },
+      "w8": {
+        "cells": 6,
+        "min_prefill_speedup": 1.374885,
+        "median_prefill_speedup": 1.609885,
+        "min_decode_speedup": 6.37484,
+        "median_decode_speedup": 6.393359,
+        "min_prefill_speedup_vs_dense": 1.293543,
+        "median_prefill_speedup_vs_dense": 1.319152,
+        "min_decode_speedup_vs_dense": 1.129083,
+        "median_decode_speedup_vs_dense": 1.130435,
+        "min_total_speedup_vs_dense": 1.131672,
+        "median_total_speedup_vs_dense": 1.142888,
+        "max_footprint_ratio_vs_dense": 0.560704,
+        "max_peak_vram_ratio_vs_dense": 0.625465
+      },
+      "w4": {
+        "cells": 6,
+        "min_prefill_speedup": 0.97338,
+        "median_prefill_speedup": 1.117429,
+        "min_decode_speedup": 5.869795,
+        "median_decode_speedup": 5.879928,
+        "min_prefill_speedup_vs_dense": 0.930925,
+        "median_prefill_speedup_vs_dense": 1.001388,
+        "min_decode_speedup_vs_dense": 1.038061,
+        "median_decode_speedup_vs_dense": 1.039839,
+        "min_total_speedup_vs_dense": 1.027211,
+        "median_total_speedup_vs_dense": 1.03595,
+        "max_footprint_ratio_vs_dense": 0.935468,
+        "max_peak_vram_ratio_vs_dense": 0.968566
+      },
+      "dense_active_work": {
+        "gate_enabled": true,
+        "prefill_gate": null,
+        "decode_gate": 1.0,
+        "min_active_parameter_ratio": 0.811661,
+        "median_active_parameter_ratio": 0.811661,
+        "max_active_parameter_ratio": 0.811661,
+        "min_prefill_throughput_ratio": 0.845718,
+        "median_prefill_throughput_ratio": 0.904756,
+        "min_decode_throughput_ratio": 4.575207,
+        "median_decode_throughput_ratio": 4.592564,
+        "passing_cells": 6,
+        "total_cells": 6
+      }
+    },
+    "rwkv-2.9b__qwen3.5-4b": {
+      "overall_pass": true,
+      "coverage": {
+        "expected_cells": 18,
+        "joined_cells": 18,
+        "complete": true
+      },
+      "qwen_fla": {
+        "required": "fla",
+        "matching_cells": 18,
+        "total_cells": 18,
+        "complete": true
+      },
+      "red_cells": 0,
+      "exit_codes": {
+        "compose_exit_code.txt": 0,
+        "compare_memory_exit_code.txt": 0,
+        "compare_speed_exit_code.txt": 0,
+        "compare_active_work_exit_code.txt": 0
+      },
+      "dense": {
+        "cells": 6,
+        "min_prefill_speedup": 1.305103,
+        "median_prefill_speedup": 1.423554,
+        "min_decode_speedup": 4.214362,
+        "median_decode_speedup": 4.242173,
+        "min_prefill_speedup_vs_dense": null,
+        "median_prefill_speedup_vs_dense": null,
+        "min_decode_speedup_vs_dense": null,
+        "median_decode_speedup_vs_dense": null,
+        "min_total_speedup_vs_dense": null,
+        "median_total_speedup_vs_dense": null,
+        "max_footprint_ratio_vs_dense": null,
+        "max_peak_vram_ratio_vs_dense": null
+      },
+      "w8": {
+        "cells": 6,
+        "min_prefill_speedup": 1.658763,
+        "median_prefill_speedup": 1.888212,
+        "min_decode_speedup": 4.950948,
+        "median_decode_speedup": 4.982344,
+        "min_prefill_speedup_vs_dense": 1.270651,
+        "median_prefill_speedup_vs_dense": 1.293411,
+        "min_decode_speedup_vs_dense": 1.17278,
+        "median_decode_speedup_vs_dense": 1.174567,
+        "min_total_speedup_vs_dense": 1.17605,
+        "median_total_speedup_vs_dense": 1.18392,
+        "max_footprint_ratio_vs_dense": 0.544714,
+        "max_peak_vram_ratio_vs_dense": 0.509156
+      },
+      "w4": {
+        "cells": 6,
+        "min_prefill_speedup": 1.301366,
+        "median_prefill_speedup": 1.408577,
+        "min_decode_speedup": 4.324672,
+        "median_decode_speedup": 4.349006,
+        "min_prefill_speedup_vs_dense": 0.986393,
+        "median_prefill_speedup_vs_dense": 0.99767,
+        "min_decode_speedup_vs_dense": 1.024407,
+        "median_decode_speedup_vs_dense": 1.024987,
+        "min_total_speedup_vs_dense": 1.014959,
+        "median_total_speedup_vs_dense": 1.022166,
+        "max_footprint_ratio_vs_dense": 0.961227,
+        "max_peak_vram_ratio_vs_dense": 0.977123
+      },
+      "dense_active_work": {
+        "gate_enabled": true,
+        "prefill_gate": null,
+        "decode_gate": 1.0,
+        "min_active_parameter_ratio": 0.700882,
+        "median_active_parameter_ratio": 0.700882,
+        "max_active_parameter_ratio": 0.700882,
+        "min_prefill_throughput_ratio": 0.914723,
+        "median_prefill_throughput_ratio": 0.997744,
+        "min_decode_throughput_ratio": 2.953767,
+        "median_decode_throughput_ratio": 2.973268,
+        "passing_cells": 6,
+        "total_cells": 6
+      }
+    }
+  },
+  "promoted_policy_probe": {
+    "status": "pass",
+    "hidden_size": 2048,
+    "batch_size": 8,
+    "prompt_tokens": 512,
+    "rwkv_prefill_scan_block_m_requested": null,
+    "rwkv_prefill_scan_block_m_effective": 32,
+    "prefill_tokps_total": 42270.374
+  },
+  "overall_pass": true,
+  "limitations": [
+    "This closes only the declared RTX 4090 bsz=8 speed/memory matrix.",
+    "Model quality and broader batch/model/hardware matrices are separate acceptance axes."
+  ]
+}
