@@ -85,9 +85,11 @@ not establish the same ratio on other M-series chips, batch sizes, prompt
 lengths, decode lengths, or thermal conditions.
 
 The matching B1 target-only run has now been measured and remains open:
-active-normalized prefill passes at `1.9786x`, raw peak memory passes at
-`1.156/1.297 GB`, but active-normalized decode is only `0.7392x` (`52.72` vs
-`57.89 tok/s` raw). See
+the token-only compiled greedy graph raises raw decode to `115.89 tok/s`
+versus Qwen's `103.55 tok/s` (`1.1191x` raw), while prefill passes at
+`1.0485x` active-normalized and raw peak memory passes at `1.196/1.297 GB`.
+Active-normalized decode is still open at `0.9084x`; another `1.1007x` raw
+RWKV uplift is required at the checked active parameter counts. See
 [`bench/apple_bsz1_active_m5_20260715/README.md`](../../bench/apple_bsz1_active_m5_20260715/README.md).
 
 ## What changed

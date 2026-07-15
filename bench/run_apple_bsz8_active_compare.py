@@ -211,6 +211,7 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
                 )
             draft_model.compiled_scan_prefill_mode = "on"
     compiled_decode_validation = None
+    compiled_greedy_decode_validation = None
     if args.rwkv_decode_backend == "compiled":
         validation_logits, validation_state = model.prefill(ids)
         compiled_decode_validation = model.validate_compiled_decode(
@@ -224,6 +225,16 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
                 + json.dumps(compiled_decode_validation, ensure_ascii=False)
             )
         model.decode_backend = "compiled"
+        compiled_greedy_decode_validation = model.validate_compiled_greedy_decode(
+            validation_logits,
+            validation_state,
+            steps=int(args.rwkv_decode_validation_steps),
+        )
+        if compiled_greedy_decode_validation.get("status") != "pass":
+            raise RuntimeError(
+                "compiled RWKV greedy decode failed token/state parity: "
+                + json.dumps(compiled_greedy_decode_validation, ensure_ascii=False)
+            )
     speculative_verify_validation = None
     if draft_model is not None:
         target_probe_logits, target_probe_state = prefill_request(model)
@@ -302,13 +313,23 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
             generated = []
             started_decode = time.perf_counter()
-            for _ in range(int(args.decode_tokens)):
-                mx.eval(next_token)
+            for token_index in range(int(args.decode_tokens)):
+                # A compiled graph consumes the lazy argmax directly.  Its
+                # bounded eval interval, plus the final result materialization,
+                # prevents unbounded graph growth without a per-token wait.
+                if model.decode_backend != "compiled":
+                    mx.eval(next_token)
                 generated.append(next_token)
-                logits, state = model.decode_step(next_token, state)
-                next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+                # The final sampled token is already a complete generation
+                # result. Feeding it again computes an unused token N+1.
+                if token_index + 1 == int(args.decode_tokens):
+                    break
+                if model.decode_backend == "compiled":
+                    next_token, state = model.decode_greedy_step(next_token, state)
+                else:
+                    logits, state = model.decode_step(next_token, state)
+                    next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
             mx.eval(
-                next_token,
                 *generated,
                 state.v_first,
                 *state.recurrent_state,
@@ -390,11 +411,14 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
             "decode_backend": telemetry.get("decode_backend_last"),
             "compiled_decode_validation": compiled_decode_validation,
+            "compiled_greedy_decode_validation": compiled_greedy_decode_validation,
             "draft_model": Path(args.rwkv_draft_model).name if args.rwkv_draft_model else None,
             "speculative_verify_validation": speculative_verify_validation,
             "speculative_telemetry": speculative_telemetry,
         }
 
+    if args.rwkv_post_validation_cooldown_seconds > 0:
+        time.sleep(float(args.rwkv_post_validation_cooldown_seconds))
     for _ in range(int(args.warmup)):
         one(0)
     rows = []
@@ -455,6 +479,8 @@ def child_command(args: argparse.Namespace, engine: str) -> list[str]:
         args.rwkv_decode_backend,
         "--rwkv-decode-validation-steps",
         str(args.rwkv_decode_validation_steps),
+        "--rwkv-post-validation-cooldown-seconds",
+        str(args.rwkv_post_validation_cooldown_seconds),
         "--rwkv-draft-model",
         args.rwkv_draft_model,
         "--rwkv-draft-quant-min-params",
@@ -623,6 +649,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--rwkv-decode-backend", choices=["eager", "compiled"], default="eager")
     parser.add_argument("--rwkv-decode-validation-steps", type=int, default=64)
+    parser.add_argument(
+        "--rwkv-post-validation-cooldown-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Idle after compile/parity setup and before RWKV warmup; useful on "
+            "fanless Macs so untimed validation does not thermally bias measured requests."
+        ),
+    )
     parser.add_argument("--rwkv-draft-model", default="")
     parser.add_argument("--rwkv-draft-quant-min-params", type=int, default=100_000)
     parser.add_argument("--rwkv-proposal-tokens", type=int, default=32)
@@ -659,6 +694,7 @@ def main(argv: list[str] | None = None) -> int:
         <= 0
         or args.warmup < 0
         or args.cooldown_seconds < 0
+        or args.rwkv_post_validation_cooldown_seconds < 0
     ):
         parser.error("batch/prompt/decode/repeat must be positive and warmup non-negative")
 
