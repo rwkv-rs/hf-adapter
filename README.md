@@ -1,7 +1,8 @@
 # RWKV-7 HF Adapter
 
-First-stage Hugging Face adapter for official RWKV-7 `.pth` checkpoints.
-Current scope is HF adapter delivery only: Transformers loading/generation,
+Hugging Face adapter for official RWKV-7 `.pth` checkpoints, with native fused
+performance backends behind the HF-compatible public surface. Current scope is
+HF adapter delivery only: Transformers loading/generation,
 PEFT/TRL/Trainer compatibility, HF state-cache serving primitives, quantized
 inference, and HF-compatible speculative decoding.
 
@@ -467,13 +468,14 @@ python tests/test_deepspeed_training_smoke.py \
   --results bench/results.jsonl
 ```
 
-DeepSpeed ZeRO checkpoint-resume smoke is tracked separately. ZeRO2 resume is
-validated through 2.9B on 2 x V100; ZeRO3 resume remains a follow-up gap:
+DeepSpeed ZeRO checkpoint-resume smoke is tracked separately. ZeRO-2 and
+ZeRO-3 resume are validated through 2.9B on 2 x V100; larger-model and
+additional-card resume matrices remain follow-up work:
 
 ```bash
 python tests/test_deepspeed_resume_smoke.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
-  --zero-stage 2 \
+  --zero-stage 3 \
   --train-dtype fp32 \
   --attn-mode fused_recurrent \
   --results bench/results.jsonl
@@ -860,7 +862,9 @@ Promoted current results are intentionally kept out of this usage guide:
 
 ## Known limitations
 
-- This is a wrapper-based first stage, not yet a native upstream Transformers implementation.
+- The public compatibility shell remains repository code loaded through HF;
+  the hot path has native fused backends, but the model is not yet upstreamed
+  into the Transformers package itself.
 - The default CUDA wrapper backend currently requires FLA; set
   `RWKV7_NATIVE_MODEL=1` for the FLA-free native PyTorch compatibility path.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
