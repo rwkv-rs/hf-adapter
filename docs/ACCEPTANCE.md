@@ -5,13 +5,13 @@ requirements and repository evidence. `PASS` means the named gate has a
 reproducible artifact; `PARTIAL` means the interface works but the complete
 hardware/performance matrix is not closed.
 
-Last updated: **2026-07-15**.
+Last updated: **2026-07-16**.
 
 ## Executive result
 
 | Requirement | Status | Current evidence | Remaining boundary |
 |---|---|---|---|
-| RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on measured V100, 4090 and 5090 lanes** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full MATH500 and quant pressure artifact | Same-card final Albatross reruns on every target, broader optimized-Qwen shapes, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
+| RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on measured V100, 4090 and 5090 lanes** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | Same-card final Albatross reruns on every target, broader optimized-Qwen shapes/cards, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
 | PEFT and RL ecosystem | **PASS for smoke/compatibility** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke across CUDA and Apple/MPS | Longer production training and broader model/card combinations |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
@@ -39,9 +39,16 @@ Last updated: **2026-07-15**.
   pass the batch-8 dense/W8/W4 Qwen3.5 contract: `54/54` small-model cells and
   `18/18` 7.2B cells, with full-FLA, dense decode active-work, quant speed and
   quant-local physical-memory gates.
-- **RTX 5090:** full 0.4B MATH500 `500×64` reaches pass@64 `0.38`; against the
-  committed Albatross full-run reference, summary/decode throughput ratios are
-  `4.336x/4.871x`. This is not a fresh same-card Albatross rerun.
+- **RTX 5090:** the full-FLA Qwen3.5 matrix passes 8/8 B1/B8 batch-pairs,
+  144/144 cells and 32/32 correctness reports from 0.4B/0.8B through 7.2B/9B;
+  raw prefill/decode minima are `1.0226x/2.8130x`. Full 0.4B MATH500 `500×64`
+  reaches pass@64 `0.38`; against the committed Albatross reference,
+  summary/decode throughput ratios are `4.336x/4.871x`. The latest official
+  g1h 13.3B checkpoint also passes conversion, load/generate, and selected
+  speed-policy MM8/MM4 gates. The MATH500 reference is not a fresh same-card
+  Albatross rerun. Evidence:
+  [`../bench/5090_g1h_qwen35_b1_b8_20260715/README.md`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
+  and [`../bench/5090_g1h_13p3_20260715/README.md`](../bench/5090_g1h_13p3_20260715/README.md).
 - Correctness gates include official/HF alignment, cosine/top-k/greedy checks,
   cache handoff, save/reload, MATH500 shape/accuracy gates and logit-compression
   alignment.

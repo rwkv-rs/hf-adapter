@@ -1490,6 +1490,10 @@ def test_5090_correctness_entrypoint_checks_full_fla_and_native_prefill() -> Non
     assert 'REQUIRED_GPU_SUBSTRING="RTX 5090"' in script
     assert 'CORRECTNESS_PROMPT_TOKENS="${CORRECTNESS_PROMPT_TOKENS:-512}"' in script
     assert 'CORRECTNESS_BATCH_SIZE="${CORRECTNESS_BATCH_SIZE:-8}"' in script
+    assert 'QWEN_CORRECTNESS_PROMPT_TOKENS="${QWEN_CORRECTNESS_PROMPT_TOKENS:-}"' in script
+    assert '[[ "${qwen_size}" == "9b" ]]' in script
+    assert "QWEN_CORRECTNESS_PROMPT_TOKENS=512" in script
+    assert '--prompt-tokens "${QWEN_CORRECTNESS_PROMPT_TOKENS}"' in script
     assert '--batch-size "${CORRECTNESS_BATCH_SIZE}"' in script
     assert "--qwen-conv-backend fla_triton --require-qwen-fast-path" in script
     assert "compare_qwen35_backend_probe.py" in script

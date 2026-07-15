@@ -12,6 +12,7 @@ REQUIRED_GPU_SUBSTRING="RTX 5090"
 BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_5090_hf_final}"
 CORRECTNESS_PROMPT_TOKENS="${CORRECTNESS_PROMPT_TOKENS:-512}"
 CORRECTNESS_BATCH_SIZE="${CORRECTNESS_BATCH_SIZE:-8}"
+QWEN_CORRECTNESS_PROMPT_TOKENS="${QWEN_CORRECTNESS_PROMPT_TOKENS:-}"
 
 if [[ -z "${PAIR_LABEL}" || -z "${RWKV_MODEL}" || -z "${QWEN_MODEL}" || -z "${OUT_DIR}" ]]; then
   echo "usage: $0 PAIR_LABEL RWKV_MODEL QWEN_MODEL OUT_DIR" >&2
@@ -41,6 +42,17 @@ cd "${ROOT}"
 rwkv_size="${PAIR_LABEL#rwkv-}"
 rwkv_size="${rwkv_size%%__*}"
 qwen_size="${PAIR_LABEL##*qwen3.5-}"
+if [[ -z "${QWEN_CORRECTNESS_PROMPT_TOKENS}" ]]; then
+  if [[ "${qwen_size}" == "9b" ]]; then
+    QWEN_CORRECTNESS_PROMPT_TOKENS=512
+  else
+    QWEN_CORRECTNESS_PROMPT_TOKENS=128
+  fi
+fi
+if [[ ! "${QWEN_CORRECTNESS_PROMPT_TOKENS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "QWEN_CORRECTNESS_PROMPT_TOKENS must be a positive integer" >&2
+  exit 2
+fi
 failures=0
 
 run_checked() {
@@ -58,7 +70,7 @@ probe_common=(
   --model-pair "${PAIR_LABEL}" --model-size-label "${qwen_size}"
   --benchmark-matrix "${BENCHMARK_MATRIX}" --dtype fp16 --quantization none
   --device cuda --batch-size "${CORRECTNESS_BATCH_SIZE}" \
-  --prompt-tokens 128 --decode-tokens 8
+  --prompt-tokens "${QWEN_CORRECTNESS_PROMPT_TOKENS}" --decode-tokens 8
   --qwen-backend fla --warmup 1 --runs 1 --probe-tokens 8
 )
 run_checked full-fla-smoke "${PYTHON_BIN}" "${probe_common[@]}" \
