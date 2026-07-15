@@ -84,6 +84,12 @@ This closes only the checked M5/B8/T133/decode64 target-only profile. It does
 not establish the same ratio on other M-series chips, batch sizes, prompt
 lengths, decode lengths, or thermal conditions.
 
+The matching B1 target-only run has now been measured and remains open:
+active-normalized prefill passes at `1.9786x`, raw peak memory passes at
+`1.156/1.297 GB`, but active-normalized decode is only `0.7392x` (`52.72` vs
+`57.89 tok/s` raw). See
+[`bench/apple_bsz1_active_m5_20260715/README.md`](../../bench/apple_bsz1_active_m5_20260715/README.md).
+
 ## What changed
 
 ### Native MLX groupwise W8/W4
