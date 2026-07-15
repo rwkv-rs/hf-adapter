@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from rwkv7_hf.cache_rwkv7 import RWKV7Cache
-from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM, RWKV7Model
+from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM, RWKV7Linear, RWKV7Model
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +20,41 @@ def _load_dense_backend(monkeypatch):
         if name == "rwkv7_kernels" or name.startswith("rwkv7_kernels."):
             sys.modules.pop(name)
     return importlib.import_module("rwkv7_kernels.model.dense")
+
+
+def test_native_packer_recognizes_clean_linear_and_privately_casts_fp32_decay_bias(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    linear = importlib.import_module("rwkv7_kernels.nvidia.native_jit_linear")
+    packing = importlib.import_module("rwkv7_kernels.nvidia.native_jit_packing")
+
+    projection = RWKV7Linear(8, 4, bias=False).half()
+    assert linear.dense_linear_module(projection)
+    assert linear.graph_linear_operand(projection) is projection.weight
+
+    model = RWKV7ForCausalLM(tiny_config).half().eval()
+    for layer in model.model.layers:
+        decay = layer.attn.w_lora.lora[2]
+        decay.bias = torch.nn.Parameter(decay.bias.float())
+    assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
+
+    dense_packs, *_ = packing.extract_dense_packs(model, rkv_policy="linear")
+    assert dense_packs[0][26].dtype == torch.float16
+    assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
+
+    graph_packs, *_ = packing.extract_graph_packs(
+        model,
+        rkv_policy="linear",
+        sparse_ffn_low_memory_pack_enabled=lambda: False,
+        try_relayout_ffn_value_weight=lambda module: False,
+        graph_linear_operand=linear.graph_linear_operand,
+        graph_linear_is_dense=linear.graph_linear_is_dense,
+    )
+    assert isinstance(graph_packs[0][24], torch.Tensor)
+    assert isinstance(graph_packs[0][25], torch.Tensor)
+    assert graph_packs[0][26].dtype == torch.float16
+    assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
 
 
 def test_migrated_dense_model_math_cache_padding_and_hidden_states(
@@ -327,3 +362,90 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
         migrated.model.layers[0].attn.r_proj.weight.grad,
         reference.model.layers[0].attn.r_proj.weight.grad,
     )
+    source = Path(runtime.__file__).read_text()
+    assert "ffn_output, _ = layer.ffn(" in source
+    assert "train_temp._CMix.apply(" not in source
+
+
+def test_train_temp_decay_operand_privately_adds_fp32_public_bias(tiny_config):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    attention = RWKV7ForCausalLM(tiny_config).model.layers[0].attn.bfloat16()
+    projection = attention.w_lora.lora[2]
+    projection.bias = torch.nn.Parameter(projection.bias.float())
+    xw = torch.randn(2, 4, tiny_config.hidden_size, dtype=torch.bfloat16)
+
+    raw_decay = attention.w_lora.project_without_bias(xw, torch.tanh)
+    actual = torch.exp(
+        -0.6065306597
+        * torch.sigmoid(raw_decay.float() + projection.bias.float())
+    )
+
+    assert actual.dtype == torch.float32
+    assert projection.bias.dtype == torch.float32
+    actual.float().sum().backward()
+    assert projection.bias.grad is not None
+    assert projection.weight.grad is not None
+    # Keep the adapted runtime source contract visible to the unit suite.
+    source = Path(train_temp.__file__).read_text()
+    assert "raw_decay.float() + decay_bias.float()" in source
+    assert "decay.dtype != torch.float32" in source
+    assert '"--fmad=false"' in source
+    assert "_recurrent_decay_reference(*inputs)" in source
+    assert "a = torch.sigmoid(self.a_lora.project(xa))" in source
+    assert "normalized_key = F.normalize(" in source
+    assert "value_mix = torch.sigmoid(self.v_lora.project(xv))" in source
+
+
+def test_train_temp_mix6_backward_matches_canonical_token_mix():
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    torch.manual_seed(127)
+    x = torch.randn(2, 5, 8, requires_grad=True)
+    mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
+    outputs = []
+    shifted = torch.cat((torch.zeros_like(x[:, :1]), x[:, :-1]), dim=1)
+    for mix in mixes:
+        outputs.append(x + (shifted - x) * mix.view(1, 1, -1))
+    output_grads = [torch.randn_like(output) for output in outputs]
+    torch.autograd.backward(outputs, output_grads)
+    expected = (x.grad.clone(), *(mix.grad.clone() for mix in mixes))
+
+    class Context:
+        saved_tensors = (x.detach(), *(mix.detach() for mix in mixes))
+
+    actual = train_temp._Mix6.backward(Context(), *output_grads)
+    for candidate, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(candidate, reference)
+
+
+def test_train_temp_recurrent_backward_replay_matches_clean_reference():
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    from rwkv7_hf.ops_rwkv7 import rwkv7_recurrent_reference
+
+    torch.manual_seed(131)
+    shapes = (2, 3, 2, 4)
+    reference_inputs = [
+        torch.randn(*shapes, dtype=torch.float32, requires_grad=True)
+        for _ in range(6)
+    ]
+    # Decay is already the canonical transformed FP32 operand at this boundary.
+    reference_inputs[1] = (
+        torch.rand(*shapes, dtype=torch.float32) * 0.4 + 0.55
+    ).requires_grad_(True)
+    candidate_inputs = [value.detach().clone().requires_grad_(True) for value in reference_inputs]
+    initial_state = torch.zeros(
+        shapes[0], shapes[2], shapes[3], shapes[3], dtype=torch.float32
+    )
+
+    expected, _ = rwkv7_recurrent_reference(
+        *reference_inputs,
+        initial_state,
+        attention_mask=None,
+    )
+    actual = train_temp._recurrent_decay_reference(*candidate_inputs)
+    torch.testing.assert_close(actual, expected)
+
+    output_gradient = torch.randn_like(expected)
+    expected.backward(output_gradient)
+    actual.backward(output_gradient)
+    for candidate, reference in zip(candidate_inputs, reference_inputs, strict=True):
+        torch.testing.assert_close(candidate.grad, reference.grad)

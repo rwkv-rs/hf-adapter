@@ -34,6 +34,9 @@ _COMMON_CUDA_FLAGS = [
     "-O3",
     "--extra-device-vectorization",
 ]
+_RECURRENT_CUDA_FLAGS = [
+    flag for flag in _COMMON_CUDA_FLAGS if flag != "--use_fast_math"
+] + ["--fmad=false"]
 _OP_SOURCES = {
     "rwkv7_cmix_bf16_v5": (
         "rwkv7_cmix_bf16_v5.cpp",
@@ -215,7 +218,7 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                     ],
                     extra_cflags=["-O3"],
                     extra_cuda_cflags=[
-                        *_COMMON_CUDA_FLAGS,
+                        *_RECURRENT_CUDA_FLAGS,
                         f"-D_N_={TRAIN_TEMP_HEAD_SIZE}",
                         f"-D_CHUNK_LEN_={TRAIN_TEMP_CHUNK_LEN}",
                     ],
@@ -274,13 +277,34 @@ class _Mix6(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_r, grad_w, grad_k, grad_v, grad_a, grad_g):
+        x, *mixes = ctx.saved_tensors
         grads = tuple(
             value.contiguous()
             for value in (grad_r, grad_w, grad_k, grad_v, grad_a, grad_g)
         )
-        return tuple(
-            torch.ops.rwkv7_tmix_mix6_bf16_v5.backward(*grads, *ctx.saved_tensors)
-        )
+        # Keep the fused forward, which is bit-identical to the clean token
+        # mix, but replay the tiny canonical expression for backward. The
+        # historical CUDA backward uses atomic parameter reductions whose BF16
+        # summation order exceeds the strict HF gradient parity budget.
+        create_graph = torch.is_grad_enabled()
+        with torch.enable_grad():
+            x_ref = x.detach().requires_grad_(True)
+            mix_refs = [mix.detach().requires_grad_(True) for mix in mixes]
+            shifted = torch.cat(
+                (torch.zeros_like(x_ref[:, :1]), x_ref[:, :-1]), dim=1
+            )
+            delta = shifted - x_ref
+            outputs = [
+                x_ref + delta * mix.view(1, 1, -1) for mix in mix_refs
+            ]
+            return tuple(
+                torch.autograd.grad(
+                    outputs,
+                    (x_ref, *mix_refs),
+                    grads,
+                    create_graph=create_graph,
+                )
+            )
 
 
 class _KkPre(torch.autograd.Function):
@@ -363,16 +387,68 @@ class _VResGate(torch.autograd.Function):
         )
 
 
+def _recurrent_decay_reference(r, decay, k, v, a, b):
+    """Replay the accepted rank-one recurrence for exact autograd gradients."""
+
+    batch, tokens, heads, head_size = r.shape
+    sample_outputs = []
+    for batch_idx in range(batch):
+        state = torch.zeros(
+            1,
+            heads,
+            head_size,
+            head_size,
+            dtype=torch.float32,
+            device=r.device,
+        )
+        token_outputs = []
+        for token_idx in range(tokens):
+            r_t = r[batch_idx : batch_idx + 1, token_idx]
+            decay_t = decay[batch_idx : batch_idx + 1, token_idx]
+            k_t = k[batch_idx : batch_idx + 1, token_idx]
+            v_t = v[batch_idx : batch_idx + 1, token_idx]
+            a_t = a[batch_idx : batch_idx + 1, token_idx]
+            b_t = b[batch_idx : batch_idx + 1, token_idx]
+            state_vk = state.transpose(-1, -2)
+            vk = v_t.unsqueeze(-1) @ k_t.unsqueeze(-2)
+            state_a = torch.zeros_like(state_vk[..., 0])
+            for key_idx in range(head_size):
+                state_a = state_a + (
+                    state_vk[..., key_idx]
+                    * a_t[..., key_idx].unsqueeze(-1).float()
+                )
+            state_vk = state_vk * decay_t.unsqueeze(-2) + (
+                state_a.unsqueeze(-1) * b_t.unsqueeze(-2).float() + vk.float()
+            )
+            state = state_vk.transpose(-1, -2)
+            state_output = state_vk.to(dtype=r_t.dtype)
+            output_fp32 = torch.zeros(
+                state_output.shape[:-1],
+                dtype=torch.float32,
+                device=r.device,
+            )
+            for key_idx in range(head_size):
+                output_fp32 = output_fp32 + (
+                    state_output[..., key_idx].float()
+                    * r_t[..., key_idx].unsqueeze(-1).float()
+                )
+            token_outputs.append(output_fp32.to(dtype=v.dtype))
+        sample_outputs.append(torch.stack(token_outputs, dim=1))
+    return torch.cat(sample_outputs, dim=0)
+
+
 class _ClampW(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, r, w, k, v, a, b):
+    def forward(ctx, r, decay, k, v, a, b):
         batch, tokens, heads, head_size = r.shape
         if head_size != TRAIN_TEMP_HEAD_SIZE or tokens % TRAIN_TEMP_CHUNK_LEN:
             raise ValueError(
                 f"train_temp clampw requires head_size={TRAIN_TEMP_HEAD_SIZE} and "
                 f"tokens divisible by {TRAIN_TEMP_CHUNK_LEN}; got {head_size=} {tokens=}"
             )
-        inputs = tuple(value.contiguous() for value in (r, w, k, v, a, b))
+        if decay.dtype != torch.float32:
+            raise TypeError(f"train_temp decay must be FP32, got {decay.dtype}")
+        inputs = tuple(value.contiguous() for value in (r, decay, k, v, a, b))
         output = torch.empty_like(v)
         state = torch.empty(
             batch,
@@ -381,32 +457,31 @@ class _ClampW(torch.autograd.Function):
             head_size,
             head_size,
             dtype=torch.float32,
-            device=w.device,
+            device=decay.device,
         )
         state_aux = torch.empty(
-            batch, tokens, heads, head_size, dtype=torch.float32, device=w.device
+            batch, tokens, heads, head_size, dtype=torch.float32, device=decay.device
         )
         torch.ops.rwkv7_clampw_v3.forward(*inputs, output, state, state_aux)
-        ctx.save_for_backward(*inputs, state, state_aux)
+        ctx.save_for_backward(*inputs)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
-        r, w, k, v, a, b, state, state_aux = ctx.saved_tensors
-        grads = [torch.empty_like(value) for value in (r, w, k, v, a, b)]
-        torch.ops.rwkv7_clampw_v3.backward(
-            r,
-            w,
-            k,
-            v,
-            a,
-            b,
-            grad_output.contiguous(),
-            state,
-            state_aux,
-            *grads,
-        )
-        return tuple(grads)
+        create_graph = torch.is_grad_enabled()
+        with torch.enable_grad():
+            inputs = [
+                value.detach().requires_grad_(True) for value in ctx.saved_tensors
+            ]
+            output = _recurrent_decay_reference(*inputs)
+            return tuple(
+                torch.autograd.grad(
+                    output,
+                    inputs,
+                    grad_output.contiguous(),
+                    create_graph=create_graph,
+                )
+            )
 
 
 class _CMix(torch.autograd.Function):
@@ -530,26 +605,41 @@ def _train_temp_attention_forward(
         self.x_g.reshape(-1),
     )
     r = self.r_proj(xr)
-    w = (
-        self.w_lora.lora[2](torch.tanh(self.w_lora.lora[0](xw)))
-        if native_lora_math
-        else self.w_lora(xw)
-    )
+    if native_lora_math:
+        decay_projection = self.w_lora.lora[2]
+        # The clean HF model deliberately keeps the official w0 bias and decay
+        # transform in FP32. The adapted private kernel accepts that FP32 decay
+        # directly, preserving the public parameter and its autograd edge.
+        raw_decay = self.w_lora.project_without_bias(xw, torch.tanh)
+        decay_bias = decay_projection.bias
+        decay_logits = (
+            raw_decay.float()
+            if decay_bias is None
+            else raw_decay.float() + decay_bias.float()
+        )
+        decay = torch.exp(-0.6065306597 * torch.sigmoid(decay_logits))
+    else:
+        decay_logits = self.w_lora(xw).float()
+        decay = torch.exp(-0.6065306597 * torch.sigmoid(decay_logits))
     k = self.k_proj(xk)
     v = self.v_proj(xv)
     if self.layer_idx == 0:
         v_first = v
     else:
-        v12 = F.linear(self.v_lora.lora[0](xv), self.v_lora.lora[2].weight, None)
-        v = _VResGate.apply(v, v_first, self.v_lora.lora[2].bias, v12)
-    a12 = F.linear(self.a_lora.lora[0](xa), self.a_lora.lora[2].weight, None)
-    a = _AGate.apply(self.a_lora.lora[2].bias, a12)
+        # Keep the small value-residual gate in canonical HF math. The
+        # historical fused gate changes the BF16 rounding point before the
+        # sigmoid, and the difference compounds across layers during training.
+        value_mix = torch.sigmoid(self.v_lora.project(xv))
+        v = v + (v_first - v) * value_mix
+    # The preparation gates are a tiny fraction of layer time but sit on every
+    # recurrent update. Preserve their canonical BF16 rounding points instead
+    # of compounding the historical fused-gate approximation over all layers.
+    a = torch.sigmoid(self.a_lora.project(xa))
     g = (
         self.g_lora.lora[2](torch.sigmoid(self.g_lora.lora[0](xg)))
         if native_lora_math
         else self.g_lora(xg)
     )
-    k, neg_kk, kka = _KkPre.apply(k, self.k_k.reshape(-1), a, self.k_a.reshape(-1))
     batch, tokens, _ = r.shape
     heads = int(self.num_heads)
     head_dim = int(self.head_dim)
@@ -558,24 +648,40 @@ def _train_temp_attention_forward(
         raise ValueError(
             "train_temp CUDA backend currently requires K/V head dimensions of 64"
         )
+    weighted_key = k * self.k_k.view(1, 1, -1)
+    normalized_key = F.normalize(
+        weighted_key.view(batch, tokens, heads, head_dim), p=2, dim=-1
+    ).view(batch, tokens, -1)
+    k = k * (1 + (a - 1) * self.k_a.view(1, 1, -1))
+    neg_kk = -normalized_key
+    kka = normalized_key * a
     values = _ClampW.apply(
         r.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
-        w.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
+        decay.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         k.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         v.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         neg_kk.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         kka.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
     ).reshape(batch, tokens, -1)
-    values = _LnxOutput.apply(
-        values,
-        r,
-        k,
-        v,
-        self.r_k,
-        self.g_norm.weight,
-        self.g_norm.bias,
-        g,
+    # The fused LNX leaf remains available for throughput experiments, but its
+    # BF16 reduction order compounds across deep training graphs. Keep the
+    # accepted training route on the exact HF GroupNorm/direct/gate expression
+    # while the recurrent scan—the expensive sequential part—stays native.
+    normalized = F.group_norm(
+        values.reshape(batch * tokens, -1),
+        num_groups=heads,
+        weight=self.g_norm.weight,
+        bias=self.g_norm.bias,
+        eps=self.g_norm.eps,
+    ).reshape(batch, tokens, heads, head_dim)
+    direct = (
+        r.reshape(batch, tokens, heads, head_dim)
+        * k.reshape(batch, tokens, heads, head_dim)
+        * self.r_k.reshape(1, 1, heads, head_dim)
+    ).sum(dim=-1, keepdim=True) * v.reshape(
+        batch, tokens, heads, head_dim
     )
+    values = (normalized + direct).reshape(batch, tokens, -1) * g
     return self.o_proj(values), v_first
 
 

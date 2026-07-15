@@ -72,17 +72,15 @@ def tensor_metric(candidate: torch.Tensor, reference: torch.Tensor) -> dict[str,
     candidate = candidate.detach().float().reshape(-1)
     reference = reference.detach().float().reshape(-1)
     delta = (candidate - reference).abs()
-    reference_norm = float(reference.norm())
-    candidate_norm = float(candidate.norm())
+    dot = (candidate * reference).sum(dtype=torch.float64)
+    reference_norm = (reference * reference).sum(dtype=torch.float64).sqrt()
+    candidate_norm = (candidate * candidate).sum(dtype=torch.float64).sqrt()
     cosine = (
         1.0
         if reference_norm == 0.0 and candidate_norm == 0.0
-        else float(
-            torch.nn.functional.cosine_similarity(
-                candidate.unsqueeze(0), reference.unsqueeze(0)
-            )
-        )
+        else float(dot / (candidate_norm * reference_norm))
     )
+    delta_l2 = (delta * delta).sum(dtype=torch.float64).sqrt()
     return {
         "finite": bool(
             torch.isfinite(candidate).all() and torch.isfinite(reference).all()
@@ -90,7 +88,7 @@ def tensor_metric(candidate: torch.Tensor, reference: torch.Tensor) -> dict[str,
         "cosine": cosine,
         "max_abs": float(delta.max()) if delta.numel() else 0.0,
         "mean_abs": float(delta.mean()) if delta.numel() else 0.0,
-        "relative_l2": float(delta.norm()) / max(reference_norm, 1.0e-12),
+        "relative_l2": float(delta_l2 / reference_norm.clamp_min(1.0e-12)),
     }
 
 

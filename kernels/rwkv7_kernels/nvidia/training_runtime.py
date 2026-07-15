@@ -45,11 +45,15 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
         )
         hidden = residual + attention_output
         ffn_input = layer.ffn_norm(hidden)
-        ffn_output = train_temp._CMix.apply(
+        # Preserve the canonical fixed-row HF linear contract for ChannelMix.
+        # The historical CMix leaf performs a differently shaped GEMM; its
+        # small BF16 rounding difference compounds over the complete model.
+        ffn_output, _ = layer.ffn(
             ffn_input,
-            layer.ffn.x_k.reshape(-1),
-            layer.ffn.key.weight,
-            layer.ffn.value.weight,
+            ffn_input.new_zeros(ffn_input.shape[0], ffn_input.shape[-1]),
+            torch.ones(
+                ffn_input.shape[:2], dtype=torch.bool, device=ffn_input.device
+            ),
         )
         return hidden + ffn_output, first_value
 

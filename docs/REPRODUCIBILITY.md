@@ -106,8 +106,8 @@ python scripts/audit_release_wheels.py \
 ```
 
 The final release verifier repeats this audit, including all 102 embedded
-migration-manifest destination hashes, Git-blob identity for the 100 exact
-transfers, the two declared clean-boundary adaptations, the reconstructed
+migration-manifest destination hashes, Git-blob identity for the 98 exact
+transfers, the four declared clean-boundary adaptations, the reconstructed
 153-file historical tree, and the separate byte-identical v0.10 Graph/Triton
 recurrent subtree. A locally complete source tree therefore cannot hide an
 incomplete wheel.

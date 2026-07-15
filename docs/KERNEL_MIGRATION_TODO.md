@@ -1328,3 +1328,285 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   weight-shard identities remained equal to the frozen baseline. No Hub write
   occurred. Targeted Ruff/compileall, `git diff --check`, and the complete
   local suite pass `174 passed` with `133` expected warnings.
+
+### 2026-08-28 — RTX 4080 formal reference lane reached 37/48
+
+- At `2026-08-28T09:27:10+08:00`, the untouched recurrent-v1 diagnostic
+  reference lane had completed **37/48** formal units, all 37 with exit code
+  zero. The long 1.5B/batch-1 HellaSwag unit completed naturally, followed by
+  Winogrande; 1.5B/batch-1 ARC-Easy was the sole active GPU unit (PID
+  `3925792`, approximately 3.39 GiB).
+- All 37 result JSON files parsed successfully and contained no non-finite
+  numeric values. The completed HellaSwag log contained no traceback,
+  RuntimeError, CUDA error or out-of-memory marker.
+- The optimized and FLA formal lanes remain at 0/48. Backend-v2 watcher PIDs
+  `3892299`, `3898158`, `3898167`, `3898175`, and `3898230` remain asleep in
+  the required sequential chain; none has produced a final JSON or competed
+  for the GPU. This is still the older `worktree-9d3ba79a-final-auto`
+  recurrent-v1 diagnostic, not final stable-wheel evidence.
+
+### 2026-08-28 — RTX 4080 formal reference lane reached 41/48
+
+- At `2026-08-28T09:57:06+08:00`, the same untouched reference lane had
+  completed **41/48** units, all 41 exit-zero. The 1.5B batch-1 matrix and the
+  batch-8 WikiText unit had finished; 1.5B/batch-8 LAMBADA was the sole active
+  GPU task (PID `3927691`, about 4.60 GiB), at 378/5,153 requests with no
+  traceback, RuntimeError, CUDA error or OOM marker.
+- All 41 generated result JSON files parsed and contained zero non-finite
+  numeric values. Optimized and FLA remain at 0/48, and all five backend-v2
+  watchers remain sleeping in sequence without a final report or GPU use.
+
+### 2026-08-28 — RTX 4080 formal reference lane reached 43/48
+
+- At `2026-08-28T10:27:34+08:00`, reference had completed **43/48** units,
+  all exit-zero, through 1.5B/batch-8 PIQA. Every completed batch-1/batch-8
+  aggregate metric pair compared so far was exactly equal.
+- The sole GPU task was 1.5B/batch-8 HellaSwag (PID `3928770`, approximately
+  4.40 GiB), at 2,827/40,168 requests. Its live log contained no traceback,
+  RuntimeError, CUDA error or OOM marker. All 43 result JSON files parsed with
+  zero non-finite numerics.
+- Optimized/FLA remain 0/48 and the backend-v2 watcher chain remains asleep,
+  unchanged and non-contending.
+
+### 2026-08-28 — RTX 4080 formal reference lane completed 48/48
+
+- At `2026-08-28T12:28:40+08:00`, the recurrent-v1 diagnostic reference lane
+  completed **48/48**, all exit-zero. All 48 result JSON files parsed with no
+  non-finite numeric values; completed batch-1/batch-8 aggregate metric pairs
+  were exactly equal, and the full log set contained no traceback,
+  RuntimeError, CUDA error or OOM marker.
+- The existing coordinator advanced naturally to the optimized lane without
+  intervention. Its first unit is 0.1B/batch-1 WikiText under requested
+  `RWKV7_BACKEND=optimized` and `RWKV7_KERNEL_IMPL=auto`; actual route evidence
+  must still come from the formal result validator and must not be inferred
+  from these requested environment values.
+- FLA remains 0/48. Backend-v2 watchers remain asleep until the complete older
+  three-way diagnostic finishes, with no duplicate launch or GPU contention.
+
+### 2026-08-28 — RTX 4080 optimized lane reached 12/48
+
+- At `2026-08-28T13:28:06+08:00`, the recurrent-v1 diagnostic optimized lane
+  had completed **12/48**, all exit-zero. All 12 completed aggregate result
+  objects were exactly equal to their reference counterparts, and the combined
+  result set contained no non-finite numeric values.
+- The only GPU task was 0.1B/batch-8 Winogrande. Requested policy remains
+  `optimized` with kernel implementation `auto`; this checkpoint records
+  functional progress only and does not substitute the requested policy for
+  actual route evidence.
+- FLA remains 0/48 and the backend-v2 watcher chain remains sleeping and
+  non-contending.
+
+### 2026-08-28 — RTX 4080 optimized lane passed the halfway point
+
+- At `2026-08-28T14:58:10+08:00`, optimized had completed **27/48**, all
+  exit-zero. Each of the 27 completed aggregate result objects was exactly
+  equal to reference and the combined result set contained no non-finite
+  values.
+- The sole GPU task was 0.4B/batch-8 HellaSwag. Its live log contained no
+  traceback, RuntimeError, CUDA error or OOM marker. FLA remains 0/48 and the
+  backend-v2 watcher chain remains asleep and non-contending.
+
+### 2026-08-28 — RTX 4080 optimized lane reached 35/48
+
+- At `2026-08-28T15:57:59+08:00`, optimized had completed **35/48**, all
+  exit-zero. All 35 completed aggregate result objects remained exactly equal
+  to reference and no result contained a non-finite numeric value.
+- The sole GPU task was 1.5B/batch-1 HellaSwag, at 6,011/40,168 requests with
+  no traceback, RuntimeError, CUDA error or OOM marker. FLA and backend-v2
+  remain sequentially queued and non-contending.
+
+### 2026-08-28 — RTX 4080 optimized lane reached 41/48
+
+- At `2026-08-28T16:58:05+08:00`, optimized had completed **41/48**, all
+  exit-zero. All 41 completed aggregate result objects remained exactly equal
+  to reference, with zero non-finite values across the formal result set.
+- The sole GPU task was 1.5B/batch-8 LAMBADA, at 2,698/5,153 requests and no
+  error marker. FLA remains 0/48; the backend-v2 watchers remain sleeping in
+  the original dependency order without GPU contention.
+
+### 2026-08-28 — RTX 4080 optimized lane completed; FLA lane started
+
+- At `2026-08-28T18:00:00+08:00`, the recurrent-v1 diagnostic optimized lane
+  completed **48/48**, all exit-zero, with no non-finite values. All 48
+  aggregate result objects were byte-for-byte equal to the reference lane.
+- Every optimized unit includes actual route evidence. Across the completed
+  lane it records `torch-cuda-graph-reference-v1` for 4,440,780 recurrent
+  calls; therefore this is the exact Graph compatibility route, not evidence
+  for the later complete backend-v2 implementation or the final 1.0.0 wheel.
+- The coordinator advanced naturally to FLA. FLA had completed **5/48** units,
+  all exit-zero and finite, while 0.1B/batch-1 ARC-Easy was the sole GPU task.
+  Preliminary FLA aggregate values differ from reference on all five completed
+  units, so the original exact-equality gate is not yet satisfied. Preserve
+  the raw evidence and let the full lane finish before diagnosing or rerunning
+  only affected comparisons.
+- Backend-v2 watcher PIDs `3892299`, `3898158`, `3898167`, `3898175`, and
+  `3898230` remain sleeping in the required sequential chain; none was
+  restarted and none contended for the GPU.
+
+### 2026-08-28 — RTX 4080 FLA lane reached 35/48
+
+- At `2026-08-28T18:58:33+08:00`, the FLA lane had completed **35/48**
+  recurrent-v1 diagnostic units, all exit-zero. All 35 result JSON files
+  parsed with no non-finite numeric values and the completed logs contained no
+  traceback, RuntimeError, CUDA error or out-of-memory marker.
+- The sole GPU task was 1.5B/batch-1 HellaSwag at 33,892/40,168 requests. The
+  backend-v2 watcher chain remained asleep in the original dependency order,
+  without restart or GPU contention.
+
+### 2026-08-28 — recurrent-v1 144/144 collected; backend-v2 smoke exposed a clean-boundary dtype bug
+
+- At `2026-08-28T19:18:31+08:00`, reference, Graph-optimized and FLA all
+  completed **48/48** formal units: **144/144 commands exited zero**, every
+  result JSON parsed, and no non-finite value was found. Graph-optimized had
+  zero per-sample prediction mismatches and zero metric failures against the
+  reference. FLA completed successfully but the strict three-way validator
+  correctly wrote `status: failed`: several discrete selections and aggregate
+  metrics differ, so this diagnostic does not satisfy the original exact FLA
+  equality gate and its raw evidence remains untouched.
+- The queued backend-v2 chain then started naturally. Its first inference
+  smoke failed before producing a report. Evidence is preserved at
+  `/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-18836aee/4080`:
+  the clean model keeps the official decay bias in FP32, while the historical
+  private native pack treated `RWKV7Linear` as a wrapped module and passed the
+  FP32 bias directly to an FP16 `F.linear`, raising `self and mat2 must have
+  the same dtype`. Dependent ecosystem, finetune, full and lm_eval watchers
+  recorded transparent `blocked` results and exited without running or
+  consuming GPU time.
+- The affected clean-boundary adapters were repaired locally without changing
+  `rwkv7_hf`, the public cache, model signatures or checkpoint parameters:
+  ordinary `RWKV7Linear` subclasses are dense only when their weight is an
+  exact `Parameter`; quantized tensor subclasses remain callable operands;
+  the FP32 decay bias is converted only in the private activation-dtype native
+  pack. Training, graph-head and quantization ownership checks use the same
+  dense contract.
+- Migration evidence now records **98 byte-identical + 4 declared
+  clean-boundary adaptations = all 102 NVIDIA files**. Targeted backend tests
+  and the complete local suite pass **175 tests** with 145 expected TorchScript
+  deprecation warnings; `git diff --check` passes. Next action is to rebuild an
+  immutable corrected kernel wheel on RTX 4080 and rerun only the failed
+  backend-v2 smoke before re-enabling its dependent sequential gates.
+
+### 2026-08-28 — RTX 4080 reached through the V100 bastion; training JIT exposed an SM89 compile defect
+
+- The working route is the V100 jump host, invoked explicitly as
+  `ssh -o ControlMaster=no -o ControlPath=none -o ProxyJump=WZU_Server WZU_4080`.
+  Through that route the corrected backend-v2 inference smoke completed with
+  `status: passed`: finite FP16 logits, cosine `0.9999990`, max-abs
+  `0.0546875`, canonical cache pass, native prefill routes and CUDA-Graph
+  fused decode routes. This confirms the clean `RWKV7Linear`/FP32-decay-bias
+  repair without rerunning the already-passing recurrent-v1 matrix.
+- The first training retry found two environment prerequisites (`ninja` and a
+  complete CUDA toolkit). After using the server's existing Ninja and complete
+  CUDA 13.0 toolkit, compilation reached the CUDA source and exposed the real
+  portability defect: the migrated train-temp files called
+  `atomicAdd(float2*, float2)`, which CUDA only provides on SM90+, while the
+  RTX 4080 is SM89.
+- The three affected BF16 training translation units now retain the vector
+  atomic on SM90+ and use two equivalent scalar FP32 atomics on SM89/SM80/SM70.
+  Migration evidence is transparently updated to **95 byte-identical + 7
+  declared adaptations = all 102 NVIDIA files**; the frozen historical tree
+  and original Git blob IDs remain unchanged. Targeted migration, wheel-audit,
+  and backend-v2 tests pass 29/29 with plugin autoload disabled.
+- Remote source sync was interrupted by a temporary loss of the V100
+  Tailscale route. No formal GPU process was running or terminated. Next action
+  is to resume the same V100 jump route, compile the corrected training leaf,
+  and rerun only training plus the still-unrun quant/FLA/full backend-v2 stages.
+
+### 2026-08-28 — RTX 4080 train-temp compiled on SM89; clean FP32 w0 handling repaired
+
+- Training smoke v6 proved that all migrated CUDA/C++ train-temp extensions now
+  compile on RTX 4080 after the architecture-gated atomic fix. Execution then
+  reached the model and exposed a second clean-boundary dtype mismatch: the
+  historical BF16 training path invoked the decay projection module directly,
+  while the clean HF model intentionally stores its public w0 bias in FP32.
+- The already-declared `train_temp_cuda.py` adapter now mirrors the clean
+  contract without changing the model: it evaluates the low-rank projection
+  without bias, adds w0 in FP32, and casts only the private raw-decay operand
+  consumed by the BF16 CUDA kernel. The public FP32 parameter and gradient edge
+  remain intact. Targeted backend/migration/wheel tests pass 30/30.
+- Only the affected training smoke has been restarted as v7 (PID `3968505`).
+  No other formal GPU job was running, and quant/FLA/full stages remain pending
+  behind this gate.
+
+### 2026-08-28 — RTX 4080 native training executes and accelerates, but strict BF16 parity remains failed
+
+- Training smoke v7 completed without exceptions and recorded the actual route
+  `native-nvidia-train-temp-autograd-v2`. Both non-checkpointed and
+  checkpointed cases were finite, had all 399 expected gradients, no missing
+  gradients, and measured speedups of `1.68x` and `3.12x` over the clean
+  reference path.
+- The existing strict gate correctly remains failed. Logits cosine was
+  `0.9997567`/`0.9998824`, loss delta `0.0339`/`0.0435`, and the worst
+  per-parameter gradient cosine/relative-L2 was `0.9891/0.1754` and
+  `0.9839/0.1961`. Every gradient is finite, every gradient cosine is at least
+  `0.98`, and every relative-L2 is at most `0.20`, but these do not satisfy the
+  pre-existing `0.9999` logits and `0.999`/`0.02` gradient requirements.
+- The failed JSON is preserved as `training-smoke-v7.json`; no thresholds were
+  weakened and no later quant/FLA/full stage was started. Next action is a
+  focused numerical comparison of the historical fused recurrence against a
+  higher-precision/hybrid training route before deciding promotion versus
+  reference fallback.
+
+### 2026-08-28 — RTX 4080 strict native-training smoke passes after numerical-order repair
+
+- Focused hybrid runs localized the v7 discrepancy to the recurrent training
+  leaf rather than Mix6, GroupNorm, ChannelMix, loss shifting, or the public HF
+  model contract.  The historical leaf consumed a BF16 raw-decay operand,
+  whereas the clean model intentionally performs the `w0` addition and decay
+  transform in FP32.  Its CUDA compiler also contracted multiply-adds, causing
+  one-ULP BF16 differences that accumulated through twelve residual blocks.
+- The clean reference recurrence now expresses the RWKV-7 rank-one update
+  directly and preserves the official sequential reduction order.  The
+  migrated clamp ABI accepts canonical FP32 decay, rounds the `v @ k` outer
+  product and updated-state view at the same BF16 boundaries, and compiles this
+  leaf with `--fmad=false`.  The public modeling/config/cache boundary remains
+  unchanged.  `RWKV7LowRank.project_without_bias()` makes the external FP32
+  bias ownership explicit instead of teaching the backend about model internals.
+- The accepted training route keeps canonical HF projection, normalization,
+  gating and ChannelMix math, uses the native CUDA recurrence for the forward,
+  and replays the readable canonical rank-one recurrence in autograd for strict
+  gradients.  A faster vectorized/pairwise experiment was retained as failed
+  diagnostic evidence and rejected; it is not part of the final source.
+- `training-smoke-rank1-decay-fp32-nofma-replay-v28.json` passes both
+  B1/T16 cases.  With and without gradient checkpointing, logits and loss are
+  bit-exact, every expected gradient is finite and present, worst gradient
+  cosine is at least `0.9999924`, worst relative-L2 is at most `0.00414`, and
+  actual route evidence is `native-nvidia-train-temp-autograd-v2`.  Measured
+  speedups are `1.03x` and `1.25x`; these are correctness-smoke timings, not the
+  final performance matrix.
+- The scalar metric validator now evaluates reductions in FP64 so large BF16
+  gradient tensors cannot report a false zero-norm/cosine failure.  A direct
+  CPU unit test also proves that the accepted recurrent backward replay matches
+  the clean recurrence for every input gradient.  The complete local suite
+  passes **179 tests** with 145 expected TorchScript deprecation warnings, both
+  migration manifests verify all 102 destination hashes, and `git diff
+  --check` passes.
+- Remaining RTX 4080 gate: rebuild a fresh immutable wheel from this exact
+  source and run the formal B=`1/4`, T=`16/128`, checkpointing on/off training
+  matrix.  Only after that passes may the queued quantization, FLA, complete
+  backend-v2 and formal lm_eval stages advance.
+
+### 2026-08-28 — RTX 4080 formal native-training matrix passes 8/8
+
+- Re-synced the accepted source to the idle RTX 4080, deleted the diagnostic
+  extension cache, and rebuilt every train-temp extension in the fresh
+  `/home/wzu/codex-run/torch-extensions/backend-v2-final-decay-fp32-nofma-v4`
+  directory.  The recurrent leaf's recorded Ninja command contains
+  `--fmad=false`, omits `--use_fast_math`, and produced clamp shared-object
+  SHA256 `4530a76e4ec1a4dd6be22bf9a9152fac0f9784780f588a73ab7ddd8eb71e4343`.
+- The formal B=`1/4`, T=`16/128`, checkpointing on/off matrix completed **8/8**
+  with exit code zero and no failures.  Every case records actual route
+  `native-nvidia-train-temp-autograd-v2`; logits and loss are bit-exact in all
+  eight cases.  Across the complete matrix, worst gradient cosine is
+  `0.9999917` and worst gradient relative-L2 is `0.00414`, both inside the
+  unchanged `0.999` / `0.02` gates.
+- Native training materially reduces non-checkpointed B4/T128 peak allocation
+  from `4.12 GB` to `1.28 GB`.  Steady cases range from `0.98x` to `1.25x` in
+  this correctness harness.  The first B1/T16 candidate timing includes the
+  one-time clean JIT build and is therefore not a throughput result; final
+  forward+backward numbers remain assigned to the dedicated warmed benchmark.
+- Evidence:
+  `/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-fix-20260828/4080/training-formal-final-src-6677ec04-v30.json`.
+  The next step is to commit this accepted source, build an immutable two-wheel
+  pair from that commit, then use only that pair for the remaining 4080
+  ecosystem, quantization, FLA, benchmark and formal lm_eval gates.

@@ -53,7 +53,10 @@ def _owned_graph_modules(model: Any) -> tuple[list[Any], str | None]:
 
     packed: list[Any] = []
     for module in model.modules():
-        if type(module) is torch.nn.Linear:
+        if (
+            isinstance(module, torch.nn.Linear)
+            and type(module.weight) is torch.nn.Parameter
+        ):
             continue
         if not (
             hasattr(module, "in_features")

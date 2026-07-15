@@ -17,7 +17,14 @@ __device__ inline void store_bf16x2(at::BFloat16* ptr, __nv_bfloat162 value) {
 }
 
 __device__ inline void atomic_add_float2(float* ptr, float x0, float x1) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
     atomicAdd(reinterpret_cast<float2*>(ptr), make_float2(x0, x1));
+#else
+    // Vector float atomics require SM90+. Ada (SM89), Ampere, and Volta
+    // retain the same operation through two scalar atomics.
+    atomicAdd(ptr, x0);
+    atomicAdd(ptr + 1, x1);
+#endif
 }
 
 inline int64_t ceil_div(int64_t n, int64_t d) {

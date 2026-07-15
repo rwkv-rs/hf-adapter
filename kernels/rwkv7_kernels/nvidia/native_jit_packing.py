@@ -10,6 +10,20 @@ from __future__ import annotations
 import torch
 
 
+def _kernel_bias(bias, reference: torch.Tensor):
+    """Return an internal bias in the native kernel's activation dtype.
+
+    The readable HF model deliberately stores the RWKV-7 decay bias in FP32.
+    Historical native kernels consume that bias from an internal FP16/BF16
+    pack, so convert only the private packed view and leave the public model
+    parameter untouched.
+    """
+
+    if bias is None:
+        return None
+    return bias.to(device=reference.device, dtype=reference.dtype)
+
+
 def extract_dense_packs(model, *, rkv_policy: str):
     layers = model.model.layers
     H = layers[0].attn.num_heads
@@ -26,7 +40,7 @@ def extract_dense_packs(model, *, rkv_policy: str):
         vl = getattr(a, "v_lora", None)
         v1 = vl.lora[0].weight if vl is not None else torch.zeros(1, ref.shape[1], device=ref.device, dtype=ref.dtype)
         v2 = vl.lora[2].weight if vl is not None else torch.zeros(attention_hidden, 1, device=ref.device, dtype=ref.dtype)
-        v0 = vl.lora[2].bias if vl is not None else torch.zeros(attention_hidden, device=ref.device, dtype=ref.dtype)
+        v0 = _kernel_bias(vl.lora[2].bias, ref) if vl is not None else torch.zeros(attention_hidden, device=ref.device, dtype=ref.dtype)
         if hasattr(layer, "pre_norm"):
             pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
         else:
@@ -41,8 +55,10 @@ def extract_dense_packs(model, *, rkv_policy: str):
             a.x_v.reshape(-1), a.x_a.reshape(-1), a.x_g.reshape(-1),
             a.k_k, a.k_a, a.r_k,
             a.r_proj.weight, a.k_proj.weight, a.v_proj.weight, a.o_proj.weight,
-            a.w_lora.lora[0].weight, a.w_lora.lora[2].weight, a.w_lora.lora[2].bias,
-            a.a_lora.lora[0].weight, a.a_lora.lora[2].weight, a.a_lora.lora[2].bias,
+            a.w_lora.lora[0].weight, a.w_lora.lora[2].weight,
+            _kernel_bias(a.w_lora.lora[2].bias, ref),
+            a.a_lora.lora[0].weight, a.a_lora.lora[2].weight,
+            _kernel_bias(a.a_lora.lora[2].bias, ref),
             v1, v2, v0,
             a.g_lora.lora[0].weight, a.g_lora.lora[2].weight,
             a.g_norm.weight, a.g_norm.bias,
@@ -82,7 +98,7 @@ def extract_graph_packs(
     embed_ref = model.model.embeddings.weight
     for i, layer in enumerate(layers):
         if sparse_ffn_low_memory_pack_enabled() and (
-            type(layer.ffn.value) is torch.nn.Linear
+            isinstance(layer.ffn.value, torch.nn.Linear)
             and type(layer.ffn.value.weight) is torch.nn.Parameter
             and layer.ffn.value.weight.device.type == "cuda"
             and layer.ffn.value.weight.dtype == torch.float16
@@ -97,7 +113,7 @@ def extract_graph_packs(
         if vl is not None:
             v1 = graph_linear_operand(vl.lora[0])
             v2 = graph_linear_operand(vl.lora[2])
-            v0 = vl.lora[2].bias
+            v0 = _kernel_bias(vl.lora[2].bias, embed_ref)
         else:
             v1 = torch.zeros(1, hidden, device=embed_ref.device, dtype=embed_ref.dtype)
             v2 = torch.zeros(attention_hidden, 1, device=embed_ref.device, dtype=embed_ref.dtype)
@@ -127,10 +143,10 @@ def extract_graph_packs(
             r_op, k_op, v_op, graph_linear_operand(a.o_proj),
             graph_linear_operand(a.w_lora.lora[0]),
             graph_linear_operand(a.w_lora.lora[2]),
-            a.w_lora.lora[2].bias,
+            _kernel_bias(a.w_lora.lora[2].bias, embed_ref),
             graph_linear_operand(a.a_lora.lora[0]),
             graph_linear_operand(a.a_lora.lora[2]),
-            a.a_lora.lora[2].bias,
+            _kernel_bias(a.a_lora.lora[2].bias, embed_ref),
             v1, v2, v0,
             graph_linear_operand(a.g_lora.lora[0]),
             graph_linear_operand(a.g_lora.lora[2]),

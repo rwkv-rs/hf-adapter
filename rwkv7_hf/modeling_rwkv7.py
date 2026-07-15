@@ -250,6 +250,21 @@ class RWKV7LowRank(nn.Module):
             value = activation(value)
         return self.lora[2](value)
 
+    def project_without_bias(
+        self, value: torch.Tensor, activation=None
+    ) -> torch.Tensor:
+        """Apply both low-rank matrices while leaving the final bias external.
+
+        RWKV-7 keeps the decay ``w0`` addition and nonlinear transform in
+        FP32.  Exposing the unbiased projection keeps that precision rule
+        explicit for both the readable model and optional recurrent kernels.
+        """
+
+        value = self.lora[0](value)
+        if activation is not None:
+            value = activation(value)
+        return _linear_reference(value, self.lora[2].weight, bias=None)
+
 
 class RWKV7TimeMix(nn.Module):
     """RWKV-7 TMix, including projections and recurrent state update."""
@@ -345,12 +360,7 @@ class RWKV7TimeMix(nn.Module):
         # the low-rank update in the model dtype, then add the stored bias only
         # after promoting both terms.  This is especially important when a
         # FP16 checkpoint is executed as BF16.
-        decay_rank = torch.tanh(self.w_lora.lora[0](xw))
-        raw_decay = _linear_reference(
-            decay_rank,
-            self.w_lora.lora[2].weight,
-            bias=None,
-        )
+        raw_decay = self.w_lora.project_without_bias(xw, torch.tanh)
         key = self.k_proj(xk)
         value = self.v_proj(xv)
         in_context_learning = torch.sigmoid(self.a_lora.project(xa))

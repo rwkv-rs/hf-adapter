@@ -13,10 +13,25 @@ import torch
 import torch.nn.functional as F
 
 
+def dense_linear_module(module) -> bool:
+    """Return whether ``module`` exposes the ordinary dense Linear contract.
+
+    The clean HF reference uses a small ``nn.Linear`` subclass solely to keep
+    its fixed-row reference GEMM readable.  The optional backend must treat
+    that class as an ordinary dense operand without accidentally classifying
+    quantized Linear subclasses whose weight is a tensor subclass.
+    """
+
+    return bool(
+        isinstance(module, torch.nn.Linear)
+        and type(getattr(module, "weight", None)) is torch.nn.Parameter
+    )
+
+
 def linear_module(module, x: torch.Tensor) -> torch.Tensor:
     """Call a dense or native quantized linear module."""
 
-    if type(module) is torch.nn.Linear:
+    if dense_linear_module(module):
         return F.linear(x, module.weight, module.bias)
     return module(x)
 
@@ -24,7 +39,7 @@ def linear_module(module, x: torch.Tensor) -> torch.Tensor:
 def graph_linear_operand(module):
     """Return a dense weight or retain a callable packed quantized module."""
 
-    if type(module) is torch.nn.Linear and type(module.weight) is torch.nn.Parameter:
+    if dense_linear_module(module):
         return module.weight
     return module
 
@@ -48,7 +63,7 @@ def relayout_ffn_value_weight(module):
     the same bytes instead of allocating a second full-size model copy.
     """
 
-    if type(module) is not torch.nn.Linear or module.bias is not None:
+    if not dense_linear_module(module) or module.bias is not None:
         raise TypeError("low-memory sparse FFN packing requires a bias-free nn.Linear")
     if getattr(module, "_rwkv7_sparse_low_memory_layout", False):
         return module.weight
@@ -70,7 +85,7 @@ def try_relayout_ffn_value_weight(
 ) -> bool:
     """Apply sparse layout only to its exact dense fp16 CUDA contract."""
 
-    if type(module) is not torch.nn.Linear or module.bias is not None:
+    if not dense_linear_module(module) or module.bias is not None:
         return False
     weight = module.weight
     if type(weight) is not torch.nn.Parameter:
@@ -82,6 +97,7 @@ def try_relayout_ffn_value_weight(
 
 
 __all__ = [
+    "dense_linear_module",
     "graph_linear_is_dense",
     "graph_linear_operand",
     "graph_linear_shape",

@@ -36,14 +36,14 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["status"] == "passed"
     assert report["migrated_files"] == 102
     assert report["transfers"] == {
-        "adapted_clean_boundary": 2,
-        "byte_identical": 100,
+        "adapted_clean_boundary": 9,
+        "byte_identical": 93,
     }
     assert report["capability_inventory"]["capabilities"] == 16
     assert report["capability_inventory"]["mapped_migration_files"] == 102
     assert report["source_scope"]["historical_files"] == 153
-    assert report["source_scope"]["dispositions"]["byte_migrated_nvidia"] == 100
-    assert report["source_scope"]["dispositions"]["adapted_protocol"] == 12
+    assert report["source_scope"]["dispositions"]["byte_migrated_nvidia"] == 93
+    assert report["source_scope"]["dispositions"]["adapted_protocol"] == 19
     assert report["recurrent_source_scope"]["historical_files"] == 3
     assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
     assert report["dependencies"] == ["numpy", "packaging", "torch"]

@@ -235,7 +235,11 @@ def _head_linear_into(module, value: torch.Tensor, output: torch.Tensor) -> None
     if callable(forward_into):
         forward_into(value, output)
         return
-    if type(module) is torch.nn.Linear and module.bias is None:
+    if (
+        isinstance(module, torch.nn.Linear)
+        and type(module.weight) is torch.nn.Parameter
+        and module.bias is None
+    ):
         if _native_graph_linear_dispatch is None:
             result = F.linear(value, module.weight)
         else:

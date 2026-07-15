@@ -38,12 +38,19 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
             )
         else:
             assert entry["source"] in {
+                "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3.cpp",
+                "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
+                "rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
+                "rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
+                "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
                 "rwkv7_hf/native_graph_runtime.py",
+                "rwkv7_hf/native_jit_linear.py",
+                "rwkv7_hf/native_jit_packing.py",
                 "rwkv7_hf/train_temp_cuda.py",
             }
             assert entry["adaptation"]
         destinations.add(destination.name)
-    assert transfers == {"byte_identical": 100, "adapted_clean_boundary": 2}
+    assert transfers == {"byte_identical": 93, "adapted_clean_boundary": 9}
 
     required_families = {
         "fused_attention_projection.py",
@@ -112,8 +119,8 @@ def test_historical_source_scope_classifies_the_entire_frozen_git_tree():
     assert scope["source_subtree_git_tree"] == historical_tree_oid(scope["entries"])
     assert len(scope["entries"]) == 153
     assert scope["counts"] == {
-        "adapted_protocol": 12,
-        "byte_migrated_nvidia": 100,
+        "adapted_protocol": 19,
+        "byte_migrated_nvidia": 93,
         "canonical_reference": 7,
         "non_kernel_feature_retired": 1,
         "separate_hardware_distribution": 27,

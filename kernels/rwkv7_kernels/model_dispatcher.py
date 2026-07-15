@@ -277,8 +277,14 @@ def _probe_native_training(owner: Any, request: dict[str, Any]):
             "owner does not expose the clean RWKV7 causal-LM structure"
         )
     if any(
-        type(layer.ffn.key) is not torch.nn.Linear
-        or type(layer.ffn.value) is not torch.nn.Linear
+        not (
+            isinstance(layer.ffn.key, torch.nn.Linear)
+            and type(layer.ffn.key.weight) is torch.nn.Parameter
+        )
+        or not (
+            isinstance(layer.ffn.value, torch.nn.Linear)
+            and type(layer.ffn.value.weight) is torch.nn.Parameter
+        )
         for layer in owner.model.layers
     ):
         return _unsupported_training(

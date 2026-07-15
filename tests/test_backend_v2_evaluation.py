@@ -16,7 +16,10 @@ from validate_backend_v2_ecosystem import (  # noqa: E402
     native_training_route,
     reference_training_route,
 )
-from validate_backend_v2_training import candidate_route_passed  # noqa: E402
+from validate_backend_v2_training import (  # noqa: E402
+    candidate_route_passed,
+    tensor_metric as training_tensor_metric,
+)
 from fla_common import (  # noqa: E402
     compare_states,
     gradient_metrics,
@@ -31,6 +34,14 @@ def test_tensor_metric_preserves_tokenwise_argmax():
     different_choice = torch.tensor([[[2.1, 1.9], [3.9, 1.1]]])
     assert tensor_metric(same_choices, reference)["argmax_same"]
     assert not tensor_metric(different_choice, reference)["argmax_same"]
+
+
+def test_training_tensor_metric_uses_stable_reductions_for_large_exact_logits():
+    logits = torch.linspace(-8.0, 8.0, 16 * 65536).reshape(1, 16, 65536)
+    row = training_tensor_metric(logits.clone(), logits)
+    assert row["cosine"] == 1.0
+    assert row["max_abs"] == 0.0
+    assert row["relative_l2"] == 0.0
 
 
 def test_compare_states_detects_fla_vk_layout():
