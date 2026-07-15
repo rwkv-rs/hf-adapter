@@ -17,9 +17,13 @@ EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base
 
 def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
               v_first: torch.Tensor, state: torch.Tensor):
-    """Port of RWKV_x070_TMix_one. x,x_prev:[hidden] state:[H,N,N] v_first:[hidden].
+    """Port of RWKV_x070_TMix_one. x,x_prev:[hidden] state:[H,N,N].
+
+    ``v_first`` and the recurrence vectors use ``attention_hidden_size=H*N``;
+    the residual stream may use a different ``hidden_size``.
     Returns (out:[hidden], x_new_prev, new_state:[H,N,N], new_v_first)."""
     H, N = layer.num_heads, layer.head_dim
+    attention_hidden = H * N
     xx = x_prev - x
     xr = x + xx * layer.x_r.reshape(-1)
     xw = x + xx * layer.x_w.reshape(-1)
@@ -35,7 +39,7 @@ def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
     a = torch.sigmoid(layer.a_lora.lora[2](layer.a_lora.lora[0](xa)))
     g = layer.g_lora.lora[2](torch.sigmoid(layer.g_lora.lora[0](xg)))
 
-    kk = F.normalize((k * layer.k_k).view(H, N), dim=-1, p=2).view(H * N)
+    kk = F.normalize((k * layer.k_k).view(H, N), dim=-1, p=2).view(attention_hidden)
     k = k * (1 + (a - 1) * layer.k_a)
     if layer_id == 0:
         v_first = v
@@ -48,12 +52,12 @@ def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
     ab = (-kk).view(H, N, 1) @ (kk * a).view(H, 1, N)
     state = state * w.view(H, 1, N) + state @ ab.float() + vk.float()
     out = state.to(x.dtype) @ r.view(H, N, 1)
-    out = out.view(H * N)
-    out = F.group_norm(out.view(1, H * N), num_groups=H,
+    out = out.view(attention_hidden)
+    out = F.group_norm(out.view(1, attention_hidden), num_groups=H,
                        weight=layer.g_norm.weight, bias=layer.g_norm.bias,
-                       eps=N * 1e-5).view(H * N)
+                       eps=N * 1e-5).view(attention_hidden)
     sk = (r.view(H, N) * k.view(H, N) * layer.r_k).sum(dim=-1, keepdim=True)
-    out = out + (sk * v.view(H, N)).view(H * N)
+    out = out + (sk * v.view(H, N)).view(attention_hidden)
     out = layer.o_proj(out * g)
     return out, x, state, v_first
 
@@ -70,14 +74,16 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
                       v_first: torch.Tensor, state: torch.Tensor):
     """Batched RWKV_x070_TMix_one.
 
-    x/x_prev/v_first: [B, hidden], state: [B, H, N, N].  This is a
+    x/x_prev: [B, hidden], v_first: [B, attention_hidden], and state:
+    [B, H, N, N].  This is a
     correctness-first pure PyTorch path for the experimental native model; it
     intentionally mirrors :func:`attn_step` and avoids FLA-specific runtime
     dependencies.
     """
     B = int(x.shape[0])
     H, N = layer.num_heads, layer.head_dim
-    hidden = H * N
+    hidden = layer.hidden_size
+    attention_hidden = H * N
     xx = x_prev - x
     xr = x + xx * layer.x_r.reshape(1, hidden)
     xw = x + xx * layer.x_w.reshape(1, hidden)
@@ -93,8 +99,12 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
     a = torch.sigmoid(layer.a_lora.lora[2](layer.a_lora.lora[0](xa)))
     g = layer.g_lora.lora[2](torch.sigmoid(layer.g_lora.lora[0](xg)))
 
-    kk = F.normalize((k * layer.k_k.reshape(1, hidden)).view(B, H, N), dim=-1, p=2).view(B, hidden)
-    k = k * (1 + (a - 1) * layer.k_a.reshape(1, hidden))
+    kk = F.normalize(
+        (k * layer.k_k.reshape(1, attention_hidden)).view(B, H, N),
+        dim=-1,
+        p=2,
+    ).view(B, attention_hidden)
+    k = k * (1 + (a - 1) * layer.k_a.reshape(1, attention_hidden))
     if layer_id == 0:
         v_first = v
     else:
@@ -106,12 +116,12 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
     ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
     state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
     out = state.to(x.dtype) @ r.view(B, H, N, 1)
-    out = out.view(B, hidden)
+    out = out.view(B, attention_hidden)
     out = F.group_norm(out, num_groups=H,
                        weight=layer.g_norm.weight, bias=layer.g_norm.bias,
                        eps=N * 1e-5)
     sk = (r.view(B, H, N) * k.view(B, H, N) * layer.r_k.reshape(1, H, N)).sum(dim=-1, keepdim=True)
-    out = out + (sk * v.view(B, H, N)).view(B, hidden)
+    out = out + (sk * v.view(B, H, N)).view(B, attention_hidden)
     out = layer.o_proj(out * g)
     return out, x, state, v_first
 
@@ -130,11 +140,12 @@ def _init_state_batched(model, batch_size: int, device, dtype):
     H = base.layers[0].attn.num_heads
     N = base.layers[0].attn.head_dim
     hid = base.layers[0].attn.hidden_size
+    attention_hidden = base.layers[0].attn.attention_hidden_size
     B = int(batch_size)
     state = [torch.zeros(B, H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
     xpa = [torch.zeros(B, hid, device=device, dtype=dtype) for _ in range(n)]
     xpf = [torch.zeros(B, hid, device=device, dtype=dtype) for _ in range(n)]
-    v_first = torch.zeros(B, hid, device=device, dtype=dtype)
+    v_first = torch.zeros(B, attention_hidden, device=device, dtype=dtype)
     return state, xpa, xpf, v_first
 
 
@@ -205,10 +216,11 @@ def _init_state(model, device, dtype):
     H = base.layers[0].attn.num_heads
     N = base.layers[0].attn.head_dim
     hid = base.layers[0].attn.hidden_size
+    attention_hidden = base.layers[0].attn.attention_hidden_size
     state = [torch.zeros(H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
     xpa = [torch.zeros(hid, device=device, dtype=dtype) for _ in range(n)]
     xpf = [torch.zeros(hid, device=device, dtype=dtype) for _ in range(n)]
-    v_first = torch.zeros(hid, device=device, dtype=dtype)
+    v_first = torch.zeros(attention_hidden, device=device, dtype=dtype)
     return state, xpa, xpf, v_first
 
 

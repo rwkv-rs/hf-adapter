@@ -678,7 +678,20 @@ class NativeRWKV7Config(PretrainedConfig):
         self.head_dim = kwargs.get("head_dim", 64)
         self.num_heads = kwargs.get("num_heads", None) or kwargs.get("num_attention_heads", None)
         if self.num_heads is None:
-            self.num_heads = self.hidden_size // self.head_dim
+            requested_attention_width = kwargs.get("attention_hidden_size", None)
+            width = self.hidden_size if requested_attention_width is None else int(requested_attention_width)
+            if width % self.head_dim:
+                raise ValueError(
+                    "attention_hidden_size must be divisible by head_dim"
+                )
+            self.num_heads = width // self.head_dim
+        self.attention_hidden_size = int(
+            kwargs.get("attention_hidden_size", self.num_heads * self.head_dim)
+        )
+        if self.attention_hidden_size != self.num_heads * self.head_dim:
+            raise ValueError(
+                "attention_hidden_size must equal num_heads * head_dim"
+            )
         self.num_attention_heads = self.num_heads
         self.intermediate_size = kwargs.get("intermediate_size", self.hidden_size * 4)
         self.decay_low_rank_dim = kwargs.get("decay_low_rank_dim", 64)
@@ -704,12 +717,20 @@ class NativeRWKV7Config(PretrainedConfig):
 class _LoRA(nn.Module):
     """Matches converted keys: ``*_lora.lora.{0,2}.weight`` / ``lora.2.bias``."""
 
-    def __init__(self, hidden: int, low_rank: int, bias: bool):
+    def __init__(
+        self,
+        input_size: int,
+        low_rank: int,
+        bias: bool,
+        *,
+        output_size: int | None = None,
+    ):
         super().__init__()
+        output_size = input_size if output_size is None else int(output_size)
         self.lora = nn.Sequential(
-            nn.Linear(hidden, low_rank, bias=False),
+            nn.Linear(input_size, low_rank, bias=False),
             nn.Identity(),
-            nn.Linear(low_rank, hidden, bias=bias),
+            nn.Linear(low_rank, output_size, bias=bias),
         )
 
     def forward(self, x):
@@ -725,22 +746,46 @@ class NativeRWKV7Attention(nn.Module):
         self.num_heads = config.num_heads
         self.head_dim = config.head_dim
         self.hidden_size = config.hidden_size
+        self.attention_hidden_size = config.attention_hidden_size
         hidden = config.hidden_size
+        attention_hidden = config.attention_hidden_size
         for p in ("x_r", "x_w", "x_k", "x_v", "x_a", "x_g"):
             setattr(self, p, nn.Parameter(torch.zeros(1, 1, hidden)))
-        self.k_k = nn.Parameter(torch.zeros(hidden))
-        self.k_a = nn.Parameter(torch.zeros(hidden))
+        self.k_k = nn.Parameter(torch.zeros(attention_hidden))
+        self.k_a = nn.Parameter(torch.zeros(attention_hidden))
         self.r_k = nn.Parameter(torch.zeros(self.num_heads, self.head_dim))
-        self.r_proj = nn.Linear(hidden, hidden, bias=False)
-        self.k_proj = nn.Linear(hidden, hidden, bias=False)
-        self.v_proj = nn.Linear(hidden, hidden, bias=False)
-        self.o_proj = nn.Linear(hidden, hidden, bias=False)
-        self.w_lora = _LoRA(hidden, config.decay_low_rank_dim, bias=True)
-        self.a_lora = _LoRA(hidden, config.a_low_rank_dim, bias=True)
-        self.g_lora = _LoRA(hidden, config.gate_low_rank_dim, bias=False)
+        self.r_proj = nn.Linear(hidden, attention_hidden, bias=False)
+        self.k_proj = nn.Linear(hidden, attention_hidden, bias=False)
+        self.v_proj = nn.Linear(hidden, attention_hidden, bias=False)
+        self.o_proj = nn.Linear(attention_hidden, hidden, bias=False)
+        self.w_lora = _LoRA(
+            hidden,
+            config.decay_low_rank_dim,
+            bias=True,
+            output_size=attention_hidden,
+        )
+        self.a_lora = _LoRA(
+            hidden,
+            config.a_low_rank_dim,
+            bias=True,
+            output_size=attention_hidden,
+        )
+        self.g_lora = _LoRA(
+            hidden,
+            config.gate_low_rank_dim,
+            bias=False,
+            output_size=attention_hidden,
+        )
         if layer_idx != 0:
-            self.v_lora = _LoRA(hidden, config.v_low_rank_dim, bias=True)
-        self.g_norm = nn.GroupNorm(self.num_heads, hidden, eps=self.head_dim * 1e-5)
+            self.v_lora = _LoRA(
+                hidden,
+                config.v_low_rank_dim,
+                bias=True,
+                output_size=attention_hidden,
+            )
+        self.g_norm = nn.GroupNorm(
+            self.num_heads, attention_hidden, eps=self.head_dim * 1e-5
+        )
 
     def forward(self, x: torch.Tensor, x_prev: torch.Tensor, v_first: torch.Tensor, state: torch.Tensor):
         """Run one native attention step through ``Module.__call__``.
@@ -1122,6 +1167,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
 
     def _native_jit_packs(self):
         if not _native_model_jit_enabled() or _native_jit_extract is None or _native_jit_step_batched is None:
+            return None
+        if self.config.attention_hidden_size != self.config.hidden_size:
             return None
         if self._native_model_requires_eager_decode():
             return None
