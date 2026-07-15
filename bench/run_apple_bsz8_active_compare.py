@@ -715,6 +715,11 @@ def main(argv: list[str] | None = None) -> int:
         "decode_tokens_per_sequence": int(args.decode_tokens),
         "rwkv_model": Path(args.rwkv_model).name,
         "qwen_model": Path(args.qwen_model).name,
+        "rwkv_decode_mode": "speculative" if args.rwkv_draft_model else "target_only",
+        "rwkv_draft_model": Path(args.rwkv_draft_model).name if args.rwkv_draft_model else None,
+        "rwkv_speculative_proposal_tokens": (
+            int(args.rwkv_proposal_tokens) if args.rwkv_draft_model else None
+        ),
         "rwkv_active_text_params": rwkv_params,
         "qwen_active_text_params": qwen_params,
         "normalization": "aggregate_tok_s * active_text_parameter_count; higher is better",

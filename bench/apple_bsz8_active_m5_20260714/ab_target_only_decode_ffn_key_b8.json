@@ -1,0 +1,19 @@
+{
+  "axis": "apple_bsz8_target_only_decode_ffn_key_ab",
+  "status": "pass",
+  "hardware": "Apple M5",
+  "model": "rwkv7-g1g-1.5b-hf",
+  "batch_size": 8,
+  "decode_tokens_per_sequence": 64,
+  "baseline": "public groupwise W4 QMM followed by separate ReLU-squared",
+  "candidate": "BM32/BK64/BN64/WM2/WN2 NAX W4 QMM with fused ReLU-squared",
+  "baseline_decode_tok_s_samples": [199.55240699239354, 186.37037417599853, 183.35218826213287],
+  "candidate_decode_tok_s_samples": [217.52137893628023, 215.2322949521323, 203.94707627188606],
+  "baseline_decode_tok_s_median": 186.37037417599853,
+  "candidate_decode_tok_s_median": 215.2322949521323,
+  "candidate_vs_baseline_speedup": 1.154863244245451,
+  "generated_tokens_exact": true,
+  "final_logits_max_abs": 0.0625,
+  "final_state_max_abs": 0.14070892333984375,
+  "fused_decode_calls_per_measured_row": 1536
+}

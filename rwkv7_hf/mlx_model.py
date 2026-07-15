@@ -1133,11 +1133,21 @@ class MLXRWKV7Model:
         k = x + xx * self._get(f"{prefix}.x_k").reshape(1, self.hidden_size)
         key_weight = f"{prefix}.key.weight"
         key_qlinear = self.quantized_linears.get(key_weight)
+        groupwise_key_relu2 = bool(
+            key_qlinear is not None
+            and isinstance(key_qlinear.weight, MLXGroupwiseWeight)
+            and int(key_qlinear.bits) == 4
+            and int(key_qlinear.weight.group_size) == 128
+            and (int(x.shape[0]), self.hidden_size, int(key_qlinear.out_features))
+            == (8, 2048, 8192)
+            and k.dtype == mx.float16
+            and groupwise_w4_relu2_metal_available()
+        )
         if (
             self.fused_ffn_key_relu2
             and key_qlinear is not None
             and int(key_qlinear.bits) == 4
-            and key_qlinear._selected_backend(k) == "metal"
+            and (groupwise_key_relu2 or key_qlinear._selected_backend(k) == "metal")
         ):
             k = key_qlinear.relu2(k)
             self.fused_ffn_key_relu2_counts["metal"] = int(
