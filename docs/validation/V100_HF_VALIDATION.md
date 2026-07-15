@@ -1,6 +1,7 @@
 # V100 HF validation matrix
 
-Validation date: 2026-07-02; ZeRO3 resume addendum: 2026-07-03
+Validation date: 2026-07-02; ZeRO3 resume addendum: 2026-07-03; performance
+addenda: 2026-07-10, 2026-07-11 and 2026-07-15
 Base commit: `4528756` (`tests: record DeepSpeed ZeRO smoke passes (#64)`)
 Server: `2 x Tesla V100-PCIE-32GB`
 Main runtime: `torch 2.5.1+cu124`, `deepspeed 0.19.2`, `fused_recurrent` unless noted. ZeRO3 resume addendum runtime: `torch 2.8.0+cu126`, Transformers `4.57.1`, PEFT `0.19.1`, TRL `1.7.0`, DeepSpeed `0.19.2`.
@@ -116,8 +117,11 @@ Decode speed — `bench/bench_speed.py`, prompt=128, decode=64, fp16, single V10
 ## Remaining V100-bounded gaps
 
 - 7.2B Trainer/SFT/DPO/GRPO on a single V100 32GB is memory-bound; use larger GPU or more aggressive offload for full training proof.
-- ZeRO3 resume has an initial 0.1B 2×V100 pass; expand the same proof to 0.4B/1.5B/2.9B and then re-run A100 large-model ZeRO3 resume.
-- Quantized inference is functionally validated with lower VRAM. Quantized speed is still not the final Albatross-level performance target; fused quant kernels are still required.
+- ZeRO3 resume is validated through 2.9B on 2×V100; larger-model resume and
+  corresponding A100 large-model coverage remain open.
+- Native W8/W4 `speed` policy passes the promoted card-local B1/B2/B4/B8
+  matrix, but full-memory quantization with the larger footprint reduction is
+  still not universally fp16-or-faster.
 
 ## 2026-07-10 fused-decode addendum
 
@@ -130,5 +134,38 @@ raw-recurrent A/B windows retain 32-step greedy equality. See the raw evidence
 and ratio table in
 [`bench/v100_sm70_decode_gap_20260710/README.md`](../../bench/v100_sm70_decode_gap_20260710/README.md).
 
-This addendum closes the V100 decode P1 floor. It does not close W8/W4 speed,
-cross-card promotion, or universal P3 parity.
+This addendum closed the V100 decode P1 floor at the time. The subsequent
+2026-07-11 production-close artifact closes the selected native W8/W4 speed
+lane; cross-card promotion, full-memory quant and universal P3 parity remain
+separate requirements.
+
+## 2026-07-15 full-FLA Qwen3.5 active-parameter addendum
+
+The current optimized-reference comparison uses RWKV-7 g1g 1.5B and official
+Qwen3.5-2B on one Tesla V100-PCIE-32GB (`sm_70`), dense fp16, prompt 512,
+decode 64 and batch 1/8. It is target-only: no draft model, speculative
+acceptance, prefix-state reuse or hidden cache warm-start.
+
+Qwen fails closed unless all 18 linear-attention layers bind FLA chunk prefill,
+FLA fused-recurrent decode, fused gated RMS norm and the repository Triton
+causal-convolution prefill/update path. Both rows report
+`qwen_full_fused_contract_pass=true` and effective backend
+`qwen_fla_gated_delta_rule_fla_triton_conv`.
+
+The acceptance metric is `aggregate tok/s * active text parameters`. Active
+counts are 1,527,404,544 for RWKV and 1,881,825,088 for Qwen (`0.811661x`), so
+the raw break-even ratio is `1.232041x`.
+
+| Bsz | Prefill RWKV/Qwen | Prefill active work | Decode RWKV/Qwen | Decode active work | Peak VRAM RWKV/Qwen |
+|---:|---:|---:|---:|---:|---:|
+| 1 | `2.815921x` | `2.285574x` | `5.913307x` | `4.799514x` | `1.024885x` |
+| 8 | `5.407762x` | `4.389270x` | `5.270432x` | `4.277804x` | `0.837248x` |
+
+All four raw and normalized phase gates pass. Qwen full-FLA/Triton-conv versus
+its oracle and RWKV native graph versus its FLA-backed HF route each preserve
+32/32 greedy tokens and pass cosine gates. Static RWKV footprint is
+`0.811662x` Qwen, but the B1 peak-VRAM ratio is explicitly a loss and must not
+be presented as a universal memory win.
+
+Canonical evidence and reproduction commands:
+[`bench/v100_active_b1b8_20260715/README.md`](../../bench/v100_active_b1b8_20260715/README.md).
