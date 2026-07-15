@@ -23,10 +23,15 @@ rerun; exact scope and evidence are in
 
 The adapter has promoted production-close evidence on V100, RTX 4090 bsz8
 dense/W8/W4 lanes covering every published 0.4B–7.2B pair against Qwen3.5,
-RTX 5090, and selected Apple M5 MLX pairs. V100 additionally has a target-only
-B1/B8 comparison of RWKV-7 1.5B against a fail-closed full-FLA Qwen3.5-2B
-reference, including active-parameter work-rate gates. API/training/cache and
-W8/W4 functionality are broadly validated;
+RTX 5090, and selected Apple M5 MLX pairs. The RTX 5090 current-main matrix
+passes all eight B1/B8 batch-pairs and 144/144 full-FLA cells, and the latest
+official g1h 13.3B checkpoint passes conversion, load/generate, and its
+selected speed-policy boundary; see
+[`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
+and [`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md).
+V100 additionally has a target-only B1/B8 comparison of RWKV-7 1.5B against a
+fail-closed full-FLA Qwen3.5-2B reference, including active-parameter work-rate
+gates. API/training/cache and W8/W4 functionality are broadly validated;
 universal full-memory W8/W4 speed, missing hardware families, larger Albatross
 matrices and production PP/TP remain open.
 

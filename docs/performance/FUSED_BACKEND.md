@@ -356,6 +356,68 @@ serving speed.
      win rather than a decode-speed win until the next design uses tensor-core
      friendly activation quantization or fuses quant projection with more of the
      native_graph token path.
+   - The next opt-in full-memory integration is
+     `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`. It fuses the MM8/MM4 FFN key
+     projection with its ReLU-square epilogue, removing one pointwise launch
+     per quantized FFN layer while preserving the existing packed weight
+     formats. `bench/bench_native_quant_fused_ffn.py` records isolated A/B
+     rows, and `bench_native_quant_e2e_decode.py` with
+     `--code-source repo --fused-quant-ffn` records the end-to-end gate against
+     the current source tree without modifying converted checkpoints. This path
+     remains default-off until exact-card decode rows show correctness and
+     non-negative value across claimed batch sizes.
+   - V100 evidence on 1.5B/bsz1/prompt128/decode128 now closes the MM4 shape:
+     fused MM4 reaches `272.7 tok/s`, `1.1867x` paired fp16, at `0.5389x`
+     footprint with the same next token. Fused MM8 reaches only `95.2 tok/s`,
+     `0.4145x` fp16, despite a `0.6932x` footprint. Isolated bsz1/2/4/8 FFN
+     rows are all positive, but the mixed end-to-end result keeps the flag
+     default-off. Raw rows are in
+     `bench/v100_native_fused_quant_ffn_20260712/`.
+   - The expanded V100 matrix now covers 126/126 rows for 1.5B/2.9B/7.2B.
+     MM4 off/up beat fp16 in all 21 cells, but greedy is only 6/7, 6/7, and
+     4/7, so no MM4 promotion is made. MM8 passes zero speed cells in every
+     off/up/deep lane and remains `0.1123x-0.4394x` fp16. A batched W4A16
+     correctness prototype was rejected because it did not restore greedy and
+     moved 1.5B/7.2B bsz8 below fp16. Raw evidence and strict machine-readable
+     acceptance fields are in `bench/v100_native_quant_full_matrix_20260713/`.
+   - The deeper MM8 value projection + residual epilogue is separately guarded
+     by `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1`. RTX 5070 Laptop 1.5B
+     expanded evidence passes 42/42 rows: deep MM8 has median `0.9671x` fp16
+     decode and `1.0059x` versus up-only, but one paired cell is `0.9888x`.
+     MM4 remains `0.8171x` fp16 at the median. Keep the deep flag default-off,
+     especially because V100 bsz1/2/4 telemetry is negative. Raw rows are in
+     `bench/5070_native_fused_quant_ffn_20260713/`.
+   - The following 5070 exact-card MM8 tile sweep finds `64x256` instead of
+     `128x128`. Deep MM8 then beats fp16 in all 7/7 expanded 1.5B cells with
+     ratios `1.0765x-1.1548x`, footprint `0.6932x`, minimum final cosine
+     `0.9999553`, and greedy 7/7. The runtime selects this tile only for device
+     names containing `5070`; the fused flags remain opt-in. The MM4 follow-up
+     below closes the matching exact-card matrix; other cards/models remain
+     separate open gates. Evidence is under
+     `bench/5070_native_mm8_tuned_deep_20260713/`.
+   - The 5070 MM4 follow-up fuses FFN-down residual add and uses measured,
+     output-aware tensor-core dot tiles from bsz2. The final fresh-process 1.5B
+     matrix beats paired fp16 in 7/7 cells (`1.0580x-1.2525x`) at `0.5394x`
+     footprint, with minimum final cosine `0.99809039` and greedy 7/7. The
+     exact-card tile policy is automatic but both FFN fusion flags stay
+     default-off; other cards and larger models require independent rows.
+     Evidence is under `bench/5070_native_mm4_tuned_deep_20260713/`.
+   - The 5070 2.9B expanded follow-up closes MM8 off/up/deep independently:
+     every lane passes 7/7 exact-shape speed, footprint, and greedy cells, with
+     ratios `1.0567x-1.1918x` at `0.6876x` footprint. Fused-up is not uniformly
+     better than off and deep has one `0.9762x` paired regression, so both flags
+     stay default-off. MM4 is 7/7 faster at `0.5310x` footprint but greedy is
+     0/7. CPU-first packing also makes 7.2B MM4/MM8 bsz1 fit in 8GB, but those
+     quant-only rows have no same-card fp16 speed or logits gate. Evidence is
+     under `bench/5070_native_quant_large_models_20260713/`.
+   - The default-off K-grouped MM4 follow-up closes the matching 5070/2.9B
+     quality gap. Group32 and group64 preserved greedy but reached only
+     `0.6045x` and `0.9049x` native_graph fp16; group128 plus fused GEMV and
+     the bsz2+ tensor-core batched dot passes all seven exact cells at
+     `1.0895x-1.1656x`, `0.5402x` footprint, minimum final cosine
+     `0.99966836`, and greedy 7/7. Keep the format explicit and do not inherit
+     the group size or tiles on V100/other cards. Evidence is under
+     `bench/5070_native_mm4_groupwise_20260713/`.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

@@ -1,0 +1,14 @@
+{
+    "status":  "pass",
+    "rows":  7,
+    "speed_pass_rows":  7,
+    "min_decode_ratio":  1.0765,
+    "median_decode_ratio":  1.1036,
+    "max_decode_ratio":  1.1548,
+    "footprint_ratio":  0.6932,
+    "min_prompt_cosine":  0.99995458,
+    "min_final_cosine":  0.9999553,
+    "greedy_match_rows":  7,
+    "block_m":  64,
+    "block_n":  256
+}

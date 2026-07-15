@@ -1,0 +1,41 @@
+{
+  "axis": "native_quant_large_model_acceptance",
+  "date": "2026-07-13",
+  "device": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "device_memory_mb": 8151,
+  "execution_complete": true,
+  "strict_quant_acceptance_complete": false,
+  "models": {
+    "2.9b": {
+      "scope": "expanded_same_process_fp16_matrix",
+      "completed_rows": 42,
+      "expected_rows": 42,
+      "failed_attempts": 0,
+      "mm8": {
+        "off": {"accepted_cells": 7, "total_cells": 7, "decode_ratio_min": 1.087, "decode_ratio_max": 1.1887, "footprint_ratio": 0.6876, "greedy_pass_cells": 7},
+        "up": {"accepted_cells": 7, "total_cells": 7, "decode_ratio_min": 1.0567, "decode_ratio_max": 1.1906, "footprint_ratio": 0.6876, "greedy_pass_cells": 7},
+        "deep": {"accepted_cells": 7, "total_cells": 7, "decode_ratio_min": 1.1019, "decode_ratio_max": 1.1918, "footprint_ratio": 0.6876, "greedy_pass_cells": 7}
+      },
+      "mm4": {
+        "off": {"accepted_cells": 0, "total_cells": 7, "speed_pass_cells": 7, "decode_ratio_min": 1.1012, "decode_ratio_max": 1.3737, "footprint_ratio": 0.531, "greedy_pass_cells": 0},
+        "up": {"accepted_cells": 0, "total_cells": 7, "speed_pass_cells": 7, "decode_ratio_min": 1.1518, "decode_ratio_max": 1.3834, "footprint_ratio": 0.531, "greedy_pass_cells": 0}
+      }
+    },
+    "7.2b": {
+      "scope": "quant_only_8gb_feasibility",
+      "same_card_fp16_baseline_available": false,
+      "speed_acceptance": "not_evaluated",
+      "same_card_logits_acceptance": "not_evaluated",
+      "dense_model_footprint_mb": 13731.3,
+      "mm4_up": {"status": "pass", "model_footprint_mb": 4140.5, "footprint_ratio": 0.3015, "peak_vram_mb": 4769.9, "decode_tokps": 40.1, "next_token": 31261},
+      "mm8_deep": {"status": "pass", "model_footprint_mb": 7340.5, "footprint_ratio": 0.5346, "peak_vram_mb": 7700.4, "decode_tokps": 32.7, "next_token": 31261},
+      "cross_card_reference": {
+        "artifact": "../v100_native_quant_full_matrix_20260713/results-shard-0.jsonl",
+        "shape": "bsz1_prompt128_decode128",
+        "v100_fp16_next_token": 31261,
+        "local_quant_tokens_match_reference": true,
+        "timing_comparable": false
+      }
+    }
+  }
+}

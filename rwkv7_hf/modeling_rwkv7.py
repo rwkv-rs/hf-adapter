@@ -562,6 +562,31 @@ def _native_graph_fused_norm_mix_num_warps() -> int:
     return value
 
 
+def _native_graph_fused_quant_ffn_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_quant_ffn", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN", default)
+
+
+def _native_graph_fused_quant_ffn_down_add_requested() -> bool:
+    return bool(
+        _native_graph_fused_quant_ffn_requested()
+        and env_flag("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD", False)
+    )
+
+
+def _native_graph_native_quant_signature() -> tuple[str, ...]:
+    return (
+        os.environ.get("RWKV7_NATIVE_MM8_BLOCK_M", ""),
+        os.environ.get("RWKV7_NATIVE_MM8_BLOCK_N", ""),
+        os.environ.get("RWKV7_NATIVE_MM4_BLOCK_PAIRS", ""),
+        os.environ.get("RWKV7_NATIVE_MM4_BLOCK_N", ""),
+        os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_B", ""),
+        os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS", ""),
+        os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_N", ""),
+    )
+
+
 def _native_graph_sm70_linear_requested() -> bool:
     policy = _rwkv7_kernel_policy()
     return env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
@@ -2299,6 +2324,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_wavg_lora_blocks(),
             _native_graph_fused_norm_mix_requested(),
             _native_graph_fused_norm_mix_num_warps(),
+            _native_graph_fused_quant_ffn_requested(),
+            _native_graph_fused_quant_ffn_down_add_requested(),
+            _native_graph_native_quant_signature(),
             _native_graph_sm70_linear_requested(),
             _native_graph_ada_linear_requested(),
             _native_graph_ada_linear_signature(),

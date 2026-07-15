@@ -100,6 +100,77 @@ priority ordering below; retain it as provenance:
 3. exact-card reproduction on 4090/A100/H100/Blackwell and AMD fallback;
 4. continued prefill/DPLR work without regressing the promoted decode routes.
 
+The current native-quant probe is
+`RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`: it fuses the MM8/MM4 FFN key
+projection with its ReLU-square epilogue. Exact V100 isolated bsz1/2/4/8 rows
+pass, and 1.5B/bsz1/prompt128/decode128 end-to-end evidence shows MM4 improving
+from `1.1462x` to `1.1867x` fp16 while footprint is `0.5389x`; MM8 improves
+slightly with fusion but remains only `0.4145x` fp16 at `0.6932x` footprint.
+Keep the flag opt-in: one MM4 shape is not enough for default promotion, and
+the full-memory MM8 speed gate remains open. Evidence is under
+`bench/v100_native_fused_quant_ffn_20260712/`.
+
+The expanded V100 full-memory matrix is complete at 126/126 rows across
+1.5B/2.9B/7.2B and seven cells per model. MM4 off/up beat fp16 in all 21
+model/cell pairs and reduce footprint to `0.5389x/0.5306x/0.3010x`, but greedy
+is only 6/7, 6/7, and 4/7, so MM4 is not accepted or promoted. MM8 off/up/deep
+pass zero speed cells for every model and remain `0.1123x-0.4394x` fp16. A
+default-off batched W4A16 probe matched its linear oracle but did not restore
+end-to-end greedy and lost the bsz8 speed gate, so it was removed. Do not call
+execution completeness quant acceptance; keep all fused quant flags off by
+default. Evidence: `bench/v100_native_quant_full_matrix_20260713/`.
+
+The independent deep MM8 down+residual experiment is
+`RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1`; it also requires the existing
+fused-quant-FFN flag. RTX 5070 Laptop 1.5B evidence covers 42/42 expanded
+end-to-end rows. MM8 deep has a median `0.9671x` fp16 decode ratio and a
+`1.0059x` median gain over up-only, but one paired cell falls to `0.9888x`.
+MM4 remains a footprint-only lane at a median `0.8171x` fp16. Keep both flags
+default-off. Evidence is under `bench/5070_native_fused_quant_ffn_20260713/`.
+
+The follow-up exact-card MM8 tile sweep selects `BLOCK_M=64`, `BLOCK_N=256`
+for RTX 5070. With deep MM8 epilogues enabled, the 1.5B expanded matrix now
+passes the speed gate in 7/7 cells (`1.0765x-1.1548x` fp16), keeps footprint
+at `0.6932x`, minimum final cosine `0.9999553`, and greedy 7/7. Device names
+containing `5070` select this MM8 tile automatically; environment overrides
+remain available and the fused FFN flags remain default-off. This closes only
+the exact 5070/1.5B/MM8 matrix. Larger-model rows remain open. Evidence:
+`bench/5070_native_mm8_tuned_deep_20260713/`.
+
+The following exact-card MM4 pass adds FFN-down residual fusion, selects
+`BLOCK_PAIRS=64/BLOCK_N=256` for bsz1 GEMV, and routes bsz2+ through an
+output-aware tensor-core dot tile (`BLOCK_B=16`, `BLOCK_N=128`, pair tile
+64/128). The fresh-process 1.5B expanded matrix beats paired fp16 in all 7/7
+cells (`1.0580x-1.2525x`) at `0.5394x` footprint, minimum final cosine
+`0.99809039`, and greedy 7/7. Device names containing `5070` select these
+tiles and the bsz2 dot threshold automatically; environment overrides remain
+available. Both fused FFN flags stay default-off. This closes only the exact
+5070/1.5B/MM4 matrix; larger models and other cards remain open. Evidence:
+`bench/5070_native_mm4_tuned_deep_20260713/`.
+
+The larger-model follow-up is under
+`bench/5070_native_quant_large_models_20260713/`. On 2.9B, the complete 42-row
+same-process matrix closes MM8 off/up/deep independently: every lane is 7/7 on
+speed, footprint, and greedy, with overall decode ratios `1.0567x-1.1918x` and
+`0.6876x` footprint. MM4 is 7/7 faster at `0.5310x` footprint but 0/7 on greedy,
+so it remains unaccepted. On 7.2B/8GB, CPU-first packing proves only quantized
+bsz1 feasibility: MM4 up uses `4140.5 MiB` model / `4769.9 MiB` peak and MM8
+deep uses `7340.5 MiB` / `7700.4 MiB`. There is no same-card fp16 timing or
+logits baseline for 7.2B; do not turn those standalone tok/s rows into speed
+acceptance. All fused flags remain default-off.
+
+The next 2.9B quality pass is under
+`bench/5070_native_mm4_groupwise_20260713/`. The independent
+`mm4_groupwise` format stores fp16 scale/bias per K group and is never selected
+by kernel policy. Group128 plus fused paired-nibble GEMV and a bsz2+ tensor-core
+batched dot closes all seven exact 5070 Laptop/2.9B cells: decode
+`1.0895x-1.1656x` fp16, footprint `0.5402x`, minimum final cosine
+`0.99966836`, and greedy 7/7. Group32 (`0.6045x`), group64 (`0.9049x`), and the
+Q4_K_M-inspired mixed W4/W8 probe (`0.3955x`) are retained negative speed
+evidence. Keep groupwise MM4 and both fused FFN epilogues default-off. Do not
+reuse the group128 decision or Blackwell tensor-core path on V100 without
+independent exact-shape evidence; V100 MM4 quality and MM8 speed remain open.
+
 ## Current V100 Active-Parameter B1/B8 Milestone (2026-07-15)
 
 - RWKV-7 1.5B versus official Qwen3.5-2B now has an exact-card dense-fp16,
@@ -740,7 +811,8 @@ Run this checklist for every new GPU before marking it as supported:
 - Role: current regression baseline and conservative production-smoke target.
 - Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
 - Default-off: `fused_recurrent`, `fused_prefill_scan`, `fused_output_project`,
-  `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`.
+  `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`,
+  `fused_quant_ffn`.
 - Required validation: functional checklist plus HF Trainer, PEFT LoRA, TRL
   SFT/DPO/GRPO, checkpoint resume, decode greedy-match, cache telemetry, and
   Albatross A/B rows when available.
@@ -748,6 +820,10 @@ Run this checklist for every new GPU before marking it as supported:
   native `memory` rows as non-speed paths unless they beat fp16. Native
   `speed` policy may be reported as the speed-acceptance lane only with
   card-local footprint, speed, and logits/greedy-token parity rows.
+- Full-memory matrix boundary: MM4 speed+footprint is 21/21 but greedy remains
+  6/7, 6/7, and 4/7 for 1.5B/2.9B/7.2B. MM8 speed is 0/21 per off/up/deep
+  lane. Neither path is promoted; next work is groupwise W4 quality and a true
+  Volta W8A16/deeper fused projection.
 - Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)
@@ -895,6 +971,26 @@ Run this checklist for every new GPU before marking it as supported:
     prove both correctness and speed. Isolated kernel wins do not promote.
   - Quantization must include footprint, long/short decode speed, and greedy or
     quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
+  - RTX 5070 Laptop / 1.5B / fp16 now has 42/42 expanded native MM8/MM4
+    end-to-end rows. Full-memory MM8 deep reaches a median `0.9671x` fp16 at
+    `0.6932x` footprint; MM4 reaches `0.8171x` at `0.5394x` footprint. Greedy
+    tokens match in 35/35 quant rows. These validate compatibility and card-local
+    telemetry only; neither quant path is promoted.
+  - The subsequent exact-card MM8 `64x256` tile plus opt-in deep FFN epilogues
+    beats fp16 in all 7/7 expanded 1.5B cells (`1.0765x-1.1548x`) at `0.6932x`
+    footprint. Treat this as a closed MM8 lane for this exact card/model only;
+    other 50-series cards must retain their own tile.
+  - The exact-card MM4 GEMV/dot tiles plus the same opt-in deep FFN epilogues
+    subsequently beat fp16 in all 7/7 expanded 1.5B cells
+    (`1.0580x-1.2525x`) at `0.5394x` footprint. Treat this as a closed MM4 lane
+    for this exact card/model only; larger models and other cards remain open.
+  - The 2.9B expanded follow-up closes MM8 off/up/deep separately at 7/7 strict
+    cells per lane (`1.0567x-1.1918x` fp16, `0.6876x` footprint, greedy 7/7).
+    The old affine MM4 remains 0/7 greedy, but the explicit group128 MM4 format
+    closes the same seven cells at `1.0895x-1.1656x`, `0.5402x` footprint, and
+    greedy 7/7. This is not a default or a cross-card promotion. The 7.2B
+    MM4/MM8 bsz1 rows remain 8GB feasibility evidence only: dense fp16 cannot
+    fit, so same-card speed and logits acceptance are not evaluated.
   - Qwen3.5 optimized-reference rows on the RTX 5070 Laptop must use
     `--qwen-backend fla` and verify every Gated DeltaNet layer binds FLA chunk
     prefill, fused-recurrent decode, FLA fused gated normalization, and an
@@ -910,15 +1006,23 @@ Run this checklist for every new GPU before marking it as supported:
     and no-larger footprint/peak-VRAM gates. Minimum RWKV/Qwen speedups are
     `1.082707x` prefill and `1.795119x` decode. The broader 72-cell FLA-core-only
     artifact remains historical coverage because its convolution uses Torch.
-  - RTX 5090 staged B1/B8 evidence exists under
-    `bench/5090_g1h_qwen35_b1_b8_20260715/` for the 0.4B/0.8B, 1.5B/2B and
-    2.9B/4B pairs. The six checked batch-pairs contain 108 candidate and 108
-    full-FLA Qwen rows and pass their raw speed, active-work decode, quant total
-    latency, footprint and greedy gates. The exact B8 1.5B prompt-512 policy may
-    opt into clampw scan, stacked RKV and sequence-FFN fusion with the recorded
-    Blackwell tiles. Do not generalize that shape policy to another model,
-    prompt, batch or card. The 7.2B/9B and fresh 13.3B rows remain mandatory
-    before calling the new matrix complete.
+  - RTX 5090 current-main B1/B8 evidence under
+    `bench/5090_g1h_qwen35_b1_b8_20260715/` passes all eight 0.4B/0.8B through
+    7.2B/9B batch-pairs: 144 candidate rows, 144 full-FLA Qwen rows, 32
+    correctness reports and 144/144 dense/W8/W4 cells. Raw prefill/decode and
+    tokens/s per active billion lead in every cell. Active-parameter work-rate
+    prefill and dense peak-VRAM are not universal wins and must remain visible.
+    The exact B8 1.5B prompt-512 policy may use clampw scan, stacked RKV and
+    sequence-FFN fusion. The exact B8 7.2B prompt-128 policy may use stacked RKV
+    only; its formal full-FLA confirmation is `1.0251x` and the full-matrix
+    minimum is `1.0309x`. Do not generalize either shape policy to another
+    model, prompt, batch or card.
+  - Fresh official g1h 13.3B evidence under
+    `bench/5090_g1h_13p3_20260715/` passes load/forward/generate and the B8,
+    prompt128/decode128 speed-policy boundary. MM8/MM4 measure
+    `1.0013x/0.9845x` paired-fp16 decode, `0.9899x/0.9848x` footprint, cosine
+    above `0.99985`, and matching next tokens. Each quant row replaces only
+    `lm_head`; do not describe this as full-memory quantization.
   - The validated Blackwell scan defaults are batch-local: `block_m` 8/16/32/64
     for bsz 1/2/4/8+, with 1 warp below 64 and 4 warps at 64. Explicit
     environment overrides still win, and these tiles must not be projected to
@@ -1153,7 +1257,8 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
 
 ## Next Milestones
 
-1. Convert and validate larger RWKV-7 checkpoints, including the 13.3B gate.
+1. Extend the currently passing 13.3B conversion/inference gate to future
+   larger official checkpoints as they are released.
 2. Keep official RWKV vs HF logits/generation alignment tests green.
 3. Keep `save_pretrained` / reload roundtrip tests green.
 4. Expand PEFT / Trainer / TRL SFT/DPO/GRPO smoke tests into multi-batch and gradient-accumulation checks.

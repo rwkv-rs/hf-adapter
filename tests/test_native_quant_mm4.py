@@ -22,6 +22,8 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from rwkv7_hf.native_quant_mm4 import (
+    _mm4_decode_blocks,
+    _mm4_dot_blocks,
     quantize_mm4,
     mm4_matmul,
     mm4_gemv_triton,
@@ -34,6 +36,35 @@ from rwkv7_hf.native_quant_mm4 import (
 )
 
 
+class _NonCudaInput:
+    is_cuda = False
+
+
+def test_mm4_decode_block_environment_override(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_BLOCK_PAIRS", "64")
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_BLOCK_N", "256")
+    assert _mm4_decode_blocks(_NonCudaInput(), None, None) == (64, 256)
+
+
+def test_mm4_dot_block_environment_override(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_DOT_BLOCK_B", "16")
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS", "64")
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_DOT_BLOCK_N", "128")
+    assert _mm4_dot_blocks(_NonCudaInput(), None, None, None) == (16, 64, 128)
+
+
+def test_mm4_gemv_reference_residual() -> None:
+    weight = torch.randn(8, 16, dtype=torch.float32)
+    packed, mx, rx_s, my, ry_s, m_orig, _ = quantize_mm4(weight.t().contiguous())
+    x = torch.randn(16, dtype=torch.float32)
+    residual = torch.randn(8, dtype=torch.float32)
+    expected = mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig) + residual
+    actual = mm4_gemv_triton(
+        x, packed, mx, rx_s, my, ry_s, m_orig, residual=residual,
+    )
+    torch.testing.assert_close(actual, expected)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -41,6 +72,7 @@ def main() -> int:
     ap.add_argument("--e2e-cos-min", type=float, default=0.998)
     ap.add_argument("--triton-max-abs", type=float, default=0.5)
     ap.add_argument("--fast-token-cos-min", type=float, default=0.998)
+    ap.add_argument("--relu2-cos-min", type=float, default=0.998)
     args = ap.parse_args()
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -73,9 +105,17 @@ def main() -> int:
         with torch.no_grad():
             ref = mm4_matmul(x1, packed, mx, rx_s, my, ry_s, m_orig)
             t = mm4_gemv_triton(x1, packed, mx, rx_s, my, ry_s, m_orig)
+            relu2 = mm4_gemv_triton(
+                x1, packed, mx, rx_s, my, ry_s, m_orig, relu2=True,
+            )
         d = (t - ref).abs().max().item()
         print(f"triton vs torch-ref max_abs = {d:.6f} (<= {args.triton_max_abs})", flush=True)
         ok = ok and d <= args.triton_max_abs
+        relu2_cos = F.cosine_similarity(
+            relu2.float().unsqueeze(0), (torch.relu(t) ** 2).float().unsqueeze(0),
+        ).item()
+        print(f"fused relu2 cosine = {relu2_cos:.6f} (>= {args.relu2_cos_min})", flush=True)
+        ok = ok and relu2_cos >= args.relu2_cos_min
 
         # Cover both batched launch families and the production dispatcher.
         batched_cases = [(2, mm4_batched_gemv_triton)]
@@ -87,6 +127,9 @@ def main() -> int:
                 refb = mm4_matmul(xb, packed, mx, rx_s, my, ry_s, m_orig)
                 fused = kernel(xb, packed, mx, rx_s, my, ry_s, m_orig)
                 dispatched = mm4_matmul_triton(xb, packed, mx, rx_s, my, ry_s, m_orig)
+                dispatched_relu2 = mm4_matmul_triton(
+                    xb, packed, mx, rx_s, my, ry_s, m_orig, relu2=True,
+                )
             db = (fused - refb).abs().max().item()
             dd = (dispatched - refb).abs().max().item()
             print(
@@ -95,6 +138,16 @@ def main() -> int:
                 flush=True,
             )
             ok = ok and db <= args.triton_max_abs and dd <= args.triton_max_abs
+            relu2_cos = F.cosine_similarity(
+                dispatched_relu2.float().flatten().unsqueeze(0),
+                (torch.relu(dispatched) ** 2).float().flatten().unsqueeze(0),
+            ).item()
+            print(
+                f"batched fused relu2 bsz={batch} cosine = {relu2_cos:.6f} "
+                f"(>= {args.relu2_cos_min})",
+                flush=True,
+            )
+            ok = ok and relu2_cos >= args.relu2_cos_min
 
     # 3. end-to-end size-gated quantization
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

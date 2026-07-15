@@ -1,0 +1,28 @@
+{
+  "architectures": [
+    "Qwen3_5ForConditionalGeneration"
+  ],
+  "index_tensor_keys": 775,
+  "model_type": "qwen3_5",
+  "shards": {
+    "model.safetensors-00001-of-00004.safetensors": {
+      "size_bytes": 5276436216,
+      "tensor_keys": 14
+    },
+    "model.safetensors-00002-of-00004.safetensors": {
+      "size_bytes": 5335161512,
+      "tensor_keys": 53
+    },
+    "model.safetensors-00003-of-00004.safetensors": {
+      "size_bytes": 5368717440,
+      "tensor_keys": 63
+    },
+    "model.safetensors-00004-of-00004.safetensors": {
+      "size_bytes": 3325995712,
+      "tensor_keys": 645
+    }
+  },
+  "status": "pass",
+  "tokenizer_class": "Qwen2Tokenizer",
+  "total_size_bytes": 19306310880
+}

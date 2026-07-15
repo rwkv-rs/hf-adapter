@@ -1,0 +1,11 @@
+date=2026-07-12
+source_commit=e2c9ee54718d068c52d9ab6cbe00db088111ebd3
+gpu_index=0
+gpu_name=Tesla V100-PCIE-32GB
+compute_capability=7.0
+driver=580.159.03
+nvidia_smi_cuda=13.0
+python_torch=2.5.1+cu124
+torch_cuda=12.4
+transformers=5.12.1
+triton=3.3.0

@@ -15,11 +15,18 @@ import gc
 import json
 import os
 import re
+import shutil
+import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("RWKV_V7_ON", "1")
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 import torch.nn.functional as F
@@ -27,6 +34,30 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 256
+
+
+def effective_native_quant_tiles(device: str) -> dict[str, int | None]:
+    from rwkv7_hf.kernel_policy import current_kernel_policy
+
+    policy = current_kernel_policy(device=device, torch_module=torch)
+
+    def resolved(env_name: str, default: int | None) -> int | None:
+        value = os.environ.get(env_name)
+        return int(value) if value is not None else default
+
+    dot_pairs_override = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS")
+    dot_pairs_small = int(dot_pairs_override) if dot_pairs_override else policy.mm4_dot_block_pairs_small
+    dot_pairs_large = int(dot_pairs_override) if dot_pairs_override else policy.mm4_dot_block_pairs_large
+    return {
+        "native_mm8_block_m": resolved("RWKV7_NATIVE_MM8_BLOCK_M", policy.mm8_block_m),
+        "native_mm8_block_n": resolved("RWKV7_NATIVE_MM8_BLOCK_N", policy.mm8_block_n),
+        "native_mm4_block_pairs": resolved("RWKV7_NATIVE_MM4_BLOCK_PAIRS", policy.mm4_block_pairs),
+        "native_mm4_block_n": resolved("RWKV7_NATIVE_MM4_BLOCK_N", policy.mm4_block_n),
+        "native_mm4_dot_block_b": resolved("RWKV7_NATIVE_MM4_DOT_BLOCK_B", policy.mm4_dot_block_b),
+        "native_mm4_dot_block_pairs_small": dot_pairs_small,
+        "native_mm4_dot_block_pairs_large": dot_pairs_large,
+        "native_mm4_dot_block_n": resolved("RWKV7_NATIVE_MM4_DOT_BLOCK_N", policy.mm4_dot_block_n),
+    }
 
 
 def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
@@ -110,6 +141,8 @@ def baseline_path(args) -> Path | None:
             f"dtype-{args.dtype}",
             f"attn-{args.attn_mode}",
             f"fast-{args.fast_token_backend}",
+            f"quantffn-{int(args.fused_quant_ffn)}",
+            f"quantffndown-{int(args.fused_quant_ffn_down_add)}",
             f"bsz-{args.batch_size}",
             f"prompt-{args.prompt_tokens}",
             f"decode-{args.decode_tokens}",
@@ -181,7 +214,14 @@ def last_native_model_decode_backend(model):
     return getattr(model, "_rwkv7_native_model_last_decode_backend", None)
 
 
-def quantize_model(model, quantization: str, min_params: int, policy: str) -> tuple[int, dict[str, int]]:
+def quantize_model(
+    model,
+    quantization: str,
+    min_params: int,
+    policy: str,
+    *,
+    mm4_group_size: int = 64,
+) -> tuple[int, dict[str, int]]:
     if quantization == "none":
         return 0, count_modules(model)
     if quantization == "mm8":
@@ -190,6 +230,21 @@ def quantize_model(model, quantization: str, min_params: int, policy: str) -> tu
     elif quantization == "mm4":
         from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
         replaced = quantize_model_mm4(model, min_params=min_params, policy=policy)
+    elif quantization == "mm4_groupwise":
+        from rwkv7_hf.native_quant_mm4_groupwise import quantize_model_mm4_groupwise
+
+        replaced = quantize_model_mm4_groupwise(
+            model,
+            min_params=min_params,
+            policy=policy,
+            group_size=mm4_group_size,
+        )
+    elif quantization == "mm4_q4km":
+        from rwkv7_hf.native_quant_q4km import quantize_model_q4km
+
+        replaced = quantize_model_q4km(
+            model, min_params=min_params, policy=policy, fused=True
+        )
     elif quantization in {"torchao_w8", "torchao_w4"}:
         from rwkv7_hf.native_quant_torchao import quantize_model_torchao
 
@@ -217,6 +272,7 @@ def count_modules(model) -> dict[str, int]:
         "linear_dense": 0,
         "mm8": 0,
         "mm4": 0,
+        "mm4_groupwise": 0,
         "a8w8": 0,
         "torchao_w8": 0,
         "torchao_w4": 0,
@@ -235,20 +291,59 @@ def count_modules(model) -> dict[str, int]:
             counts["mm8"] += 1
         elif name == "MM4Linear":
             counts["mm4"] += 1
+        elif name == "MM4GroupwiseLinear":
+            counts["mm4_groupwise"] += 1
         elif name == "A8W8Linear":
             counts["a8w8"] += 1
     return counts
 
 
-def load_model(args, dtype):
+def prepare_model_dir(model_path: str, code_source: str, staging_root: str = ""):
+    if code_source == "model":
+        return model_path, None
+    source = Path(model_path).resolve()
+    if not source.is_dir():
+        raise ValueError("--code-source repo requires a local converted model directory")
+    repo_code = Path(__file__).resolve().parents[1] / "rwkv7_hf"
+    staging_path = Path(staging_root).resolve() if staging_root else None
+    if staging_path is not None:
+        staging_path.mkdir(parents=True, exist_ok=True)
+    temporary = tempfile.TemporaryDirectory(prefix="rwkv7_native_quant_e2e_", dir=staging_path)
+    target = Path(temporary.name)
+    for item in source.iterdir():
+        if item.name == "__pycache__" or item.suffix == ".py":
+            continue
+        destination = target / item.name
+        if item.is_file():
+            try:
+                os.link(item, destination)
+                continue
+            except OSError:
+                pass
+        try:
+            destination.symlink_to(item, target_is_directory=item.is_dir())
+        except OSError:
+            if item.is_dir():
+                shutil.copytree(item, destination)
+            else:
+                shutil.copy2(item, destination)
+    for py_file in repo_code.glob("*.py"):
+        shutil.copy2(py_file, target / py_file.name)
+    return str(target), temporary
+
+
+def load_model(args, dtype, model_path: str | None = None, *, load_on_cpu: bool = False):
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1" if args.fused_quant_ffn else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD"] = "1" if args.fused_quant_ffn_down_add else "0"
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     model = AutoModelForCausalLM.from_pretrained(
-        args.hf_dir,
+        model_path or args.hf_dir,
         trust_remote_code=True,
         torch_dtype=dtype,
-        device_map=args.device if args.device.startswith("cuda") else None,
+        device_map=None if load_on_cpu else (args.device if args.device.startswith("cuda") else None),
+        low_cpu_mem_usage=True,
     ).eval()
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
@@ -257,6 +352,19 @@ def load_model(args, dtype):
             raise ValueError(f"Loaded model config has fuse_norm={actual}; expected {desired}")
     set_attn_mode(model, args.attn_mode)
     return model
+
+
+def validate_quantize_before_device(args) -> None:
+    if not args.quantize_before_device:
+        return
+    if not args.device.startswith("cuda"):
+        raise ValueError("--quantize-before-device requires a CUDA target device")
+    if args.single_quantization not in {"mm8", "mm4"}:
+        raise ValueError("--quantize-before-device requires --single-quantization mm8 or mm4")
+    if args.paired_baseline:
+        raise ValueError("--quantize-before-device cannot measure an in-process fp16 baseline")
+    if not args.allow_missing_baseline:
+        raise ValueError("--quantize-before-device requires --allow-missing-baseline")
 
 
 def benchmark_decode(args, tok, model, ids):
@@ -317,6 +425,12 @@ def benchmark_decode(args, tok, model, ids):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument(
+        "--code-source",
+        choices=["model", "repo"],
+        default="model",
+        help="Use checkpoint-bundled Python or stage the current rwkv7_hf repo code beside linked weights",
+    )
     ap.add_argument("--model-size-label", default="")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
@@ -324,7 +438,20 @@ def main() -> int:
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="true")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
-    quantization_choices = ["none", "mm8", "mm4", "a8w8", "torchao_w8", "torchao_w4"]
+    ap.add_argument(
+        "--fused-quant-ffn",
+        action="store_true",
+        help="Fuse MM8/MM4 FFN-up dequant projection with the ReLU-square epilogue",
+    )
+    ap.add_argument(
+        "--fused-quant-ffn-down-add",
+        action="store_true",
+        help="Also fuse the MM8 FFN-down dequant projection with residual add; requires --fused-quant-ffn",
+    )
+    quantization_choices = [
+        "none", "mm8", "mm4", "mm4_groupwise", "mm4_q4km",
+        "a8w8", "torchao_w8", "torchao_w4"
+    ]
     ap.add_argument("--quantizations", nargs="+", choices=quantization_choices, default=["none", "mm8", "mm4"])
     ap.add_argument(
         "--single-quantization",
@@ -333,6 +460,13 @@ def main() -> int:
         help="Run exactly one quantization in this process. Useful for fresh-process 7B+ rows.",
     )
     ap.add_argument("--min-params", type=int, default=8_000_000)
+    ap.add_argument(
+        "--mm4-group-size",
+        type=int,
+        choices=[32, 64, 128],
+        default=64,
+        help="K-group size for the default-off mm4_groupwise quality prototype",
+    )
     ap.add_argument(
         "--policy",
         default="memory",
@@ -346,23 +480,39 @@ def main() -> int:
     ap.add_argument("--timing-repeats", type=int, default=1, help="Independent decode measurements; report the median run")
     ap.add_argument("--baseline-dir", default="", help="Directory for fp16 baseline logits/tokps used by fresh quant-only runs")
     ap.add_argument("--baseline-key", default="", help="Optional explicit baseline-cache key shared by fp16/mm8/mm4 subprocesses")
+    ap.add_argument("--staging-root", default="", help="Optional same-volume directory for repo-code hardlink staging")
     ap.add_argument(
         "--paired-baseline",
         action="store_true",
         help="Measure a dense baseline in the same fresh process immediately before quantizing; removes cross-process clock noise",
     )
     ap.add_argument("--allow-missing-baseline", action="store_true", help="Emit quant-only rows with null ratios when fp16 OOM/no baseline")
+    ap.add_argument(
+        "--quantize-before-device",
+        action="store_true",
+        help=(
+            "Load dense weights on CPU, quantize there, then move only the packed model to the target device. "
+            "Requires a single native MM8/MM4 quantization and --allow-missing-baseline."
+        ),
+    )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
+    if args.fused_quant_ffn_down_add and not args.fused_quant_ffn:
+        ap.error("--fused-quant-ffn-down-add requires --fused-quant-ffn")
     if args.timing_repeats < 1:
         ap.error("--timing-repeats must be >= 1")
+    try:
+        validate_quantize_before_device(args)
+    except ValueError as exc:
+        ap.error(str(exc))
     if args.single_quantization is not None:
         args.quantizations = [args.single_quantization]
     else:
         args.quantizations = list(dict.fromkeys(["none", *args.quantizations]))
 
     dtype = DTYPES[args.dtype]
-    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    effective_hf_dir, temporary_model_dir = prepare_model_dir(args.hf_dir, args.code_source, args.staging_root)
+    tok = AutoTokenizer.from_pretrained(effective_hf_dir, trust_remote_code=True)
     ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
     rows = []
     baseline_prompt = None
@@ -378,7 +528,14 @@ def main() -> int:
         if args.device.startswith("cuda"):
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
-        model = load_model(args, dtype)
+        model = load_model(
+            args,
+            dtype,
+            effective_hf_dir,
+            load_on_cpu=args.quantize_before_device,
+        )
+        if args.quantize_before_device:
+            baseline_footprint = module_footprint_mb(model)
         if quantization != "none" and args.paired_baseline:
             dense_footprint = module_footprint_mb(model)
             dense_res = benchmark_decode(args, tok, model, ids)
@@ -387,7 +544,16 @@ def main() -> int:
             baseline_next = dense_res["next_token"]
             baseline_tokps = dense_res["decode_tokps_total"]
             baseline_footprint = dense_footprint
-        replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
+        replaced, module_counts = quantize_model(
+            model,
+            quantization,
+            args.min_params,
+            args.policy,
+            mm4_group_size=args.mm4_group_size,
+        )
+        if args.quantize_before_device:
+            gc.collect()
+            model.to(args.device)
         footprint = module_footprint_mb(model)
         # Measure steady-state inference memory, not temporary fp32 tensors
         # created while quantizing a dense checkpoint at process startup.
@@ -425,7 +591,11 @@ def main() -> int:
                 prompt_cos = final_cos = None
                 same_next = None
                 speed_ratio = None
-                footprint_ratio = None
+                footprint_ratio = (
+                    float(footprint) / float(baseline_footprint)
+                    if baseline_footprint is not None
+                    else None
+                )
             else:
                 prompt_cos = F.cosine_similarity(baseline_prompt.flatten().unsqueeze(0), prompt_logits.flatten().unsqueeze(0)).item()
                 final_cos = F.cosine_similarity(baseline_final.flatten().unsqueeze(0), final_logits.flatten().unsqueeze(0)).item()
@@ -443,12 +613,19 @@ def main() -> int:
             "attn_mode": args.attn_mode,
             "fuse_norm": getattr(model.config, "fuse_norm", None),
             "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
+            "fused_quant_ffn": bool(args.fused_quant_ffn),
+            "fused_quant_ffn_down_add": bool(args.fused_quant_ffn_down_add),
+            **effective_native_quant_tiles(args.device),
             "batch_size": args.batch_size,
             "prompt_tokens": int(ids.shape[1]),
             "decode_tokens": args.decode_tokens,
             "min_params": args.min_params,
             "native_mm_policy": args.policy,
+            "mm4_group_size": (
+                args.mm4_group_size if quantization == "mm4_groupwise" else None
+            ),
             "paired_baseline": bool(args.paired_baseline and quantization != "none"),
+            "quantize_before_device": bool(args.quantize_before_device),
             "replaced_modules": replaced,
             "module_counts": module_counts,
             "model_footprint_mb": footprint,
@@ -475,6 +652,8 @@ def main() -> int:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
             print(f"appended 1 row -> {out_path}", flush=True)
 
+    if temporary_model_dir is not None:
+        temporary_model_dir.cleanup()
     return 0
 
 

@@ -135,6 +135,13 @@ class KernelPolicy:
     fused_projection: bool = False
     fused_wag_lora: bool = False
     fused_wavg_lora: bool = False
+    fused_quant_ffn: bool = False
+    mm8_block_m: int | None = None
+    mm8_block_n: int | None = None
+    mm4_block_pairs: int | None = None
+    mm4_block_n: int | None = None
+    mm4_dot_block_pairs_small: int | None = None
+    mm4_dot_block_pairs_large: int | None = None
     wavg_lora_bsz1_max_hidden: int | None = None
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
@@ -704,22 +711,35 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="Hopper profile: stable output fusions on; H100-specific projection/quant kernels require sweep rows",
         )
     if family == "blackwell":
+        exact_5070 = "5070" in profile.name.lower()
         is_5090 = "5090" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
             fused_prefill_scan=False,
-            # Exact RTX 5090 B8/P512 sweep on g1h 1.5B. The fused prefill route
-            # remains opt-in globally; these shape gates only select the
-            # measured row-8 scan and clampw + stacked R/K/V combination.
+            mm8_block_m=64 if exact_5070 else None,
+            mm8_block_n=256 if exact_5070 else None,
+            mm4_block_pairs=64 if exact_5070 else None,
+            mm4_block_n=256 if exact_5070 else None,
+            mm4_dot_min_rows=2 if exact_5070 else None,
+            mm4_dot_block_b=16 if exact_5070 else None,
+            mm4_dot_block_pairs_small=64 if exact_5070 else None,
+            mm4_dot_block_pairs_large=128 if exact_5070 else None,
+            mm4_dot_block_n=128 if exact_5070 else None,
+            # Exact RTX 5090 B8 sweeps on g1h 1.5B/P512 and 7.2B/P128. The
+            # fused prefill route remains opt-in globally; these shape gates
+            # only select combinations measured end to end on this card.
             prefill_scan_block_m_model_shapes=((2048, 8, 512, 8),) if is_5090 else (),
             fused_prefill_residual_gemm=is_5090,
             prefill_clampw_scan_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
             fused_prefill_stacked_rkv=is_5090,
             prefill_stacked_rkv_min_rows=1,
             prefill_stacked_rkv_max_rows=1,
-            prefill_stacked_rkv_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
+            prefill_stacked_rkv_model_shapes=(
+                (2048, 24, 8, 512),
+                (4096, 32, 8, 128),
+            ) if is_5090 else (),
             fused_prefill_sequence_ffn=is_5090,
             prefill_sequence_ffn_min_rows=1,
             prefill_sequence_ffn_max_rows=1,
@@ -728,7 +748,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_sequence_ffn_num_stages=3,
             prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes=(
+                "RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus "
+                "clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; "
+                "g1h-7.2B B8/P128 selects stacked R/K/V only. Exact RTX 5070 uses measured "
+                "MM8/MM4 decode tiles. Do not generalize either card's routes across Blackwell; "
+                "use triton_compat for early sm_120 stacks and keep quant FFN plus unvalidated "
+                "projection/LoRA fusions off by default"
+            ),
         )
     return KernelPolicy(profile=profile)
 

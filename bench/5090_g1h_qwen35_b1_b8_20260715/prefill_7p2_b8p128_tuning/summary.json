@@ -1,0 +1,156 @@
+{
+  "axis": "rtx5090_g1h_7p2_b8p128_prefill_tuning",
+  "status": "pass",
+  "rows": [
+    {
+      "variant": "stacked64",
+      "status": "pass",
+      "prefill_ms": 81.193,
+      "prefill_tokps": 12611.858,
+      "clampw": false,
+      "stacked_rkv": true,
+      "sequence_ffn": false,
+      "block_m": 64
+    },
+    {
+      "variant": "block32",
+      "status": "pass",
+      "prefill_ms": 82.299,
+      "prefill_tokps": 12442.399,
+      "clampw": false,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 32
+    },
+    {
+      "variant": "block16",
+      "status": "pass",
+      "prefill_ms": 83.351,
+      "prefill_tokps": 12285.376,
+      "clampw": false,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 16
+    },
+    {
+      "variant": "clamp32",
+      "status": "pass",
+      "prefill_ms": 83.475,
+      "prefill_tokps": 12267.083,
+      "clampw": true,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 32
+    },
+    {
+      "variant": "block8",
+      "status": "pass",
+      "prefill_ms": 83.701,
+      "prefill_tokps": 12233.955,
+      "clampw": false,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 8
+    },
+    {
+      "variant": "clamp16",
+      "status": "pass",
+      "prefill_ms": 83.92,
+      "prefill_tokps": 12202.138,
+      "clampw": true,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 16
+    },
+    {
+      "variant": "base64",
+      "status": "pass",
+      "prefill_ms": 83.926,
+      "prefill_tokps": 12201.297,
+      "clampw": false,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 64
+    },
+    {
+      "variant": "clamp64",
+      "status": "pass",
+      "prefill_ms": 83.958,
+      "prefill_tokps": 12196.614,
+      "clampw": true,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 64
+    },
+    {
+      "variant": "stacked_seq64",
+      "status": "pass",
+      "prefill_ms": 84.909,
+      "prefill_tokps": 12059.909,
+      "clampw": false,
+      "stacked_rkv": true,
+      "sequence_ffn": true,
+      "block_m": 64
+    },
+    {
+      "variant": "all16",
+      "status": "pass",
+      "prefill_ms": 85.008,
+      "prefill_tokps": 12045.923,
+      "clampw": true,
+      "stacked_rkv": true,
+      "sequence_ffn": true,
+      "block_m": 16
+    },
+    {
+      "variant": "all64",
+      "status": "pass",
+      "prefill_ms": 85.023,
+      "prefill_tokps": 12043.753,
+      "clampw": true,
+      "stacked_rkv": true,
+      "sequence_ffn": true,
+      "block_m": 64
+    },
+    {
+      "variant": "clamp8",
+      "status": "pass",
+      "prefill_ms": 85.421,
+      "prefill_tokps": 11987.737,
+      "clampw": true,
+      "stacked_rkv": false,
+      "sequence_ffn": false,
+      "block_m": 8
+    },
+    {
+      "variant": "all32",
+      "status": "pass",
+      "prefill_ms": 85.523,
+      "prefill_tokps": 11973.434,
+      "clampw": true,
+      "stacked_rkv": true,
+      "sequence_ffn": true,
+      "block_m": 32
+    },
+    {
+      "variant": "all8",
+      "status": "pass",
+      "prefill_ms": 86.974,
+      "prefill_tokps": 11773.663,
+      "clampw": true,
+      "stacked_rkv": true,
+      "sequence_ffn": true,
+      "block_m": 8
+    },
+    {
+      "variant": "seq64",
+      "status": "pass",
+      "prefill_ms": 87.246,
+      "prefill_tokps": 11736.971,
+      "clampw": false,
+      "stacked_rkv": false,
+      "sequence_ffn": true,
+      "block_m": 64
+    }
+  ]
+}

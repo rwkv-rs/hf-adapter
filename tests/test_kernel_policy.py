@@ -68,6 +68,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert not v100.ada_sparse_ffn_up
     assert not v100.fused_projection
     assert not v100.fused_output_project
+    assert not v100.fused_quant_ffn
 
     ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)))
     assert ada.fused_output
@@ -111,6 +112,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.ada_sparse_ffn_inplace
     assert ada.rkv_policy == "vkwr_auto"
     assert ada.norm_mix_num_warps == 8
+    assert not ada.fused_quant_ffn
 
     other_ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4070", (8, 9)))
     assert not other_ada.fast_prefill
@@ -234,6 +236,15 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.fused_output
     assert blackwell.fused_recurrent_output
     assert not blackwell.fused_projection
+    assert not blackwell.fused_quant_ffn
+    assert blackwell.mm8_block_m is None
+    assert blackwell.mm8_block_n is None
+    assert blackwell.mm4_block_pairs is None
+    assert blackwell.mm4_block_n is None
+    assert blackwell.mm4_dot_block_b is None
+    assert blackwell.mm4_dot_block_pairs_small is None
+    assert blackwell.mm4_dot_block_pairs_large is None
+    assert blackwell.mm4_dot_block_n is None
     assert blackwell.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 8),)
     assert not blackwell.fused_prefill_clampw_scan
     assert blackwell.prefill_clampw_scan_model_shapes == ((2048, 24, 8, 512),)
@@ -241,7 +252,10 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.fused_prefill_stacked_rkv
     assert blackwell.prefill_stacked_rkv_min_rows == 1
     assert blackwell.prefill_stacked_rkv_max_rows == 1
-    assert blackwell.prefill_stacked_rkv_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.prefill_stacked_rkv_model_shapes == (
+        (2048, 24, 8, 512),
+        (4096, 32, 8, 128),
+    )
     assert blackwell.fused_prefill_sequence_ffn
     assert blackwell.prefill_sequence_ffn_min_rows == 1
     assert blackwell.prefill_sequence_ffn_max_rows == 1
@@ -257,6 +271,18 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_blackwell.prefill_clampw_scan_model_shapes == ()
     assert not other_blackwell.fused_prefill_stacked_rkv
     assert not other_blackwell.fused_prefill_sequence_ffn
+
+    rtx5070 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)))
+    assert rtx5070.mm8_block_m == 64
+    assert rtx5070.mm8_block_n == 256
+    assert rtx5070.mm4_block_pairs == 64
+    assert rtx5070.mm4_block_n == 256
+    assert rtx5070.mm4_dot_min_rows == 2
+    assert rtx5070.mm4_dot_block_b == 16
+    assert rtx5070.mm4_dot_block_pairs_small == 64
+    assert rtx5070.mm4_dot_block_pairs_large == 128
+    assert rtx5070.mm4_dot_block_n == 128
+    assert not rtx5070.fused_quant_ffn
 
     apple = policy_for_profile(classify_gpu("Apple M5", None, is_mps=True))
     assert apple.profile.family == "apple_mps"
