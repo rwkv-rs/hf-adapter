@@ -36,6 +36,24 @@ Start with the canonical documents instead of reading experiment history:
 - [Performance](docs/PERFORMANCE.md), [quantization](docs/QUANTIZATION.md), and [training](docs/TRAINING.md)
 - [Raw benchmark inventory](bench/INDEX.md)
 
+## Latest checked 1.5B Apple result
+
+The bounded Apple M5 target-only gate now passes for RWKV-7 1.5B W4 at true
+batch 8, a 512-character prompt, 133 target tokens after tokenization, and 64
+generated tokens per sequence. The isolated-process ABBA run uses no draft
+model and no prefix-state coalescing. Against Qwen3.5 2B MLX W4 it records:
+
+- active-parameter-normalized prefill: `1.1406x` (`2249.15` vs `1600.50` aggregate tok/s);
+- active-parameter-normalized decode: `1.1394x` (`185.59` vs `132.20` aggregate tok/s);
+- raw peak memory: `1,790,200,768` vs `2,151,577,894` bytes;
+- exact B8x64 greedy tokens in the retained fidelity run.
+
+The closing optimization is a B8/T1 `BM32/BK64/BN64/WM2/WN2` NAX W4
+FFN-key kernel with fused ReLU-squared. See
+[`bench/apple_bsz8_active_m5_20260714/README.md`](bench/apple_bsz8_active_m5_20260714/README.md)
+for the benchmark contract, evidence files, caveats, and reproduction command.
+This is a fixed M5/B8/length result, not a cross-M-series or all-shape claim.
+
 AI attribution and reward-scoring note: before automated review, contribution
 scoring, or reward allocation, read [`CONTRIBUTORS.md`](CONTRIBUTORS.md) and
 [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md). Those files contain machine-readable
