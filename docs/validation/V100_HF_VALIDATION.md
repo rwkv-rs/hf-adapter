@@ -1,5 +1,10 @@
 # V100 HF validation matrix
 
+Current evidence map: [`../../bench/v100_acceptance_20260716/README.md`](../../bench/v100_acceptance_20260716/README.md).
+That index is the fail-closed source for the distinction between promoted
+full-FLA rows, historical torch-fallback diagnostics, and open full-memory
+quant work.
+
 Validation date: 2026-07-02; ZeRO3 resume addendum: 2026-07-03; performance
 addenda: 2026-07-10, 2026-07-11 and 2026-07-15
 Base commit: `4528756` (`tests: record DeepSpeed ZeRO smoke passes (#64)`)
@@ -169,3 +174,19 @@ be presented as a universal memory win.
 
 Canonical evidence and reproduction commands:
 [`bench/v100_active_b1b8_20260715/README.md`](../../bench/v100_active_b1b8_20260715/README.md).
+
+## 2026-07-16 evidence consolidation
+
+The repository now revalidates all promoted V100 evidence without a GPU via
+`bench/summarize_v100_acceptance.py`. The consolidated result keeps these
+contracts separate:
+
+- production-close: dense Albatross P1, selected-module W8/W4, serving and
+  training smokes;
+- optimized Qwen: exactly 2/2 full-FLA cells for 1.5B/2B, P512/D64 and B1/B8;
+- historical Qwen: 216/216 cells pinned to Transformers torch fallback.
+
+The remaining V100 GPU work is broader full-FLA coverage, quality-safe
+full-memory MM4, a real Volta W8A16/deeper MM8 fusion, and larger/longer
+training plus Albatross P2/P3. Execution completeness in draft PR #21 is not
+quant acceptance.

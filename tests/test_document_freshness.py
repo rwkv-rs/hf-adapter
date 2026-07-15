@@ -59,6 +59,24 @@ def main() -> int:
             f"V100 current artifact missing from {relative}"
         )
 
+    v100_indexed = [
+        "AGENTS.md",
+        "README.md",
+        "HF_STATUS.md",
+        "BENCHMARK.md",
+        "docs/ACCEPTANCE.md",
+        "docs/HARDWARE_MATRIX.md",
+        "docs/PERFORMANCE.md",
+        "docs/QUANTIZATION.md",
+        "docs/performance/FUSED_BACKEND.md",
+        "docs/validation/V100_HF_VALIDATION.md",
+        "bench/INDEX.md",
+    ]
+    for relative in v100_indexed:
+        assert "v100_acceptance_20260716" in read(relative), (
+            f"V100 consolidated index missing from {relative}"
+        )
+
     assert "Strict global audit snapshot" in read(
         "docs/hardware/APPLE_PRODUCTION_ACCEPTANCE.md"
     )

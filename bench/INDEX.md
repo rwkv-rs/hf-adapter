@@ -6,6 +6,7 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 
 | Platform | Artifact | Current conclusion |
 |---|---|---|
+| V100 32GB | [`v100_acceptance_20260716/`](v100_acceptance_20260716/README.md) | Consolidated fail-closed index separates production, full-FLA and historical torch-fallback lanes |
 | V100 32GB | [`v100_production_close_20260711/`](v100_production_close_20260711/README.md) | Dense Albatross P1 and native W8/W4 speed lane pass |
 | V100 32GB | [`v100_active_b1b8_20260715/`](v100_active_b1b8_20260715/README.md) | 1.5B vs full-FLA Qwen3.5-2B B1/B8 raw and active-parameter work gates pass |
 | RTX 3090 | [`3090_g1h_7p2_bsz8_20260714/`](3090_g1h_7p2_bsz8_20260714/README.md) | Latest g1h 7.2B/9B bsz8 dense, active-work, W8/W4 speed and memory gates pass 18/18 |

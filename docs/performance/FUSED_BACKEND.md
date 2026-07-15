@@ -95,6 +95,14 @@ V100 is the first regression baseline. Newer Ada/Blackwell-class cards should be
 used to validate that W8/W4 can eventually approach or beat fp16 native-graph
 serving speed.
 
+The current V100 boundary is machine-checked in
+[`bench/v100_acceptance_20260716/`](../../bench/v100_acceptance_20260716/README.md).
+The promoted selected-module speed policy meets its declared card-local gate,
+but the draft full-memory matrix does not: MM4 still has batch-dependent greedy
+mismatches and MM8 has no speed-passing model/cell set. Those kernels remain
+default-off; the next Volta work must be quality-safe groupwise MM4 and true
+W8A16 or deeper MM8 projection fusion.
+
 ## Planned PR sequence
 
 1. Fused-backend target/reporting gate.

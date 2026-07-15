@@ -10,6 +10,22 @@
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
 
+## V100 promoted and experimental boundaries
+
+The promoted V100 `speed` policy is deliberately narrow. Across
+0.1B/0.4B/1.5B and B1/B2/B4/B8, selected-module W8/W4 records paired decode
+`1.0062x-1.1278x`, prefill `0.9964x-1.0068x`, and payload
+`0.8027x-0.9561x` fp16. It does not establish full-memory quantization.
+
+The separate default-off full-memory work in draft PR #21 is still negative
+for strict acceptance. Its V100 matrix completed 126/126 execution rows, but
+MM4 greedy equality is only 6/7, 6/7 and 4/7 for 1.5B/2.9B/7.2B, while MM8
+passes 0/21 speed cells per model. Those rows are development evidence, not a
+promoted path, until a quality-safe groupwise MM4 and real Volta W8A16/deeper
+fusion pass the same-card gate.
+
+Evidence boundary: [`../bench/v100_acceptance_20260716/README.md`](../bench/v100_acceptance_20260716/README.md).
+
 ## RTX 4090 g1h 7.2B promoted result
 
 The bsz8 matrix covers prompt 128/512/2048 and decode 128/512. Route
