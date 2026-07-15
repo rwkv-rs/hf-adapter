@@ -31,7 +31,9 @@ Last updated: **2026-07-16**.
   RWKV-7 1.5B versus full-FLA/Triton-conv Qwen3.5-2B passes B1/B8 raw
   prefill/decode minima `2.815921x/5.270432x` and active-parameter work minima
   `2.285574x/4.277804x`; the B1 peak-VRAM loss remains disclosed. Evidence:
-  [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md).
+  [`../bench/v100_acceptance_20260716/README.md`](../bench/v100_acceptance_20260716/README.md).
+  The promoted W8/W4 speed lane is selected-module quantization; full-memory
+  native MM8/MM4 and broader full-FLA Qwen shapes remain open.
 - **RTX 4090:** 0.4B dense decode bsz1/2/4/8 reaches
   `1.007x/1.016x/1.008x/1.418x` of matching Albatross rows. Prompt-512 bsz4 is
   `1.007x` the same-session reference and `0.916x` the retained historical

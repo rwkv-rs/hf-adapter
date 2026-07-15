@@ -24,7 +24,7 @@ Status vocabulary:
 
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
-| V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8; 1.5B vs full-FLA Qwen3.5-2B B1/B8 | greedy/cache gates plus 32-token Qwen and RWKV native-route probes pass | Albatross P1; full-FLA Qwen raw prefill/decode min `2.8159x/5.2704x`, active-work min `2.2856x/4.2778x` | **PASS measured lanes** |
+| V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8; 1.5B vs full-FLA Qwen3.5-2B B1/B8 | greedy/cache gates plus 32-token Qwen and RWKV native-route probes pass | Albatross P1 and selected-module quant; full-FLA Qwen raw prefill/decode min `2.8159x/5.2704x`, active-work min `2.2856x/4.2778x` | **PASS measured lanes** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
@@ -48,6 +48,7 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 | Native W8/W4 paired prefill / fp16 | `0.996x–1.007x` | 1% equivalence PASS |
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+Consolidated V100 index: [`bench/v100_acceptance_20260716/README.md`](bench/v100_acceptance_20260716/README.md).
 
 ### V100 B1/B8 active-parameter comparison against full-FLA Qwen3.5
 
@@ -76,20 +77,24 @@ speed artifact.
 
 Evidence: [`bench/v100_active_b1b8_20260715/README.md`](bench/v100_active_b1b8_20260715/README.md).
 
-### Historical V100 RWKV-7 vs Qwen3.5 Torch-fallback matrix
+### Historical V100 RWKV-7 vs Qwen3.5 Torch-fallback matrices
 
-The historical official text-only matrix covers three model pairs, fp16/bnb8/
+The original official text-only matrix covers three model pairs, fp16/bnb8/
 bnb4, prompt 128/512/2048, decode 128/512, and bsz1/2/4/8: `432/432` raw rows
-pass and all `216/216` comparison cells join.
+pass and all `216/216` comparison cells join. Its strict 1.05x report has nine
+bnb4 decode misses and three true losses.
 
 | Metric | Minimum | Median | Maximum | Strict 1.05x pass |
 |---|---:|---:|---:|---:|
 | Prefill RWKV/Qwen | `1.246x` | `1.936x` | `8.141x` | 216/216 |
 | Decode RWKV/Qwen | `0.947x` | `1.317x` | `10.832x` | 207/216 |
 
-All nine strict-gate misses are bnb4 decode rows; only three are below `1.0x`.
-Static model footprint is lower in `216/216` cells (`0.629x-0.812x`), and peak
-allocated VRAM is lower in `192/216` cells (`0.390x-1.068x`).
+The append-only 2026-07-13 follow-up adds three `prefill_hot` candidate reruns
+and uses a non-regression 1.00x gate for W8/W4 while retaining 1.05x for dense.
+With `--required-reference-backend torch`, the current comparator passes all
+216 cells at minimum prefill/decode `1.246447x/1.002879x`. The combined input
+has 435 rows. Memory was not a gate: final model footprint is no larger in
+213/216 cells and peak VRAM is no larger in 189/216.
 
 Important boundary: all recorded Qwen rows use the official
 Transformers/PyTorch fallback (`qwen3_5_text`, forced torch, FLA not
@@ -102,7 +107,9 @@ artifact above additionally closes the optimized reference on `sm_70`,
 including the Triton causal-convolution contract. Neither result retroactively
 upgrades these historical Torch-fallback rows.
 
-Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md).
+Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md)
+and [`bench/v100_qwen35_full_matrix_20260713/README.md`](bench/v100_qwen35_full_matrix_20260713/README.md).
+Current boundary summary: [`bench/v100_acceptance_20260716/README.md`](bench/v100_acceptance_20260716/README.md).
 Design: [`docs/plans/2026-07-13-qwen35-5070-fla-design.md`](docs/plans/2026-07-13-qwen35-5070-fla-design.md).
 
 ## RTX 3090 self-fused long-prefill rows

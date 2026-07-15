@@ -748,6 +748,16 @@ Run this checklist for every new GPU before marking it as supported:
   native `memory` rows as non-speed paths unless they beat fp16. Native
   `speed` policy may be reported as the speed-acceptance lane only with
   card-local footprint, speed, and logits/greedy-token parity rows.
+- Canonical evidence map: `bench/v100_acceptance_20260716/README.md`. It keeps
+  the selected-module production quant lane, the 2-cell full-FLA Qwen lane,
+  and the 216-cell historical torch-fallback matrix as separate contracts.
+- Optimized-Qwen scope is only RWKV-7 1.5B versus Qwen3.5-2B, fp16,
+  prompt512/decode64 and B1/B8. Do not relabel the broader torch-fallback
+  matrix as full-FLA evidence.
+- Full-memory native quant remains unaccepted. Draft PR #21 records V100 MM4
+  speed with greedy mismatches and MM8 with zero speed-passing cells per
+  model; keep every related flag default-off until new exact-card rows close
+  both correctness and speed.
 - Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)

@@ -67,6 +67,9 @@ convolution oracle and RWKV native graph versus its FLA-backed HF route each
 preserve 32/32 greedy tokens and pass cosine gates. The B1 peak-memory loss is
 retained rather than generalized away. See
 [`bench/v100_active_b1b8_20260715/README.md`](bench/v100_active_b1b8_20260715/README.md).
+The consolidated V100 evidence map, including the historical torch-fallback
+matrix and remaining GPU-only gates, is
+[`bench/v100_acceptance_20260716/`](bench/v100_acceptance_20260716/README.md).
 
 ## Latest checked 1.5B Apple result
 

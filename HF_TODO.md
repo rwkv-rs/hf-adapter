@@ -34,6 +34,10 @@ remaining fp16-or-faster across representative batch/prompt/decode shapes.
       selected-module speed policy.
 - [ ] Add fused quant prefill; decode-only wins are insufficient.
 - [ ] Validate V100, 4090, 5090 and at least one Ampere professional card.
+- [ ] On V100, fix full-memory MM4 greedy mismatches before promoting its
+      existing speed/footprint rows.
+- [ ] On V100, replace the current slow MM8 route with real Volta W8A16 or a
+      deeper projection fusion; the draft full-memory matrix has no speed wins.
 - [ ] Preserve cosine, same-next, footprint and paired timing gates.
 - [ ] Add 0.4B/1.5B/2.9B/7.2B/13.3B boundary rows where memory permits.
 

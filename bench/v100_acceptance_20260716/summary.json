@@ -1,0 +1,190 @@
+{
+  "axis": "v100_acceptance_manifest",
+  "date": "2026-07-16",
+  "device": "Tesla V100-PCIE-32GB (sm_70)",
+  "errors": [],
+  "lanes": {
+    "production_close": {
+      "boundary": "The W8/W4 speed lane quantizes selected modules; it is not the unaccepted full-memory native MM8/MM4 path.",
+      "chunk512_speed_ratio_vs_full": 0.8512,
+      "chunk512_vram_ratio_vs_full": 0.7939,
+      "dense_decode_ratio_min": 0.908,
+      "dense_prefill_ratio_min": 0.9298,
+      "quant_decode_ratio_min": 1.0062,
+      "quant_payload_ratio_range": [
+        0.8027,
+        0.9561
+      ],
+      "quant_prefill_ratio_min": 0.9964,
+      "scope": "0.1B/0.4B/1.5B dense, selected-module W8/W4, serving and training smokes",
+      "source": "bench/v100_production_close_20260711",
+      "status": "pass",
+      "training_backends": [
+        "trainer",
+        "trl_sft"
+      ],
+      "zero_resume_stages": [
+        2,
+        3
+      ]
+    },
+    "qwen_full_fla": {
+      "active_parameter_work": {
+        "decode_gate": 1.0,
+        "gate_enabled": true,
+        "max_active_parameter_ratio": 0.811661,
+        "median_active_parameter_ratio": 0.811661,
+        "median_decode_throughput_ratio": 4.538659,
+        "median_prefill_throughput_ratio": 3.337422,
+        "min_active_parameter_ratio": 0.811661,
+        "min_decode_throughput_ratio": 4.277804,
+        "min_prefill_throughput_ratio": 2.285574,
+        "passing_cells": 2,
+        "prefill_gate": 1.0,
+        "total_cells": 2
+      },
+      "boundary": "This is the only promoted V100 full-FLA Qwen lane. It does not cover larger pairs, other lengths, quantization, or model quality.",
+      "correctness": {
+        "qwen_full_fla_vs_conv_oracle": {
+          "final_logits_cosine": 0.9999918937683105,
+          "greedy_tokens": 32,
+          "prompt_logits_cosine": 0.9999890327453613,
+          "status": "pass"
+        },
+        "rwkv_native_graph_vs_fla": {
+          "final_logits_cosine": 0.9999954104423523,
+          "greedy_tokens": 32,
+          "prompt_logits_cosine": 0.999995231628418,
+          "status": "pass"
+        }
+      },
+      "coverage": {
+        "complete": true,
+        "expected_cells": 2,
+        "joined_cells": 2
+      },
+      "memory": {
+        "max_model_footprint_ratio": 0.811662,
+        "max_peak_vram_ratio": 1.024885,
+        "max_runtime_working_set_ratio": 9.021944,
+        "median_model_footprint_ratio": 0.811662,
+        "median_peak_vram_ratio": 0.931067,
+        "median_runtime_working_set_ratio": 4.995016,
+        "min_model_footprint_ratio": 0.811662,
+        "min_peak_vram_ratio": 0.837248,
+        "min_runtime_working_set_ratio": 0.968087,
+        "model_footprint_not_larger_cells": 2,
+        "peak_vram_not_larger_cells": 1,
+        "runtime_working_set_not_larger_cells": 1,
+        "total_cells": 2
+      },
+      "reference_backend": {
+        "complete": true,
+        "matching_cells": 2,
+        "required": "fla",
+        "total_cells": 2
+      },
+      "scope": {
+        "batch_sizes": [
+          1,
+          8
+        ],
+        "decode_tokens": 64,
+        "dtype": "fp16",
+        "model_pair": "RWKV-7 1.5B / Qwen3.5-2B",
+        "prompt_tokens": 512,
+        "quantization": "none"
+      },
+      "source": "bench/v100_active_b1b8_20260715",
+      "speed": {
+        "decode_at_least_equal_cells": 2,
+        "decode_gate_cells": 2,
+        "max_decode_speedup": 5.913307,
+        "max_prefill_speedup": 5.407762,
+        "median_decode_speedup": 5.591869,
+        "median_prefill_speedup": 4.111841,
+        "min_decode_speedup": 5.270432,
+        "min_prefill_speedup": 2.815921,
+        "prefill_at_least_equal_cells": 2,
+        "prefill_gate_cells": 2,
+        "strict_gate_cells": 2,
+        "total_cells": 2
+      },
+      "status": "pass"
+    },
+    "qwen_torch_fallback": {
+      "boundary": "All 216 Qwen references are Transformers torch fallback. This matrix is not evidence against optimized FLA Qwen. Memory was not a gate and is not lower in every final rerun cell.",
+      "coverage": {
+        "complete": true,
+        "expected_cells": 216,
+        "joined_cells": 216
+      },
+      "memory": {
+        "max_model_footprint_ratio": 1.876552,
+        "max_peak_vram_ratio": 1.702476,
+        "max_runtime_working_set_ratio": null,
+        "median_model_footprint_ratio": 0.723979,
+        "median_peak_vram_ratio": 0.745515,
+        "median_runtime_working_set_ratio": null,
+        "min_model_footprint_ratio": 0.628784,
+        "min_peak_vram_ratio": 0.389502,
+        "min_runtime_working_set_ratio": null,
+        "model_footprint_not_larger_cells": 213,
+        "peak_vram_not_larger_cells": 189,
+        "runtime_working_set_not_larger_cells": 0,
+        "total_cells": 216
+      },
+      "raw_rows": 435,
+      "reference_backend": {
+        "complete": true,
+        "matching_cells": 216,
+        "required": "torch",
+        "total_cells": 216
+      },
+      "role": "historical diagnostic",
+      "scope": "3 pairs x 3 prompts x 2 decode lengths x B1/B2/B4/B8 x fp16/W8/W4",
+      "source": "bench/v100_qwen35_full_matrix_20260713",
+      "speed": {
+        "decode_at_least_equal_cells": 216,
+        "decode_gate_cells": 210,
+        "max_decode_speedup": 10.832118,
+        "max_prefill_speedup": 8.141495,
+        "median_decode_speedup": 1.323868,
+        "median_prefill_speedup": 1.936287,
+        "min_decode_speedup": 1.002879,
+        "min_prefill_speedup": 1.246447,
+        "prefill_at_least_equal_cells": 216,
+        "prefill_gate_cells": 216,
+        "strict_gate_cells": 216,
+        "total_cells": 216
+      },
+      "status": "pass"
+    }
+  },
+  "not_claimed": [
+    "model-quality superiority over Qwen3.5",
+    "full-FLA coverage for the historical 216-cell torch matrix",
+    "lower peak VRAM in every full-FLA or historical cell",
+    "accepted full-memory native MM8/MM4 on Volta",
+    "universal Albatross P2/P3 parity"
+  ],
+  "open_gpu_gates": [
+    {
+      "detail": "Expand beyond 1.5B/2B, prompt512/decode64 and B1/B8.",
+      "id": "qwen_full_fla_expansion",
+      "status": "requires_v100"
+    },
+    {
+      "detail": "Draft PR #21 records MM4 speed with greedy mismatches and MM8 at 0/21 speed cells per model; no full-memory path is promoted.",
+      "id": "full_memory_native_quant",
+      "status": "requires_v100_and_kernel_work"
+    },
+    {
+      "detail": "Longer training and ZeRO resume beyond the promoted smoke/model sizes remain open.",
+      "id": "large_training_and_zero",
+      "status": "requires_v100_or_larger_gpu"
+    }
+  ],
+  "project_status": "partial_gpu_followups_required",
+  "validation_status": "pass"
+}

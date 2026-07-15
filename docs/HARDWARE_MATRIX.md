@@ -16,7 +16,7 @@ Last updated: **2026-07-16**.
 
 | Platform | Status | Models / scope | Strongest current evidence | Open work |
 |---|---|---|---|---|
-| Tesla V100 32GB, sm70 | **Production-close** | 0.1B/0.4B/1.5B performance; 1.5B/Qwen3.5-2B B1/B8; larger inference/training smoke | Albatross P1; native W8/W4 speed lane; full-FLA Qwen raw and active-work gates pass at B1/B8 | Larger-model P2/P3, full-memory quant and broader optimized-Qwen shapes |
+| Tesla V100 32GB, sm70 | **Production-close for measured lanes** | 0.1B/0.4B/1.5B performance; 1.5B/Qwen3.5-2B B1/B8; larger inference/training smoke | Albatross P1; selected-module W8/W4 speed lane; full-FLA Qwen raw and active-work gates pass at B1/B8 | Larger-model P2/P3, full-memory quant and broader optimized-Qwen shapes |
 | RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
 | RTX 4090 24GB, sm89 | **Production-close for measured bsz8 lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B, dense/W8/W4 | Small-model matrix passes 54/54 and 7.2B passes 18/18; dense prefill/decode, active-work, full Qwen FLA, quant speed and quant-local memory gates pass | bsz1/2/4 latest matrix, task quality, full-memory W4, other Ada cards |
 | RTX 5090, sm120 | **Production-close for measured lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B at B1/B8; 0.4B MATH500; latest g1h 13.3B inference | Full-FLA Qwen matrix passes 8/8 batch-pairs and 144/144 cells; MATH500 gate passes; latest g1h 13.3B load/generate and selected speed-policy MM8/MM4 gate pass | Task quality beyond MATH500; fresh same-card Albatross rerun; full-memory quant; broader 50-series cards |
@@ -33,7 +33,8 @@ Last updated: **2026-07-16**.
 
 ## Promoted artifacts
 
-- V100: [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md)
+- V100 consolidated: [`../bench/v100_acceptance_20260716/README.md`](../bench/v100_acceptance_20260716/README.md)
+- V100 production matrix: [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md)
 - V100 full-FLA Qwen B1/B8: [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md)
 - RTX 3090 g1h 7.2B: [`../bench/3090_g1h_7p2_bsz8_20260714/README.md`](../bench/3090_g1h_7p2_bsz8_20260714/README.md)
 - RTX 4090 g1h 7.2B: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md)
