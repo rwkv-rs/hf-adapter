@@ -44,6 +44,18 @@ def main() -> int:
     todo = read("HF_TODO.md")
     assert "## Current milestone — COMPLETE" in todo
     assert "per-PR template, not a list of outstanding project tasks" in todo
+    assert "Do not convert the unchecked roadmap" in todo
+
+    status = read("HF_STATUS.md")
+    assert "## Completion reporting rule" in status
+    assert "no official repository-wide completion percentage" in status
+
+    acceptance = read("docs/ACCEPTANCE.md")
+    assert "## How to report completion" in acceptance
+    assert "current HF milestone is complete" in acceptance
+
+    readme = read("README.md")
+    assert "Completion is reported by **named scope**" in readme
 
     required_current = [
         "README.md",
