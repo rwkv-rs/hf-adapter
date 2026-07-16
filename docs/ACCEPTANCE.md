@@ -20,7 +20,7 @@ implemented capability below, start with
 | PEFT and RL ecosystem | **PASS for smoke/compatibility** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke across CUDA and Apple/MPS | Longer production training and broader model/card combinations |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
 | Common professional and consumer cards | **PARTIAL** | V100, A100, A800, A6000, 4090, 5090, GTX 1080 Ti and Apple M5 evidence | H100, AMD/ROCm, Turing and broader Apple/50-series coverage |
-| W8/W4 inference and lower memory | **PASS functionally; PARTIAL for universal speed** | bnb compatibility plus native MM8/MM4; 5090 speed-policy pressure close; Apple MLX W4 | Full-memory quantized projections must become fp16-or-faster across cards and shapes |
+| W8/W4 inference and lower memory | **PASS functionally; PARTIAL for universal speed** | bnb compatibility plus native MM8/MM4; RTX 5090 7.2B BN/TN W4 B1/B8 all-phase close at `0.5298x` footprint; Apple MLX W4 | Extend the 5090 FFN result to square/W8 paths and make full-memory quantized projections fp16-or-faster across cards/shapes |
 | PP/TP inference | **PARTIAL** | HF `device_map`/multi-device smoke and pipeline-oriented path | Production TP and a complete PP matrix are not closed in this HF repository |
 | ZeRO-2/3 training | **PASS for current smoke matrix** | ZeRO-2/3 base and resume evidence on V100/A100/A800/A6000 combinations | Longer training and larger ZeRO-3 resume matrix |
 | Initial speculative decoding | **PASS as experimental HF/Apple path** | HF-compatible target/draft harness and Apple target-greedy oracle evidence | Serving integration and broader quality/speed gates |
@@ -60,10 +60,14 @@ or by counting the table rows above.
   reaches pass@64 `0.38`; against the committed Albatross reference,
   summary/decode throughput ratios are `4.336x/4.871x`. The latest official
   g1h 13.3B checkpoint also passes conversion, load/generate, and selected
-  speed-policy MM8/MM4 gates. The MATH500 reference is not a fresh same-card
-  Albatross rerun. Evidence:
+  speed-policy MM8/MM4 gates. Separately, the g1h 7.2B production BN/TN W4
+  route passes B1/B8 paired BF16 prefill/decode with minima
+  `1.0010x/1.4978x`, `0.5298x` footprint, final cosine `>=0.99954909` and
+  same-next output. The MATH500 reference is not a fresh same-card Albatross
+  rerun. Evidence:
   [`../bench/5090_g1h_qwen35_b1_b8_20260715/README.md`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
-  and [`../bench/5090_g1h_13p3_20260715/README.md`](../bench/5090_g1h_13p3_20260715/README.md).
+  [`../bench/5090_g1h_13p3_20260715/README.md`](../bench/5090_g1h_13p3_20260715/README.md),
+  and [`../bench/5090_bn_tn_tensorcore_20260716/README.md`](../bench/5090_bn_tn_tensorcore_20260716/README.md).
 - Correctness gates include official/HF alignment, cosine/top-k/greedy checks,
   cache handoff, save/reload, MATH500 shape/accuracy gates and logit-compression
   alignment.

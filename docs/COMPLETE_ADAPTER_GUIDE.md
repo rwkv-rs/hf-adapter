@@ -17,7 +17,7 @@
 | PEFT LoRA、adapter 保存/加载/合并、Trainer 和断点恢复 | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | loss/梯度有限且打印对应 `PASS` | 先运行小模型 smoke，再替换为自己的数据和训练配置 |
 | TRL SFT、DPO 和 GRPO | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | `NATIVE SFT/DPO/GRPO PASS` | 示例提供兼容性起点，正式训练时按数据规模调整 batch 和 checkpoint |
 | DeepSpeed ZeRO-2/ZeRO-3 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 所请求的结果行为 `PASS` | 推荐 Linux/WSL2 和至少两张 CUDA 卡，并为断点恢复保留输出目录 |
-| bitsandbytes W8/W4 或原生 MM8/MM4 | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) | 生成、有限 logits、对齐和 footprint 检查通过 | 可先选择省显存路线；追求速度时使用硬件矩阵中对应显卡的已验证配置 |
+| bitsandbytes W8/W4、原生 MM8/MM4 或 RTX 5090 BN/TN Marlin W4 | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) | 生成、有限 logits、对齐和 footprint 检查通过；5090 精确路线另验配对 prefill/decode | 可先选择省显存路线；追求速度时使用硬件矩阵中对应显卡的已验证配置 |
 | Apple MPS、MLX、packed W8/W4、会话和 CoreML | [`APPLE_USAGE.md`](APPLE_USAGE.md) | 对应命令输出 JSON/通过标记 | 按具体 Apple 芯片、模型和 batch shape 选择证据行 |
 | 让 AI 编程助手执行某项任务 | [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) | AI 报告完整命令、退出码、设备/模型路径和通过标记 | 只需选择任务并填写模型与设备信息；密码和私有 token 留在本机 |
 | 复现硬件和性能结论 | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md)、[`PERFORMANCE.md`](PERFORMANCE.md)、[`../bench/INDEX.md`](../bench/INDEX.md) | 同卡、同 shape 原始证据和文档门槛 | 精确卡数据可直接用于选择 backend、dtype、batch 和量化策略 |

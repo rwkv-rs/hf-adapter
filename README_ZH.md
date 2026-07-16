@@ -163,6 +163,28 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 - **量化：** 显存优先时查看 W8/W4 footprint；速度优先时选择与你的显卡、模型和
   batch 完全一致的配对结果。
 
+## RTX 5090 最新 W4 生产路径
+
+RTX 5090 上的官方 g1h 7.2B BF16 模型现在有一条精确卡、精确 shape 的
+Tensor Core W4 路径。它会自动把 32 个 `ffn.key` 和 32 个 `ffn.value` 替换为
+group-128 Marlin W4，并为 FFN key 融合 ReLU-square；用户不需要手工设置 BN/TN。
+
+在 prompt128/decode128 的配对 hot-BF16 验收中：
+
+- B1：prefill `1.0010x`，decode `1.5068x`；独立九次复测为
+  `1.0024x/1.5062x`；
+- B8：prefill `1.1561x`，decode `1.4978x`；
+- 模型 footprint 为 BF16 的 `0.5298x`，最低 final cosine 为
+  `0.99954909`，next-token 全部一致；
+- 35 个 row 数 × 两种 FFN shape 的契约扫描 `70/70` 通过、`70/70`
+  bit-exact、错误 BN `70/70` fail-close。
+
+这项晋升只适用于 RTX 5090、SM120、BF16、g1h 7.2B 的已测 FFN
+角色/shape；其他显卡和 shape 继续使用原来的安全 fallback。使用方法见
+[量化教程的 RTX 5090 专节](docs/QUANTIZATION_USAGE.md#5-rtx-5090-72b-bntn-tensor-core-w4)，
+原始结果和复现命令见
+[`bench/5090_bn_tn_tensorcore_20260716/`](bench/5090_bn_tn_tensorcore_20260716/README.md)。
+
 ## 常见问题恢复
 
 ### `RESULT: NEEDS ATTENTION`
