@@ -6,6 +6,18 @@ tuning are not required for normal inference.
 
 Chinese version: [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)
 
+## Choose a path
+
+- Follow this page step by step for a manual setup.
+- Give [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) to a terminal-capable AI
+  assistant if you want it to perform and verify the setup.
+- If you already have a converted HF model directory, skip to
+  [Run generation](#3-run-generation).
+
+Setup is complete only when the environment doctor reports `RESULT: READY`,
+the model-directory check passes, and `examples/generate.py` exits with code 0
+and prints newly generated text.
+
 ## What you need
 
 - Python 3.10 or newer.
@@ -63,6 +75,15 @@ the default PyPI build does not provide the CUDA or platform support you need.
 If `flash-linear-attention` cannot be installed, the base profile and native
 backend remain usable.
 
+Verify the base environment before downloading a model:
+
+```bash
+python examples/check_environment.py
+```
+
+Fix the first `FAIL` and rerun the command. Continue only after it prints
+`RESULT: READY`.
+
 ## 2. Get and convert a model
 
 If you already have a converted model directory containing `config.json`,
@@ -72,7 +93,13 @@ tokenizer files, remote-code Python files, and safetensors weights, skip to
 Official RWKV-7 checkpoints are published in
 [`BlinkDL/rwkv7-g1`](https://huggingface.co/BlinkDL/rwkv7-g1). The example
 below downloads the 0.4B checkpoint with the Hugging Face CLI installed by the
-Python dependencies:
+following command:
+
+```bash
+python -m pip install -U huggingface_hub
+```
+
+Download the checkpoint:
 
 ```bash
 mkdir -p models/source
@@ -127,6 +154,14 @@ python scripts/convert_rwkv7_to_hf.py \
 
 `--low-memory` lowers conversion RAM. It does not reduce inference VRAM.
 
+Validate the converted directory before generation:
+
+```bash
+python examples/check_environment.py --model models/rwkv7-g1d-0.4b-hf
+```
+
+The result must include `[PASS] Model directory` and `RESULT: READY`.
+
 ## 3. Run generation
 
 The included example automatically selects CUDA, MPS, or CPU. It uses FLA on
@@ -136,7 +171,7 @@ CUDA when available and otherwise selects the native backend:
 python examples/generate.py \
   --model models/rwkv7-g1d-0.4b-hf \
   --prompt "User: Write a short greeting. Assistant:" \
-  --max-new-tokens 64
+  --max-new-tokens 8
 ```
 
 Useful explicit configurations:
@@ -164,6 +199,9 @@ python examples/generate.py --model /path/to/model-hf \
 ```
 
 Run `python examples/generate.py --help` for all options.
+
+The first-run gate checks execution, not model quality: the command must exit
+with code 0 and print new text after the loading message.
 
 ## 4. Use the Transformers API
 
@@ -220,6 +258,7 @@ Check the example and focused tests without loading a large checkpoint:
 
 ```bash
 python examples/generate.py --help
+python examples/check_environment.py
 python -m pytest tests/test_user_quickstart.py -q
 ```
 
@@ -231,6 +270,15 @@ python examples/generate.py \
   --prompt "User: Hello! Assistant:" \
   --max-new-tokens 8
 ```
+
+## 6. Let an AI assistant do the setup
+
+Use the copy-ready prompt and fail-closed checklist in
+[`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md). It tells the assistant to
+inspect the real machine, request approval before a large download, avoid
+global package installation, and prove success with command exit status and
+generated output. Do not give an assistant account tokens or SSH credentials
+for this public-model setup.
 
 ## Common problems
 

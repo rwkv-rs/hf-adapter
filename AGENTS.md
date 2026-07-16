@@ -19,6 +19,15 @@ The active reward target is the HF/Transformers track: make RWKV-7 usable from
 standard HF APIs with near-production correctness, performance, memory behavior,
 training compatibility, quantized inference, and reproducible benchmarks.
 
+## Ordinary-user setup requests
+
+When a user asks how to install, run, or troubleshoot their first model, read
+`docs/AI_ASSISTED_SETUP.md` and `docs/USER_GUIDE_ZH.md` or
+`docs/USER_GUIDE.md` before acting. Keep that task separate from benchmark and
+kernel work. Use `examples/check_environment.py` before and after model
+conversion, request confirmation before large downloads, and do not report
+success until `examples/generate.py` exits successfully with generated text.
+
 ## Current Agent Contract: Native Fused HF Backend
 
 This is the active contract for the next workers on this branch. Treat
