@@ -1,5 +1,8 @@
 # RTX 5090 BF16/W4 Marlin hybrid acceptance — 2026-07-16
 
+> Historical baseline. The production BN/TN grid and fused FFN-key successor
+> is [`../5090_bn_tn_tensorcore_20260716/`](../5090_bn_tn_tensorcore_20260716/README.md).
+
 ## Result
 
 Exact-card paired-baseline acceptance passes for official g1h 1.5B and 7.2B

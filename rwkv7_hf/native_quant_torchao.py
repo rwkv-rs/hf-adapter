@@ -9,6 +9,9 @@ the underlying ``aten::_weight_int4pack_mm`` CUDA contract is bf16.
 """
 from __future__ import annotations
 
+import inspect
+import types
+
 try:  # pragma: no cover - optional dependency
     import torch
 except Exception:  # pragma: no cover
@@ -19,6 +22,86 @@ from .kernel_policy import current_kernel_policy
 
 
 TORCHAO_QUANTIZATIONS = ("torchao_w8", "torchao_w4")
+
+
+def _fla_rwkv7_ffn_forward_fused_relu2(
+    self,
+    x,
+    attention_mask=None,
+    state=None,
+    cu_seqlens=None,
+    **kwargs,
+):
+    """FLA RWKV7 FFN forward with the key activation in Marlin's epilogue.
+
+    This mirrors FLA's public RWKV7FeedForward contract.  It is installed only
+    on an exact, recognized FLA module; generic Marlin ``forward`` remains a
+    plain Linear so arbitrary HF callers cannot accidentally square twice.
+    """
+
+    from fla.modules.token_shift import token_shift
+
+    if attention_mask is not None:
+        x = x.mul(attention_mask[:, -x.shape[-2] :, None])
+    if state is not None:
+        delta, ffn_state = token_shift(
+            x,
+            cu_seqlens,
+            cache=state[self.layer_idx]["ffn_state"],
+            output_cache=True,
+        )
+    else:
+        delta, ffn_state = token_shift(x, cu_seqlens, output_cache=True)
+    if state is not None:
+        state.update(ffn_state=ffn_state, layer_idx=self.layer_idx, offset=0)
+    mixed = x.addcmul(delta, self.x_k)
+    return self.value(self.key.rwkv7_forward_relu2(mixed)), state
+
+
+def _enable_fla_fused_relu2_ffn(model, key_names) -> int:
+    """Patch only recognized FLA RWKV7 FFNs; fail safely on other models."""
+
+    enabled = 0
+    for key_name in key_names:
+        if not key_name.endswith(".ffn.key"):
+            continue
+        ffn_name = key_name[: -len(".key")]
+        try:
+            ffn = model.get_submodule(ffn_name)
+        except Exception:
+            continue
+        module_name = type(ffn).__module__
+        if (
+            not module_name.startswith("fla.models.rwkv7.")
+            or type(ffn).__name__ != "RWKV7FeedForward"
+        ):
+            continue
+        if not all(
+            hasattr(ffn, attr)
+            for attr in ("key", "value", "act_fn", "x_k", "layer_idx")
+        ):
+            continue
+        try:
+            parameters = tuple(inspect.signature(type(ffn).forward).parameters)
+        except (TypeError, ValueError):
+            continue
+        if parameters[:5] != (
+            "self",
+            "x",
+            "attention_mask",
+            "state",
+            "cu_seqlens",
+        ):
+            continue
+        if not callable(getattr(ffn.key, "rwkv7_forward_relu2", None)):
+            continue
+        if getattr(ffn, "_rwkv7_fused_relu2_forward", False):
+            enabled += 1
+            continue
+        ffn.forward = types.MethodType(_fla_rwkv7_ffn_forward_fused_relu2, ffn)
+        ffn._rwkv7_fused_relu2_forward = True
+        enabled += 1
+    return enabled
 
 
 def _torchao_w4_5090_speed_shape_supported(
@@ -225,7 +308,13 @@ def quantize_model_torchao(
             setattr(
                 parent,
                 attr,
-                marlin_linear_cls(module, group_size=int(group_size)),
+                marlin_linear_cls(
+                    module,
+                    group_size=int(group_size),
+                    fp32_reduce=False,
+                    production_bn_tn=True,
+                    fuse_relu2=name.lower().endswith(".ffn.key"),
+                ),
             )
             continue
         if fp16_w4_bridge:
@@ -235,6 +324,14 @@ def quantize_model_torchao(
             parent_name, _, attr = name.rpartition(".")
             parent = model.get_submodule(parent_name) if parent_name else model
             setattr(parent, attr, TorchAOW4FP16Linear(module, output_dtype=torch.float16))
+    fused_relu2_ffn_modules = _enable_fla_fused_relu2_ffn(
+        model,
+        [
+            name
+            for name, exact in targets
+            if exact and name.lower().endswith(".ffn.key")
+        ],
+    )
     setattr(
         model,
         "_rwkv7_native_mm_quantization",
@@ -251,6 +348,16 @@ def quantize_model_torchao(
         model,
         "_rwkv7_native_mm_exact_5090_speed_modules",
         int(exact_5090_speed_targets),
+    )
+    setattr(
+        model,
+        "_rwkv7_native_mm_exact_5090_kernel",
+        "bntn_marlin_bf16_w4" if exact_5090_speed_targets else None,
+    )
+    setattr(
+        model,
+        "_rwkv7_native_mm_fused_relu2_ffn_modules",
+        int(fused_relu2_ffn_modules),
     )
     setattr(
         model,

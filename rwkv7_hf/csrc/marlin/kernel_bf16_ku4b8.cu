@@ -6,6 +6,21 @@
 
 namespace MARLIN_NAMESPACE_NAME {
 
+// Blackwell latency grid: BF16/U4B8, group-128 (8 x K16), two-stage pipeline.
+// BN is N_BLOCKS*16.  The coalesced epilogue writes one int4 vector, i.e. TN=8
+// contiguous BF16 output columns per output writer.
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 256, 1, 8, 8, true, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 1, 8, 4, true, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 1, 4, 8, true, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 256, 1, 8, 8, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 1, 8, 4, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 1, 4, 8, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 256, 2, 16, 4, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 2, 8, 4, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 2, 4, 8, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 3, 4, 8, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 128, 4, 4, 8, false, 2, 8, false>( MARLIN_KERNEL_PARAMS );
+
 // Instantiations for dtype=bf16, weight=vllm::kU4B8
 
 template __global__ void Marlin<nv_bfloat16, vllm::kU4B8.id(), vllm::kBFloat16.id(), 256, 1, 8, 8, true, pipe_stages, 0, false>( MARLIN_KERNEL_PARAMS );

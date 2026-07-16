@@ -98,8 +98,11 @@ torch::Tensor MARLIN_GEMM_EXPORT_NAME(
     std::optional<torch::Tensor> const& g_idx_or_none,
     std::optional<torch::Tensor> const& perm_or_none, torch::Tensor& workspace,
     vllm::ScalarTypeId const& b_q_type_id, int64_t size_m, int64_t size_n,
-    int64_t size_k, bool is_k_full, bool use_atomic_add, bool use_fp32_reduce,
-    bool is_zp_float) {
+    int64_t size_k, int64_t thread_k, int64_t thread_n,
+    int64_t num_threads, int64_t sms, int64_t stages,
+    int64_t expected_bn, int64_t expected_tn, bool fuse_relu2,
+    bool is_k_full, bool use_atomic_add,
+    bool use_fp32_reduce, bool is_zp_float) {
   TORCH_CHECK_NOT_IMPLEMENTED(false,
                               "marlin_gemm(..) requires CUDA_ARCH >= 7.5");
   return torch::empty({1, 1});
@@ -632,6 +635,28 @@ MarlinFuncPtr get_marlin_kernel(const vllm::ScalarType q_type,
     }
   }
 
+  // The upstream BF16 path only emitted the deep pipeline.  Blackwell decode
+  // is latency sensitive, so the production BN/TN tuner also emits the exact
+  // U4B8/group-128 stage-2 grid instead of pretending a launch-only sweep is a
+  // complete tile search.
+  if constexpr (std::is_same<scalar_t, nv_bfloat16>::value) {
+    if (stages == 2) {
+      if (false) {
+      }
+      _GET_IF(vllm::kU4B8, 1, 8, 8, true, 2, 8, 256, false)
+      _GET_IF(vllm::kU4B8, 1, 8, 4, true, 2, 8, 128, false)
+      _GET_IF(vllm::kU4B8, 1, 4, 8, true, 2, 8, 128, false)
+      _GET_IF(vllm::kU4B8, 1, 8, 8, false, 2, 8, 256, false)
+      _GET_IF(vllm::kU4B8, 1, 8, 4, false, 2, 8, 128, false)
+      _GET_IF(vllm::kU4B8, 1, 4, 8, false, 2, 8, 128, false)
+      _GET_IF(vllm::kU4B8, 2, 16, 4, false, 2, 8, 256, false)
+      _GET_IF(vllm::kU4B8, 2, 8, 4, false, 2, 8, 128, false)
+      _GET_IF(vllm::kU4B8, 2, 4, 8, false, 2, 8, 128, false)
+      _GET_IF(vllm::kU4B8, 3, 4, 8, false, 2, 8, 128, false)
+      _GET_IF(vllm::kU4B8, 4, 4, 8, false, 2, 8, 128, false)
+    }
+  }
+
   if (stages == pipe_stages) {
     if (false) {
     }
@@ -749,7 +774,9 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
                void* workspace, vllm::ScalarType const& q_type, bool has_bias,
                bool has_act_order, bool is_k_full, bool has_zp, int num_groups,
                int group_size, int dev, cudaStream_t stream, int thread_k_init,
-               int thread_n_init, int sms, bool use_atomic_add,
+               int thread_n_init, int num_threads_init, int stages_init,
+               int sms, int expected_bn, int expected_tn, bool fuse_relu2,
+               bool use_atomic_add,
                bool use_fp32_reduce, bool is_zp_float) {
   if (has_zp) {
     TORCH_CHECK(
@@ -831,7 +858,17 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
                   (major_capability == 7 && minor_capability >= 5),
               "marlin kernel only supports Turing or newer GPUs.");
 
-  int stages = pipe_stages;
+  TORCH_CHECK(stages_init == -1 || stages_init == 2 || stages_init == pipe_stages,
+              "Marlin stages must be -1, 2, or ", pipe_stages);
+  TORCH_CHECK(expected_bn == -2 || expected_bn == -1 || expected_bn == 64 ||
+                  expected_bn == 128 || expected_bn == 256,
+              "expected BN must be -2 (per-launch production policy), -1, "
+              "64, 128, or 256");
+  TORCH_CHECK(expected_tn == -1 || expected_tn == 8,
+              "the vectorized BF16 epilogue supports TN=8");
+  TORCH_CHECK(!(fuse_relu2 && use_atomic_add),
+              "fused ReLU2 is incompatible with atomic partial reduction");
+  int stages = stages_init == -1 ? pipe_stages : stages_init;
   if (major_capability == 7 && minor_capability == 5) {
     stages = 2;
     if constexpr (!std::is_same<scalar_t, half>::value) {
@@ -850,7 +887,8 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
   while (rest_m) {
     int thread_k = thread_k_init;
     int thread_n = thread_n_init;
-    bool manual_override = thread_k != -1 && thread_n != -1;
+    bool manual_override =
+        thread_k != -1 && thread_n != -1 && num_threads_init != -1;
     int attempt_thread_m_blocks = max_thread_m_blocks;
     bool force_exact_split = false;
     // On the local 124-SM sm_80 boards, a few exact-M shapes consistently beat
@@ -880,7 +918,7 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
     exec_config_t exec_cfg;
     thread_config_t thread_tfg;
     if (thread_k != -1 && thread_n != -1) {
-      thread_tfg = thread_config_t{thread_k, thread_n, default_threads};
+      thread_tfg = thread_config_t{thread_k, thread_n, num_threads_init};
       exec_cfg = exec_config_t{1, thread_tfg};
       TORCH_CHECK(prob_n % thread_n == 0, "prob_n = ", prob_n,
                   " is not divisible by thread_n = ", thread_n);
@@ -907,6 +945,16 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
     int num_threads = thread_tfg.num_threads;
     thread_k = thread_tfg.thread_k;
     thread_n = thread_tfg.thread_n;
+    // A logical GEMM may be split into a large aligned segment and a short
+    // tail.  Validate the production grid against each scheduler segment
+    // rather than applying one whole-GEMM BN to both launches.
+    int launch_expected_bn = expected_bn == -2
+                                 ? (prob_m_split <= 16 ? 128 : 256)
+                                 : expected_bn;
+    TORCH_CHECK(launch_expected_bn == -1 || thread_n == launch_expected_bn,
+                "selected Marlin block-N ", thread_n,
+                " does not match production BN ", launch_expected_bn,
+                " for internal M segment ", prob_m_split);
     int blocks = sms * exec_cfg.blocks_per_sm;
     if (exec_cfg.blocks_per_sm > 1)
       max_shared_mem_new =
@@ -958,7 +1006,7 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
         A_ptr, B_ptr, C_ptr, C_tmp_ptr, bias_ptr, s_ptr, s2_ptr, zp_ptr,
         g_idx_ptr, num_groups,
         prob_m_split, prob_n, prob_k, lda, locks, has_bias, part_use_atomic_add,
-        use_fp32_reduce, max_shared_mem_new);
+        use_fp32_reduce, fuse_relu2, max_shared_mem_new);
     // clang-format on
 
     A_ptr += prob_m_split * (lda / 8);
@@ -978,8 +1026,11 @@ torch::Tensor MARLIN_GEMM_EXPORT_NAME(
     std::optional<torch::Tensor> const& g_idx_or_none,
     std::optional<torch::Tensor> const& perm_or_none, torch::Tensor& workspace,
     vllm::ScalarTypeId const& b_q_type_id, int64_t size_m, int64_t size_n,
-    int64_t size_k, bool is_k_full, bool use_atomic_add, bool use_fp32_reduce,
-    bool is_zp_float) {
+    int64_t size_k, int64_t thread_k_override, int64_t thread_n_override,
+    int64_t num_threads_override, int64_t sms_override, int64_t stages_override,
+    int64_t expected_bn, int64_t expected_tn, bool fuse_relu2,
+    bool is_k_full, bool use_atomic_add,
+    bool use_fp32_reduce, bool is_zp_float) {
   vllm::ScalarType const b_q_type = vllm::ScalarType::from_id(b_q_type_id);
   int pack_factor = 32 / b_q_type.size_bits();
 
@@ -1019,14 +1070,25 @@ torch::Tensor MARLIN_GEMM_EXPORT_NAME(
   TORCH_CHECK(b_scales.device().is_cuda(), "b_scales is not on GPU");
   TORCH_CHECK(b_scales.is_contiguous(), "b_scales is not contiguous");
 
-  // thread_k: `k` size of a thread_tile in `weights` (can usually be left as
-  // auto -1)
-  int thread_k = -1;
-  // thread_n: `n` size of a thread_tile in `weights` (can usually be left as
-  // auto -1)
-  int thread_n = -1;
-  // sms: number of SMs to use for the kernel
-  int sms = marlin::get_marlin_device_info(a.get_device()).sms;
+  bool auto_schedule = thread_k_override == -1 && thread_n_override == -1 &&
+                       num_threads_override == -1;
+  bool manual_schedule = thread_k_override > 0 && thread_n_override > 0 &&
+                         num_threads_override > 0;
+  TORCH_CHECK(auto_schedule || manual_schedule,
+              "Marlin schedule must set thread_k, thread_n and num_threads "
+              "together, or leave all three at -1");
+  int thread_k = static_cast<int>(thread_k_override);
+  int thread_n = static_cast<int>(thread_n_override);
+  int num_threads = static_cast<int>(num_threads_override);
+  // Number of SM-resident CTAs used by the persistent tile scheduler.  The
+  // default uses the whole device; an explicit value is only exposed for the
+  // measured BN/TN production tuner and remains bounded by the physical GPU.
+  int physical_sms = marlin::get_marlin_device_info(a.get_device()).sms;
+  TORCH_CHECK(sms_override == -1 ||
+                  (sms_override > 0 && sms_override <= physical_sms),
+              "Marlin sms override must be -1 or in [1, ", physical_sms,
+              "]");
+  int sms = sms_override == -1 ? physical_sms : static_cast<int>(sms_override);
 
   // Alloc buffers
   const c10::cuda::OptionalCUDAGuard device_guard(at::device_of(a));
@@ -1235,7 +1297,9 @@ torch::Tensor MARLIN_GEMM_EXPORT_NAME(
         perm.data_ptr(), a_tmp.data_ptr<at::Half>(), size_m, size_n, size_k,
         a.stride(0), workspace.data_ptr(), b_q_type, has_bias, has_act_order,
         is_k_full, has_zp, num_groups, group_size, dev,
-        at::cuda::getCurrentCUDAStream(dev), thread_k, thread_n, sms,
+        at::cuda::getCurrentCUDAStream(dev), thread_k, thread_n, num_threads,
+        static_cast<int>(stages_override), sms, static_cast<int>(expected_bn),
+        static_cast<int>(expected_tn), fuse_relu2,
         use_atomic_add, use_fp32_reduce, is_zp_float);
     return c;
   }
@@ -1278,7 +1342,9 @@ torch::Tensor MARLIN_GEMM_EXPORT_NAME(
         g_idx.data_ptr(), perm.data_ptr(), a_tmp.data_ptr<at::BFloat16>(),
         size_m, size_n, size_k, a.stride(0), workspace.data_ptr(), b_q_type,
         has_bias, has_act_order, is_k_full, has_zp, num_groups, group_size, dev,
-        at::cuda::getCurrentCUDAStream(dev), thread_k, thread_n, sms,
+        at::cuda::getCurrentCUDAStream(dev), thread_k, thread_n, num_threads,
+        static_cast<int>(stages_override), sms, static_cast<int>(expected_bn),
+        static_cast<int>(expected_tn), fuse_relu2,
         use_atomic_add, use_fp32_reduce, is_zp_float);
     return c;
   }

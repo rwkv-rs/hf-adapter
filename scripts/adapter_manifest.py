@@ -49,6 +49,7 @@ ADAPTER_FILES = [
     "native_quant_bnb8.py",
     "native_quant_mm4.py",
     "native_quant_mm8.py",
+    "native_quant_bn_tn.py",
     "native_quant_marlin.py",
     "native_quant_marlin_sources.py",
     "native_quant_torchao.py",
