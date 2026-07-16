@@ -10,8 +10,6 @@
 这些命令主要是短 smoke：通过只能证明当前路径在本机完成了指定操作，不能自动证明
 加速、生产训练收敛、原生张量并行或长期稳定性。
 
-![从环境安装、模型转换到首次生成的流程图](assets/tutorials/01-first-run.png)
-
 ## 共同准备
 
 第一次仍然使用转换好的 0.1B 或 0.4B 模型。激活仓库 `.venv` 后检查模型和显卡：
@@ -32,8 +30,6 @@ python -m pip install -e ".[train]"
 投机解码先让较小的 draft 模型提出一组 token，再由 target 模型验证；不匹配时由
 target 纠正。贪心输出必须与 target 普通生成完全一致。
 
-![draft 模型提出 token、target 验证并保持精确输出的流程图](assets/tutorials/02-speculative-decoding.png)
-
 先用 target 自己同时充当 draft，验证 API 和正确性：
 
 ```bash
@@ -52,7 +48,8 @@ python tests\test_speculative_decode.py --model C:\path\to\target-model-hf --dev
 ```
 
 成功时应打印 `speculative_stats`、生成文本和 `PASS`；同模型 smoke 还应满足
-`acceptance_rate=1.0` 且没有 correction。它只证明正确性，不证明更快。
+`acceptance_rate=1.0` 且没有 correction。完成正确性检查后，再运行配对 benchmark
+确认实际加速效果。
 
 再换成同一词表、同一适配器协议的较小 RWKV-7 draft 模型：
 
@@ -102,8 +99,6 @@ off-the-shelf draft 作为 A/B 对照。
 
 先跑短 backward，再接真实数据。这能用较低成本发现后端不支持、梯度为零和显存不足。
 
-![单卡 LoRA backward 和 HF Trainer 验收流程图](assets/tutorials/03-single-gpu-training.png)
-
 运行 LoRA backward smoke：
 
 ```bash
@@ -137,8 +132,6 @@ python tests/test_native_trainer_smoke.py \
 仓库当前提供的是 HF 分层放置 / pipeline 方向 smoke。模型层分布到两张可见 CUDA
 显卡，并可与单卡输出对比。
 
-![两张 GPU 的模型层放置、状态传递和输出验收流程图](assets/tutorials/04-multi-gpu-inference.png)
-
 Linux 或 WSL2：
 
 ```bash
@@ -157,15 +150,13 @@ $env:CUDA_VISIBLE_DEVICES="0,1"
 python tests\test_device_map_generate.py --model C:\path\to\model-hf --dtype fp16 --attn-mode fused_recurrent --max-new-tokens 4 --compare-single-device
 ```
 
-成功时打印 `PASS`。这证明测试模型的 HF 分层放置和输出一致，不代表已经实现原生
-tensor parallel；小模型还可能因为跨卡传递而变慢。
+成功时打印 `PASS`，表示测试模型的 HF 分层放置和输出一致。该路线按层分配模型；
+性能评估请同时记录单卡参考和跨卡传递开销，小模型通常优先使用单卡。
 
 ## 4. 多卡训练：DeepSpeed ZeRO-2/3
 
 ZeRO-2 切分 optimizer state 和 gradient，ZeRO-3 进一步切分 parameter。该流程请在
 Linux 或 WSL2、至少两张可见 CUDA 显卡上运行。
-
-![DeepSpeed ZeRO-2 与 ZeRO-3 训练状态切分流程图](assets/tutorials/05-multi-gpu-training.png)
 
 先检查仓库配置文件：
 
@@ -190,5 +181,5 @@ checkpoint 连续性或 optimizer/scheduler/RNG 完整恢复。
 
 ## 5. 交给 AI 执行
 
-统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
-“投机解码”“多卡推理”或“DeepSpeed 训练”。本页不再维护第二套 AI 指令。
+需要 AI 协助时，请打开 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)，选择
+“投机解码”“多卡推理”或“DeepSpeed 训练”。AI 会返回完整命令、退出码和验收结果。
