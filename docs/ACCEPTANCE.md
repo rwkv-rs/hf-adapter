@@ -21,6 +21,17 @@ Last updated: **2026-07-16**.
 | ZeRO-2/3 training | **PASS for current smoke matrix** | ZeRO-2/3 base and resume evidence on V100/A100/A800/A6000 combinations | Longer training and larger ZeRO-3 resume matrix |
 | Initial speculative decoding | **PASS as experimental HF/Apple path** | HF-compatible target/draft harness and Apple target-greedy oracle evidence | Serving integration and broader quality/speed gates |
 
+## How to report completion
+
+The **current HF milestone is complete**, and the repository is suitable for a
+public HF-adapter milestone under the boundaries below. The broader universal
+requirement remains `PARTIAL`: full-memory quant speed, every target hardware
+family, wider Albatross matrices, and production PP/TP are not all closed.
+
+There is no official repository-wide completion percentage. Report the named
+scope and its status instead; do not estimate a percentage from TODO checkboxes
+or by counting the table rows above.
+
 ## Official requirement mapping
 
 ### 1. Performance, speed, accuracy and memory

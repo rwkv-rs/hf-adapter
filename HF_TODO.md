@@ -23,6 +23,11 @@ The unchecked items below are the **project-wide remaining roadmap** needed for
 universal “all cards/all shapes/upstream” claims. They are not unfinished work
 from the completed current milestone.
 
+Do not convert the unchecked roadmap, checkbox counts, or status-row counts
+into a repository-wide completion percentage. Completion is reported only for
+an explicitly named milestone; universal production scope remains `PARTIAL`
+until its own acceptance gates close.
+
 ## P0 — Remaining universal production gaps
 
 ### 1. Full-memory W8/W4 performance
