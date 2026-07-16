@@ -47,8 +47,6 @@ python -m pip install -e ".[cuda]"
 RESULT: READY
 ```
 
-![首次运行流程](docs/assets/tutorials/01-first-run.png)
-
 ## 准备模型
 
 如果你已经有转换好的 Hugging Face 模型目录，可以直接进入下一节。模型目录至少应

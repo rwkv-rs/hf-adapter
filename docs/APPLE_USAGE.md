@@ -6,8 +6,6 @@ Apple 用户可以选择三层路线：
 - **MLX**：Apple 原生循环推理、会话、动态批处理和 packed W8/W4；
 - **CoreML**：面向 macOS/iOS runtime 的部署导出原型。
 
-![MPS 兼容、MLX serving 和 CoreML 部署路线](assets/tutorials/10-apple-deployment.png)
-
 需要 Apple Silicon Mac、Python 3.10+ 和检查通过的 HF 模型。第一次用 0.1B 或
 0.4B。Intel Mac 不是 MLX 目标。
 

@@ -10,8 +10,6 @@
 这些命令主要是短 smoke：通过只能证明当前路径在本机完成了指定操作，不能自动证明
 加速、生产训练收敛、原生张量并行或长期稳定性。
 
-![从环境安装、模型转换到首次生成的流程图](assets/tutorials/01-first-run.png)
-
 ## 共同准备
 
 第一次仍然使用转换好的 0.1B 或 0.4B 模型。激活仓库 `.venv` 后检查模型和显卡：
@@ -31,8 +29,6 @@ python -m pip install -e ".[train]"
 
 投机解码先让较小的 draft 模型提出一组 token，再由 target 模型验证；不匹配时由
 target 纠正。贪心输出必须与 target 普通生成完全一致。
-
-![draft 模型提出 token、target 验证并保持精确输出的流程图](assets/tutorials/02-speculative-decoding.png)
 
 先用 target 自己同时充当 draft，验证 API 和正确性：
 
@@ -103,8 +99,6 @@ off-the-shelf draft 作为 A/B 对照。
 
 先跑短 backward，再接真实数据。这能用较低成本发现后端不支持、梯度为零和显存不足。
 
-![单卡 LoRA backward 和 HF Trainer 验收流程图](assets/tutorials/03-single-gpu-training.png)
-
 运行 LoRA backward smoke：
 
 ```bash
@@ -138,8 +132,6 @@ python tests/test_native_trainer_smoke.py \
 仓库当前提供的是 HF 分层放置 / pipeline 方向 smoke。模型层分布到两张可见 CUDA
 显卡，并可与单卡输出对比。
 
-![两张 GPU 的模型层放置、状态传递和输出验收流程图](assets/tutorials/04-multi-gpu-inference.png)
-
 Linux 或 WSL2：
 
 ```bash
@@ -165,8 +157,6 @@ python tests\test_device_map_generate.py --model C:\path\to\model-hf --dtype fp1
 
 ZeRO-2 切分 optimizer state 和 gradient，ZeRO-3 进一步切分 parameter。该流程请在
 Linux 或 WSL2、至少两张可见 CUDA 显卡上运行。
-
-![DeepSpeed ZeRO-2 与 ZeRO-3 训练状态切分流程图](assets/tutorials/05-multi-gpu-training.png)
 
 先检查仓库配置文件：
 
