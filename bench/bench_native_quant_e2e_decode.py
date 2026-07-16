@@ -131,6 +131,7 @@ def save_baseline(args, row: dict[str, Any], prompt_logits, final_logits) -> Non
             "prompt_logits": prompt_logits.cpu(),
             "final_logits": final_logits.cpu(),
             "next_token": int(row["next_token"]),
+            "prefill_tokps_total": float(row["prefill_tokps_total"]),
             "decode_tokps_total": float(row["decode_tokps_total"]),
             "model_footprint_mb": float(row["model_footprint_mb"]),
         },
@@ -218,14 +219,21 @@ def count_modules(model) -> dict[str, int]:
         "mm8": 0,
         "mm4": 0,
         "a8w8": 0,
+        "marlin_w4": 0,
         "torchao_w8": 0,
         "torchao_w4": 0,
     }
     for mod in model.modules():
         name = type(mod).__name__
         if isinstance(mod, torch.nn.Linear):
-            impl = getattr(getattr(mod, "weight", None), "tensor_impl", None)
-            if hasattr(impl, "packed_weight"):
+            weight = getattr(mod, "weight", None)
+            impl = getattr(weight, "tensor_impl", None)
+            weight_type = type(weight).__name__
+            if (
+                hasattr(impl, "packed_weight")
+                or weight_type == "Int4TilePackedTo4dTensor"
+                or (hasattr(weight, "qdata") and hasattr(weight, "scale_and_zero"))
+            ):
                 counts["torchao_w4"] += 1
             elif hasattr(impl, "int_data"):
                 counts["torchao_w8"] += 1
@@ -237,6 +245,8 @@ def count_modules(model) -> dict[str, int]:
             counts["mm4"] += 1
         elif name == "A8W8Linear":
             counts["a8w8"] += 1
+        elif name == "MarlinW4Linear":
+            counts["marlin_w4"] += 1
     return counts
 
 
@@ -275,9 +285,18 @@ def benchmark_decode(args, tok, model, ids):
         step_backend = last_fast_token_backend(model) or os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
 
     samples = []
+    # Exclude one-time import/compile/cache construction from paired steady
+    # prefill timing, just as decode excludes its warmup steps.
+    with torch.inference_mode():
+        model(ids, use_cache=True, logits_to_keep=1)
+    cuda_sync(args.device)
     for _repeat in range(args.timing_repeats):
         with torch.inference_mode():
+            cuda_sync(args.device)
+            prefill_start = time.time()
             out = model(ids, use_cache=True, logits_to_keep=1)
+            cuda_sync(args.device)
+            prefill_sec = time.time() - prefill_start
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
             prompt_logits = out.logits[:, -1].float().detach().cpu()
@@ -296,6 +315,11 @@ def benchmark_decode(args, tok, model, ids):
             final_logits = out.logits[:, -1].float().detach().cpu()
         samples.append(
             {
+                "prefill_sec": prefill_sec,
+                "prefill_tokps_total": round(
+                    (ids.shape[0] * ids.shape[1]) / prefill_sec,
+                    1,
+                ),
                 "decode_sec": dt,
                 "decode_tokps_total": round((ids.shape[0] * args.decode_tokens) / dt, 1),
                 "decode_tokps_per_seq": round(args.decode_tokens / dt, 1),
@@ -309,7 +333,16 @@ def benchmark_decode(args, tok, model, ids):
             }
         )
     selected = sorted(samples, key=lambda item: float(item["decode_sec"]))[len(samples) // 2]
+    prefill_selected = sorted(
+        samples,
+        key=lambda item: float(item["prefill_sec"]),
+    )[len(samples) // 2]
+    selected["prefill_sec"] = prefill_selected["prefill_sec"]
+    selected["prefill_tokps_total"] = prefill_selected["prefill_tokps_total"]
     selected["timing_repeats"] = len(samples)
+    selected["prefill_tokps_samples"] = [
+        float(item["prefill_tokps_total"]) for item in samples
+    ]
     selected["decode_tokps_samples"] = [float(item["decode_tokps_total"]) for item in samples]
     return selected
 
@@ -368,6 +401,7 @@ def main() -> int:
     baseline_prompt = None
     baseline_final = None
     baseline_next = None
+    baseline_prefill_tokps = None
     baseline_tokps = None
     baseline_footprint = None
     out_path = Path(args.results) if args.results else None
@@ -385,6 +419,7 @@ def main() -> int:
             baseline_prompt = dense_res["prompt_logits"]
             baseline_final = dense_res["final_logits"]
             baseline_next = dense_res["next_token"]
+            baseline_prefill_tokps = dense_res["prefill_tokps_total"]
             baseline_tokps = dense_res["decode_tokps_total"]
             baseline_footprint = dense_footprint
         replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
@@ -402,10 +437,12 @@ def main() -> int:
             baseline_prompt = res.pop("prompt_logits")
             baseline_final = res.pop("final_logits")
             baseline_next = res["next_token"]
+            baseline_prefill_tokps = res["prefill_tokps_total"]
             baseline_tokps = res["decode_tokps_total"]
             baseline_footprint = footprint
             prompt_cos = final_cos = 1.0
             same_next = True
+            prefill_speed_ratio = 1.0
             speed_ratio = 1.0
             footprint_ratio = 1.0
         else:
@@ -415,6 +452,12 @@ def main() -> int:
                     baseline_prompt = cached_baseline["prompt_logits"]
                     baseline_final = cached_baseline["final_logits"]
                     baseline_next = int(cached_baseline["next_token"])
+                    baseline_prefill_tokps = float(
+                        cached_baseline.get(
+                            "prefill_tokps_total",
+                            cached_baseline.get("row", {}).get("prefill_tokps_total", 0.0),
+                        )
+                    ) or None
                     baseline_tokps = float(cached_baseline["decode_tokps_total"])
                     baseline_footprint = float(cached_baseline["model_footprint_mb"])
             prompt_logits = res.pop("prompt_logits")
@@ -424,12 +467,18 @@ def main() -> int:
                     raise RuntimeError("quantized run has no in-process or cached fp16 baseline")
                 prompt_cos = final_cos = None
                 same_next = None
+                prefill_speed_ratio = None
                 speed_ratio = None
                 footprint_ratio = None
             else:
                 prompt_cos = F.cosine_similarity(baseline_prompt.flatten().unsqueeze(0), prompt_logits.flatten().unsqueeze(0)).item()
                 final_cos = F.cosine_similarity(baseline_final.flatten().unsqueeze(0), final_logits.flatten().unsqueeze(0)).item()
                 same_next = int(res["next_token"]) == int(baseline_next)
+                prefill_speed_ratio = (
+                    float(res["prefill_tokps_total"]) / float(baseline_prefill_tokps)
+                    if baseline_prefill_tokps is not None
+                    else None
+                )
                 speed_ratio = float(res["decode_tokps_total"]) / float(baseline_tokps)
                 footprint_ratio = float(footprint) / float(baseline_footprint)
         row = {
@@ -452,9 +501,11 @@ def main() -> int:
             "replaced_modules": replaced,
             "module_counts": module_counts,
             "model_footprint_mb": footprint,
+            "baseline_prefill_tokps_total": round(float(baseline_prefill_tokps), 1) if baseline_prefill_tokps is not None else None,
             "baseline_decode_tokps_total": round(float(baseline_tokps), 1) if baseline_tokps is not None else None,
             "baseline_model_footprint_mb": round(float(baseline_footprint), 1) if baseline_footprint is not None else None,
             "footprint_ratio_vs_fp16": round(footprint_ratio, 4) if footprint_ratio is not None else None,
+            "prefill_speed_ratio_vs_fp16": round(prefill_speed_ratio, 4) if prefill_speed_ratio is not None else None,
             "decode_speed_ratio_vs_fp16": round(speed_ratio, 4) if speed_ratio is not None else None,
             "prompt_logits_cos_vs_fp16": round(float(prompt_cos), 8) if prompt_cos is not None else None,
             "final_logits_cos_vs_fp16": round(float(final_cos), 8) if final_cos is not None else None,

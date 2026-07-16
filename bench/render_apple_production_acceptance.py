@@ -42,6 +42,13 @@ def render(manifest: dict[str, object], *, root: Path) -> str:
     out = [
         "# Apple Silicon 生产级硬门清单",
         "",
+        f"> **Strict global audit snapshot, manifest `{_cell(manifest.get('version'))}`.** This {len(required)}-gate",
+        "> checklist intentionally remains incomplete and is not the source for selected",
+        "> exact-profile production-close claims. Current bounded M5 B1/B8 conclusions",
+        "> are in [`APPLE_PRODUCTION_CLOSE.md`](APPLE_PRODUCTION_CLOSE.md). Re-run the",
+        "> checker before changing the counts below; do not hand-edit them to match a",
+        "> later partial close.",
+        "",
         "> **结论：%s。** 当前通过 **%d / %d** 个必选硬门。任何 `FAIL`、`MISSING` 或 `UNKNOWN` 都禁止声明 Apple 生产级完成。"
         % ("全部通过" if complete else "尚未达到生产级", passed, len(required)),
         "",

@@ -10,6 +10,32 @@
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
 
+## RTX 5090 BF16/W4 Marlin hybrid close
+
+The exact RTX 5090 g1h route now uses two complementary packed kernels under
+`torchao_w4 --policy speed`:
+
+- 1.5B keeps the high-accuracy TorchAO asymmetric W4 `lm_head` route.
+- 7.2B uses group-128 symmetric Marlin W4 for all 64 FFN key/value matrices
+  and TorchAO W4 for `lm_head`; 4096-square projections remain dense.
+
+Paired BF16 acceptance at prompt128/decode128 passes every measured phase:
+
+| Model | Batch | Footprint ratio | Prefill speed | Decode speed | Final cosine |
+|---|---:|---:|---:|---:|---:|
+| 1.5B | 1 | `0.9355x` | `1.0083x` | `1.0335x` | `0.99969822` |
+| 1.5B | 8 | `0.9355x` | `1.0090x` | `1.0187x` | `0.99960977` |
+| 7.2B | 1 | `0.5298x` | `1.2240x` | `1.4944x` | `0.99963725` |
+| 7.2B | 8 | `0.5298x` | `1.0835x` | `1.4872x` | `0.99955124` |
+
+All rows preserve the deterministic next token. The route is gated by exact
+device name, SM120 capability, BF16 dtype, module role and measured matrix
+shape. It does not alter fallback dispatch on any other card. The Marlin
+extension is compiled lazily from vendored Apache-2.0 sources and currently
+requires a compatible local CUDA toolkit.
+
+Evidence: [`../bench/5090_marlin_w4_hybrid_20260716/README.md`](../bench/5090_marlin_w4_hybrid_20260716/README.md).
+
 ## RTX 4090 g1h 7.2B promoted result
 
 The bsz8 matrix covers prompt 128/512/2048 and decode 128/512. Route
@@ -88,6 +114,8 @@ python bench/summarize_blackwell_quant_matrix.py \
 
 ## Main open item
 
-The remaining quantization problem is not loading or correctness. It is a fused
-full-memory projection/prefill implementation that provides the large W8/W4
-payload reduction while remaining fp16-or-faster across old and new cards.
+The RTX 5090 7.2B FFN-heavy W4 lane now provides a large payload reduction and
+all-phase speed win. The remaining project-wide problem is extending that
+result to the still-dense square projections, W8, old cards, Hopper, AMD and
+the rest of the declared common-card matrix without regressing any measured
+fallback.

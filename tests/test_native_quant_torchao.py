@@ -114,3 +114,98 @@ def test_torchao_w4_fp16_speed_policy_wraps_head(monkeypatch) -> None:
     assert model._rwkv7_native_mm_quantization == "torchao_w4_fp16_head"
     x = torch.randn(2, 8, dtype=torch.float16)
     assert model.lm_head(x).dtype == torch.float16
+
+
+def test_torchao_w4_5090_speed_shape_gate_is_exact() -> None:
+    gate = qao._torchao_w4_5090_speed_shape_supported
+    enabled = ((16384, 4096), (4096, 16384))
+    assert gate(
+        "model.layers.0.ffn.key",
+        (16384, 4096),
+        torch.bfloat16,
+        (12, 0),
+        enabled,
+    )
+    assert gate(
+        "model.layers.0.ffn.value",
+        (4096, 16384),
+        torch.bfloat16,
+        (12, 0),
+        enabled,
+    )
+    assert not gate(
+        "model.layers.0.attn.r_proj",
+        (4096, 4096),
+        torch.bfloat16,
+        (12, 0),
+        enabled,
+    )
+    assert not gate(
+        "model.layers.0.ffn.key",
+        (16384, 4096),
+        torch.float16,
+        (12, 0),
+        enabled,
+    )
+    assert not gate(
+        "model.layers.0.ffn.key",
+        (16384, 4096),
+        torch.bfloat16,
+        (8, 9),
+        enabled,
+    )
+    assert not gate(
+        "model.layers.0.ffn.key",
+        (16384, 4096),
+        torch.bfloat16,
+        (12, 0),
+        (),
+    )
+
+
+def test_torchao_w4_speed_policy_adds_only_measured_5090_ffn(monkeypatch) -> None:
+    class FakeMarlinW4Linear(torch.nn.Module):
+        def __init__(self, inner, *, group_size):
+            super().__init__()
+            self.inner = inner
+            self.group_size = group_size
+
+    class FFN(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.key = torch.nn.Linear(4, 16, bias=False, dtype=torch.bfloat16)
+            self.value = torch.nn.Linear(16, 4, bias=False, dtype=torch.bfloat16)
+
+    class Layer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.ffn = FFN()
+            self.other = torch.nn.Linear(4, 4, bias=False, dtype=torch.bfloat16)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Module()
+            self.model.layers = torch.nn.ModuleList([Layer()])
+            self.lm_head = torch.nn.Linear(4, 32, bias=False, dtype=torch.bfloat16)
+
+    calls = []
+    monkeypatch.setattr(qao, "_torchao_api", lambda: fake_api(calls))
+    fake_marlin = types.ModuleType("rwkv7_hf.native_quant_marlin")
+    fake_marlin.MarlinW4Linear = FakeMarlinW4Linear
+    monkeypatch.setitem(sys.modules, "rwkv7_hf.native_quant_marlin", fake_marlin)
+    monkeypatch.setattr(
+        qao,
+        "_torchao_w4_5090_speed_module",
+        lambda name, _module: name.endswith(".ffn.key") or name.endswith(".ffn.value"),
+    )
+    model = Model()
+    replaced = qao.quantize_model_torchao_w4(model, min_params=1, policy="speed")
+
+    assert replaced == 3
+    assert len(calls) == 1
+    assert calls[0][0] is model.lm_head
+    assert isinstance(model.model.layers[0].ffn.key, FakeMarlinW4Linear)
+    assert isinstance(model.model.layers[0].ffn.value, FakeMarlinW4Linear)
+    assert model._rwkv7_native_mm_quantization == "marlin_w4_5090_hybrid"
+    assert model._rwkv7_native_mm_exact_5090_speed_modules == 2
