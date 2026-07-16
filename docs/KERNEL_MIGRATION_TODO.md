@@ -1686,3 +1686,39 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   rerun the formal FP16/BF16 inference matrix, then run strict native lm_eval
   against the already-exact recurrent/reference lane before considering any
   production promotion.
+
+### 2026-08-29 — gate-audited candidate formal inference and strict-native lm_eval
+
+- Re-synced commit `5c467e2e3857e75880ab126cf34a01ef14a2ddca` through the
+  V100 jump host to the idle RTX 4080.  The first wheel-build attempt failed
+  only because the remote environment did not contain the optional `build`
+  frontend; the preserved source was then built without isolation using pip.
+  The resulting candidate pair is immutable for this validation round:
+  `rwkv7_hf-1.0.0 =
+  fa42443ecec6a02d0bb0542b76438ace0443c0ee6c46f531b1afa30af98ef4b9`
+  and `rwkv7_kernels-1.0.0.dev0 =
+  18edad2782f9420dcace52080e92f809d7b21d986391c0b2d4e566c6cdae6c37`.
+- The FP16 formal inference matrix passed all 0.1B/0.4B/1.5B cases for
+  B=`1/4`, T=`17/128`, padding, cached decode and 64-token greedy/beam
+  generation.  All tensors are finite, the calibrated state gate passes
+  360/360 comparisons, minimum logits cosine is `0.9999710`, and minimum state
+  cosine is `0.9999886`.  The report still exposes six long-prefill cases that
+  miss the separate aspirational `0.15` max-abs target; none is removed or
+  relabeled.  Evidence:
+  `/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-5c467e2e-candidate/4080/inference-formal-fp16.json`.
+- The BF16 tensor/state/cache checks and the 0.4B/1.5B generation checks pass,
+  but 0.1B greedy generation diverges at generated token six and therefore the
+  BF16 report remains `failed`.  Stepwise diagnosis shows an exact clean-model
+  BF16 tie at that step (tokens 47 and 21265 both have logit `3.765625`), while
+  the candidate selects token 21265 with logits `3.828125` versus `3.8125`.
+  This is preserved as a genuine near-tie failure; BF16 whole-model native is
+  not promoted.  Evidence: `inference-formal-bf16.json` and
+  `inference-diag-bf16-01b-greedy-stepwise.txt` in the same result root.
+- A strict whole-model native PIQA smoke (0.1B, batch 1/8, 16 samples) completed
+  2/2 with exit code zero.  Both manifests record the requested `native` model
+  policy and actual `native-nvidia-prefill-v2[dense_fallback]` calls; wheel,
+  source, model and dataset provenance are present.  The no-limit 48-unit FP16
+  formal matrix was then started as the only RTX 4080 GPU workload (runner PID
+  `3996222`) at
+  `/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-5c467e2e-candidate/4080/lm-eval-native-formal`.
+  It must finish naturally before any FLA, V100 or RTX 4090 work is scheduled.
