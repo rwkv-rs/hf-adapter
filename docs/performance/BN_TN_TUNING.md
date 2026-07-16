@@ -1,55 +1,178 @@
-# BN/TN kernel tuning
+# BN/TN CUDA kernel tuning
 
-`BN` and `TN` are separate CUDA tiling terms in this repository:
+This page is the public reference for the explicit BN/TN probe. Read it before
+interpreting the RTX 5090 JSONL files or proposing a BN/TN production policy.
 
-- **BN / block-N:** output columns owned by one CUDA thread block;
-- **TN / thread-N:** output columns accumulated by one CUDA thread;
-- the explicit probe launches `BN / TN` threads, and rejects configurations
-  that do not form complete 32-thread warps.
+## Current conclusion
 
-Do not confuse either term with bitsandbytes. Do not infer `TN` from a Triton
-`num_warps` value: Triton's physical lane/MMA layout is compiler controlled.
+**BN and TN are useful, independent launch parameters, but the tested scalar
+CUDA W8/W4 kernel is not a production fast path.** On RTX 5090 the sweep passed
+correctness in all 288 rows, but the best candidate beat same-shape dense FP16
+in `0/32` cases. No BN/TN candidate was added to runtime dispatch.
 
-## Measurement lane
+The later RTX 5090 7.2B W4 speed close uses a tensor-core Marlin FFN kernel. It
+does not promote or reuse this scalar BN/TN probe. See
+[`../../bench/5090_marlin_w4_hybrid_20260716/`](../../bench/5090_marlin_w4_hybrid_20260716/README.md).
 
-[`../../bench/bench_quant_bn_tn.py`](../../bench/bench_quant_bn_tn.py) compiles
-a small handwritten-CUDA W8/W4 decode probe and compares each legal `BN × TN`
-pair with:
+## Terminology
 
-1. the current native MM8/MM4 dispatch;
-2. same-shape dense fp16;
-3. the current quantized output for cosine and maximum-absolute-error gates.
+For an input `X[B,K]`, weight `W[K,N]`, and output `Y[B,N]`:
 
-The minimum required matrix is:
+| Term | Meaning in this probe | CUDA launch consequence |
+|---|---|---|
+| `BN` / block-N | Output columns assigned to one CUDA thread block | grid-x is `ceil(N / BN)` |
+| `TN` / thread-N | Output columns accumulated by one CUDA thread | block size is `BN / TN` threads |
+| `threads` | Physical threads in the block | exactly `BN / TN` |
 
-- true batch `1` and `8`;
-- square, FFN-up and FFN-down projections;
-- `BN={64,128,256}` and `TN={1,2,4,8}`, filtered by legal warp count;
-- exact GPU name, compute capability, Torch/CUDA versions and raw JSONL.
+For output tile `tile = blockIdx.x * BN`, thread `lane` computes columns
+`tile + lane + j * threads` for `j = 0..TN-1`. Therefore BN controls output
+tiling while TN trades thread-level work against block occupancy. They must not
+be collapsed into one label.
 
-Example:
+BN/TN is unrelated to **bitsandbytes**. `TN` is also not Triton
+`num_warps`: Triton's physical lane/MMA mapping is selected by the compiler,
+whereas this handwritten CUDA probe assigns an explicit per-thread output
+tile.
+
+## Legal configurations
+
+The default Cartesian product is `BN={64,128,256}` and `TN={1,2,4,8}`. A
+candidate is retained only when `BN / TN` produces 32–1024 threads in complete
+32-thread warps.
+
+| BN | TN | Threads | Warps | Legal |
+|---:|---:|---:|---:|---|
+| 64 | 1 | 64 | 2 | yes |
+| 64 | 2 | 32 | 1 | yes |
+| 64 | 4 / 8 | 16 / 8 | — | no: fewer than 32 threads |
+| 128 | 1 | 128 | 4 | yes |
+| 128 | 2 | 64 | 2 | yes |
+| 128 | 4 | 32 | 1 | yes |
+| 128 | 8 | 16 | — | no: fewer than 32 threads |
+| 256 | 1 | 256 | 8 | yes |
+| 256 | 2 | 128 | 4 | yes |
+| 256 | 4 | 64 | 2 | yes |
+| 256 | 8 | 32 | 1 | yes |
+
+This yields nine candidates per mode/batch/shape case.
+
+## What the benchmark measures
+
+[`../../bench/bench_quant_bn_tn.py`](../../bench/bench_quant_bn_tn.py) JIT
+compiles handwritten CUDA kernels and measures each legal pair against two
+same-run baselines:
+
+1. `current_ms`: the existing Triton `mm8_matmul_triton` or
+   `mm4_matmul_triton` implementation;
+2. `fp16_ms`: same-shape dense `X @ W` in FP16.
+
+The JSONL ratios are deliberately baseline-over-candidate:
+
+```text
+speedup_vs_current = current_ms / candidate_ms
+speedup_vs_fp16    = fp16_ms / candidate_ms
+```
+
+For both fields, **greater than 1 means the BN/TN candidate is faster**;
+less than 1 means it is slower. For example, `speedup_vs_current=2.60` and
+`speedup_vs_fp16=0.059` means “2.60x faster than the old quant kernel, but only
+5.9% of dense-FP16 speed.” It is not an FP16 speed win.
+
+Correctness is checked against the current quantized kernel, not against dense
+FP16:
+
+- `cosine_vs_current` must meet `--min-cosine` (default `0.999`);
+- `max_abs_vs_current` is retained as diagnostic telemetry;
+- the lowest-latency correct row is selected as the case winner.
+
+## Required measurement matrix
+
+A card-local sweep should include:
+
+- true batch 1 and 8;
+- square, FFN-up, FFN-down, and output-head projections;
+- W8 and W4;
+- all nine legal default BN/TN pairs;
+- exact GPU name, compute capability, driver, Torch and CUDA versions;
+- warmup count, timed-run count, raw JSONL, and per-case winners.
+
+The probe is a synthetic projection microbenchmark. It does **not** measure
+model prefill, recurrent decode, full generation, peak model memory, or task
+quality. A microkernel result cannot establish an end-to-end production claim.
+
+## RTX 5090 result (2026-07-16)
+
+Environment: RTX 5090 32GB (`sm_120`), driver `595.58.03`, Torch
+`2.11.0+cu128`, CUDA 12.8, FP16 activations, 10 warmups and 50 CUDA-event
+runs. The matrix contains 32 mode/batch/shape cases and nine candidates per
+case: **288/288 rows passed correctness**.
+
+| Gate | Result |
+|---|---:|
+| Correct candidate rows | `288/288` |
+| Minimum cosine vs current quant | `0.999999642` |
+| Maximum absolute error vs current quant | `0.000977` |
+| Case winners faster than current quant | `4/32` |
+| Case winners faster than dense FP16 | `0/32` |
+| Winner `(BN,TN)=(64,1)` | `27/32` |
+
+The four wins against the old quant kernel are all W4, B8, square/FFN-up
+projections:
+
+| Shape `KxN` | BN/TN | vs current quant | vs dense FP16 |
+|---|---:|---:|---:|
+| `2048x2048` | `64/1` | `2.603268x` | `0.059335x` |
+| `2048x8192` | `64/1` | `2.527187x` | `0.063006x` |
+| `4096x4096` | `64/1` | `1.293249x` | `0.052171x` |
+| `4096x16384` | `64/1` | `1.257639x` | `0.225539x` |
+
+FFN-down and output-head cases regress, and every W8/B1 winner is slower than
+the existing quant path. The experiment therefore rejects this scalar design
+as a universal kernel even though it validates BN/TN as separate tuning axes.
+
+Full evidence:
+[`../../bench/5090_bn_tn_20260716/`](../../bench/5090_bn_tn_20260716/README.md).
+
+## Reproduce
 
 ```bash
 export CUDA_HOME=/usr/local/cuda-12.8
 export PATH="$VIRTUAL_ENV/bin:$CUDA_HOME/bin:$PATH"
+export PYTHONPATH=$PWD
+
 python bench/bench_quant_bn_tn.py \
-  --batch-sizes 1 8 \
-  --shapes 2048x2048 2048x8192 8192x2048 \
-  --output bench/<artifact>/bn_tn.jsonl
+  --modes mm8 mm4 --batch-sizes 1 8 \
+  --shapes 2048x2048 2048x8192 8192x2048 2048x65536 \
+  --block-n 64 128 256 --thread-n 1 2 4 8 \
+  --warmup 10 --runs 50 \
+  --output /tmp/bn_tn_1p5b.jsonl
 ```
 
-## Promotion rule
+Run the 7.2B shape set separately:
 
-A microkernel winner is not automatically a production winner. Promote a
-card/shape dispatch only when it passes quantized-output correctness, beats the
-current native kernel, and improves or preserves paired end-to-end prefill or
-decode throughput. Keep unmeasured cards on their existing route.
+```bash
+python bench/bench_quant_bn_tn.py \
+  --modes mm8 mm4 --batch-sizes 1 8 \
+  --shapes 4096x4096 4096x16384 16384x4096 4096x65536 \
+  --block-n 64 128 256 --thread-n 1 2 4 8 \
+  --warmup 10 --runs 50 \
+  --output /tmp/bn_tn_7p2b.jsonl
+```
 
-## RTX 5090 result
+The first run JIT-compiles a CUDA extension and is not part of the timed
+region. Use an idle GPU and preserve clock/power/process telemetry when making
+new performance claims.
 
-The 2026-07-16 `sm_120` sweep covers 288/288 correct rows over 32 W8/W4,
-B1/B8 and 1.5B/7.2B projection cases. Some internal W4 B8 shapes beat the
-current quant kernel, but every handwritten BN/TN winner remains slower than
-same-shape fp16 and the FFN-down/lm-head routes regress. No production dispatch
-is promoted from this experiment. Evidence:
-[`../../bench/5090_bn_tn_20260716/`](../../bench/5090_bn_tn_20260716/README.md).
+## Production promotion rule
+
+A BN/TN candidate may enter card policy only when all of the following pass:
+
+1. quantized-output correctness for every promoted shape;
+2. repeated same-card improvement over the current production quant kernel;
+3. FP16 equivalence or speed according to the declared gate;
+4. paired end-to-end prefill and decode with no regression;
+5. footprint/peak-memory and quality gates;
+6. exact-card/shape/dtype dispatch with fail-closed fallback elsewhere.
+
+The 2026-07-16 RTX 5090 probe passes item 1 only. Its correct status is
+**negative performance evidence; no production dispatch promoted**.
