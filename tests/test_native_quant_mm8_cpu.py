@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import torch
 
-from rwkv7_hf.native_quant_mm4 import MM4Linear
 from rwkv7_hf.native_quant_mm8 import (
     MM8Linear,
     mm8_gemv_available,
@@ -48,6 +47,31 @@ def main() -> int:
     assert out4_row.shape == (1, 16)
     assert torch.isfinite(out4_1d).all()
     assert torch.isfinite(out4_row).all()
+    epilogue_x = torch.randn(2, 32)
+    epilogue_linear = q4(epilogue_x)
+    residual = torch.randn_like(epilogue_linear)
+    torch.testing.assert_close(
+        q4.rwkv7_forward_relu2(epilogue_x),
+        torch.relu(epilogue_linear) ** 2,
+    )
+    torch.testing.assert_close(
+        q4.rwkv7_forward_add(epilogue_x, residual),
+        epilogue_linear + residual,
+    )
+
+    group_linear = torch.nn.Linear(128, 16)
+    q4_group = MM4Linear(group_linear, fused=True, group_size=128)
+    out4_group = q4_group(torch.randn(2, 128))
+    assert out4_group.shape == (2, 16)
+    assert q4_group.group_size == 128
+    assert q4_group.groupwise
+    assert torch.isfinite(out4_group).all()
+
+    q4_group256 = MM4Linear(torch.nn.Linear(256, 16), fused=True, group_size=256)
+    out4_group256 = q4_group256(torch.randn(2, 256))
+    assert out4_group256.shape == (2, 16)
+    assert q4_group256.group_size == 256
+    assert torch.isfinite(out4_group256).all()
 
     # Direct matmul_triton wrapper should also fall back for CPU or large 2D
     # inputs, matching the reference shape without launching Triton.

@@ -573,6 +573,35 @@ serving speed.
      accepting traffic. The compile latency is cold-start setup and is not
      included in steady-state throughput.
 
+### V100 packed-MM4 BN/TN and groupwise decode lane
+
+`rwkv7_hf.sm70_quant` now provides a separate exact-sm70 packed-W4 path:
+
+- B1 keeps fp16 activations and uses a warp A16 kernel;
+- B2/B4/B8 quantize activation rows once and reuse DP4A packed weights;
+- rowwise and groupwise kernels select independent `(BN,TN)` values from exact
+  `(rows,K,N)` tables;
+- group128 and group256 scales are explicit config, with group256 adding the
+  audited 2.9B head tiles `(32,1)/(8,1)/(8,1)/(32,1)` for B1/B2/B4/B8;
+- optional FFN ReLU-squared and residual-add epilogues remain default-off; the
+  exact 1.5B deployment profile opts in after its unfused B4 row failed.
+
+The fail-closed runner verifies policy, group size, group policy and fused
+epilogue state before
+reusing a row. It requires decode `>=1.0x` fp16, lower footprint, final cosine
+`>=0.998`, complete greedy equality and repeat determinism. One deployment
+config passes all seven cells for each promoted model: 1.5B
+memory/group128/fused, 2.9B speed/group256/unfused and 7.2B
+memory/group128/unfused. Decode minima are `1.0255x/1.0111x/1.0810x`;
+footprint is `0.5395x/0.9573x/0.3013x`.
+
+This does not promote full-memory prefill. The rejected tiled WMMA prototype
+reached only `0.054305x-0.115137x` fp16. Fused epilogues remain model-specific:
+they lift the latest-main 1.5B B4 row from an unfused `0.9997x` to `1.0255x`,
+while the 2.9B fused B4 probe remains rejected at `0.9997x`. Full rows and
+reproduction commands are in
+[`bench/v100_sm70_mm4_bntn_20260716/`](../../bench/v100_sm70_mm4_bntn_20260716/README.md).
+
 23. Fixed-shape native prefill CUDA Graph and 4090 promotion.
    - `_RWKV7NativeGraphPrefillRunner` captures the complete layer-wise native
      prefill path for a fixed `(batch, prompt_tokens, logits_to_keep)` shape,

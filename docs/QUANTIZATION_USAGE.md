@@ -103,6 +103,76 @@ MM4 则设置 `use_native_mm8=False`、`use_native_mm4=True`，并配置
   路线可以按精确显卡证据晋升为速度路线。
 - `memory` 替换更多 Linear，通常更省内存，但并不保证普遍快于 fp16。
 
+### V100 上的 MM4 decode 配置
+
+前置条件：精确 `sm_70` V100、fp16、可用的 CUDA 12.x 编译工具链，以及已经
+转换好的本地 HF 模型目录。先从 1.5B 和最小矩阵开始，不要直接用未验证模型
+改服务默认值。
+
+```python
+import os
+os.environ["RWKV7_NATIVE_MODEL"] = "1"
+
+# Select one exact-card profile before loading the model.
+profile = "2.9b"  # "1.5b", "2.9b", or "7.2b"
+profiles = {
+    "1.5b": ("memory", 128, "1"),
+    "2.9b": ("speed", 256, "0"),
+    "7.2b": ("memory", 128, "0"),
+}
+policy, group_size, fused_epilogue = profiles[profile]
+os.environ["RWKV7_SM70_W4_FUSED_EPILOGUE"] = fused_epilogue
+
+from transformers import AutoConfig, AutoModelForCausalLM
+
+path = f"/path/to/rwkv7-g1g-{profile}-hf"
+config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+config.use_native_mm8 = False
+config.use_native_mm4 = True
+config.native_mm4_policy = policy
+config.native_mm4_min_params = 8_000_000
+config.native_mm4_group_size = group_size
+config.native_mm4_group_policy = "lm_head"
+model = AutoModelForCausalLM.from_pretrained(
+    path, trust_remote_code=True, config=config, device_map="cuda"
+).eval()
+
+assert model._rwkv7_native_mm_quantization == "mm4"
+assert model._rwkv7_native_mm_replaced_modules > 0
+```
+
+三个配置不能混用：1.5B 使用 `memory + group128 + fused epilogue`，2.9B 使用
+`speed + group256 + unfused`，7.2B 使用 `memory + group128 + unfused`。1.5B/7.2B
+替换更多模块、更省模型内存，但 prefill 会明显变慢。fused epilogue 的全局默认值
+仍为关闭，只有精确的 1.5B 配置显式打开。2.9B 只替换 `lm_head`，因此省内存
+较少，但当前七个 paired-fp16 prefill 单元也达到 `1.0006x-1.0603x`。
+
+直接复制下面的命令做严格验收：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
+python bench/run_v100_sm70_mm4_production_matrix.py \
+  --model 2.9b=/path/to/rwkv7-g1g-2.9b-hf \
+  --policy speed --group-size 256 --group-policy lm_head \
+  --fused-epilogue false \
+  --output-dir /tmp/v100-mm4-2p9b
+```
+
+验收 1.5B 时将模型、policy/group 改为 `1.5b`、`memory/128`，并增加
+`--fused-epilogue true`；7.2B 使用 `memory/128` 和
+`--fused-epilogue false`。
+
+可观察的通过标准是命令退出 0，`summary.json` 中 `completed=7`，且 decode、
+footprint、logits、完整 greedy 和 repeat determinism 五项都是 `7`。runner 也会
+拒绝复用 policy/group/fused 配置不一致的旧结果。
+
+失败时先查看每个 cell 的 `.log`，确认 `CUDA_HOME`、编译器和当前 GPU 确实是
+`sm_70`；然后只删除失败 cell 的 JSONL 再重跑同一目录。不要把 fallback 的
+Torch 执行、一次 microbench 胜利或 `status=pass` 当成速度验收。当前限制是
+full-memory prefill 尚未晋升、2.9B speed 只量化 `lm_head`、其他显卡和模型必须
+重新跑精确矩阵。需要 AI 执行时只使用统一入口
+[`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)，选择其中的“量化验收”任务。
+
 先验证 config round-trip，再验证真实 MM8 持久化：
 
 ```bash

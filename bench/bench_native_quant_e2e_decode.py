@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -96,6 +99,37 @@ def model_metadata(args, model) -> dict[str, Any]:
     }
 
 
+def prepare_model_dir(
+    model_path: str, code_source: str
+) -> tuple[str, tempfile.TemporaryDirectory[str] | None]:
+    """Overlay current repo code without copying checkpoint payloads."""
+
+    if code_source == "model":
+        return model_path, None
+    source = Path(model_path).resolve()
+    repo_code = Path(__file__).resolve().parents[1] / "rwkv7_hf"
+    if not source.is_dir():
+        raise ValueError("--code-source repo requires a local converted model directory")
+    temporary = tempfile.TemporaryDirectory(
+        prefix="rwkv7_native_quant_repo_code_", dir=source.parent
+    )
+    target = Path(temporary.name)
+    for item in source.iterdir():
+        if item.name == "__pycache__" or item.suffix == ".py":
+            continue
+        link = target / item.name
+        try:
+            link.symlink_to(item, target_is_directory=item.is_dir())
+        except OSError:
+            if item.is_dir():
+                shutil.copytree(item, link)
+            else:
+                os.link(item, link)
+    for py_file in repo_code.glob("*.py"):
+        shutil.copy2(py_file, target / py_file.name)
+    return str(target), temporary
+
+
 def _safe_slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
 
@@ -120,7 +154,9 @@ def baseline_path(args) -> Path | None:
     return Path(args.baseline_dir) / f"{_safe_slug(key)}.pt"
 
 
-def save_baseline(args, row: dict[str, Any], prompt_logits, final_logits) -> None:
+def save_baseline(
+    args, row: dict[str, Any], prompt_logits, final_logits, greedy_tokens
+) -> None:
     path = baseline_path(args)
     if path is None:
         return
@@ -130,6 +166,7 @@ def save_baseline(args, row: dict[str, Any], prompt_logits, final_logits) -> Non
             "row": row,
             "prompt_logits": prompt_logits.cpu(),
             "final_logits": final_logits.cpu(),
+            "greedy_tokens": greedy_tokens,
             "next_token": int(row["next_token"]),
             "prefill_tokps_total": float(row["prefill_tokps_total"]),
             "decode_tokps_total": float(row["decode_tokps_total"]),
@@ -182,7 +219,15 @@ def last_native_model_decode_backend(model):
     return getattr(model, "_rwkv7_native_model_last_decode_backend", None)
 
 
-def quantize_model(model, quantization: str, min_params: int, policy: str) -> tuple[int, dict[str, int]]:
+def quantize_model(
+    model,
+    quantization: str,
+    min_params: int,
+    policy: str,
+    *,
+    mm4_group_size: int = 0,
+    mm4_group_policy: str = "all",
+) -> tuple[int, dict[str, int]]:
     if quantization == "none":
         return 0, count_modules(model)
     if quantization == "mm8":
@@ -190,7 +235,13 @@ def quantize_model(model, quantization: str, min_params: int, policy: str) -> tu
         replaced = quantize_model_mm8(model, min_params=min_params, fused=True, policy=policy)
     elif quantization == "mm4":
         from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
-        replaced = quantize_model_mm4(model, min_params=min_params, policy=policy)
+        replaced = quantize_model_mm4(
+            model,
+            min_params=min_params,
+            policy=policy,
+            group_size=mm4_group_size,
+            group_policy=mm4_group_policy,
+        )
     elif quantization in {"torchao_w8", "torchao_w4"}:
         from rwkv7_hf.native_quant_torchao import quantize_model_torchao
 
@@ -263,7 +314,8 @@ def load_model(args, dtype, *, load_on_cpu: bool = False):
     }
     if load_on_cpu:
         load_kwargs["low_cpu_mem_usage"] = True
-    model = AutoModelForCausalLM.from_pretrained(args.hf_dir, **load_kwargs).eval()
+    model_dir = getattr(args, "effective_hf_dir", args.hf_dir)
+    model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs).eval()
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
         actual = bool(getattr(model.config, "fuse_norm", False))
@@ -327,10 +379,12 @@ def benchmark_decode(args, tok, model, ids):
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
             prompt_logits = out.logits[:, -1].float().detach().cpu()
+            greedy_tokens = []
             for _ in range(args.warmup):
                 out = step_fn(nxt, past_key_values=state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
+                greedy_tokens.append(nxt.detach().cpu())
             cuda_sync(args.device)
             t0 = time.time()
             for _ in range(args.decode_tokens):
@@ -353,6 +407,7 @@ def benchmark_decode(args, tok, model, ids):
                 "decode_ms_per_step": round(1000 * dt / args.decode_tokens, 3),
                 "prompt_logits": prompt_logits,
                 "final_logits": final_logits,
+                "greedy_tokens": torch.cat(greedy_tokens, dim=1).tolist(),
                 "next_token": int(nxt[0, -1].detach().cpu()),
                 "fast_token_backend_effective": step_backend,
                 "native_model_decode_backend_effective": last_native_model_decode_backend(model),
@@ -371,12 +426,22 @@ def benchmark_decode(args, tok, model, ids):
         float(item["prefill_tokps_total"]) for item in samples
     ]
     selected["decode_tokps_samples"] = [float(item["decode_tokps_total"]) for item in samples]
+    greedy_hashes = [
+        hashlib.sha256(
+            json.dumps(item["greedy_tokens"], separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+        for item in samples
+    ]
+    selected["greedy_tokens_sha256"] = greedy_hashes[samples.index(selected)]
+    selected["greedy_repeat_sha256"] = greedy_hashes
+    selected["greedy_repeat_deterministic"] = len(set(greedy_hashes)) == 1
     return selected
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--code-source", choices=("repo", "model"), default="repo")
     ap.add_argument("--model-size-label", default="")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
@@ -393,6 +458,26 @@ def main() -> int:
         help="Run exactly one quantization in this process. Useful for fresh-process 7B+ rows.",
     )
     ap.add_argument("--min-params", type=int, default=8_000_000)
+    ap.add_argument(
+        "--mm4-group-size",
+        type=int,
+        choices=(0, 128, 256),
+        default=0,
+        help="native MM4 scale group: 0=row-wise, 128/256=groupwise V100 routes",
+    )
+    ap.add_argument(
+        "--mm4-group-policy",
+        choices=(
+            "all",
+            "lm_head",
+            "ffn_key",
+            "ffn_value",
+            "lm_head_and_key",
+            "lm_head_and_value",
+        ),
+        default="all",
+        help="modules that receive groupwise scales; other MM4 modules stay row-wise",
+    )
     ap.add_argument(
         "--policy",
         default="memory",
@@ -435,12 +520,16 @@ def main() -> int:
         args.quantizations = list(dict.fromkeys(["none", *args.quantizations]))
 
     dtype = DTYPES[args.dtype]
-    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    args.effective_hf_dir, code_overlay = prepare_model_dir(
+        args.hf_dir, args.code_source
+    )
+    tok = AutoTokenizer.from_pretrained(args.effective_hf_dir, trust_remote_code=True)
     ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
     rows = []
     baseline_prompt = None
     baseline_final = None
     baseline_next = None
+    baseline_greedy = None
     baseline_prefill_tokps = None
     baseline_tokps = None
     baseline_footprint = None
@@ -461,10 +550,18 @@ def main() -> int:
             baseline_prompt = dense_res["prompt_logits"]
             baseline_final = dense_res["final_logits"]
             baseline_next = dense_res["next_token"]
+            baseline_greedy = dense_res["greedy_tokens"]
             baseline_prefill_tokps = dense_res["prefill_tokps_total"]
             baseline_tokps = dense_res["decode_tokps_total"]
             baseline_footprint = dense_footprint
-        replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
+        replaced, module_counts = quantize_model(
+            model,
+            quantization,
+            args.min_params,
+            args.policy,
+            mm4_group_size=args.mm4_group_size,
+            mm4_group_policy=args.mm4_group_policy,
+        )
         if args.quantize_before_device:
             gc.collect()
             model.to(args.device)
@@ -478,15 +575,19 @@ def main() -> int:
         res = benchmark_decode(args, tok, model, ids)
         prompt_logits_for_baseline = res["prompt_logits"]
         final_logits_for_baseline = res["final_logits"]
+        greedy_tokens_for_baseline = res["greedy_tokens"]
         if quantization == "none":
             baseline_prompt = res.pop("prompt_logits")
             baseline_final = res.pop("final_logits")
             baseline_next = res["next_token"]
+            baseline_greedy = res.pop("greedy_tokens")
             baseline_prefill_tokps = res["prefill_tokps_total"]
             baseline_tokps = res["decode_tokps_total"]
             baseline_footprint = footprint
             prompt_cos = final_cos = 1.0
             same_next = True
+            same_greedy = True
+            first_greedy_mismatch = None
             prefill_speed_ratio = 1.0
             speed_ratio = 1.0
             footprint_ratio = 1.0
@@ -497,6 +598,7 @@ def main() -> int:
                     baseline_prompt = cached_baseline["prompt_logits"]
                     baseline_final = cached_baseline["final_logits"]
                     baseline_next = int(cached_baseline["next_token"])
+                    baseline_greedy = cached_baseline.get("greedy_tokens")
                     baseline_prefill_tokps = float(
                         cached_baseline.get(
                             "prefill_tokps_total",
@@ -507,11 +609,14 @@ def main() -> int:
                     baseline_footprint = float(cached_baseline["model_footprint_mb"])
             prompt_logits = res.pop("prompt_logits")
             final_logits = res.pop("final_logits")
+            greedy_tokens = res.pop("greedy_tokens")
             if baseline_prompt is None or baseline_final is None:
                 if not args.allow_missing_baseline:
                     raise RuntimeError("quantized run has no in-process or cached fp16 baseline")
                 prompt_cos = final_cos = None
                 same_next = None
+                same_greedy = None
+                first_greedy_mismatch = None
                 prefill_speed_ratio = None
                 speed_ratio = None
                 footprint_ratio = (
@@ -523,6 +628,22 @@ def main() -> int:
                 prompt_cos = F.cosine_similarity(baseline_prompt.flatten().unsqueeze(0), prompt_logits.flatten().unsqueeze(0)).item()
                 final_cos = F.cosine_similarity(baseline_final.flatten().unsqueeze(0), final_logits.flatten().unsqueeze(0)).item()
                 same_next = int(res["next_token"]) == int(baseline_next)
+                same_greedy = (
+                    greedy_tokens == baseline_greedy
+                    if baseline_greedy is not None
+                    else None
+                )
+                first_greedy_mismatch = None
+                if same_greedy is False:
+                    flat_baseline = [token for row in baseline_greedy for token in row]
+                    flat_quant = [token for row in greedy_tokens for token in row]
+                    first_greedy_mismatch = next(
+                        index
+                        for index, (baseline_token, quant_token) in enumerate(
+                            zip(flat_baseline, flat_quant)
+                        )
+                        if baseline_token != quant_token
+                    )
                 prefill_speed_ratio = (
                     float(res["prefill_tokps_total"]) / float(baseline_prefill_tokps)
                     if baseline_prefill_tokps is not None
@@ -530,11 +651,67 @@ def main() -> int:
                 )
                 speed_ratio = float(res["decode_tokps_total"]) / float(baseline_tokps)
                 footprint_ratio = float(footprint) / float(baseline_footprint)
+        sm70_active = bool(
+            quantization == "mm4"
+            and args.device.startswith("cuda")
+            and torch.cuda.is_available()
+            and torch.cuda.get_device_capability(args.device) == (7, 0)
+        )
         row = {
             "axis": "native_quant_e2e_decode",
             "backend": "hf_adapter",
+            "code_source": args.code_source,
+            "effective_hf_dir": args.effective_hf_dir,
             "status": "pass",
             "quantization": quantization,
+            "native_mm4_group_size": args.mm4_group_size if quantization == "mm4" else None,
+            "native_mm4_group_policy": (
+                args.mm4_group_policy if quantization == "mm4" else None
+            ),
+            "sm70_w4_tuning_policy": (
+                "environment_override"
+                if sm70_active
+                and any(
+                    name in os.environ
+                    for name in (
+                        "RWKV7_SM70_W4_BN",
+                        "RWKV7_SM70_W4_TN",
+                        "RWKV7_SM70_W4_GROUP_BN",
+                        "RWKV7_SM70_W4_GROUP_TN",
+                    )
+                )
+                else "exact_v100_auto_20260716"
+                if sm70_active
+                else None
+            ),
+            "sm70_w4_fused_epilogue": (
+                os.environ.get("RWKV7_SM70_W4_FUSED_EPILOGUE", "0").strip().lower()
+                not in {"", "0", "false", "no", "off"}
+                if sm70_active
+                else None
+            ),
+            "sm70_w4_block_n": (
+                int(os.environ["RWKV7_SM70_W4_BN"])
+                if sm70_active and "RWKV7_SM70_W4_BN" in os.environ
+                else None
+            ),
+            "sm70_w4_thread_n": (
+                int(os.environ["RWKV7_SM70_W4_TN"])
+                if sm70_active and "RWKV7_SM70_W4_TN" in os.environ
+                else None
+            ),
+            "sm70_w4_group_block_n": (
+                int(os.environ["RWKV7_SM70_W4_GROUP_BN"])
+                if sm70_active
+                and "RWKV7_SM70_W4_GROUP_BN" in os.environ
+                else None
+            ),
+            "sm70_w4_group_thread_n": (
+                int(os.environ["RWKV7_SM70_W4_GROUP_TN"])
+                if sm70_active
+                and "RWKV7_SM70_W4_GROUP_TN" in os.environ
+                else None
+            ),
             "dtype": args.dtype,
             "device": device_name(args.device),
             **model_metadata(args, model),
@@ -564,11 +741,21 @@ def main() -> int:
             "prompt_logits_cos_vs_fp16": round(float(prompt_cos), 8) if prompt_cos is not None else None,
             "final_logits_cos_vs_fp16": round(float(final_cos), 8) if final_cos is not None else None,
             "same_next_token_as_fp16": bool(same_next) if same_next is not None else None,
+            "same_greedy_tokens_as_fp16": (
+                bool(same_greedy) if same_greedy is not None else None
+            ),
+            "first_greedy_mismatch_flat_index": first_greedy_mismatch,
             "peak_vram_mb": peak_mb(args.device),
             **{k: v for k, v in res.items() if k not in {"prompt_logits", "final_logits"}},
         }
         if quantization == "none":
-            save_baseline(args, row, prompt_logits_for_baseline, final_logits_for_baseline)
+            save_baseline(
+                args,
+                row,
+                prompt_logits_for_baseline,
+                final_logits_for_baseline,
+                greedy_tokens_for_baseline,
+            )
         rows.append(row)
         print(json.dumps(row, indent=2), flush=True)
         del model
@@ -580,6 +767,8 @@ def main() -> int:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
             print(f"appended 1 row -> {out_path}", flush=True)
 
+    if code_overlay is not None:
+        code_overlay.cleanup()
     return 0
 
 

@@ -702,6 +702,8 @@ class NativeRWKV7Config(PretrainedConfig):
         self.use_native_mm4 = kwargs.get("use_native_mm4", False)
         self.native_mm4_min_params = kwargs.get("native_mm4_min_params", 8_000_000)
         self.native_mm4_policy = kwargs.get("native_mm4_policy", "memory")
+        self.native_mm4_group_size = kwargs.get("native_mm4_group_size", 0)
+        self.native_mm4_group_policy = kwargs.get("native_mm4_group_policy", "all")
         if getattr(self, "auto_map", None) is None:
             self.auto_map = {
                 "AutoConfig": "native_model.NativeRWKV7Config",
@@ -1040,6 +1042,10 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                     self,
                     min_params=int(getattr(self.config, "native_mm4_min_params", 8_000_000)),
                     policy=str(getattr(self.config, "native_mm4_policy", "memory")),
+                    group_size=int(getattr(self.config, "native_mm4_group_size", 0)),
+                    group_policy=str(
+                        getattr(self.config, "native_mm4_group_policy", "all")
+                    ),
                 )
             )
             quantization = "mm4"
