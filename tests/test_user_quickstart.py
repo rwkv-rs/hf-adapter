@@ -80,12 +80,15 @@ def test_environment_doctor_model_directory_contract(tmp_path: Path) -> None:
 def test_human_and_ai_quickstart_entries_stay_discoverable() -> None:
     root = Path(__file__).resolve().parents[1]
     readme = (root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (root / "README_ZH.md").read_text(encoding="utf-8")
     guide_zh = (root / "docs" / "USER_GUIDE_ZH.md").read_text(encoding="utf-8")
     ai_guide = (root / "docs" / "AI_ASSISTED_SETUP.md").read_text(encoding="utf-8")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
 
-    for text in (readme, guide_zh, ai_guide, agents):
+    for text in (readme, readme_zh, guide_zh, ai_guide, agents):
         assert "docs/AI_ASSISTED_SETUP.md" in text or "AI_ASSISTED_SETUP.md" in text
+    assert "[中文](README_ZH.md)" in readme
+    assert "[English](README.md)" in readme_zh
     for command in (
         "python examples/check_environment.py",
         "python examples/generate.py",
@@ -100,6 +103,7 @@ def test_quickstart_relative_links_exist() -> None:
     root = Path(__file__).resolve().parents[1]
     documents = (
         root / "README.md",
+        root / "README_ZH.md",
         root / "docs" / "README.md",
         root / "docs" / "USER_GUIDE.md",
         root / "docs" / "USER_GUIDE_ZH.md",
@@ -178,14 +182,16 @@ def test_visual_workflow_assets_and_commands_stay_complete() -> None:
         assert command in guide
         assert command in guide_zh
 
-def test_complete_adapter_teaching_contract_stays_discoverable() -> None:
+def test_complete_adapter_user_index_stays_discoverable() -> None:
     root = Path(__file__).resolve().parents[1]
     index = (root / "docs" / "COMPLETE_ADAPTER_GUIDE.md").read_text(encoding="utf-8")
     readme = (root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (root / "README_ZH.md").read_text(encoding="utf-8")
     docs_readme = (root / "docs" / "README.md").read_text(encoding="utf-8")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
 
     assert "COMPLETE_ADAPTER_GUIDE.md" in readme
+    assert "COMPLETE_ADAPTER_GUIDE.md" in readme_zh
     assert "COMPLETE_ADAPTER_GUIDE.md" in docs_readme
     assert "COMPLETE_ADAPTER_GUIDE.md" in agents
 
@@ -199,6 +205,22 @@ def test_complete_adapter_teaching_contract_stays_discoverable() -> None:
     )
     for name in topical_docs:
         assert name in index
+
+    public_guides = (
+        index,
+        readme_zh,
+        *((root / "docs" / name).read_text(encoding="utf-8") for name in topical_docs),
+    )
+    for internal_phrase in (
+        "教学覆盖合同",
+        "这些内容不能写成",
+        "每个新增教程必须包含六项内容",
+        "本页不再维护第二套 AI 指令",
+    ):
+        for guide in public_guides:
+            assert internal_phrase not in guide
+    assert "smallest safe example" in agents
+    assert "observable PASS gate" in agents
 
     for removed_duplicate in (
         "COMPLETE_ADAPTER_GUIDE_ZH.md",
@@ -239,7 +261,7 @@ def test_complete_adapter_teaching_contract_stays_discoverable() -> None:
     for document, commands in commands_by_doc.items():
         text = (root / "docs" / document).read_text(encoding="utf-8")
         assert "AI_ASSISTED_SETUP.md" in text
-        assert "本页不再维护第二套 AI 指令" in text
+        assert "AI 会返回完整命令、退出码和验收结果" in text
         for command in commands:
             assert command in text
 

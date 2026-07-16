@@ -36,8 +36,8 @@ python tests/test_native_peft_save_load_merge.py \
   --model MODEL --device cuda --dtype fp32 --steps 2
 ```
 
-必须打印 `NATIVE PEFT SAVE/LOAD/MERGE PASS`。这证明测试模型的序列化和
-函数一致性，不代表 adapter 的任务效果。
+必须打印 `NATIVE PEFT SAVE/LOAD/MERGE PASS`，表示测试模型的序列化和函数一致性
+已经通过。随后使用真实验证集评估 adapter 的任务效果。
 
 普通 PEFT 部署写法：
 
@@ -86,9 +86,8 @@ python tests/test_native_trainer_resume_smoke.py --model MODEL \
 必须打印 `NATIVE TRAINER RESUME PASS`；前后两阶段都要更新参数，最终
 global step 必须等于 `--resume-steps`。
 
-这个便携 smoke 主要验证 model/adapter 和 Trainer state。它不代表所有库版本的
-optimizer、scheduler、RNG、dataloader 和分布式状态都完整恢复。真实训练必须
-逐项保存和核验。
+这个便携 smoke 验证 model/adapter 和 Trainer state。正式训练还应按实际库版本
+逐项保存并核验 optimizer、scheduler、RNG、dataloader 和分布式状态。
 
 ## 5. TRL DPO 和 GRPO
 
@@ -144,5 +143,5 @@ DEVICE=cuda TRAIN_DTYPE=bf16 RESULTS=bench/results.jsonl \
 
 ## 8. 交给 AI 执行
 
-统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
-“PEFT/Trainer”“TRL”或“DeepSpeed 训练”。本页不再维护第二套 AI 指令。
+需要 AI 协助时，请打开 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)，选择
+“PEFT/Trainer”“TRL”或“DeepSpeed 训练”。AI 会返回完整命令、退出码和验收结果。

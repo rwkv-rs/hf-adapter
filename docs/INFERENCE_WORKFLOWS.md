@@ -193,8 +193,8 @@ python tests/test_chunked_prefill.py --model MODEL --device cuda \
 
 ## 8. 交给 AI 执行
 
-统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
-“转换与推理”或“缓存与分块 prefill”。本页不再维护第二套 AI 指令。
+需要 AI 协助时，请打开 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)，选择
+“转换与推理”或“缓存与分块 prefill”。AI 会返回完整命令、退出码和验收结果。
 
 ## 完整 HF API 合同门槛
 
