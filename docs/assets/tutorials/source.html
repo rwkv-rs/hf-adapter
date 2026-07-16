@@ -200,6 +200,63 @@ Rerun command.</div></div>
   <div class="footer">Start with 0.1B/0.4B. Keep the converted HF directory as the portable source of truth.</div>
 </section>
 
+<section class="slide" id="download-layout">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / 下载与目录</div><h1>两个源文件进入 models/source，转换结果单独保存</h1></div><div class="badge">DOWNLOAD</div></div>
+  <div class="main">
+    <div class="flow">
+      <div class="panel"><h2>1. 官方权重</h2><p>第一次固定选择 0.4B，不要下载整个 107 GB 仓库。</p><div class="terminal">models/source/<br>rwkv7-g1d-0.4b-...pth</div><div class="metric">约 902 MB</div></div>
+      <div class="arrow">+</div>
+      <div class="panel"><h2>2. 官方词表</h2><p>从 RWKV-LM / RWKV-v7 下载唯一文本词表。</p><div class="terminal">models/source/<br>rwkv_vocab_v20230424.txt</div><div class="metric">约 1.04 MB</div></div>
+      <div class="arrow">&#8594;</div>
+      <div class="panel"><h2>3. HF 模型目录</h2><p>转换后目录可以被 Transformers 直接加载。</p><div class="terminal">models/rwkv7-g1d-0.4b-hf/<br>config.json<br>*.safetensors<br>tokenizer_config.json</div></div>
+    </div>
+    <div class="note"><b>不要混放：</b> `.pth` 和词表是转换输入；HF 输出目录是运行入口。保留源文件便于重新转换和校验。</div>
+  </div>
+  <div class="footer">验收：python examples/check_environment.py --model models/rwkv7-g1d-0.4b-hf 显示 [PASS] Model directory</div>
+</section>
+
+<section class="slide" id="backend-choice">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / 后端选择</div><h1>先保证能运行，再按真实硬件选择优化路线</h1></div><div class="badge">NATIVE / FLA / MLX</div></div>
+  <div class="main">
+    <div class="grid3">
+      <div class="panel"><h2>Windows / CPU</h2><p>安装基础版，使用 portable native 后端。</p><div class="terminal">pip install -e .<br>--backend native</div><div class="metric">首次推荐</div></div>
+      <div class="panel"><h2>Linux + NVIDIA</h2><p>先完成 native，再尝试 CUDA/FLA 优化依赖。</p><div class="terminal">pip install -e ".[cuda]"<br>--backend fla</div><div class="note">FLA 失败时退回 native</div></div>
+      <div class="panel"><h2>Apple Silicon</h2><p>标准 Transformers 走 MPS；Apple 原生部署可另选 MLX。</p><div class="terminal">--device mps<br>或 scripts/mlx_generate.py</div><div class="metric">从 0.1B/0.4B 开始</div></div>
+    </div>
+    <div class="lane"><div class="lane-name">共同验收</div><div class="blocks"><div class="block green">环境 READY</div><div class="block green">目录 PASS</div><div class="block green">生成退出 0</div><div class="block orange">再做性能验收</div></div></div>
+  </div>
+  <div class="footer">后端名称不是性能结论。速度必须在同卡、同模型、同 shape 下配对测量。</div>
+</section>
+
+<section class="slide" id="troubleshooting">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / 失败恢复</div><h1>只处理第一个真实错误，然后重跑同一条命令</h1></div><div class="badge">FAIL CLOSED</div></div>
+  <div class="main">
+    <div class="grid4">
+      <div class="step"><div class="num">1</div><h2>停止</h2><p>非零退出码出现后，不继续执行后面的章节。</p><div class="terminal"><span class="fail">exit code != 0</span></div></div>
+      <div class="step"><div class="num">2</div><h2>定位</h2><p>记录失败命令和第一段 traceback，不从最后一行猜原因。</p><div class="terminal">command<br>first traceback</div></div>
+      <div class="step"><div class="num">3</div><h2>最小修复</h2><p>检查路径、磁盘、依赖或设备，只改动与错误直接相关的一项。</p><div class="terminal">path / disk / package / GPU</div></div>
+      <div class="step"><div class="num">4</div><h2>重跑验收</h2><p>重新执行原命令，直到得到文档规定的 PASS。</p><div class="terminal"><span class="pass">exit 0 + exact PASS</span></div></div>
+    </div>
+    <div class="note"><b>常见误区：</b> 文件已经下载、进程启动、日志持续增长，都不等于模型目录或生成流程通过。</div>
+  </div>
+  <div class="footer">仍失败时只分享系统、设备、Python、失败命令和错误文本，不分享密码或 token。</div>
+</section>
+
+<section class="slide" id="ai-task-router">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / 唯一 AI 入口</div><h1>一个任务模板，只路由到一个用户教程</h1></div><div class="badge">AI ROUTER</div></div>
+  <div class="main">
+    <div class="flow">
+      <div class="panel"><h2>1. 唯一规则源</h2><p>AI 先读取一个文件，不在仓库里搜集散落提示词。</p><div class="terminal">docs/<br><span class="pass">AI_ASSISTED_SETUP.md</span></div></div>
+      <div class="arrow">&#8594;</div>
+      <div class="panel"><h2>2. 选择 TASK_ID</h2><p>first-run、cache、training、quantization、apple 等一次只选一个。</p><div class="terminal">TASK_ID: quantization<br>MODEL: D:/models/...</div></div>
+      <div class="arrow">&#8594;</div>
+      <div class="panel"><h2>3. 一个教程 + 一个门槛</h2><p>执行指定章节，并按统一格式报告命令、退出码和证据。</p><div class="terminal">tutorial section<br>exit code<br><span class="pass">exact PASS gate</span></div></div>
+    </div>
+    <div class="note"><b>禁止扩展任务：</b> 不顺带下载大模型、不顺带跑训练或 benchmark、不把 smoke 写成生产结论。</div>
+  </div>
+  <div class="footer">任务、模型、设备、dtype 和结果目录由模板显式给出；缺失时 AI 停下检查，不猜。</div>
+</section>
+
 <script>
 const selected = new URLSearchParams(window.location.search).get("slide");
 if (selected) {

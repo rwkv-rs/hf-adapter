@@ -1,7 +1,9 @@
 # Ordinary-user and AI-assisted onboarding design
 
 Historical design record. Current user instructions live in
-`docs/USER_GUIDE.md` and `docs/USER_GUIDE_ZH.md`.
+`docs/USER_GUIDE.md`, `docs/USER_GUIDE_ZH.md`, and the single Chinese
+`docs/COMPLETE_ADAPTER_GUIDE.md` adaptation index. All operational AI rules
+live only in `docs/AI_ASSISTED_SETUP.md`.
 
 ## Goal
 
@@ -26,6 +28,13 @@ Use six layers:
    single-GPU training, HF multi-GPU inference, and DeepSpeed ZeRO training.
    Keep exact commands beside every image so both humans and agents can act on
    the same source of truth.
+7. Keep the original stable bilingual first-run/advanced pair, but maintain new
+   adaptation topics as one Chinese canonical document instead of duplicated
+   English/Chinese files. Use one AI task router and one prompt template rather
+   than copying agent rules into every topic.
+8. Embed current screenshots of the official Hugging Face checkpoint list and
+   GitHub vocabulary download controls, plus deterministic diagrams for model
+   directories, backend choice, error recovery, and AI routing.
 
 This is preferred over prose alone because users and agents can validate the
 documented path. It is preferred over an unattended checkpoint installer
@@ -52,5 +61,9 @@ translate.
 - Run `examples/check_environment.py` and unit-test model-directory diagnosis.
 - Run clean-install packaging and documentation-freshness tests.
 - Validate Markdown relative links before publishing.
-- Verify every tutorial PNG is non-empty, exactly 1200x675, linked from a guide,
-  and paired with descriptive alt text and a copyable command.
+- Verify every generated tutorial PNG is non-empty, exactly 1200x675, linked
+  from a guide, and paired with descriptive alt text and a copyable command.
+- Verify official website screenshots are valid JPEG images of useful minimum
+  size and are linked from the download walkthrough.
+- Assert deleted duplicate topic guides stay absent and topical docs link to the
+  single AI entry without embedding a second task template.

@@ -1,8 +1,9 @@
 # Tutorial image sources
 
-The ten PNG files in this directory are deterministic 1200x675 documentation
-diagrams rendered from [`source.html`](source.html). Keep commands in the images
-short; the adjacent Markdown guide is the copyable source of truth.
+The deterministic workflow diagrams in this directory are rendered at 1200x675
+from [`source.html`](source.html). Files 11 and 12 are current screenshots of the
+official Hugging Face model list and GitHub tokenizer page. Keep commands in the
+images short; the adjacent Markdown guide is the copyable source of truth.
 
 To update an image:
 
@@ -26,3 +27,9 @@ Section and output mapping:
 | `training-ecosystem` | `08-training-ecosystem.png` |
 | `quantization` | `09-quantization-paths.png` |
 | `apple-deployment` | `10-apple-deployment.png` |
+| official Hugging Face page | `11-huggingface-model-download.jpg` |
+| official GitHub page | `12-github-tokenizer-download.jpg` |
+| `download-layout` | `13-download-directory-layout.png` |
+| `backend-choice` | `14-backend-choice.png` |
+| `troubleshooting` | `15-first-error-recovery.png` |
+| `ai-task-router` | `16-ai-task-router.png` |

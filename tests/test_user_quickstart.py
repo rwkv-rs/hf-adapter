@@ -92,7 +92,7 @@ def test_human_and_ai_quickstart_entries_stay_discoverable() -> None:
         "RESULT: READY",
     ):
         assert command in ai_guide
-    assert "Do not paste passwords" in ai_guide
+    assert "不要在提示词里提供密码" in ai_guide
     assert "不要发送密码" in guide_zh
 
 
@@ -107,15 +107,10 @@ def test_quickstart_relative_links_exist() -> None:
         root / "docs" / "ADVANCED_USAGE.md",
         root / "docs" / "ADVANCED_USAGE_ZH.md",
         root / "docs" / "COMPLETE_ADAPTER_GUIDE.md",
-        root / "docs" / "COMPLETE_ADAPTER_GUIDE_ZH.md",
         root / "docs" / "INFERENCE_WORKFLOWS.md",
-        root / "docs" / "INFERENCE_WORKFLOWS_ZH.md",
         root / "docs" / "TRAINING_WORKFLOWS.md",
-        root / "docs" / "TRAINING_WORKFLOWS_ZH.md",
         root / "docs" / "QUANTIZATION_USAGE.md",
-        root / "docs" / "QUANTIZATION_USAGE_ZH.md",
         root / "docs" / "APPLE_USAGE.md",
-        root / "docs" / "APPLE_USAGE_ZH.md",
     )
     for document in documents:
         text = document.read_text(encoding="utf-8")
@@ -134,21 +129,42 @@ def test_visual_workflow_assets_and_commands_stay_complete() -> None:
     guide_zh = (root / "docs" / "ADVANCED_USAGE_ZH.md").read_text(
         encoding="utf-8"
     )
-    assets = (
-        "01-first-run.png",
-        "02-speculative-decoding.png",
-        "03-single-gpu-training.png",
-        "04-multi-gpu-inference.png",
-        "05-multi-gpu-training.png",
-        "06-ai-assisted-setup.png",
-    )
-    for name in assets:
+    assets_by_docs = {
+        "01-first-run.png": ("USER_GUIDE.md", "USER_GUIDE_ZH.md"),
+        "02-speculative-decoding.png": ("ADVANCED_USAGE.md", "ADVANCED_USAGE_ZH.md"),
+        "03-single-gpu-training.png": ("ADVANCED_USAGE.md", "ADVANCED_USAGE_ZH.md"),
+        "04-multi-gpu-inference.png": ("ADVANCED_USAGE.md", "ADVANCED_USAGE_ZH.md"),
+        "05-multi-gpu-training.png": ("ADVANCED_USAGE.md", "ADVANCED_USAGE_ZH.md"),
+        "06-ai-assisted-setup.png": ("AI_ASSISTED_SETUP.md",),
+        "07-inference-and-cache.png": ("INFERENCE_WORKFLOWS.md",),
+        "08-training-ecosystem.png": ("TRAINING_WORKFLOWS.md",),
+        "09-quantization-paths.png": ("QUANTIZATION_USAGE.md",),
+        "10-apple-deployment.png": ("APPLE_USAGE.md",),
+        "13-download-directory-layout.png": ("USER_GUIDE_ZH.md",),
+        "14-backend-choice.png": ("USER_GUIDE_ZH.md",),
+        "15-first-error-recovery.png": ("USER_GUIDE_ZH.md",),
+        "16-ai-task-router.png": ("AI_ASSISTED_SETUP.md",),
+    }
+    for name, guide_names in assets_by_docs.items():
         path = root / "docs" / "assets" / "tutorials" / name
         payload = path.read_bytes()
         assert payload.startswith(b"\x89PNG\r\n\x1a\n"), name
         assert struct.unpack(">II", payload[16:24]) == (1200, 675), name
-        assert name in guide
-        assert name in guide_zh
+        for guide_name in guide_names:
+            text = (root / "docs" / guide_name).read_text(encoding="utf-8")
+            assert name in text
+
+    for name in (
+        "11-huggingface-model-download.jpg",
+        "12-github-tokenizer-download.jpg",
+    ):
+        path = root / "docs" / "assets" / "tutorials" / name
+        payload = path.read_bytes()
+        assert payload.startswith(b"\xff\xd8\xff"), name
+        assert len(payload) > 40_000, name
+        assert name in (root / "docs" / "USER_GUIDE_ZH.md").read_text(
+            encoding="utf-8"
+        )
 
     for command in (
         "tests/test_speculative_decode.py",
@@ -162,31 +178,14 @@ def test_visual_workflow_assets_and_commands_stay_complete() -> None:
         assert command in guide
         assert command in guide_zh
 
-    topical_assets = {
-        "07-inference-and-cache.png": ("INFERENCE_WORKFLOWS.md", "INFERENCE_WORKFLOWS_ZH.md"),
-        "08-training-ecosystem.png": ("TRAINING_WORKFLOWS.md", "TRAINING_WORKFLOWS_ZH.md"),
-        "09-quantization-paths.png": ("QUANTIZATION_USAGE.md", "QUANTIZATION_USAGE_ZH.md"),
-        "10-apple-deployment.png": ("APPLE_USAGE.md", "APPLE_USAGE_ZH.md"),
-    }
-    for name, guide_names in topical_assets.items():
-        path = root / "docs" / "assets" / "tutorials" / name
-        payload = path.read_bytes()
-        assert payload.startswith(b"\x89PNG\r\n\x1a\n"), name
-        assert struct.unpack(">II", payload[16:24]) == (1200, 675), name
-        for guide_name in guide_names:
-            text = (root / "docs" / guide_name).read_text(encoding="utf-8")
-            assert name in text
-
-
 def test_complete_adapter_teaching_contract_stays_discoverable() -> None:
     root = Path(__file__).resolve().parents[1]
     index = (root / "docs" / "COMPLETE_ADAPTER_GUIDE.md").read_text(encoding="utf-8")
-    index_zh = (root / "docs" / "COMPLETE_ADAPTER_GUIDE_ZH.md").read_text(encoding="utf-8")
     readme = (root / "README.md").read_text(encoding="utf-8")
     docs_readme = (root / "docs" / "README.md").read_text(encoding="utf-8")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
 
-    assert "COMPLETE_ADAPTER_GUIDE_ZH.md" in readme
+    assert "COMPLETE_ADAPTER_GUIDE.md" in readme
     assert "COMPLETE_ADAPTER_GUIDE.md" in docs_readme
     assert "COMPLETE_ADAPTER_GUIDE.md" in agents
 
@@ -195,12 +194,20 @@ def test_complete_adapter_teaching_contract_stays_discoverable() -> None:
         "TRAINING_WORKFLOWS.md",
         "QUANTIZATION_USAGE.md",
         "APPLE_USAGE.md",
-        "ADVANCED_USAGE.md",
+        "ADVANCED_USAGE_ZH.md",
         "AI_ASSISTED_SETUP.md",
     )
     for name in topical_docs:
         assert name in index
-        assert name.replace(".md", "_ZH.md") in index_zh or name == "AI_ASSISTED_SETUP.md"
+
+    for removed_duplicate in (
+        "COMPLETE_ADAPTER_GUIDE_ZH.md",
+        "INFERENCE_WORKFLOWS_ZH.md",
+        "TRAINING_WORKFLOWS_ZH.md",
+        "QUANTIZATION_USAGE_ZH.md",
+        "APPLE_USAGE_ZH.md",
+    ):
+        assert not (root / "docs" / removed_duplicate).exists()
 
     commands_by_doc = {
         "INFERENCE_WORKFLOWS.md": (
@@ -231,6 +238,40 @@ def test_complete_adapter_teaching_contract_stays_discoverable() -> None:
     }
     for document, commands in commands_by_doc.items():
         text = (root / "docs" / document).read_text(encoding="utf-8")
-        assert "AI execution rule" in text
+        assert "AI_ASSISTED_SETUP.md" in text
+        assert "本页不再维护第二套 AI 指令" in text
         for command in commands:
             assert command in text
+
+
+def test_ai_instructions_have_one_canonical_source() -> None:
+    root = Path(__file__).resolve().parents[1]
+    ai_guide = (root / "docs" / "AI_ASSISTED_SETUP.md").read_text(encoding="utf-8")
+    for task_id in (
+        "first-run",
+        "inference",
+        "cache",
+        "speculative",
+        "training",
+        "trl",
+        "multi-gpu-inference",
+        "deepspeed",
+        "quantization",
+        "apple",
+    ):
+        assert f"`{task_id}`" in ai_guide
+    for field in ("TASK_ID:", "MODEL:", "DEVICE:", "DTYPE:", "RESULT_DIR:"):
+        assert field in ai_guide
+
+    topical_docs = (
+        "INFERENCE_WORKFLOWS.md",
+        "TRAINING_WORKFLOWS.md",
+        "QUANTIZATION_USAGE.md",
+        "APPLE_USAGE.md",
+        "ADVANCED_USAGE.md",
+        "ADVANCED_USAGE_ZH.md",
+    )
+    for document in topical_docs:
+        text = (root / "docs" / document).read_text(encoding="utf-8")
+        assert "AI_ASSISTED_SETUP.md" in text
+        assert "TASK_ID:" not in text

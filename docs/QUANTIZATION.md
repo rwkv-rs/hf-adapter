@@ -3,7 +3,7 @@
 This page records promoted status and evidence. For copyable bitsandbytes,
 native MM8/MM4, Apple MLX W8/W4 commands, acceptance gates, and failure
 boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
-[`QUANTIZATION_USAGE_ZH.md`](QUANTIZATION_USAGE_ZH.md).
+[`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md).
 
 ## Supported paths
 
