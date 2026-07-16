@@ -1782,3 +1782,18 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   not be cited as wheel evidence.  Next, build a new immutable wheel, repeat
   the direct B1/B8 smoke from that wheel, and rerun only the six affected task
   pairs.
+- Commit `2baaf4b46bdd2e26ca2e8ce979d35065d834f55b` makes that
+  batch-invariant projection/scan boundary immutable.  The new RTX 4080
+  candidate wheels are `rwkv7_hf-1.0.0 =
+  93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071`
+  and `rwkv7_kernels-1.0.0.dev0 =
+  affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec`.
+  A wheel-only install (no source/diagnostic overlay) reproduces the 0.1B
+  equal-length B1/repeated-B8 result bit-exactly and records two actual
+  `native-nvidia-prefill-v2[dense_fallback]` calls.  Evidence is under
+  `backend-v2-2baaf4b4-candidate/4080/batch-invariance-wheel*.json`.
+  The six affected metric pairs are now being rerun as exactly 12 formal units
+  from the same wheel pair (runner PID `4016444`) at
+  `backend-v2-2baaf4b4-candidate/4080/lm-eval-native-affected`; no unaffected
+  task is being repeated and no V100/RTX 4090 job may begin before this gate
+  finishes.
