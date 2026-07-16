@@ -1797,6 +1797,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                     model,
                     min_params=int(getattr(model.config, "native_mm4_min_params", 8_000_000)),
                     policy=str(getattr(model.config, "native_mm4_policy", "memory")),
+                    group_size=int(getattr(model.config, "native_mm4_group_size", 0)),
+                    group_policy=str(
+                        getattr(model.config, "native_mm4_group_policy", "all")
+                    ),
                 )
                 setattr(model, "_rwkv7_native_mm_quantization", "mm4")
                 setattr(model, "_rwkv7_native_mm_replaced_modules", int(replaced))

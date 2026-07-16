@@ -1,0 +1,16 @@
+date=2026-07-16
+gpu=Tesla V100-PCIE-32GB
+compute_capability=7.0
+driver=580.159.03
+gpu_memory=32768 MiB
+torch=2.5.1+cu124
+torch_cuda=12.4
+triton=3.3.0
+transformers=5.12.1
+dtype=fp16
+attention_mode=fused_recurrent
+fast_token_backend=native_graph
+base_main_commit=e333534
+candidate_branch=wangyue/v100-bn-tn-production
+matrix_scope=1.5b_full,2.9b_full,7.2b_full
+benchmark_gpu=1

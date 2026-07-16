@@ -37,10 +37,22 @@ except Exception:  # pragma: no cover - remote-code fallback
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
 
 try:
-    from .sm70_quant import is_sm70, quantize_w4_row, w4_linear as sm70_w4_linear
+    from .sm70_quant import (
+        is_sm70,
+        quantize_w4_groupwise,
+        quantize_w4_row,
+        w4_groupwise_linear as sm70_w4_groupwise_linear,
+        w4_linear_add as sm70_w4_linear_add,
+        w4_linear_relu2 as sm70_w4_linear_relu2,
+        w4_linear as sm70_w4_linear,
+    )
 except Exception:  # pragma: no cover
     is_sm70 = lambda _device=None: False  # type: ignore[assignment]
+    quantize_w4_groupwise = None  # type: ignore[assignment]
     quantize_w4_row = None  # type: ignore[assignment]
+    sm70_w4_groupwise_linear = None  # type: ignore[assignment]
+    sm70_w4_linear_add = None  # type: ignore[assignment]
+    sm70_w4_linear_relu2 = None  # type: ignore[assignment]
     sm70_w4_linear = None  # type: ignore[assignment]
 
 
@@ -498,11 +510,29 @@ def mm4_matmul_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, max_gemv_rows: i
 class MM4Linear(torch.nn.Module):
     """Drop-in for ``nn.Linear`` storing int4 (mm4) packed weights + dequant on forward."""
 
-    def __init__(self, linear, *, fused=True):
+    def __init__(self, linear, *, fused=True, group_size=0):
         super().__init__()
         self.in_features, self.out_features = linear.weight.shape[1], linear.weight.shape[0]
-        self.sm70_rowwise = bool(is_sm70(linear.weight.device) and quantize_w4_row is not None)
-        if self.sm70_rowwise:
+        self.group_size = int(group_size)
+        if self.group_size not in {0, 128, 256}:
+            raise ValueError("native MM4 group_size must be 0, 128, or 256")
+        self.groupwise = bool(
+            self.group_size == 128 and quantize_w4_groupwise is not None
+        )
+        self.sm70_rowwise = bool(
+            not self.groupwise
+            and is_sm70(linear.weight.device)
+            and quantize_w4_row is not None
+        )
+        if self.groupwise:
+            packed_group, group_scales, packed_inputs = quantize_w4_groupwise(
+                linear.weight.data, group_size=self.group_size
+            )
+            self.register_buffer("packed_group", packed_group)
+            self.register_buffer("group_scales", group_scales)
+            self.packed_inputs = int(packed_inputs)
+            self.m_orig = self.out_features
+        elif self.sm70_rowwise:
             packed_row, row_scale, packed_inputs = quantize_w4_row(linear.weight.data)
             self.register_buffer("packed_row", packed_row)
             self.register_buffer("row_scale", row_scale)
@@ -523,6 +553,16 @@ class MM4Linear(torch.nn.Module):
         self.fused = bool(fused)
 
     def forward(self, x):
+        if self.groupwise and sm70_w4_groupwise_linear is not None:
+            y = sm70_w4_groupwise_linear(
+                x,
+                self.packed_group,
+                self.group_scales,
+                self.out_features,
+                self.in_features,
+                group_size=self.group_size,
+            )
+            return y if self.bias is None else y + self.bias
         if self.sm70_rowwise and sm70_w4_linear is not None:
             y = sm70_w4_linear(x, self.packed_row, self.row_scale, self.out_features, self.in_features)
             return y if self.bias is None else y + self.bias
@@ -546,14 +586,102 @@ class MM4Linear(torch.nn.Module):
         return y
 
     def rwkv7_forward_into(self, x, out):
+        if self.groupwise and sm70_w4_groupwise_linear is not None and self.bias is None:
+            return sm70_w4_groupwise_linear(
+                x,
+                self.packed_group,
+                self.group_scales,
+                self.out_features,
+                self.in_features,
+                group_size=self.group_size,
+                out=out,
+            )
         if self.sm70_rowwise and sm70_w4_linear is not None and self.bias is None:
             return sm70_w4_linear(x, self.packed_row, self.row_scale, self.out_features, self.in_features, out=out)
         result = self.forward(x)
         out.copy_(result)
         return out
 
+    def rwkv7_forward_relu2(self, x):
+        if (
+            self.sm70_rowwise
+            and sm70_w4_linear_relu2 is not None
+            and self.bias is None
+            and os.environ.get("RWKV7_SM70_W4_FUSED_EPILOGUE", "0").strip().lower()
+            not in {"", "0", "false", "no", "off"}
+        ):
+            return sm70_w4_linear_relu2(
+                x,
+                self.packed_row,
+                self.row_scale,
+                self.out_features,
+                self.in_features,
+            )
+        return torch.relu(self.forward(x)) ** 2
+
+    def rwkv7_forward_add(self, x, residual):
+        if (
+            self.sm70_rowwise
+            and sm70_w4_linear_add is not None
+            and self.bias is None
+            and os.environ.get("RWKV7_SM70_W4_FUSED_EPILOGUE", "0").strip().lower()
+            not in {"", "0", "false", "no", "off"}
+        ):
+            return sm70_w4_linear_add(
+                x,
+                self.packed_row,
+                self.row_scale,
+                residual,
+                self.out_features,
+                self.in_features,
+            )
+        return self.forward(x) + residual
+
     def extra_repr(self):
-        return f"in={self.in_features}, out={self.out_features}, mm4(fused={self.fused})"
+        return (
+            f"in={self.in_features}, out={self.out_features}, "
+            f"mm4(fused={self.fused}, group_size={self.group_size})"
+        )
+
+
+NATIVE_MM4_GROUP_POLICIES = (
+    "all",
+    "lm_head",
+    "ffn_key",
+    "ffn_value",
+    "lm_head_and_key",
+    "lm_head_and_value",
+)
+
+
+def normalize_native_mm4_group_policy(policy: str | None) -> str:
+    value = (policy or "all").strip().lower().replace("-", "_")
+    if value not in NATIVE_MM4_GROUP_POLICIES:
+        allowed = ", ".join(NATIVE_MM4_GROUP_POLICIES)
+        raise ValueError(
+            f"unsupported native MM4 group policy {policy!r}; expected: {allowed}"
+        )
+    return value
+
+
+def native_mm4_group_size_for_module(
+    name: str, group_size: int, group_policy: str
+) -> int:
+    if int(group_size) == 0:
+        return 0
+    policy = normalize_native_mm4_group_policy(group_policy)
+    is_head = name == "lm_head" or name.endswith(".lm_head")
+    is_key = name.endswith(".ffn.key")
+    is_value = name.endswith(".ffn.value")
+    enabled = {
+        "all": True,
+        "lm_head": is_head,
+        "ffn_key": is_key,
+        "ffn_value": is_value,
+        "lm_head_and_key": is_head or is_key,
+        "lm_head_and_value": is_head or is_value,
+    }[policy]
+    return int(group_size) if enabled else 0
 
 
 def quantize_model_mm4(
@@ -562,6 +690,8 @@ def quantize_model_mm4(
     min_params: int = 8_000_000,
     fused: bool = True,
     policy: str = "memory",
+    group_size: int = 0,
+    group_policy: str = "all",
 ) -> int:
     """Swap eligible ``nn.Linear`` modules for :class:`MM4Linear`.
 
@@ -572,6 +702,7 @@ def quantize_model_mm4(
     if torch is None:
         raise RuntimeError("quantize_model_mm4 requires torch")
     policy = normalize_native_mm_policy(policy)
+    group_policy = normalize_native_mm4_group_policy(group_policy)
     targets = [
         n
         for n, m in model.named_modules()
@@ -581,9 +712,21 @@ def quantize_model_mm4(
     for full_name in targets:
         parent_name, _, attr = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
-        setattr(parent, attr, MM4Linear(getattr(parent, attr), fused=fused))
+        setattr(
+            parent,
+            attr,
+            MM4Linear(
+                getattr(parent, attr),
+                fused=fused,
+                group_size=native_mm4_group_size_for_module(
+                    full_name, group_size, group_policy
+                ),
+            ),
+        )
     setattr(model, "_rwkv7_native_mm_quantization", "mm4")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(model, "_rwkv7_native_mm4_group_size", int(group_size))
+    setattr(model, "_rwkv7_native_mm4_group_policy", group_policy)
     setattr(
         model,
         "_rwkv7_native_mm_block_replaced_modules",

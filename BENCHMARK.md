@@ -24,7 +24,7 @@ Status vocabulary:
 
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
-| V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8; 1.5B vs full-FLA Qwen3.5-2B B1/B8 | greedy/cache gates plus 32-token Qwen and RWKV native-route probes pass | Albatross P1; full-FLA Qwen raw prefill/decode min `2.8159x/5.2704x`, active-work min `2.2856x/4.2778x` | **PASS measured lanes** |
+| V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4 decode | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x` | **PASS measured lanes** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
@@ -49,6 +49,31 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 | Native W8/W4 paired prefill / fp16 | `0.996x–1.007x` | 1% equivalence PASS |
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+
+### V100 packed-MM4 BN/TN decode matrix
+
+The exact-sm70 packed-W4 path adds card-local BN/TN tables and groupwise head
+scales. Each promoted row is one load-time configuration across seven paired
+fp16 cells: B1/B2/B4/B8 at prompt128/decode128, plus prompt512, prompt2048 and
+decode512 at B1.
+
+| Model | Config | Decode vs fp16 | Footprint | Min cosine | Complete gate |
+|---|---|---:|---:|---:|---:|
+| 1.5B | memory + group128 head + fused epilogue | `1.0255x-1.1837x` | `0.5395x` | `0.99828702` | `7/7` |
+| 2.9B | speed + group256 head | `1.0111x-1.0346x` | `0.9573x` | `0.99965668` | `7/7` |
+| 7.2B | memory + group128 head | `1.0810x-1.8422x` | `0.3013x` | `0.99903870` | `7/7` |
+
+All 21 current-main cells match the complete fp16 greedy sequence and repeat
+SHA256. The weakest 1.5B B4, 2.9B B8 and 7.2B B8 cells use five repeats. The
+old unfused 1.5B B4 row (`0.9997x`), a 2.9B group128 B8 row (`0.9984x`) and
+2.9B full-memory B4 (`0.9888x`) are retained as rejected boundaries; the gate
+was not relaxed.
+
+This is primarily a cached-decode result. Full-memory prefill is
+`0.1276x-0.3192x` fp16 for 1.5B and `0.0716x-0.1516x` for 7.2B, so no universal
+W4/prefill claim is made. The head-only 2.9B speed profile separately passes
+paired prefill at `1.0006x-1.0603x`. Evidence:
+[`bench/v100_sm70_mm4_bntn_20260716/README.md`](bench/v100_sm70_mm4_bntn_20260716/README.md).
 
 ### V100 B1/B8 active-parameter comparison against full-FLA Qwen3.5
 

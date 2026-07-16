@@ -1,0 +1,14 @@
+{
+  "completed": 7,
+  "decode_speed_pass": 7,
+  "expected": 7,
+  "failures": 0,
+  "footprint_pass": 7,
+  "fused_epilogue": false,
+  "greedy_pass": 7,
+  "logits_pass": 7,
+  "memory_policy_cells": 7,
+  "repeat_determinism_pass": 7,
+  "requested_policy": "memory",
+  "speed_policy_cells": 0
+}

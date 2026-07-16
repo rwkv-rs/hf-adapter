@@ -184,6 +184,29 @@ priority ordering below; retain it as provenance:
   remain in `bench/v100_production_close_20260711/`; this new artifact does not
   turn the dense Qwen comparison into a quantized-Qwen claim.
 
+## Current V100 Packed-MM4 Decode Profiles (2026-07-16)
+
+- Exact-sm70 packed W4 uses A16 at B1 and A8/DP4A at B2/B4/B8. BN/TN is
+  selected by exact `(rows,K,N)` tables and must not be inherited by another
+  GPU family.
+- Three single load-time configs pass the seven-cell cached-decode gate:
+  1.5B `memory + group128 lm_head + fused epilogue`, 2.9B
+  `speed + group256 lm_head`, and 7.2B `memory + group128 lm_head`. Decode
+  minima, including post-rebase weakest-cell confirmations, are
+  `1.0255x/1.0111x/1.0810x`; footprint ratios are
+  `0.5395x/0.9573x/0.3013x`. All rows pass final cosine `>=0.998`, complete
+  greedy equality, and repeat determinism.
+- Group size remains explicit and defaults to rowwise (`0`). The 2.9B B8
+  group128 confirmation is rejected at `0.9984x`; group256 is required for
+  that promoted speed profile. The runner must reject stale rows whose policy,
+  group size, group policy, or fused-epilogue state differs.
+- The claim is cached decode only. Full-memory prefill remains much slower
+  than fp16. Fused FFN epilogues remain globally default-off; only the exact
+  1.5B profile opts in. The rejected WMMA prefill prototype must not be restored
+  without new card-local evidence.
+- Canonical evidence:
+  `bench/v100_sm70_mm4_bntn_20260716/README.md`.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
@@ -809,6 +832,9 @@ Run this checklist for every new GPU before marking it as supported:
   native `memory` rows as non-speed paths unless they beat fp16. Native
   `speed` policy may be reported as the speed-acceptance lane only with
   card-local footprint, speed, and logits/greedy-token parity rows.
+- Exact MM4 exception: the 2026-07-16 named 1.5B/7.2B memory profiles pass the
+  seven-cell cached-decode gate; this does not promote their prefill path or
+  any unmeasured model. The 2.9B promoted profile is speed/group256.
 - Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)
