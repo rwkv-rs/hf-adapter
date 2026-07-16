@@ -508,11 +508,11 @@
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_prefill.py",
-      "destination_sha256": "0f004caa95110034dd317aa58d64c016f22b9af95525ae1e59f30a43d6c8bf5d",
+      "destination_sha256": "7be6540147f30d68112de42b0856757e1d1c519c143f82083d2b81892f94353f",
       "git_blob": "bb8f3141b60922a50b4caec363068f8670390e96",
       "source": "rwkv7_hf/native_jit_prefill.py",
       "transfer": "adapted_clean_boundary",
-      "adaptation": "adapted native prefill W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path"
+      "adaptation": "adapted native prefill W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path; fixed-row projections and row-serialized B>1 recurrent scans preserve batch-invariant HF evaluation semantics"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_prefill_policy.py",

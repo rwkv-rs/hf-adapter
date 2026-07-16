@@ -86,6 +86,83 @@ def test_native_decay_projection_adds_w0_only_after_fp32_promotion(
     torch.testing.assert_close(prefill_actual, expected, rtol=0, atol=0)
 
 
+def test_native_prefill_dense_linear_uses_clean_fixed_row_contract(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    native_jit = importlib.import_module("rwkv7_kernels.nvidia.native_jit")
+    prefill = importlib.import_module("rwkv7_kernels.nvidia.native_jit_prefill")
+    prefill.bind_runtime(vars(native_jit))
+
+    torch.manual_seed(211)
+    value = torch.randn(1, 17, 8, dtype=torch.float16)
+    weight = torch.randn(11, 8, dtype=torch.float16)
+    expected = RWKV7Linear(8, 11, bias=False).half()
+    with torch.no_grad():
+        expected.weight.copy_(weight)
+
+    projected = prefill._native_prefill_linear(value, weight)
+    repeated = prefill._native_prefill_linear(value.repeat(8, 1, 1), weight)
+    torch.testing.assert_close(projected, expected(value), rtol=0, atol=0)
+    torch.testing.assert_close(projected, repeated[:1], rtol=0, atol=0)
+
+
+def test_native_prefill_scan_uses_batch_invariant_row_contract(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    native_jit = importlib.import_module("rwkv7_kernels.nvidia.native_jit")
+    prefill = importlib.import_module("rwkv7_kernels.nvidia.native_jit_prefill")
+    prefill.bind_runtime(vars(native_jit))
+
+    monkeypatch.setattr(prefill, "_native_prefill_fused_scan_enabled", lambda *_: False)
+    monkeypatch.setattr(prefill, "_native_prefill_dplr_scan_enabled", lambda: False)
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_REFERENCE_BATCH_SCAN", "1")
+
+    torch.manual_seed(223)
+    batch, sequence, heads, head_size = 3, 5, 2, 4
+    shape = (batch, sequence, heads * head_size)
+    r = torch.randn(shape)
+    w = torch.sigmoid(torch.randn(shape))
+    k = torch.randn(shape)
+    v = torch.randn(shape)
+    kk = torch.randn(shape)
+    a = torch.randn(shape)
+    state = torch.randn(batch, heads, head_size, head_size)
+
+    actual_output, actual_state = prefill._native_prefill_scan(
+        r,
+        w,
+        k,
+        v,
+        kk,
+        a,
+        state,
+        batch,
+        sequence,
+        heads,
+        head_size,
+        use_self_chunk=False,
+    )
+    row_results = [
+        prefill._native_prefill_scan(
+            r[index : index + 1],
+            w[index : index + 1],
+            k[index : index + 1],
+            v[index : index + 1],
+            kk[index : index + 1],
+            a[index : index + 1],
+            state[index : index + 1],
+            1,
+            sequence,
+            heads,
+            head_size,
+            use_self_chunk=False,
+        )
+        for index in range(batch)
+    ]
+    expected_output = torch.cat([result[0] for result in row_results], dim=0)
+    expected_state = torch.cat([result[1] for result in row_results], dim=0)
+    torch.testing.assert_close(actual_output, expected_output, rtol=0, atol=0)
+    torch.testing.assert_close(actual_state, expected_state, rtol=0, atol=0)
+
+
 def test_migrated_dense_model_math_cache_padding_and_hidden_states(
     tiny_config, monkeypatch
 ):

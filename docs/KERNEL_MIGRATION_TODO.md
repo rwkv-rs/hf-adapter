@@ -1768,3 +1768,17 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   add the same stable row contract at the native projection boundary (without
   changing readable modeling), verify B1/B8 exactness, and rerun only the six
   affected task pairs before any V100 promotion.
+- The stable-row diagnostic now also isolates the remaining batch-dependent
+  drift to the recurrent scan launch.  Matching the clean model's fixed
+  128-row projection contract alone reduces the repeated-prompt difference to
+  max-abs `0.09375` but does not eliminate it.  With the same projection
+  contract plus row-serialized B>1 recurrent scan, the identical unmasked B1
+  and repeated-B8 native prompt is bit-exact (`max_abs=0`, `mean_abs=0`, no
+  argmax mismatch).  The native result still has the separately tracked
+  clean-reference drift (`max_abs=0.09375`, `mean_abs=0.01199`, cosine
+  `0.9999803`, no argmax mismatch).  The default-on correctness boundary and
+  unit coverage are implemented locally; the complete local suite passes
+  **183 tests**.  The temporary RTX 4080 overlay is diagnostic only and must
+  not be cited as wheel evidence.  Next, build a new immutable wheel, repeat
+  the direct B1/B8 smoke from that wheel, and rerun only the six affected task
+  pairs.

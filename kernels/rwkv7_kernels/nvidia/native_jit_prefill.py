@@ -15,6 +15,15 @@ _EXECUTION_NAMES = {'_native_prefill_project_residual', '_prefill_current_device
 _OWNED_NAMES = _EXECUTION_NAMES | {"bind_runtime"}
 _RUNTIME_NAMES = ('_FP16_ACCUMULATION_LOCK', '_bnb8_direct_linear', '_bnb8_direct_relu_square_linear', '_bnb8_ffn_mix_quant_enabled', '_bnb8_prequant_linear', '_bnb8_rkv_mix_quant_enabled', '_graph_linear_is_dense', '_graph_linears_are_dense', '_init_batched_from_packs', '_lm_head', '_native_bnb8_policy_block', '_native_prefill_attn_shift_mix_block_size', '_native_prefill_dplr_chunk_size', '_native_prefill_dplr_scan_enabled', '_native_prefill_ffn_shift_mix_block_size', '_native_prefill_fp16_accum_ffn_key_enabled', '_native_prefill_fp16_accum_ffn_key_layers', '_native_prefill_fp16_recurrent_enabled', '_native_prefill_fp16_recurrent_requested', '_native_prefill_global_fp16_accum_enabled', '_native_prefill_block_fp16_accum_enabled', '_native_prefill_fused_clampw_scan_enabled', '_native_prefill_fused_output_enabled', '_native_prefill_fused_output_project_block_m', '_native_prefill_fused_output_project_enabled', '_native_prefill_fused_residual_gemm_enabled', '_native_prefill_fused_scan_enabled', '_native_prefill_fused_scan_output_enabled', '_native_prefill_fused_sequence_ffn_enabled', '_native_prefill_fused_shift_mix_enabled', '_native_prefill_fused_state_prep_enabled', '_native_prefill_fused_state_scan_enabled', '_native_prefill_fused_wavg_lora_blocks', '_native_prefill_fused_wavg_lora_enabled', '_native_prefill_model_shape_selected', '_native_prefill_policy_model_shape_selected', '_native_prefill_scan_block_m', '_native_prefill_scan_num_warps', '_native_prefill_self_chunk_enabled', '_native_prefill_self_chunk_h_tiles', '_native_prefill_self_chunk_safe_gate', '_native_prefill_self_chunk_size', '_native_prefill_sequence_ffn_blocks', '_native_prefill_sequence_ffn_launch', '_native_prefill_shift_mix_layers', '_native_prefill_shift_mix_num_warps', '_native_prefill_stacked_rkv_enabled', '_native_prefill_state_prep_layers', '_native_prefill_state_prep_w_dtype', '_recurrent_update_batched', 'dplr_chunk_scan', 'env_flag', 'fused_attn_output_prepare', 'fused_attn_output_project', 'fused_attn_sequence_shift_mix', 'fused_bnb8_attn_sequence_mix_quant', 'fused_bnb8_ffn_sequence_mix_quant', 'fused_ffn_sequence_shift_mix', 'fused_prefill_kv_kk_prep', 'fused_prefill_state_prep', 'fused_recurrent_scan', 'fused_recurrent_scan_clampw', 'fused_recurrent_scan_output_prepare', 'fused_recurrent_scan_state_prep', 'fused_relu_square', 'fused_relu_square_available', 'fused_sequence_ffn', 'fused_wavg_lora', 'native_fp16_sequence', 'self_chunk_rwkv7')
 
+_REFERENCE_LINEAR_ROWS = 128
+
+
+def _reference_linear_rows_enabled(value: torch.Tensor) -> bool:
+    return bool(
+        value.ndim == 3
+        and env_flag("RWKV7_NATIVE_PREFILL_REFERENCE_LINEAR_ROWS", True)
+    )
+
 
 def bind_runtime(runtime: dict[str, object]) -> None:
     for name in _RUNTIME_NAMES:
@@ -42,6 +51,44 @@ def _native_prefill_linear(
     """Sequence linear supporting dense and HF/native quantized operands."""
 
     if _graph_linear_is_dense(operand):
+        if _reference_linear_rows_enabled(x):
+            batch_size, sequence_length, input_size = x.shape
+            batch_groups: list[torch.Tensor] = []
+            for batch_start in range(0, batch_size, _REFERENCE_LINEAR_ROWS):
+                group = x[batch_start : batch_start + _REFERENCE_LINEAR_ROWS]
+                valid_batch = int(group.shape[0])
+                padded_batch = 1 << (valid_batch - 1).bit_length()
+                tokens_per_block = _REFERENCE_LINEAR_ROWS // padded_batch
+                sequence_blocks: list[torch.Tensor] = []
+                for token_start in range(0, sequence_length, tokens_per_block):
+                    block = group[:, token_start : token_start + tokens_per_block]
+                    valid_tokens = int(block.shape[1])
+                    if (
+                        valid_batch < padded_batch
+                        or valid_tokens < tokens_per_block
+                    ):
+                        block = F.pad(
+                            block,
+                            (
+                                0,
+                                0,
+                                0,
+                                tokens_per_block - valid_tokens,
+                                0,
+                                padded_batch - valid_batch,
+                            ),
+                        )
+                    projected = _native_prefill_linear(
+                        block.contiguous().view(
+                            _REFERENCE_LINEAR_ROWS, input_size
+                        ),
+                        operand,
+                        bias,
+                        allow_fp16_accumulation=allow_fp16_accumulation,
+                    ).view(padded_batch, tokens_per_block, -1)
+                    sequence_blocks.append(projected[:valid_batch, :valid_tokens])
+                batch_groups.append(torch.cat(sequence_blocks, dim=1))
+            return torch.cat(batch_groups, dim=0)
         matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
         can_select_accumulation = bool(
             allow_fp16_accumulation
@@ -71,6 +118,8 @@ def _native_prefill_linear(
 def _native_prefill_linear_add_residual(x, weight, residual):
     """Compute ``residual + linear(x, weight)`` with one GEMM output write."""
 
+    if _reference_linear_rows_enabled(x):
+        return residual + _native_prefill_linear(x, weight)
     hidden = int(weight.shape[0])
     out = residual.reshape(-1, hidden)
     out.addmm_(
@@ -141,6 +190,31 @@ def _native_prefill_scan(
     num_layers: int | None = None,
 ):
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
+
+    if B > 1 and env_flag("RWKV7_NATIVE_PREFILL_REFERENCE_BATCH_SCAN", True):
+        row_outputs: list[torch.Tensor] = []
+        row_states: list[torch.Tensor] = []
+        for batch_index in range(B):
+            row_output, row_state = _native_prefill_scan(
+                r[batch_index : batch_index + 1],
+                w[batch_index : batch_index + 1],
+                k[batch_index : batch_index + 1],
+                v[batch_index : batch_index + 1],
+                kk[batch_index : batch_index + 1],
+                a[batch_index : batch_index + 1],
+                state[batch_index : batch_index + 1],
+                1,
+                T,
+                H,
+                N,
+                w_is_raw=w_is_raw,
+                w_is_log=w_is_log,
+                use_self_chunk=use_self_chunk,
+                num_layers=num_layers,
+            )
+            row_outputs.append(row_output)
+            row_states.append(row_state)
+        return torch.cat(row_outputs, dim=0), torch.cat(row_states, dim=0)
 
     if w_is_raw and _native_prefill_fused_clampw_scan_enabled(B, T, H * N, num_layers):
         scan_block_m = _native_prefill_scan_block_m(N, B, T, H * N)
@@ -300,21 +374,31 @@ def _prefill_current_device_impl(
             raise ValueError("fp16_elapsed must be contiguous CUDA int32 [batch]")
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, residual_hidden)
+    reference_linear_rows = bool(
+        env_flag("RWKV7_NATIVE_PREFILL_REFERENCE_LINEAR_ROWS", True)
+    )
     v_first_seq = torch.zeros(B, T, attention_hidden, device=ids.device, dtype=dtype)
-    use_clampw_scan_requested = not use_fp16_recurrent_requested and _native_prefill_fused_clampw_scan_enabled(
-        B,
-        T,
-        attention_hidden,
-        len(packs),
+    use_clampw_scan_requested = bool(
+        not reference_linear_rows
+        and not use_fp16_recurrent_requested
+        and _native_prefill_fused_clampw_scan_enabled(
+            B,
+            T,
+            attention_hidden,
+            len(packs),
+        )
     )
     clampw_scan_used = False
-    use_prefill_sequence_ffn = _native_prefill_fused_sequence_ffn_enabled(
-        B * T,
-        B,
-        T,
-        residual_hidden,
-        len(packs),
-        dtype,
+    use_prefill_sequence_ffn = bool(
+        not reference_linear_rows
+        and _native_prefill_fused_sequence_ffn_enabled(
+            B * T,
+            B,
+            T,
+            residual_hidden,
+            len(packs),
+            dtype,
+        )
     )
     sequence_ffn_blocks = _native_prefill_sequence_ffn_blocks(B * T) if use_prefill_sequence_ffn else None
     sequence_ffn_launch = _native_prefill_sequence_ffn_launch() if use_prefill_sequence_ffn else None
@@ -421,8 +505,11 @@ def _prefill_current_device_impl(
     use_prefill_state_prep = _native_prefill_fused_state_prep_enabled(
         B, T, residual_hidden, len(packs)
     )
-    use_prefill_output = _native_prefill_fused_output_enabled(
-        B, T, residual_hidden, len(packs)
+    use_prefill_output = bool(
+        not reference_linear_rows
+        and _native_prefill_fused_output_enabled(
+            B, T, residual_hidden, len(packs)
+        )
     )
     prefill_state_prep_layers = (
         _native_prefill_state_prep_layers(B, T, residual_hidden, len(packs))
@@ -436,7 +523,10 @@ def _prefill_current_device_impl(
     layer_outputs = [] if capture_layer_outputs else None
     stacked_rkv_weights = (
         _native_prefill_stacked_rkv_weights(model, packs)
-        if _native_prefill_stacked_rkv_enabled(B * T, B, T, residual_hidden, len(packs))
+        if not reference_linear_rows
+        and _native_prefill_stacked_rkv_enabled(
+            B * T, B, T, residual_hidden, len(packs)
+        )
         else None
     )
     stacked_rkv_used = False
@@ -589,7 +679,8 @@ def _prefill_current_device_impl(
             k = _native_prefill_linear(xk, Kw)
             v = _native_prefill_linear(xv, Vw)
         use_prefill_wavg_lora = bool(
-            (not use_fp16_recurrent or T > 16)
+            not reference_linear_rows
+            and (not use_fp16_recurrent or T > 16)
             and layer_idx > 0
             and _native_prefill_fused_wavg_lora_enabled(B * T)
             and _graph_linears_are_dense(w1, w2, a1, a2, g1, g2, v1, v2)
@@ -641,11 +732,14 @@ def _prefill_current_device_impl(
                 if not defer_state_sigmoid:
                     v_gate.sigmoid_()
         use_fused_scan_output = bool(
-            not use_fp16_recurrent and _native_prefill_fused_scan_output_enabled()
+            not reference_linear_rows
+            and not use_fp16_recurrent
+            and _native_prefill_fused_scan_output_enabled()
         )
         raw_w_matches_activation = bool(w.dtype == r.dtype)
         use_self_chunk = bool(
-            raw_w_matches_activation
+            not reference_linear_rows
+            and raw_w_matches_activation
             and _native_prefill_self_chunk_enabled(
                 T,
                 N,
@@ -664,7 +758,8 @@ def _prefill_current_device_impl(
             and not use_fused_scan_output
         )
         use_fused_state_scan = bool(
-            not use_fp16_recurrent
+            not reference_linear_rows
+            and not use_fp16_recurrent
             and raw_w_matches_activation
             and _native_prefill_fused_state_scan_enabled(B)
             and not use_fused_scan_output
