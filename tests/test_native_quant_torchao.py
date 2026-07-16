@@ -163,12 +163,73 @@ def test_torchao_w4_5090_speed_shape_gate_is_exact() -> None:
     )
 
 
+def test_fla_ffn_patch_uses_explicit_relu2_abi(monkeypatch) -> None:
+    fla = types.ModuleType("fla")
+    fla_modules = types.ModuleType("fla.modules")
+    fla_token_shift = types.ModuleType("fla.modules.token_shift")
+
+    def token_shift(x, cu_seqlens, **kwargs):
+        return torch.zeros_like(x), x[:, -1]
+
+    fla_token_shift.token_shift = token_shift
+    monkeypatch.setitem(sys.modules, "fla", fla)
+    monkeypatch.setitem(sys.modules, "fla.modules", fla_modules)
+    monkeypatch.setitem(sys.modules, "fla.modules.token_shift", fla_token_shift)
+
+    class Key(torch.nn.Module):
+        def forward(self, _x):
+            raise AssertionError("plain Linear ABI must not be used by the patched FFN")
+
+        def rwkv7_forward_relu2(self, x):
+            return x + 1
+
+    class RWKV7FeedForward(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.key = Key()
+            self.value = torch.nn.Identity()
+            self.act_fn = torch.nn.Identity()
+            self.x_k = torch.zeros(4)
+            self.layer_idx = 0
+
+        def forward(
+            self,
+            x,
+            attention_mask=None,
+            state=None,
+            cu_seqlens=None,
+            **kwargs,
+        ):
+            raise AssertionError("the recognized FLA forward must be replaced")
+
+    RWKV7FeedForward.__module__ = "fla.models.rwkv7.modeling_rwkv7"
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Module()
+            self.model.layers = torch.nn.ModuleList([torch.nn.Module()])
+            self.model.layers[0].ffn = RWKV7FeedForward()
+
+    model = Model()
+    assert qao._enable_fla_fused_relu2_ffn(
+        model, ["model.layers.0.ffn.key"]
+    ) == 1
+    x = torch.randn(1, 2, 4)
+    out, state = model.model.layers[0].ffn(x)
+    assert state is None
+    assert torch.equal(out, x + 1)
+
+
 def test_torchao_w4_speed_policy_adds_only_measured_5090_ffn(monkeypatch) -> None:
     class FakeMarlinW4Linear(torch.nn.Module):
-        def __init__(self, inner, *, group_size):
+        def __init__(self, inner, *, group_size, fp32_reduce, production_bn_tn, fuse_relu2):
             super().__init__()
             self.inner = inner
             self.group_size = group_size
+            self.fp32_reduce = fp32_reduce
+            self.production_bn_tn = production_bn_tn
+            self.fused_relu2 = fuse_relu2
 
     class FFN(torch.nn.Module):
         def __init__(self):
@@ -207,5 +268,10 @@ def test_torchao_w4_speed_policy_adds_only_measured_5090_ffn(monkeypatch) -> Non
     assert calls[0][0] is model.lm_head
     assert isinstance(model.model.layers[0].ffn.key, FakeMarlinW4Linear)
     assert isinstance(model.model.layers[0].ffn.value, FakeMarlinW4Linear)
+    assert model.model.layers[0].ffn.key.production_bn_tn is True
+    assert model.model.layers[0].ffn.key.fp32_reduce is False
+    assert model.model.layers[0].ffn.key.fused_relu2 is True
+    assert model.model.layers[0].ffn.value.fused_relu2 is False
     assert model._rwkv7_native_mm_quantization == "marlin_w4_5090_hybrid"
     assert model._rwkv7_native_mm_exact_5090_speed_modules == 2
+    assert model._rwkv7_native_mm_exact_5090_kernel == "bntn_marlin_bf16_w4"

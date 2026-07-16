@@ -1,0 +1,9 @@
+gpu=NVIDIA GeForce RTX 5090
+compute_capability=12.0
+driver=595.58.03
+torch=2.11.0+cu128
+torch_cuda=12.8
+cuda_toolkit=/usr/local/cuda-12.8
+triton=3.6.0
+torchao=0.17.0
+transformers=5.12.1

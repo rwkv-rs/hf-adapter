@@ -1705,6 +1705,9 @@ def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight) -> torch.Tensor
     ):
         return torch.relu(ada_linear(x, weight)) ** 2
     if not _graph_linear_is_dense(weight):
+        fused = getattr(weight, "rwkv7_forward_relu2", None)
+        if bool(getattr(weight, "fused_relu2", False)) and callable(fused):
+            return fused(x)
         return torch.relu(_graph_linear_call(x, weight)) ** 2
     if (
         not _native_graph_sm70_linear_enabled()
@@ -2959,11 +2962,22 @@ def prefill(
                 fxx = prev_h2 - h2
                 fk = h2 + fxx * fx_k.view(1, 1, hidden)
                 next_xpf = h2[:, -1, :].contiguous()
+            fused_up_relu2 = False
             if not ffn_up_prequantized:
-                fk = _native_prefill_linear(fk, fK)
-            fused_bnb8_ffn = _bnb8_direct_relu_square_linear(fk, fV)
+                fused = getattr(fK, "rwkv7_forward_relu2", None)
+                fused_up_relu2 = bool(
+                    getattr(fK, "fused_relu2", False) and callable(fused)
+                )
+                fk = fused(fk) if fused_up_relu2 else _native_prefill_linear(fk, fK)
+            fused_bnb8_ffn = (
+                None
+                if fused_up_relu2
+                else _bnb8_direct_relu_square_linear(fk, fV)
+            )
             if fused_bnb8_ffn is not None:
                 x = residual + fused_bnb8_ffn
+            elif fused_up_relu2:
+                x = _native_prefill_project_residual(fk, fV, residual)
             elif (
                 use_prefill_shift_mix
                 and fused_relu_square is not None

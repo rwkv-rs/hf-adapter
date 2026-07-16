@@ -16,6 +16,7 @@
       const int4 *__restrict__ zp_ptr, const int *__restrict__ g_idx,          \
       int num_groups, int prob_m, int prob_n, int prob_k, int lda, int *locks, \
       bool has_bias, bool use_atomic_add, bool use_fp32_reduce,                \
+      bool fuse_relu2,                                                         \
       int max_shared_mem
 
 namespace MARLIN_NAMESPACE_NAME {

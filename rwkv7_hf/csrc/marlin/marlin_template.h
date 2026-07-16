@@ -253,6 +253,7 @@ __global__ void Marlin(
     bool has_bias,
     bool use_atomic_add,   // whether to use atomic add to reduce
     bool use_fp32_reduce,  // whether to use fp32 global reduce
+    bool fuse_relu2,       // fuse the RWKV FFN-key ReLU-square epilogue
     int max_shared_mem) {
   // Each threadblock processes one "stripe" of the B matrix with (roughly) the
   // same size, which might involve multiple column "slices" (of width 16 *
@@ -1471,6 +1472,18 @@ __global__ void Marlin(
               reinterpret_cast<scalar_t*>(&b_bias[0])[(threadIdx.x % 8) / 4]);
         }
         res = __hadd2(res, tmp_bias);
+      }
+
+      // FFN-key production specialization.  ``res`` is already rounded to the
+      // output BF16/FP16 type, matching torch.relu(linear(x)) ** 2 before the
+      // final multiplication is rounded back to the same output type.
+      if (fuse_relu2 && last) {
+        float r0 = Dtype::num2float(res.x);
+        float r1 = Dtype::num2float(res.y);
+        r0 = r0 > 0.0f ? r0 : 0.0f;
+        r1 = r1 > 0.0f ? r1 : 0.0f;
+        res.x = Dtype::float2num(r0 * r0);
+        res.y = Dtype::float2num(r1 * r1);
       }
 
       if constexpr (m_block_size_8) {

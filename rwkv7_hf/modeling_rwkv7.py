@@ -688,6 +688,13 @@ def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
     return F.linear(x, module.weight, module.bias)
 
 
+def _linear_relu2_direct(module, x: torch.Tensor) -> torch.Tensor:
+    fused = getattr(module, "rwkv7_forward_relu2", None)
+    if bool(getattr(module, "fused_relu2", False)) and callable(fused):
+        return fused(x)
+    return torch.relu(_linear_direct(module, x)) ** 2
+
+
 def _native_graph_head_linear(module, x: torch.Tensor) -> torch.Tensor:
     """Native-graph lm_head with an optional measured sm_70 bsz=1 route."""
 
@@ -3185,7 +3192,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             prev = ffn_cache.unsqueeze(1) if ffn_cache.dim() == 2 else ffn_cache
         delta = prev - hidden_states
         k = torch.addcmul(hidden_states, delta, ffn.x_k.view(1, 1, -1))
-        out = _linear_direct(ffn.value, torch.relu(_linear_direct(ffn.key, k)) ** 2)
+        out = _linear_direct(ffn.value, _linear_relu2_direct(ffn.key, k))
         return out, hidden_states[:, -1]
 
     @staticmethod
@@ -3197,7 +3204,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             prev = ffn_cache[:, -1] if ffn_cache.dim() == 3 else ffn_cache
         delta = prev - hidden_states
         k = torch.addcmul(hidden_states, delta, ffn.x_k.view(1, -1))
-        out = _linear_direct(ffn.value, torch.relu(_linear_direct(ffn.key, k)) ** 2)
+        out = _linear_direct(ffn.value, _linear_relu2_direct(ffn.key, k))
         return out, hidden_states
 
     def _rwkv7_forward_fast_candidate(self, args: tuple[Any, ...], kwargs: dict[str, Any], effective_use_cache: bool):
