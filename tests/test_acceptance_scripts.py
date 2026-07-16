@@ -183,6 +183,7 @@ def test_blackwell_matrix_supports_paired_baselines() -> None:
     assert '"--timing-repeats"' in matrix
     assert '"--paired-baseline"' in decode
     assert '"--timing-repeats"' in decode
+    assert '"--quantize-before-device"' in decode
     assert "quantization != \"none\" and args.paired_baseline" in decode
 
 
