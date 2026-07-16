@@ -27,6 +27,10 @@ When a user asks how to install, run, or troubleshoot their first model, read
 kernel work. Use `examples/check_environment.py` before and after model
 conversion, request confirmation before large downloads, and do not report
 success until `examples/generate.py` exits successfully with generated text.
+For ordinary-user speculative decoding, training, or multi-GPU requests, read
+`docs/ADVANCED_USAGE.md` or `docs/ADVANCED_USAGE_ZH.md`. Run only the requested
+workflow, enforce its PASS gate, and preserve the documented distinction between
+a compatibility smoke and production performance, convergence, or TP evidence.
 
 ## Current Agent Contract: Native Fused HF Backend
 

@@ -18,6 +18,8 @@ model, tune kernels, or change repository code.
 - Keep the first run on the 0.4B checkpoint. Larger models consume much more
   disk, RAM, and VRAM and are not useful for checking whether installation works.
 
+![AI-assisted inspect, approve, execute, and verify flow](assets/tutorials/06-ai-assisted-setup.png)
+
 ## Copy this prompt to the AI
 
 Replace nothing unless you want to use a model that has already been converted.
@@ -100,6 +102,19 @@ and [`USER_GUIDE_ZH.md#5-python-api`](USER_GUIDE_ZH.md#5-python-api). Keep
 This repository provides a model adapter, not a hosted chat service. An app is
 responsible for its own prompt template, conversation history, request limits,
 and process lifecycle.
+
+## Advanced AI tasks
+
+After first generation passes, use
+[`ADVANCED_USAGE.md`](ADVANCED_USAGE.md) or
+[`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) for speculative decoding,
+single-GPU training, multi-GPU inference, and DeepSpeed ZeRO training. Give the
+assistant exactly one workflow at a time. It must check the real GPU count,
+quote the documented command, run it, and report its exit code and PASS gate.
+
+The assistant must call a one-step training command a compatibility smoke. It
+must not turn that result into a production convergence, speedup, tensor
+parallelism, or long-run stability claim.
 
 ## Safe troubleshooting handoff
 

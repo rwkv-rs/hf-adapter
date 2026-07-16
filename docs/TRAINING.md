@@ -2,6 +2,10 @@
 
 Canonical summary for Trainer, PEFT, TRL and DeepSpeed validation.
 
+For copyable single-GPU and multi-GPU smoke commands with visual explanations,
+read [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md) or
+[`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md).
+
 ## Interface status
 
 | Workflow | Status | Validation level |

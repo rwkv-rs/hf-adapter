@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import struct
 
 import torch
 import pytest
@@ -103,6 +104,8 @@ def test_quickstart_relative_links_exist() -> None:
         root / "docs" / "USER_GUIDE.md",
         root / "docs" / "USER_GUIDE_ZH.md",
         root / "docs" / "AI_ASSISTED_SETUP.md",
+        root / "docs" / "ADVANCED_USAGE.md",
+        root / "docs" / "ADVANCED_USAGE_ZH.md",
     )
     for document in documents:
         text = document.read_text(encoding="utf-8")
@@ -113,3 +116,36 @@ def test_quickstart_relative_links_exist() -> None:
             assert (document.parent / relative).exists(), (
                 f"broken link in {document.relative_to(root)}: {target}"
             )
+
+
+def test_visual_workflow_assets_and_commands_stay_complete() -> None:
+    root = Path(__file__).resolve().parents[1]
+    guide = (root / "docs" / "ADVANCED_USAGE.md").read_text(encoding="utf-8")
+    guide_zh = (root / "docs" / "ADVANCED_USAGE_ZH.md").read_text(
+        encoding="utf-8"
+    )
+    assets = (
+        "01-first-run.png",
+        "02-speculative-decoding.png",
+        "03-single-gpu-training.png",
+        "04-multi-gpu-inference.png",
+        "05-multi-gpu-training.png",
+        "06-ai-assisted-setup.png",
+    )
+    for name in assets:
+        path = root / "docs" / "assets" / "tutorials" / name
+        payload = path.read_bytes()
+        assert payload.startswith(b"\x89PNG\r\n\x1a\n"), name
+        assert struct.unpack(">II", payload[16:24]) == (1200, 675), name
+        assert name in guide
+        assert name in guide_zh
+
+    for command in (
+        "tests/test_speculative_decode.py",
+        "tests/test_peft_lora.py",
+        "tests/test_native_trainer_smoke.py",
+        "tests/test_device_map_generate.py",
+        "scripts/run_zero_training_smoke.sh",
+    ):
+        assert command in guide
+        assert command in guide_zh

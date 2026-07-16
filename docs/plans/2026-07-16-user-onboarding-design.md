@@ -11,7 +11,7 @@ backend environment variables.
 
 ## Chosen approach
 
-Use five layers:
+Use six layers:
 
 1. Put a five-minute path at the top of the root README.
 2. Keep installation, checkpoint conversion, platform choices, Python API, and
@@ -22,6 +22,10 @@ Use five layers:
    PASS/FAIL output before installation is called complete.
 5. Provide an AI runbook with a copy-ready prompt, approval boundaries, a small
    state machine, and command-based acceptance criteria.
+6. Provide stable visual guides for first generation, speculative decoding,
+   single-GPU training, HF multi-GPU inference, and DeepSpeed ZeRO training.
+   Keep exact commands beside every image so both humans and agents can act on
+   the same source of truth.
 
 This is preferred over prose alone because users and agents can validate the
 documented path. It is preferred over an unattended checkpoint installer
@@ -48,3 +52,5 @@ translate.
 - Run `examples/check_environment.py` and unit-test model-directory diagnosis.
 - Run clean-install packaging and documentation-freshness tests.
 - Validate Markdown relative links before publishing.
+- Verify every tutorial PNG is non-empty, exactly 1200x675, linked from a guide,
+  and paired with descriptive alt text and a copyable command.

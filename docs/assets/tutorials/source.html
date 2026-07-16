@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; overflow-x: hidden; background: #dfe3e8; font-family: Arial, "Segoe UI", sans-serif; color: #17202a; }
+.slide { width: 1200px; height: 675px; background: #f7f8fa; position: relative; overflow: hidden; border-bottom: 1px solid #aeb6bf; }
+.top { height: 88px; padding: 22px 40px 16px; background: #18212b; color: #fff; display: flex; align-items: center; justify-content: space-between; }
+.eyebrow { color: #78d8a0; font: 700 15px Consolas, monospace; text-transform: uppercase; }
+h1 { font-size: 31px; line-height: 1.15; margin: 4px 0 0; letter-spacing: 0; }
+.badge { border: 1px solid #6f7c88; border-radius: 6px; padding: 9px 13px; font: 700 14px Consolas, monospace; color: #d8e0e7; }
+.main { height: 527px; padding: 26px 40px 20px; }
+.footer { height: 60px; padding: 17px 40px; background: #eef1f4; border-top: 1px solid #d0d6dc; color: #3c4854; font-size: 16px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 17px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.step, .panel { min-width: 0; background: #fff; border: 1px solid #cfd6dc; border-radius: 7px; padding: 18px; min-height: 220px; }
+.num { display: inline-flex; width: 31px; height: 31px; align-items: center; justify-content: center; border-radius: 50%; background: #176b4d; color: #fff; font-weight: 700; margin-bottom: 10px; }
+h2 { font-size: 21px; margin: 0 0 10px; letter-spacing: 0; }
+h3 { font-size: 18px; margin: 0 0 9px; letter-spacing: 0; }
+p { font-size: 16px; line-height: 1.38; margin: 8px 0; }
+.terminal { background: #111820; color: #e5e9ed; border-radius: 6px; padding: 13px 14px; margin-top: 12px; font: 15px/1.43 Consolas, monospace; min-height: 92px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.grid4 .terminal { font-size: 12.5px; }
+.grid3 .terminal { font-size: 13px; }
+.prompt { color: #78d8a0; }
+.pass { color: #72db9d; font-weight: 700; }
+.warn { color: #f2bf62; font-weight: 700; }
+.fail { color: #ff8585; font-weight: 700; }
+.arrow { text-align: center; font-size: 35px; color: #176b4d; padding-top: 80px; }
+.flow { display: grid; grid-template-columns: 1fr 54px 1fr 54px 1fr; gap: 4px; align-items: stretch; }
+.flow .panel { min-height: 262px; }
+.metric { background: #eaf6ef; border-left: 4px solid #198754; padding: 10px 12px; margin-top: 12px; font: 700 15px Consolas, monospace; }
+.note { background: #fff5dc; border-left: 4px solid #d68b00; padding: 11px 13px; font-size: 15px; line-height: 1.35; margin-top: 14px; }
+.lane { border: 1px solid #bac4cd; background: #fff; border-radius: 7px; padding: 15px; margin-bottom: 13px; display: grid; grid-template-columns: 155px 1fr; gap: 14px; align-items: center; }
+.lane-name { font-weight: 700; font-size: 17px; color: #185f7a; }
+.blocks { display: flex; gap: 8px; }
+.block { flex: 1; background: #e7f0f5; border: 1px solid #aebfca; border-radius: 5px; padding: 10px 7px; text-align: center; font: 700 14px Consolas, monospace; }
+.block.green { background: #e8f5ec; border-color: #9bc4a8; }
+.block.orange { background: #fff0da; border-color: #d9b27a; }
+.center { text-align: center; }
+.big-status { font: 700 28px Consolas, monospace; color: #198754; margin-top: 16px; }
+.small { font-size: 14px; color: #53616e; }
+</style>
+</head>
+<body>
+
+<section class="slide" id="first-run">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / visual quickstart</div><h1>From a clean clone to generated text</h1></div><div class="badge">FIRST RUN</div></div>
+  <div class="main">
+    <div class="grid4">
+      <div class="step"><div class="num">1</div><h2>Create environment</h2><p>Use Python 3.10+ and keep packages inside the repository.</p><div class="terminal"><span class="prompt">$</span> python -m venv .venv
+<span class="prompt">$</span> python -m pip install -e .</div></div>
+      <div class="step"><div class="num">2</div><h2>Check the machine</h2><p>Fix the first FAIL before downloading a model.</p><div class="terminal"><span class="prompt">$</span> python examples/check_environment.py
+<span class="pass">RESULT: READY</span></div></div>
+      <div class="step"><div class="num">3</div><h2>Download + convert</h2><p>Start with the public 0.4B checkpoint and official vocabulary.</p><div class="terminal">hf download BlinkDL/rwkv7-g1 ...
+convert_rwkv7_to_hf.py ...</div></div>
+      <div class="step"><div class="num">4</div><h2>Generate</h2><p>Validate the model directory, then run 8 deterministic tokens.</p><div class="terminal"><span class="pass">[PASS] Model directory</span>
+generate.py --max-new-tokens 8</div></div>
+    </div>
+    <div class="note"><b>Done means evidence:</b> environment READY + model directory PASS + generation exits 0 and prints new text.</div>
+  </div>
+  <div class="footer">Use the native backend for the first compatibility run. Optional FLA optimization can be added later on supported Linux NVIDIA systems.</div>
+</section>
+
+<section class="slide" id="speculative">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / speculative decoding</div><h1>Draft quickly, verify exactly, correct when needed</h1></div><div class="badge">INFERENCE</div></div>
+  <div class="main">
+    <div class="flow">
+      <div class="panel"><h2>1. Draft model</h2><p>Proposes a short block of tokens using recurrent cache.</p><div class="terminal">draft_tokens = 4
+propose: A B C D</div><div class="metric">draft_forward_calls &gt; 0</div></div>
+      <div class="arrow">&#8594;</div>
+      <div class="panel"><h2>2. Target model</h2><p>Verifies the proposal. Accepted tokens are kept; a mismatch is corrected.</p><div class="terminal">target.verify(A B C D)
+accept / correct / resync</div><div class="metric">target_forward_calls &gt; 0</div></div>
+      <div class="arrow">&#8594;</div>
+      <div class="panel"><h2>3. Exact output</h2><p>Greedy output must equal normal target generation.</p><div class="terminal"><span class="pass">speculative_stats {...}</span>
+decoded ...
+<span class="pass">PASS</span></div></div>
+    </div>
+    <div class="note"><b>Correctness first:</b> same-model draft proves the API contract, not speed. A smaller compatible draft is required for a real speed experiment.</div>
+  </div>
+  <div class="footer">Command: python tests/test_speculative_decode.py --model MODEL --max-new-tokens 8 --draft-tokens 4</div>
+</section>
+
+<section class="slide" id="training">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / single-GPU training</div><h1>Prove gradients before starting a real fine-tune</h1></div><div class="badge">TRAINING</div></div>
+  <div class="main">
+    <div class="grid3">
+      <div class="panel"><div class="num">1</div><h2>Install training extras</h2><div class="terminal"><span class="prompt">$</span> python -m pip install -e ".[train]"</div><p>Includes PEFT, Accelerate, datasets, TRL, and DeepSpeed.</p></div>
+      <div class="panel"><div class="num">2</div><h2>LoRA backward smoke</h2><div class="terminal">test_peft_lora.py --model MODEL
+<span class="pass">nonzero_grad_count &gt; 0</span></div><p>Checks trainable parameters, finite loss, backward, and non-zero gradients.</p></div>
+      <div class="panel"><div class="num">3</div><h2>Trainer smoke</h2><div class="terminal">test_native_trainer_smoke.py \
+ --max-steps 2 --batch-size 2
+<span class="pass">NATIVE TRAINER PASS</span></div><p>Checks a short optimizer update through the HF Trainer path.</p></div>
+    </div>
+    <div class="note"><b>Scope:</b> a smoke pass proves compatibility, not convergence or dataset quality. A production run still needs a real dataset, evaluation split, checkpoints, and loss monitoring.</div>
+  </div>
+  <div class="footer">Disable cache during training. Start with 0.1B or 0.4B and confirm memory before increasing sequence length or batch size.</div>
+</section>
+
+<section class="slide" id="multi-gpu-inference">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / multi-GPU inference</div><h1>Layer sharding with Hugging Face device_map</h1></div><div class="badge">2+ GPU</div></div>
+  <div class="main">
+    <div class="lane"><div class="lane-name">GPU 0</div><div class="blocks"><div class="block green">Embedding</div><div class="block green">Layers 0..K</div><div class="block orange">State handoff</div></div></div>
+    <div class="lane"><div class="lane-name">GPU 1</div><div class="blocks"><div class="block orange">State receive</div><div class="block">Layers K+1..N</div><div class="block">LM head</div></div></div>
+    <div class="grid2">
+      <div class="panel"><h2>Preflight</h2><div class="terminal">torch.cuda.device_count() &gt;= 2
+CUDA_VISIBLE_DEVICES=0,1</div><p>Use visible-device selection before loading the model.</p></div>
+      <div class="panel"><h2>Acceptance</h2><div class="terminal">test_device_map_generate.py \
+ --compare-single-device
+<span class="pass">PASS</span></div><p>Compares sharded output against a single-device reference.</p></div>
+    </div>
+  </div>
+  <div class="footer"><b>Boundary:</b> this is HF layer placement / pipeline direction. It is not a claim of native tensor-parallel inference.</div>
+</section>
+
+<section class="slide" id="multi-gpu-training">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / multi-GPU training</div><h1>DeepSpeed ZeRO-2 and ZeRO-3 smoke workflow</h1></div><div class="badge">DISTRIBUTED</div></div>
+  <div class="main">
+    <div class="grid2">
+      <div class="panel"><h2>ZeRO-2</h2><p>Replicates parameters, partitions optimizer states and gradients.</p><div class="blocks"><div class="block green">GPU 0<br>opt/grad shard</div><div class="block green">GPU 1<br>opt/grad shard</div></div><div class="metric">Lower optimizer + gradient memory</div></div>
+      <div class="panel"><h2>ZeRO-3</h2><p>Also partitions model parameters across workers.</p><div class="blocks"><div class="block orange">GPU 0<br>param shard</div><div class="block orange">GPU 1<br>param shard</div></div><div class="metric">Lowest per-GPU parameter memory</div></div>
+    </div>
+    <div class="terminal"><span class="prompt">$</span> NPROC_PER_NODE=2 ZERO_STAGE=both MODEL=MODEL \
+  bash scripts/run_zero_training_smoke.sh
+<span class="pass">PASS</span>  + rows written to bench/results.jsonl</div>
+    <div class="note"><b>Run on Linux/WSL2 with two visible CUDA GPUs.</b> A one-step smoke does not prove long-run convergence or optimizer/scheduler continuity.</div>
+  </div>
+  <div class="footer">ZeRO is distributed training state sharding. Do not describe these rows as tensor-parallel inference evidence.</div>
+</section>
+
+<section class="slide" id="ai-assistant">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / AI-assisted setup</div><h1>Make the assistant prove each state</h1></div><div class="badge">CODEX / CLAUDE / CURSOR</div></div>
+  <div class="main">
+    <div class="grid4">
+      <div class="step"><div class="num">1</div><h2>Inspect</h2><p>OS, shell, Python, disk, PyTorch, GPU count and names.</p><div class="terminal">Do not guess.</div></div>
+      <div class="step"><div class="num">2</div><h2>Ask</h2><p>Request approval before model downloads or system-level changes.</p><div class="terminal"><span class="warn">Await approval</span></div></div>
+      <div class="step"><div class="num">3</div><h2>Execute</h2><p>Run one documented workflow and stop at the first non-zero exit.</p><div class="terminal">Fix first error.
+Rerun command.</div></div>
+      <div class="step"><div class="num">4</div><h2>Verify</h2><p>Report exact command, exit code, output gate, device and model.</p><div class="terminal"><span class="pass">PASS + evidence</span></div></div>
+    </div>
+    <div class="note"><b>Never share secrets:</b> public-model setup does not require passwords, Hugging Face tokens, SSH keys, or private credentials.</div>
+  </div>
+  <div class="footer">An AI response saying "this should work" is not acceptance. The documented command must actually pass.</div>
+</section>
+
+<script>
+const selected = new URLSearchParams(window.location.search).get("slide");
+if (selected) {
+  document.querySelectorAll(".slide").forEach((slide) => {
+    slide.style.display = slide.id === selected ? "block" : "none";
+  });
+  window.scrollTo(0, 0);
+}
+</script>
+</body>
+</html>

@@ -18,6 +18,8 @@ Setup is complete only when the environment doctor reports `RESULT: READY`,
 the model-directory check passes, and `examples/generate.py` exits with code 0
 and prints newly generated text.
 
+![First-run flow from environment setup to generated text](assets/tutorials/01-first-run.png)
+
 ## What you need
 
 - Python 3.10 or newer.
@@ -318,6 +320,8 @@ environment.
 
 ## Next steps
 
+- Visual speculative decoding, training, and multi-GPU workflows:
+  [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md)
 - Training and PEFT/TRL: [`TRAINING.md`](TRAINING.md)
 - Quantized inference: [`QUANTIZATION.md`](QUANTIZATION.md)
 - Validated cards and limitations: [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md)
