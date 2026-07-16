@@ -1,5 +1,10 @@
 # Apple Silicon / MPS / MLX adaptation plan
 
+> **User tutorial:** for a step-by-step MPS, MLX conversion/generation/session,
+> packed W8/W4, dynamic batching, speculative verification, and CoreML export
+> guide, read [`../APPLE_USAGE.md`](../APPLE_USAGE.md) or
+> [`../APPLE_USAGE_ZH.md`](../APPLE_USAGE_ZH.md).
+
 > **Chronological platform detail.** This document contains both current
 > architecture notes and older experiment rows. Promoted conclusions are
 > limited to [`APPLE_PRODUCTION_CLOSE.md`](APPLE_PRODUCTION_CLOSE.md) and the

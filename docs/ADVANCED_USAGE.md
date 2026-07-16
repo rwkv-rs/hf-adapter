@@ -7,6 +7,10 @@ and DeepSpeed multi-GPU training.
 
 Chinese version: [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md)
 
+For conversion/cache, the full training ecosystem, quantization, and Apple
+workflows, use the complete map in
+[`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md).
+
 These commands are short compatibility smokes. A smoke pass does not by itself
 prove a speedup, production convergence, tensor parallelism, or long-run
 stability.
@@ -70,6 +74,36 @@ python tests/test_speculative_decode.py \
 The smaller-draft run passes when output still equals target greedy generation.
 A real performance claim additionally requires paired timing against normal
 target generation on the same device and shape.
+
+### Optional: align a smaller draft
+
+Create a UTF-8 text file with one representative prompt per line. Train only
+the smaller draft against a frozen target, then save the merged draft:
+
+```bash
+python scripts/train_spec_draft.py \
+  --target /path/to/target-model-hf \
+  --draft /path/to/smaller-draft-model-hf \
+  --prompts /path/to/prompts.txt \
+  --output /path/to/aligned-draft-hf \
+  --device cuda --dtype fp16 --epochs 1 --gen-tokens 64
+```
+
+Training must exit 0, print finite loss telemetry, and print
+`saved_aligned_draft`. That is traceability, not speculative acceptance.
+Measure the resulting draft against normal target generation:
+
+```bash
+python bench/bench_speculative_decode.py \
+  --target-model /path/to/target-model-hf \
+  --draft-model /path/to/aligned-draft-hf \
+  --draft-tag trained --device cuda --dtype fp16 \
+  --max-new-tokens 32 --draft-tokens 4
+```
+
+Require `status: pass`, exact target-greedy equality, and a paired
+`speedup_vs_target_generate > 1` before describing the trained draft as a
+speed improvement. Keep the original off-the-shelf draft for an A/B control.
 
 ## 2. Single-GPU PEFT and Trainer smoke
 

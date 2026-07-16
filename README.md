@@ -14,6 +14,12 @@ For normal inference, start here instead of the benchmark sections below:
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
 - [Give the setup to an AI assistant](docs/AI_ASSISTED_SETUP.md)
 - [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
+- [Complete adaptation tutorial index / 全部适配教学总表](docs/COMPLETE_ADAPTER_GUIDE_ZH.md)
+
+After first generation, use the complete index to find copyable tutorials for
+conversion and cache workflows, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
+speculative decoding, and multi-GPU execution. Each tutorial defines its own
+PASS gate and states what the result does not prove.
 
 The guides define success with real environment, model-directory, and
 generation checks. They do not treat installed files as proof that the model

@@ -106,6 +106,16 @@ def test_quickstart_relative_links_exist() -> None:
         root / "docs" / "AI_ASSISTED_SETUP.md",
         root / "docs" / "ADVANCED_USAGE.md",
         root / "docs" / "ADVANCED_USAGE_ZH.md",
+        root / "docs" / "COMPLETE_ADAPTER_GUIDE.md",
+        root / "docs" / "COMPLETE_ADAPTER_GUIDE_ZH.md",
+        root / "docs" / "INFERENCE_WORKFLOWS.md",
+        root / "docs" / "INFERENCE_WORKFLOWS_ZH.md",
+        root / "docs" / "TRAINING_WORKFLOWS.md",
+        root / "docs" / "TRAINING_WORKFLOWS_ZH.md",
+        root / "docs" / "QUANTIZATION_USAGE.md",
+        root / "docs" / "QUANTIZATION_USAGE_ZH.md",
+        root / "docs" / "APPLE_USAGE.md",
+        root / "docs" / "APPLE_USAGE_ZH.md",
     )
     for document in documents:
         text = document.read_text(encoding="utf-8")
@@ -142,6 +152,8 @@ def test_visual_workflow_assets_and_commands_stay_complete() -> None:
 
     for command in (
         "tests/test_speculative_decode.py",
+        "scripts/train_spec_draft.py",
+        "bench/bench_speculative_decode.py",
         "tests/test_peft_lora.py",
         "tests/test_native_trainer_smoke.py",
         "tests/test_device_map_generate.py",
@@ -149,3 +161,76 @@ def test_visual_workflow_assets_and_commands_stay_complete() -> None:
     ):
         assert command in guide
         assert command in guide_zh
+
+    topical_assets = {
+        "07-inference-and-cache.png": ("INFERENCE_WORKFLOWS.md", "INFERENCE_WORKFLOWS_ZH.md"),
+        "08-training-ecosystem.png": ("TRAINING_WORKFLOWS.md", "TRAINING_WORKFLOWS_ZH.md"),
+        "09-quantization-paths.png": ("QUANTIZATION_USAGE.md", "QUANTIZATION_USAGE_ZH.md"),
+        "10-apple-deployment.png": ("APPLE_USAGE.md", "APPLE_USAGE_ZH.md"),
+    }
+    for name, guide_names in topical_assets.items():
+        path = root / "docs" / "assets" / "tutorials" / name
+        payload = path.read_bytes()
+        assert payload.startswith(b"\x89PNG\r\n\x1a\n"), name
+        assert struct.unpack(">II", payload[16:24]) == (1200, 675), name
+        for guide_name in guide_names:
+            text = (root / "docs" / guide_name).read_text(encoding="utf-8")
+            assert name in text
+
+
+def test_complete_adapter_teaching_contract_stays_discoverable() -> None:
+    root = Path(__file__).resolve().parents[1]
+    index = (root / "docs" / "COMPLETE_ADAPTER_GUIDE.md").read_text(encoding="utf-8")
+    index_zh = (root / "docs" / "COMPLETE_ADAPTER_GUIDE_ZH.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    docs_readme = (root / "docs" / "README.md").read_text(encoding="utf-8")
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "COMPLETE_ADAPTER_GUIDE_ZH.md" in readme
+    assert "COMPLETE_ADAPTER_GUIDE.md" in docs_readme
+    assert "COMPLETE_ADAPTER_GUIDE.md" in agents
+
+    topical_docs = (
+        "INFERENCE_WORKFLOWS.md",
+        "TRAINING_WORKFLOWS.md",
+        "QUANTIZATION_USAGE.md",
+        "APPLE_USAGE.md",
+        "ADVANCED_USAGE.md",
+        "AI_ASSISTED_SETUP.md",
+    )
+    for name in topical_docs:
+        assert name in index
+        assert name.replace(".md", "_ZH.md") in index_zh or name == "AI_ASSISTED_SETUP.md"
+
+    commands_by_doc = {
+        "INFERENCE_WORKFLOWS.md": (
+            "batch_convert_rwkv7_to_hf.py",
+            "sync_hf_adapter_code.py",
+            "test_hf_api_contract.py",
+            "test_batch_cache.py",
+            "test_dynamic_batch_cache.py",
+            "test_chunked_prefill.py",
+        ),
+        "TRAINING_WORKFLOWS.md": (
+            "test_peft_lora.py",
+            "test_native_peft_save_load_merge.py",
+            "test_native_trainer_resume_smoke.py",
+            "test_hf_rl_training_smoke.py",
+        ),
+        "QUANTIZATION_USAGE.md": (
+            "test_quantized_inference.py",
+            "test_native_bnb_quant_smoke.py",
+            "test_native_mm8_persist.py",
+        ),
+        "APPLE_USAGE.md": (
+            "convert_hf_to_mlx.py",
+            "mlx_session_batch_smoke.py",
+            "mlx_dynamic_serving_bench.py",
+            "export_rwkv7_coreml.py",
+        ),
+    }
+    for document, commands in commands_by_doc.items():
+        text = (root / "docs" / document).read_text(encoding="utf-8")
+        assert "AI execution rule" in text
+        for command in commands:
+            assert command in text

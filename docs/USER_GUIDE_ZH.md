@@ -10,6 +10,9 @@
 - **让 AI 帮我操作**：把 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)
   里的完整提示词发给有终端权限的 Codex、Claude Code、Cursor 等工具。
 - **已经有转换好的 HF 模型目录**：直接跳到[第 4 步](#4-生成第一段文本)。
+- **第一次生成已经成功**：打开
+  [`COMPLETE_ADAPTER_GUIDE_ZH.md`](COMPLETE_ADAPTER_GUIDE_ZH.md)，按总表选择
+  缓存、训练、量化、Apple、投机解码或多卡教程。
 
 ## 完成标准
 

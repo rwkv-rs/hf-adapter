@@ -144,6 +144,62 @@ Rerun command.</div></div>
   <div class="footer">An AI response saying "this should work" is not acceptance. The documented command must actually pass.</div>
 </section>
 
+<section class="slide" id="inference-cache">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / inference and cache</div><h1>Convert once, reuse recurrent state safely</h1></div><div class="badge">SERVING PRIMITIVES</div></div>
+  <div class="main">
+    <div class="grid4">
+      <div class="step"><div class="num">1</div><h2>Convert</h2><p>Single or batch conversion produces a checked HF model directory.</p><div class="terminal">batch_convert... --dry-run<br><span class="pass">manifest: no failed rows</span></div></div>
+      <div class="step"><div class="num">2</div><h2>Prefill</h2><p>Run normal or chunked prefill and retain the recurrent cache.</p><div class="terminal">rwkv7_prefill_chunks(...)<br>past_key_values = state</div></div>
+      <div class="step"><div class="num">3</div><h2>Select + move</h2><p>Reorder/drop active rows and offload inactive state to CPU.</p><div class="terminal">state.select_batch(...)<br>state.to("cpu")</div></div>
+      <div class="step"><div class="num">4</div><h2>Verify</h2><p>Compare rows, dynamic modes, and chunk boundaries.</p><div class="terminal">batch cache: <span class="pass">PASS</span><br>dynamic + chunked: <span class="pass">PASS</span></div></div>
+    </div>
+    <div class="note"><b>Boundary:</b> recurrent cache, batching, and prefill helpers are serving primitives. Queueing, admission, timeouts, and networking remain the caller's job.</div>
+  </div>
+  <div class="footer">Acceptance uses real-model row parity and exact PASS markers, not the presence of a cache class.</div>
+</section>
+
+<section class="slide" id="training-ecosystem">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / training ecosystem</div><h1>Prove the complete lifecycle before a long run</h1></div><div class="badge">PEFT / TRAINER / TRL</div></div>
+  <div class="main">
+    <div class="flow">
+      <div class="panel"><h2>1. Gradients</h2><p>PEFT LoRA and causal loss must produce finite, non-zero updates.</p><div class="terminal">loss: finite<br><span class="pass">nonzero_grad_count &gt; 0</span></div></div>
+      <div class="arrow">&#8594;</div>
+      <div class="panel"><h2>2. Lifecycle</h2><p>Save, reload, merge/unmerge, generate, checkpoint, and resume.</p><div class="terminal"><span class="pass">SAVE/LOAD/MERGE PASS</span><br><span class="pass">TRAINER RESUME PASS</span></div></div>
+      <div class="arrow">&#8594;</div>
+      <div class="panel"><h2>3. Ecosystem</h2><p>Trainer, SFT, DPO, GRPO, then ZeRO on 2+ CUDA GPUs.</p><div class="terminal"><span class="pass">SFT PASS</span><br><span class="pass">DPO / GRPO PASS</span></div></div>
+    </div>
+    <div class="note"><b>Smoke is not convergence:</b> a real run still needs licensed data, evaluation, checkpoints, resume validation, metrics, and a rollback artifact.</div>
+  </div>
+  <div class="footer">Use cache=false during training. Start with 0.1B/0.4B and one workflow at a time.</div>
+</section>
+
+<section class="slide" id="quantization">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / W8 and W4</div><h1>Keep functional, memory, and speed claims separate</h1></div><div class="badge">QUANTIZATION</div></div>
+  <div class="main">
+    <div class="grid3">
+      <div class="panel"><h2>bitsandbytes</h2><p>Standard HF W8/W4 for CUDA compatibility and footprint reduction.</p><div class="terminal">quantization 8bit / 4bit<br><span class="pass">modules + finite logits</span></div></div>
+      <div class="panel"><h2>Native MM8/MM4</h2><p><b>speed</b> selects proven projections; <b>memory</b> replaces more linears.</p><div class="terminal">exactly one mode<br>policy + threshold + count</div></div>
+      <div class="panel"><h2>Apple MLX</h2><p>Packed W8/W4 uses the MLX runtime and card-local Metal routes.</p><div class="terminal">--quantization mm8/mm4<br>--quant-backend auto</div></div>
+    </div>
+    <div class="lane"><div class="lane-name">Acceptance ladder</div><div class="blocks"><div class="block green">1. Functional</div><div class="block green">2. Quality</div><div class="block orange">3. Memory</div><div class="block orange">4. Paired speed</div></div></div>
+    <div class="note"><b>Loaded is not faster.</b> Report exact GPU, model, shape, policy, replaced modules, greedy/logit gate, footprint, peak memory, and paired timing.</div>
+  </div>
+  <div class="footer">A microbenchmark or smaller file cannot replace end-to-end prefill and decode evidence.</div>
+</section>
+
+<section class="slide" id="apple-deployment">
+  <div class="top"><div><div class="eyebrow">RWKV-7 HF / Apple Silicon</div><h1>Choose MPS, MLX, or CoreML by deployment goal</h1></div><div class="badge">APPLE SILICON</div></div>
+  <div class="main">
+    <div class="grid3">
+      <div class="panel"><h2>MPS compatibility</h2><p>Use standard Transformers, native/no-FLA loading, generation, and training smokes.</p><div class="terminal">generate.py --device mps<br><span class="pass">new text</span></div></div>
+      <div class="panel"><h2>MLX runtime</h2><p>Convert safetensors, then use recurrent sessions, dynamic batches, and packed W8/W4.</p><div class="terminal">convert_hf_to_mlx.py<br>mlx_generate.py<br><span class="pass">status: pass</span></div></div>
+      <div class="panel"><h2>CoreML deployment</h2><p>Plan first, export on a compatible Mac, then prove package runtime parity.</p><div class="terminal">--dry-run: plan only<br>--require-coremltools<br><span class="warn">device parity required</span></div></div>
+    </div>
+    <div class="note"><b>Exact-device rule:</b> promoted M5 evidence is not an all-M-series claim. CoreML export success does not prove INT4 quality or confirmed ANE placement.</div>
+  </div>
+  <div class="footer">Start with 0.1B/0.4B. Keep the converted HF directory as the portable source of truth.</div>
+</section>
+
 <script>
 const selected = new URLSearchParams(window.location.search).get("slide");
 if (selected) {

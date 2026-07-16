@@ -2,9 +2,10 @@
 
 Canonical summary for Trainer, PEFT, TRL and DeepSpeed validation.
 
-For copyable single-GPU and multi-GPU smoke commands with visual explanations,
-read [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md) or
-[`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md).
+For copyable PEFT, adapter round-trip, Trainer/resume, SFT/DPO/GRPO, and matrix
+commands, read [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) or
+[`TRAINING_WORKFLOWS_ZH.md`](TRAINING_WORKFLOWS_ZH.md). Multi-GPU ZeRO remains
+in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 
 ## Interface status
 
