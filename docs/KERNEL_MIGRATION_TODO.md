@@ -1744,3 +1744,27 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   that batch 8 resolves by `0.0078125` or `0.03125`; both traces again use the
   dense native prefill route.  This evidence is retained while the 1.5B block
   continues.
+- The collector completed **48/48** units with runner exit zero.  Every task is
+  finite and every manifest records a real `native-nvidia-prefill-v2[...]`
+  route; no OOM, traceback or infrastructure failure occurred.  The corrected
+  formal validator nevertheless exits 1 with six unique batch-stability
+  failures: the two 0.1B metrics and one 0.4B metric above, plus 1.5B
+  ARC-Challenge `acc` (`0.4812286689` vs `0.4829351536`), PIQA `acc_norm`
+  (`0.7823721436` vs `0.7807399347`) and Winogrande `acc`
+  (`0.6874506709` vs `0.6890292028`).  The 1.5B misses correspond to only
+  two, three and two near-tied samples respectively; the clean reference is
+  batch-stable for all three tasks.
+- Formal validation initially selected the newer `kernel-route.json` instead
+  of lm_eval's aggregate report and then duplicated each failure once per
+  batch.  Commit `4159695c` fixes both validator bugs, adds a regression test,
+  and preserves the corrected six-failure `validation.json`; the collector
+  results themselves were not changed or rerun.
+- A controlled equal-length diagnostic reproduces the cause at the model
+  boundary: the same 0.1B prompt run as B1 versus an unmasked repeated B8 batch
+  differs by logits max-abs `0.125`/mean-abs `0.01350`, whereas a padded batch
+  that takes the existing per-row compact path is bit-exact.  The clean HF
+  linears deliberately project fixed 128-row blocks, but the native dense
+  fallback currently feeds the full variable B×T row count to GEMM.  Next,
+  add the same stable row contract at the native projection boundary (without
+  changing readable modeling), verify B1/B8 exactness, and rerun only the six
+  affected task pairs before any V100 promotion.
