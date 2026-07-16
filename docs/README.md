@@ -75,7 +75,7 @@ matrix and benchmark summary.
 |---|---|
 | [`BACKENDS.md`](BACKENDS.md) | Backend boundaries and rules for hardware-specific dispatch |
 | [`performance/FUSED_BACKEND.md`](performance/FUSED_BACKEND.md) | Fused fp16/quant kernel roadmap and target ladder |
-| [`performance/BN_TN_TUNING.md`](performance/BN_TN_TUNING.md) | Explicit CUDA block-N/thread-N terminology, sweep and promotion contract |
+| [`performance/BN_TN_TUNING.md`](performance/BN_TN_TUNING.md) | Public BN/TN terminology, legal launch table, ratio definitions, RTX 5090 result and promotion contract |
 | [`native_fused_roadmap.md`](native_fused_roadmap.md) | Native kernel/layout/DPLR architecture notes |
 | [`reference/HF_CRITERIA.md`](reference/HF_CRITERIA.md) | Low-level acceptance criteria reference |
 | [`reference/MLX_RUNTIME_ARCHITECTURE.md`](reference/MLX_RUNTIME_ARCHITECTURE.md) | MLX runtime module and session boundaries |
