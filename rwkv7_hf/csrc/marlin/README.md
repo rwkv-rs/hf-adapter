@@ -6,6 +6,14 @@ Apache-2.0 Marlin runtime, itself adapted from vLLM and the original Marlin
 project. See the adjacent `LICENSE` and the SPDX/copyright headers in each
 source file.
 
-RWKV7 changes are intentionally limited to packaging the BF16 sources and
-renaming the registered torch.ops namespace to `rwkv7_marlin_bf16`, preventing
-a collision when GPTQModel is loaded in the same Python process.
+RWKV7-specific modifications include:
+
+- isolated source packaging and the `rwkv7_marlin_bf16` torch.ops namespace;
+- explicit K/CTA-N/thread/SM/stage controls used by offline tuning;
+- per-internal-launch BN/TN assertions, including mixed bulk/tail segments;
+- BF16 U4B8 stage specializations used by the tuner;
+- an optional final-reduction fused ReLU-square epilogue entered only through
+  the explicit RWKV ABI.
+
+The Tensor Core MMA/dequantization architecture remains Marlin-derived. This
+directory is not a from-scratch GEMM implementation.

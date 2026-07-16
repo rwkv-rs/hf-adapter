@@ -15,8 +15,8 @@ The active V100/full-FLA/documentation milestone is complete:
   active-parameter work gates;
 - RTX 4090 small-model and 7.2B bsz8 promoted matrices;
 - RTX 5070 full-FLA 1.5B/2B bsz8 promoted matrix;
-- RTX 5090 full-FLA Qwen B1/B8 8/8 matrix, production BN/TN W4 7.2B
-  B1/B8 lane, and latest g1h 13.3B boundary;
+- RTX 5090 full-FLA Qwen B1/B8 8/8 matrix, production BN/TN W4
+  1.5B/2.9B/7.2B/13.3B B1/B8 matrix, and latest g1h 13.3B boundary;
 - PEFT/Trainer/TRL and current ZeRO-2/3 smoke/resume matrix;
 - canonical documentation refresh and full Markdown freshness audit.
 
@@ -38,18 +38,21 @@ remaining fp16-or-faster across representative batch/prompt/decode shapes.
 
 - [ ] Fuse quantized R/K/V/output and FFN projections instead of relying on
       selected-module speed policy.
-- [x] Close RTX 5090 g1h 1.5B/7.2B B1/B8 W4 prefill and decode for the
-      exact measured prompt128/decode128 lane; the 7.2B route quantizes all 64
-      FFN key/value matrices, reaches `0.5298x` BF16 footprint and minimum
-      `1.0010x/1.4978x` prefill/decode. Its per-launch BN/TN audit passes
-      70/70 rows including mixed bulk/tail grids. Evidence:
-      [`bench/5090_bn_tn_tensorcore_20260716/`](bench/5090_bn_tn_tensorcore_20260716/README.md).
+- [x] Close RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B B1/B8 W4 prefill and decode
+      for the exact measured prompt128/decode128 lane. Exact-model quality
+      profiles reach `0.5298x–0.6250x` BF16 footprint and minimum
+      `1.0010x/1.1854x` prefill/decode while preserving cosine `>=0.9995` and
+      same-next 8/8. The group-128 per-launch BN/TN audit passes 280/280 rows;
+      group-32 experimental coverage passes another 48/48. Evidence:
+      [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md).
 - [ ] Add all-phase fused quant prefill for the remaining cards/shapes;
       decode-only wins are insufficient.
 - [ ] Validate the same large-payload contract on V100, 4090 and at least one
       Ampere professional card; RTX 5090 exact-lane evidence is complete.
 - [ ] Preserve cosine, same-next, footprint and paired timing gates.
-- [ ] Add 0.4B/1.5B/2.9B/7.2B/13.3B boundary rows where memory permits.
+- [x] Add 0.4B/1.5B/2.9B/7.2B/13.3B boundary rows. The four g1h profiles are
+      promoted; g1d 0.4B full-FFN is explicitly rejected and remains on its
+      previous head-only/generic fallback.
 
 Acceptance: every promoted row lowers footprint, passes correctness, and meets
 the declared same-card fp16 equivalence/speed threshold. See

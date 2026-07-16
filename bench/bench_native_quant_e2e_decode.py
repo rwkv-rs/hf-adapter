@@ -227,6 +227,9 @@ def quantize_model(
     *,
     mm4_group_size: int = 0,
     mm4_group_policy: str = "all",
+    group_size: int = 128,
+    quantize_head: bool | None = None,
+    marlin_skip_last_layers: int | None = None,
 ) -> tuple[int, dict[str, int]]:
     if quantization == "none":
         return 0, count_modules(model)
@@ -250,6 +253,9 @@ def quantize_model(
             quantization,
             min_params=min_params,
             policy=policy,
+            group_size=int(group_size),
+            quantize_head=quantize_head,
+            marlin_skip_last_layers=marlin_skip_last_layers,
         )
     elif quantization == "a8w8":
         from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
@@ -479,6 +485,25 @@ def main() -> int:
         help="modules that receive groupwise scales; other MM4 modules stay row-wise",
     )
     ap.add_argument(
+        "--group-size",
+        type=int,
+        choices=(32, 64, 128),
+        default=128,
+        help="TorchAO/Marlin W4 group size; ignored by non-W4 backends",
+    )
+    ap.add_argument(
+        "--quantize-head",
+        choices=("auto", "true", "false"),
+        default="auto",
+        help="auto uses the exact-card model profile; true/false overrides it",
+    )
+    ap.add_argument(
+        "--marlin-skip-last-layers",
+        type=int,
+        default=-1,
+        help="-1 uses the exact-card profile; otherwise leave this many final FFN layers dense",
+    )
+    ap.add_argument(
         "--policy",
         default="memory",
         choices=["memory", "speed"],
@@ -561,6 +586,15 @@ def main() -> int:
             args.policy,
             mm4_group_size=args.mm4_group_size,
             mm4_group_policy=args.mm4_group_policy,
+            group_size=args.group_size,
+            quantize_head=(
+                None if args.quantize_head == "auto" else args.quantize_head == "true"
+            ),
+            marlin_skip_last_layers=(
+                None
+                if args.marlin_skip_last_layers < 0
+                else args.marlin_skip_last_layers
+            ),
         )
         if args.quantize_before_device:
             gc.collect()
@@ -722,6 +756,13 @@ def main() -> int:
             "prompt_tokens": int(ids.shape[1]),
             "decode_tokens": args.decode_tokens,
             "min_params": args.min_params,
+            "quant_group_size": int(args.group_size),
+            "quantized_head": bool(
+                getattr(model, "_rwkv7_native_mm_quantized_head", False)
+            ),
+            "marlin_skip_last_layers": int(
+                getattr(model, "_rwkv7_native_mm_marlin_skip_last_layers", 0)
+            ),
             "native_mm_policy": args.policy,
             "paired_baseline": bool(args.paired_baseline and quantization != "none"),
             "quantize_before_device": bool(args.quantize_before_device),

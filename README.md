@@ -61,11 +61,13 @@ keep the HF wrapper as the public compatibility layer, then add native fused
 fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
 to close the Albatross and quantized-decode speed gaps.
 
-The 2026-07-16 RTX 5090 production BN/TN Marlin W4 artifact closes paired BF16
-prefill, decode, footprint and correctness for the 7.2B B1/B8 lane. It reaches
-`0.5298x` model footprint and post-audit minimum `1.0010x/1.4978x`
-prefill/decode, with a bit-exact fused FFN-key epilogue. See
-[`bench/5090_bn_tn_tensorcore_20260716/README.md`](bench/5090_bn_tn_tensorcore_20260716/README.md).
+The 2026-07-16 RTX 5090 production BN/TN Marlin W4 matrix closes paired BF16
+prefill, decode, footprint and correctness for official g1h 1.5B, 2.9B, 7.2B
+and 13.3B at B1/B8. Across the eight prompt128/decode128 rows, footprint is
+`0.5298x–0.6250x`, minimum prefill/decode is `1.0010x/1.1854x`, cosine stays
+above `0.9995`, and every next token matches. The group-128 physical grid
+contract passes 280/280 checks. See
+[`bench/5090_bntn_all_models_20260716/README.md`](bench/5090_bntn_all_models_20260716/README.md).
 
 The 2026-07-12 RTX 5090 production-close artifact adds Blackwell batched
 MM8/MM4 kernels, low-memory 13.3B conversion, and a full 0.4B MATH500
@@ -80,11 +82,13 @@ rerun; exact scope and evidence are in
 The adapter has promoted production-close evidence on V100, RTX 4090 bsz8
 dense/W8/W4 lanes covering every published 0.4B–7.2B pair against Qwen3.5,
 RTX 5090, and selected Apple M5 MLX pairs. The RTX 5090 current-main matrix
-passes all eight B1/B8 batch-pairs and 144/144 full-FLA cells, and the latest
-official g1h 13.3B checkpoint passes conversion, load/generate, and its
+passes all eight B1/B8 batch-pairs and 144/144 full-FLA cells. Its exact-model
+W4 matrix additionally closes official g1h 1.5B–13.3B B1/B8 lanes, while the
+official g1h 13.3B checkpoint passes conversion, load/generate, and the
 selected speed-policy boundary; see
-[`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
-and [`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md).
+[`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md),
+[`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md), and
+[`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md).
 V100 additionally has a target-only B1/B8 comparison of RWKV-7 1.5B against a
 fail-closed full-FLA Qwen3.5-2B reference, including active-parameter work-rate
 gates. API/training/cache and W8/W4 functionality are broadly validated;

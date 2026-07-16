@@ -25,6 +25,7 @@ ALLOWED_CORE_FILES = {
     # Generated opaque package data for Transformers remote-code caches. The
     # encoded payload cannot contain executable hardware dispatch decisions.
     CORE / "native_quant_marlin_sources.py",
+    CORE / "marlin_autotune.py",
 }
 
 

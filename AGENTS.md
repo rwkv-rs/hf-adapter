@@ -111,33 +111,42 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
 - Do not restore the TorchAO-only 7.2B FFN route. It passes decode but paired
   prefill is only `0.9176x` at B1 and `0.2711x` at B8.
 - The promoted exact-card route is `torchao_w4 --policy speed` with group-128
-  Marlin BF16/W4 for the 32 `ffn.key` and 32 `ffn.value` matrices, plus the
-  existing TorchAO asymmetric W4 `lm_head`. The 4096-square projections stay
-  dense until their own all-phase rows pass.
-- Paired prompt128/decode128 acceptance is complete for g1h 1.5B and 7.2B at
-  B1/B8. The latest 7.2B production BN/TN route has post-audit minimum
-  prefill/decode speedups `1.0010x/1.4978x` against hot BF16, footprint
-  `0.5298x`, final cosine `>=0.99954909`, and same-next passes. The 1.5B
-  head-only lane also passes both phases with `0.9355x` footprint.
+  Marlin BF16/W4 for selected `ffn.key`/`ffn.value` matrices. Exact-model
+  profiles automatically decide whether `lm_head` is TorchAO W4 and whether
+  the final FFN pair remains dense: 1.5B=`dense head, skip=1`, 2.9B=`dense
+  head`, 7.2B=`W4 head`, 13.3B=`W4 head, skip=1`.
+- Paired prompt128/decode128 acceptance is complete for official g1h
+  1.5B/2.9B/7.2B/13.3B at B1/B8. Across the eight rows, minimum
+  prefill/decode speedups are `1.0010x/1.1854x` against hot BF16, footprint is
+  `0.5298x–0.6250x`, prompt/final cosine is `>=0.9995`, and same-next passes
+  8/8. The g1d 0.4B full-FFN candidate failed speed/quality and must remain on
+  the previous head-only/generic fallback.
 - Physical 5090 grids are low-row internal launch
   `BN=128/TN=8/K=128/256 threads/4 stages` and bulk internal launch
   `BN=256/TN=8/K=64/256 threads/4 stages`. A logical GEMM may mix them (65
   rows becomes 64+1). TN is the eight BF16 values in one 16-byte epilogue
   store; historical Marlin `thread_n` is CTA BN, not per-writer TN. CUDA
-  validates every scheduler segment and fails closed on mismatch. The extended
-  5090 contract sweep passes 70/70 rows, including 10 mixed-grid tails.
+  validates every scheduler segment and fails closed on mismatch. The expanded
+  group-128 contract passes 280/280 rows across eight FFN directions; the
+  experimental group-32 contract passes 48/48. All are bit-exact against
+  unguarded Marlin and reject an intentionally wrong BN.
 - FFN-key ReLU-square is an explicit ABI (`rwkv7_forward_relu2`); generic
   `MarlinW4Linear.forward` must stay a plain Linear. Recognized FLA FFNs and
   native graph may use the fused method. Never globally fuse `forward`, which
   makes FLA square twice and corrupts logits.
 - Dispatch must remain fail-closed to BF16, SM120, device name containing
-  `5090`, exact FFN role and exact `(16384,4096)/(4096,16384)` weight shapes.
-  Do not project these defaults to 5070, Ada, Volta, Ampere, Hopper or ROCm.
+  `5090`, exact FFN role and promoted 1.5B/2.9B/7.2B/13.3B weight shapes and
+  model profile. Do not project these defaults to 0.4B, 5070, Ada, Volta,
+  Ampere, Hopper or ROCm.
+- Offline schedule profiles are explicit experiments only. Generate them with
+  `bench/build_marlin_autotune_profile.py`, consume them only through
+  `RWKV7_MARLIN_AUTOTUNE_PROFILE`, and fail closed on GPU/runtime mismatch.
+  They must never silently replace the proven Marlin automatic scheduler.
 - The vendored Apache-2.0 Marlin extension compiles lazily and currently needs
   a local CUDA toolkit matching PyTorch. Preserve the isolated namespace
   `rwkv7_marlin_bf16` so GPTQModel can coexist in one process.
 - Canonical evidence:
-  `bench/5090_bn_tn_tensorcore_20260716/README.md`; historical Marlin and
+  `bench/5090_bntn_all_models_20260716/README.md`; historical Marlin and
   retained negative TorchAO rows remain under
   `bench/5090_marlin_w4_hybrid_20260716/` and
   `bench/5090_torchao_w4_hybrid_20260716/`.
@@ -1014,6 +1023,13 @@ Run this checklist for every new GPU before marking it as supported:
     `1.0013x/0.9845x` paired-fp16 decode, `0.9899x/0.9848x` footprint, cosine
     above `0.99985`, and matching next tokens. Each quant row replaces only
     `lm_head`; do not describe this as full-memory quantization.
+  - The production BN/TN W4 model matrix under
+    `bench/5090_bntn_all_models_20260716/` covers official g1h
+    1.5B/2.9B/7.2B/13.3B at B1/B8, prompt128/decode128. Automatic exact-model
+    profiles pass all eight paired BF16/W4 prefill/decode rows with minimum
+    `1.0010x/1.1854x`, footprint `0.5298x–0.6250x`, cosine `>=0.9995` and
+    same-next 8/8. The 280/280 group-128 grid contract is physical-kernel
+    evidence, not permission to generalize to other models or cards.
   - The validated Blackwell scan defaults are batch-local: `block_m` 8/16/32/64
     for bsz 1/2/4/8+, with 1 warp below 64 and 4 warps at 64. Explicit
     environment overrides still win, and these tiles must not be projected to
