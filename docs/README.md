@@ -8,6 +8,7 @@ and history.
 
 | Question | Canonical document |
 |---|---|
+| How do I install and run a model? | [`USER_GUIDE.md`](USER_GUIDE.md) / [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) |
 | What is done now? | [`../HF_STATUS.md`](../HF_STATUS.md) |
 | How should completion be reported? | [`../HF_STATUS.md#completion-reporting-rule`](../HF_STATUS.md#completion-reporting-rule) |
 | What still needs work? | [`../HF_TODO.md`](../HF_TODO.md) |
