@@ -165,25 +165,22 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 
 ## RTX 5090 最新 W4 生产路径
 
-RTX 5090 上的官方 g1h 7.2B BF16 模型现在有一条精确卡、精确 shape 的
-Tensor Core W4 路径。它会自动把 32 个 `ffn.key` 和 32 个 `ffn.value` 替换为
-group-128 Marlin W4，并为 FFN key 融合 ReLU-square；用户不需要手工设置 BN/TN。
+RTX 5090 上的官方 g1h 1.5B、2.9B、7.2B 和 13.3B BF16 模型已有精确卡、
+精确模型的 Tensor Core W4 配置。运行时会自动选择 group-128 Marlin FFN、
+是否量化 `lm_head` 以及是否保留最后一层 FFN；用户不需要手工设置 BN/TN。
 
-在 prompt128/decode128 的配对 hot-BF16 验收中：
+在 prompt128/decode128 的配对 hot-BF16 B1/B8 验收中，四个模型的最差
+prefill/decode 分别为：1.5B `1.0097x/1.1854x`、2.9B
+`1.0092x/1.2222x`、7.2B `1.0010x/1.4978x`、13.3B
+`1.0153x/1.4670x`。footprint 为 BF16 的 `0.6250x/0.5776x/0.5298x/0.5347x`，
+所有新增 profile 的 prompt/final cosine 均不低于 `0.9995`，next-token 一致。
 
-- B1：prefill `1.0010x`，decode `1.5068x`；独立九次复测为
-  `1.0024x/1.5062x`；
-- B8：prefill `1.1561x`，decode `1.4978x`；
-- 模型 footprint 为 BF16 的 `0.5298x`，最低 final cosine 为
-  `0.99954909`，next-token 全部一致；
-- 35 个 row 数 × 两种 FFN shape 的契约扫描 `70/70` 通过、`70/70`
-  bit-exact、错误 BN `70/70` fail-close。
-
-这项晋升只适用于 RTX 5090、SM120、BF16、g1h 7.2B 的已测 FFN
-角色/shape；其他显卡和 shape 继续使用原来的安全 fallback。使用方法见
-[量化教程的 RTX 5090 专节](docs/QUANTIZATION_USAGE.md#5-rtx-5090-72b-bntn-tensor-core-w4)，
-原始结果和复现命令见
-[`bench/5090_bn_tn_tensorcore_20260716/`](bench/5090_bn_tn_tensorcore_20260716/README.md)。
+扩展契约覆盖四档模型的八种 FFN GEMM shape：group-128 为 `280/280`
+通过、bit-exact、错误 BN fail-close；group-32 实验网格另有 `48/48`。g1d
+0.4B 全 FFN 候选因 decode 和 cosine 未过门而保持 fallback。使用方法见
+[量化教程的 RTX 5090 专节](docs/QUANTIZATION_USAGE.md#5-rtx-5090-g1h-bntn-tensor-core-w4)，
+原始结果见
+[`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md)。
 
 ## 常见问题恢复
 

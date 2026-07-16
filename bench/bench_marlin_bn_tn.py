@@ -60,6 +60,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shapes", nargs="+", type=parse_shape, required=True)
     parser.add_argument("--rows", nargs="+", type=int, default=(1, 8, 128, 1024))
+    parser.add_argument("--group-size", type=int, choices=(32, 64, 128), default=128)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--runs", type=int, default=50)
     parser.add_argument("--repeats", type=int, default=5)
@@ -89,7 +90,7 @@ def main() -> int:
     records = []
     for k, n in args.shapes:
         dense = torch.nn.Linear(k, n, bias=False, device="cuda", dtype=torch.bfloat16)
-        packed = MarlinW4Linear(dense, group_size=128)
+        packed = MarlinW4Linear(dense, group_size=args.group_size)
         weight = dense.weight.detach()
         for rows in args.rows:
             x = torch.randn(rows, k, device="cuda", dtype=torch.bfloat16)
@@ -123,6 +124,7 @@ def main() -> int:
                         "sms": schedule[3] if schedule and len(schedule) >= 4 else -1,
                         "stages": schedule[4] if schedule and len(schedule) == 5 else -1,
                         "rows": rows,
+                        "group_size": int(args.group_size),
                         "k": k,
                         "n": n,
                         "candidate_ms": round(candidate_ms, 6),
@@ -149,6 +151,7 @@ def main() -> int:
                         "sms": schedule[3] if schedule and len(schedule) >= 4 else -1,
                         "stages": schedule[4] if schedule and len(schedule) == 5 else -1,
                         "rows": rows,
+                        "group_size": int(args.group_size),
                         "k": k,
                         "n": n,
                         "error": str(exc).splitlines()[0],

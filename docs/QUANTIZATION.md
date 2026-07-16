@@ -42,23 +42,25 @@ explicit opt-ins and do not change non-V100 defaults. Copyable configuration
 is in [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md); raw evidence is in
 [`../bench/v100_sm70_mm4_bntn_20260716/`](../bench/v100_sm70_mm4_bntn_20260716/README.md).
 
-## RTX 5090 production BN/TN BF16/W4 close
+## RTX 5090 production BN/TN BF16/W4 model matrix
 
-The exact RTX 5090 g1h route now uses two complementary packed kernels under
-`torchao_w4 --policy speed`:
-
-- 1.5B keeps the high-accuracy TorchAO asymmetric W4 `lm_head` route.
-- 7.2B uses group-128 symmetric Marlin W4 for all 64 FFN key/value matrices
-  and TorchAO W4 for `lm_head`; 4096-square projections remain dense.
+The exact RTX 5090 g1h route uses group-128 symmetric Marlin W4 for selected
+FFN key/value matrices and TorchAO W4 for the head only where the model-level
+quality profile permits it. The profile is selected automatically from exact
+GPU, dtype, hidden/intermediate size and layer count.
 
 Paired BF16 acceptance at prompt128/decode128 passes every measured phase:
 
 | Model | Batch | Footprint ratio | Prefill speed | Decode speed | Final cosine |
 |---|---:|---:|---:|---:|---:|
-| 1.5B | 1 | `0.9355x` | `1.0083x` | `1.0335x` | `0.99969822` |
-| 1.5B | 8 | `0.9355x` | `1.0090x` | `1.0187x` | `0.99960977` |
+| 1.5B | 1 | `0.6250x` | `1.2788x` | `1.1854x` | `0.99984407` |
+| 1.5B | 8 | `0.6250x` | `1.0097x` | `1.2133x` | `0.99975127` |
+| 2.9B | 1 | `0.5776x` | `1.0092x` | `1.2222x` | `0.99965632` |
+| 2.9B | 8 | `0.5776x` | `1.0116x` | `1.2894x` | `0.99958199` |
 | 7.2B | 1 | `0.5298x` | `1.0010x` | `1.5068x` | `0.99963713` |
 | 7.2B | 8 | `0.5298x` | `1.1561x` | `1.4978x` | `0.99954909` |
+| 13.3B | 1 | `0.5347x` | `1.0153x` | `1.4957x` | `0.99966073` |
+| 13.3B | 8 | `0.5347x` | `1.1549x` | `1.4670x` | `0.99955237` |
 
 All rows preserve the deterministic next token. The route is gated by exact
 device name, SM120 capability, BF16 dtype, module role and measured matrix
@@ -66,12 +68,13 @@ shape. It does not alter fallback dispatch on any other card. The Marlin
 extension is compiled lazily from vendored Apache-2.0 sources and currently
 requires a compatible local CUDA toolkit.
 
-The latest route asserts physical BN/TN per internal scheduler segment, uses a
+The route asserts physical BN/TN per internal scheduler segment, uses a
 bit-exact fused FFN-key ReLU-square epilogue, and preserves plain-Linear
-semantics for generic HF callers. Its non-aligned/dynamic-row contract passes
-70/70 checks through 8192 rows on both FFN shapes, including mixed `BN=256`
-bulk plus `BN=128` tail launches. Evidence:
-[`../bench/5090_bn_tn_tensorcore_20260716/README.md`](../bench/5090_bn_tn_tensorcore_20260716/README.md).
+semantics for generic HF callers. The expanded group-128 contract passes
+280/280 checks across eight FFN directions through 8192 rows; all are
+bit-exact against unguarded Marlin and reject a wrong BN. Group-32 experimental
+coverage passes another 48/48. Evidence:
+[`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md).
 
 ## CPU-first native memory loading
 

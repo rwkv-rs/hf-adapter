@@ -236,17 +236,26 @@ Tensor Core accumulation and gives BN/TN explicit physical contracts:
   fails closed on disagreement.
 
 The per-segment distinction is required for non-aligned M. A 65-row logical
-GEMM is a 64-row `BN=256` launch plus a 1-row `BN=128` tail. The production
-contract sweep checks 35 row counts through 8192 on both 7.2B FFN shapes:
-70/70 pass, 70/70 are bit-exact against unguarded Marlin, 70/70 intentionally
-wrong BN checks fail closed, and 10 rows exercise mixed-grid tails.
+GEMM is a 64-row `BN=256` launch plus a 1-row `BN=128` tail. The original
+production contract checked 35 row counts through 8192 on both 7.2B FFN
+shapes. The expanded matrix now checks eight FFN directions: 280/280
+group-128 rows pass, are bit-exact against unguarded Marlin, and reject an
+intentionally wrong BN. Group-32 experimental coverage adds 48/48.
 
 Historical Marlin `thread_n` means CTA output-tile width, not per-writer TN.
 Manual tile, SM-count and two-stage sweeps did not beat auto broadly, so
 production retains auto schedule selection and validates the selected grid.
 
-The exact RTX 5090 7.2B B1/B8 route also fuses FFN-key ReLU-square through an
-explicit ABI. It passes paired hot-BF16 prefill and decode, uses `0.5298x`
-footprint, preserves same-next-token output, and keeps other cards on their
-old fallback. Canonical evidence:
-[`../../bench/5090_bn_tn_tensorcore_20260716/`](../../bench/5090_bn_tn_tensorcore_20260716/README.md).
+The exact RTX 5090 model profiles also fuse FFN-key ReLU-square through an
+explicit ABI. Official g1h 1.5B/2.9B/7.2B/13.3B pass paired hot-BF16 prefill
+and decode at B1/B8, use `0.5298x–0.6250x` footprint, preserve cosine
+`>=0.9995` and same-next output, and keep 0.4B/other cards on their old
+fallback. Head and final-layer choices are automatic quality policies, not
+user-supplied BN/TN exceptions. Canonical evidence:
+[`../../bench/5090_bntn_all_models_20260716/`](../../bench/5090_bntn_all_models_20260716/README.md).
+
+Offline schedule search is intentionally separate from production defaults.
+`bench/build_marlin_autotune_profile.py` converts stable, correct screen rows
+into an exact GPU/runtime JSON profile, and runtime consumption requires the
+explicit `RWKV7_MARLIN_AUTOTUNE_PROFILE` environment variable. Unknown,
+malformed or identity-mismatched profiles fail closed to Marlin auto schedule.

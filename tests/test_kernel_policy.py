@@ -253,8 +253,18 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_sequence_ffn_num_stages == 3
     assert blackwell.prefill_sequence_ffn_num_warps == 8
     assert blackwell.marlin_w4_ffn_shapes == (
+        (8192, 2048),
+        (2048, 8192),
+        (10240, 2560),
+        (2560, 10240),
         (16384, 4096),
         (4096, 16384),
+    )
+    assert blackwell.marlin_w4_model_profiles == (
+        (2048, 8192, 24, 128, False, 1),
+        (2560, 10240, 32, 128, False, 0),
+        (4096, 16384, 32, 128, True, 0),
+        (4096, 16384, 61, 128, True, 1),
     )
     assert "triton_compat" in blackwell.notes
     other_blackwell = policy_for_profile(
@@ -265,6 +275,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert not other_blackwell.fused_prefill_stacked_rkv
     assert not other_blackwell.fused_prefill_sequence_ffn
     assert other_blackwell.marlin_w4_ffn_shapes == ()
+    assert other_blackwell.marlin_w4_model_profiles == ()
 
     apple = policy_for_profile(classify_gpu("Apple M5", None, is_mps=True))
     assert apple.profile.family == "apple_mps"

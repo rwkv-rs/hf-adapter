@@ -71,6 +71,8 @@ class KernelPolicy:
     mm4_dot_block_n: int | None = None
     mm4_dot_warps: int | None = None
     marlin_w4_ffn_shapes: tuple[tuple[int, int], ...] = ()
+    # hidden, intermediate, layers, group_size, quantize_head, skip_last_layers
+    marlin_w4_model_profiles: tuple[tuple[int, int, int, int, bool, int], ...] = ()
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
     fused_prefill_self_chunk: bool = False
@@ -735,8 +737,18 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_sequence_ffn_num_stages=3,
             prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
             marlin_w4_ffn_shapes=(
+                (8192, 2048),
+                (2048, 8192),
+                (10240, 2560),
+                (2560, 10240),
                 (16384, 4096),
                 (4096, 16384),
+            ) if is_5090 else (),
+            marlin_w4_model_profiles=(
+                (2048, 8192, 24, 128, False, 1),
+                (2560, 10240, 32, 128, False, 0),
+                (4096, 16384, 32, 128, True, 0),
+                (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
             notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 selects stacked R/K/V only; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
