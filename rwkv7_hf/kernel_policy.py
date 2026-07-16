@@ -70,6 +70,7 @@ class KernelPolicy:
     mm4_dot_block_pairs: int | None = None
     mm4_dot_block_n: int | None = None
     mm4_dot_warps: int | None = None
+    marlin_w4_ffn_shapes: tuple[tuple[int, int], ...] = ()
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
     fused_prefill_self_chunk: bool = False
@@ -423,24 +424,27 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
     if torch_module is None:
         return classify_gpu(None, None)
 
-    mps = getattr(getattr(torch_module, "backends", None), "mps", None)
-    mps_available = getattr(mps, "is_available", None)
-    if callable(mps_available):
-        try:
-            if bool(mps_available()):
-                return GPUProfile(
-                    name="Apple Silicon MPS",
-                    vendor="apple",
-                    family="apple_mps",
-                    is_mps=True,
-                )
-        except Exception:
-            pass
-
     is_hip = bool(getattr(getattr(torch_module, "version", None), "hip", None))
     cuda = getattr(torch_module, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
-    if not callable(is_available) or not is_available():
+    try:
+        cuda_available = bool(callable(is_available) and is_available())
+    except Exception:
+        cuda_available = False
+    if not cuda_available:
+        mps = getattr(getattr(torch_module, "backends", None), "mps", None)
+        mps_available = getattr(mps, "is_available", None)
+        if callable(mps_available):
+            try:
+                if bool(mps_available()):
+                    return GPUProfile(
+                        name="Apple Silicon MPS",
+                        vendor="apple",
+                        family="apple_mps",
+                        is_mps=True,
+                    )
+            except Exception:
+                pass
         return classify_gpu(None, None, is_hip=is_hip)
 
     try:
@@ -730,6 +734,10 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_sequence_ffn_large_blocks=(64, 128, 32, 64, 8),
             prefill_sequence_ffn_num_stages=3,
             prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
+            marlin_w4_ffn_shapes=(
+                (16384, 4096),
+                (4096, 16384),
+            ) if is_5090 else (),
             output_project_block_m=32,
             notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 selects stacked R/K/V only; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )

@@ -36,3 +36,6 @@ mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [tool.setuptools.packages.find]
 include = ["rwkv7_hf*"]
+
+[tool.setuptools.package-data]
+rwkv7_hf = ["csrc/marlin/*", "csrc/marlin/core/*"]

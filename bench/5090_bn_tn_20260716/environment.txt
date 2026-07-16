@@ -1,0 +1,14 @@
+date=2026-07-16
+hostname=gt-ubuntu22-04-cmd-v3-2-120gb-25m
+gpu=NVIDIA GeForce RTX 5090
+compute_capability=12.0
+gpu_memory=32607 MiB
+driver=595.58.03
+python=3.10.12
+torch=2.11.0+cu128
+torch_cuda=12.8
+triton=3.6.0
+cuda_home=/usr/local/cuda-12.8
+timing=cuda-event
+warmup=10
+runs=50
