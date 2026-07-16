@@ -36,6 +36,41 @@ requires a compatible local CUDA toolkit.
 
 Evidence: [`../bench/5090_marlin_w4_hybrid_20260716/README.md`](../bench/5090_marlin_w4_hybrid_20260716/README.md).
 
+## CPU-first native memory loading
+
+Large dense checkpoints can exceed GPU memory before native MM8/MM4 packing
+has a chance to reduce the model. The end-to-end decode runner now has an
+explicit CPU-first route: load dense weights on CPU, apply the native `memory`
+policy there, release dense module payloads during replacement, and move only
+the packed model to CUDA.
+
+```bash
+PYTHONPATH=. python bench/bench_native_quant_e2e_decode.py \
+  --hf-dir /path/to/rwkv7-model-hf \
+  --device cuda --dtype fp16 \
+  --single-quantization mm4 \
+  --policy memory --min-params 8000000 \
+  --quantize-before-device --allow-missing-baseline \
+  --batch-size 1 --prompt-tokens 128 --decode-tokens 128 \
+  --results bench/results-memory-mm4.jsonl
+```
+
+Use `mm8` instead of `mm4` for W8. The flag intentionally rejects `speed`
+policy, non-native formats, multi-quant runs, CPU targets, and in-process paired
+baselines. It reduces peak **GPU** loading pressure; the machine still needs
+enough host RAM for the dense checkpoint and temporary packing work.
+
+Without a cached fp16 baseline, the row may report packed model footprint and
+successful decode, but speed ratio, logits cosine, and greedy parity remain
+unset. Such a row is memory-feasibility evidence only. Run a separate fp16 row
+on hardware that can fit it before making quality or speed claims.
+
+In Windows PowerShell, set `$env:PYTHONPATH = "."` before the same command and
+use backticks for line continuation.
+
+Exact RTX 5070 Laptop 0.4B smoke evidence is in
+[`../bench/5070_native_memory_loading_20260716/README.md`](../bench/5070_native_memory_loading_20260716/README.md).
+
 ## RTX 4090 g1h 7.2B promoted result
 
 The bsz8 matrix covers prompt 128/512/2048 and decode 128/512. Route
