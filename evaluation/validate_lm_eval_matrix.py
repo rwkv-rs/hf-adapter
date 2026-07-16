@@ -14,11 +14,10 @@ def parse_args():
 
 
 def find_result(unit_dir: Path) -> Path:
-    candidates = [
-        path
-        for path in unit_dir.rglob("*.json")
-        if "samples_" not in path.name and path.name != "manifest.json"
-    ]
+    # lm_eval names aggregate reports ``results_<timestamp>.json``.  A unit
+    # may also contain a newer kernel-route.json, so selecting the newest
+    # arbitrary JSON can validate the route trace instead of the metrics.
+    candidates = [path for path in unit_dir.rglob("results_*.json") if path.is_file()]
     if not candidates:
         raise FileNotFoundError(f"no result JSON in {unit_dir}")
     return max(candidates, key=lambda path: path.stat().st_mtime)
@@ -61,7 +60,7 @@ def main():
         indexed[(row["model"], row["task"], row["batch_size"])] = metrics
 
     failures = []
-    for model, task, _ in {(m, t, b) for m, t, b in indexed}:
+    for model, task in {(m, t) for m, t, _ in indexed}:
         left = indexed[(model, task, 1)]
         right = indexed[(model, task, 8)]
         for key in left.keys() & right.keys():

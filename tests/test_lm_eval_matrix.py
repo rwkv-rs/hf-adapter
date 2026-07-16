@@ -17,6 +17,7 @@ from evaluation.validate_lm_eval_three_way import (
     sample_outcomes,
     semantic_model_files,
 )
+from evaluation.validate_lm_eval_matrix import find_result as find_validation_result
 
 
 def test_compact_lm_eval_summary_retains_accuracy_and_mismatch_counts():
@@ -61,6 +62,7 @@ def test_kernel_route_trace_is_not_mistaken_for_lm_eval_result(tmp_path):
     route.touch()
 
     assert find_result_json(unit) == result
+    assert find_validation_result(unit) == result
     assert task_provenance(unit, "piqa")["result_json"] == str(result)
 
 
