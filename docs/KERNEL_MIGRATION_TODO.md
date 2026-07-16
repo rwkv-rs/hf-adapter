@@ -1722,3 +1722,16 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `3996222`) at
   `/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-5c467e2e-candidate/4080/lm-eval-native-formal`.
   It must finish naturally before any FLA, V100 or RTX 4090 work is scheduled.
+- The first complete formal model block (0.1B, 16/16 units) has all commands
+  exiting zero, finite metrics and the intended native route, but it exposed a
+  real batch-stability gate miss.  ARC-Easy `acc_norm` differs by
+  `0.0012626263` between batch 1/8 and PIQA `acc` differs by `0.0010881393`,
+  both just above the unchanged `0.001` ceiling.  The corresponding clean
+  reference results are bit-stable across batch sizes.  Sample-level analysis
+  localizes the metric changes to near-tied choices (three ARC-Easy normalized
+  decisions and four PIQA accuracy decisions, including exact FP16 score
+  ties); the native routes for both batch sizes are
+  `native-nvidia-prefill-v2[dense_fallback]`, so this is not a Graph-route
+  substitution.  The 48-unit collector remains running to gather the complete
+  model/task evidence; these failures are preserved and only the affected
+  units may be rerun after a numerical fix.
