@@ -1735,3 +1735,12 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   substitution.  The 48-unit collector remains running to gather the complete
   model/task evidence; these failures are preserved and only the affected
   units may be rerun after a numerical fix.
+- The second complete model block (0.4B, another 16/16 units) also has zero
+  command, route, finite-value or infrastructure failures.  Its only batch
+  gate miss is Winogrande accuracy: batch 1=`0.5777426993`, batch
+  8=`0.5793212313`, absolute difference `0.0015785320`.  The clean reference
+  is identical across batch sizes (`0.5753749013` for both).  Exactly two of
+  1,267 native samples change correctness, and both are FP16 ties at batch 1
+  that batch 8 resolves by `0.0078125` or `0.03125`; both traces again use the
+  dense native prefill route.  This evidence is retained while the 1.5B block
+  continues.
