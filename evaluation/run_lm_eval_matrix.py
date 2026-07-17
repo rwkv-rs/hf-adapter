@@ -290,6 +290,19 @@ def find_result_json(unit_dir: Path) -> Path | None:
     )
 
 
+def dataset_task_config(config: dict) -> dict:
+    """Return the task definition without model/runtime-only metadata.
+
+    ``lm_eval`` injects the model arguments (including the local pretrained
+    path) into ``configs[task].metadata``.  Hashing that field makes identical
+    datasets appear different across reference, optimized, and FLA lanes.
+    The metadata is still retained verbatim in ``task_config`` for audit; it
+    is excluded only from the dataset-input fingerprint.
+    """
+
+    return {key: value for key, value in config.items() if key != "metadata"}
+
+
 def task_provenance(unit_dir: Path, task: str) -> dict:
     result_path = find_result_json(unit_dir)
     if result_path is None:
@@ -336,7 +349,7 @@ def task_provenance(unit_dir: Path, task: str) -> dict:
     # datasets cache fingerprint that can vary across Arrow versions.
     canonical = json.dumps(
         {
-            "task_config": config,
+            "task_config": dataset_task_config(config),
             "sample_count": sample_count,
             "sample_hash_fingerprint": sample_hash_fingerprint,
         },

@@ -1904,3 +1904,27 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   three-lane reference/optimized/FLA 144-unit equivalence gate is unchecked,
   native backend-v2 training parity is unchecked, and the kernel artifact is
   still a `1.0.0.dev0` candidate rather than the final stable wheel.
+
+### 2026-08-29 — native-vs-FLA evidence audit
+
+- The RTX 4080 is idle and no formal watcher was active.  The previous
+  three-way bundle contains 48/48 successful commands in each lane, but its
+  nominal optimized lane actually records
+  `torch-cuda-graph-reference-v1`; it is not evidence for backend-v2 native.
+- A read-only diagnostic compared the repaired native 48-unit composite with
+  the existing pinned-FLA 48-unit outputs.  All commands exited zero and the
+  maximum aggregate classification-accuracy difference is
+  `0.0016322089`, but only 60/156 classification metrics are bit-exact and 41
+  units have at least one selected-outcome mismatch.  The diagnostic is
+  explicitly marked non-release because native is the transparent 36+12
+  composite while FLA was produced by the earlier harness.  Evidence:
+  `/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-2baaf4b4-candidate/4080/native-vs-fla-existing-diagnostic.json`
+  (`sha256=09cf19fe57e8963d46a32f8c386c01c6ecb65c71c2691de57b3c748384eacfd8`).
+- The audit exposed a harness provenance bug: `dataset_fingerprint` included
+  `lm_eval`'s runtime/model-path metadata, so the same cached documents looked
+  different across native and FLA even though their sample-hash fingerprints
+  were identical.  Dataset fingerprints now exclude only this runtime
+  metadata while preserving the full task config for audit.  The complete
+  local suite passes **187 tests**.  The next formal comparison must regenerate
+  all three manifests with this corrected harness and the same final wheel;
+  old Graph or mixed-SHA results must not be promoted.

@@ -5,6 +5,7 @@ import json
 from evaluation.run_lm_eval_matrix import (
     EXPECTED_FLA_COMMIT,
     artifact,
+    dataset_task_config,
     find_result_json,
     fla_revision,
     resolve_model,
@@ -64,6 +65,22 @@ def test_kernel_route_trace_is_not_mistaken_for_lm_eval_result(tmp_path):
     assert find_result_json(unit) == result
     assert find_validation_result(unit) == result
     assert task_provenance(unit, "piqa")["result_json"] == str(result)
+
+
+def test_dataset_task_config_excludes_lane_specific_model_metadata():
+    task = {
+        "task": "piqa",
+        "dataset_path": "ybisk/piqa",
+        "metadata": {
+            "pretrained": "/different/model/path",
+            "dtype": "float16",
+            "version": 1.0,
+        },
+    }
+    assert dataset_task_config(task) == {
+        "task": "piqa",
+        "dataset_path": "ybisk/piqa",
+    }
 
 
 def test_local_model_provenance_hashes_rwkv_vocabulary(tmp_path):
