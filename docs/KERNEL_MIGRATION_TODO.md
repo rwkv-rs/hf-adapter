@@ -26,8 +26,10 @@
   `perf/optional-native-backend-v0.10` into `rwkv7_hf/`.
 - FLA comparison is pinned to commit
   `80e494f6c588e091fc8316b612870df29375c5b8`.
-- RTX 4080 is the first release device. V100 and RTX 4090 follow only after the
-  4080 evidence bundle is internally consistent.
+- RTX 4080 is the release-validation device. V100 was removed from the release
+  gate by user decision on 2026-08-29; its partial evidence remains historical
+  only. RTX 4090 follows after the 4080 evidence bundle is internally
+  consistent.
 - Full NVIDIA prefill/decode/quant/training migration uses the frozen one-shot
   design in `docs/KERNEL_BACKEND_V2_DESIGN.md`. Its public ABI is fixed before
   implementation; diagnostic stages may identify failures but do not redesign
@@ -217,7 +219,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - [ ] `rwkv7_hf/` remains clean after kernel installation.
 - [ ] `rwkv7-hf` and `rwkv7-kernels` install independently.
 - [ ] RTX 4080 correctness, HF, FLA speed and three-way lm_eval gates pass.
-- [ ] Equivalent V100 and RTX 4090 gates pass.
+- [ ] Equivalent RTX 4090 gates pass; V100 is not a release requirement.
 - [ ] Six Hub repositories contain only self-contained reference code and
       unchanged weights where hashes match.
 - [ ] GitHub, Hub and PyPI versions/tags agree.
@@ -1886,3 +1888,19 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   wheel-only B1/B8 smoke remains bit-exact.  The three pending local commits
   were successfully pushed to `origin/perf/optional-kernels-v1` at
   `cd1e64d75e38f9f6960fe5a08c7eb163f701ade4`.
+
+### 2026-08-29 — V100 removed from the release gate
+
+- By explicit user decision, V100 is no longer required.  The active V100
+  strict-native lm_eval and canonical finetune process groups were terminated
+  without deleting their outputs.  At termination, lm_eval had completed
+  33/48 units with zero command failures and DPO had reached 73/100; these are
+  retained as partial historical evidence and must not be presented as a full
+  V100 acceptance bundle.
+- RTX 4080 remains the release-validation device.  Its repaired strict-native
+  FP16 lm_eval composite passes 48/48 with exact B1/B8 aggregate metrics and
+  real `native-nvidia-prefill-v2[...]` routes.  This does not yet close every
+  release item: the 0.1B BF16 greedy near-tie remains failed, the complete
+  three-lane reference/optimized/FLA 144-unit equivalence gate is unchecked,
+  native backend-v2 training parity is unchecked, and the kernel artifact is
+  still a `1.0.0.dev0` candidate rather than the final stable wheel.
