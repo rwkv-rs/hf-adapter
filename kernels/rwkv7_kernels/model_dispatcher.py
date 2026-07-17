@@ -28,6 +28,14 @@ _DENSE_IMPLEMENTATION = "native-torchscript-dense-sequential-v2"
 _NATIVE_PREFILL_IMPLEMENTATION = "native-nvidia-prefill-v2"
 _NATIVE_DECODE_IMPLEMENTATION = "native-nvidia-fused-decode-v2"
 _NATIVE_TRAINING_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
+_AUTO_NATIVE_GPU = "NVIDIA GeForce RTX 4080"
+_AUTO_NATIVE_MODEL_SHAPES = {
+    (768, 12),
+    (1024, 24),
+    (2048, 24),
+}
+_AUTO_NATIVE_MAX_BATCH = 8
+_AUTO_NATIVE_MAX_PREFILL_TOKENS = 2048
 
 
 def _phase(request: dict[str, Any]) -> str:
@@ -238,6 +246,76 @@ def _probe_native(owner: Any, request: dict[str, Any]):
         implementation=implementation,
         reason=f"explicit migrated NVIDIA {_phase(request)} implementation selected",
         phase=_phase(request),
+    )
+
+
+def _cuda_device_name(input_ids: torch.Tensor) -> str:
+    return str(torch.cuda.get_device_name(input_ids.device))
+
+
+def _probe_auto_native(owner: Any, request: dict[str, Any]):
+    """Enable only the immutable RTX 4080 FP16 inference acceptance envelope.
+
+    Explicit ``native`` remains the diagnostic surface for BF16, training,
+    quantization, new cards, and new shapes. Production ``auto`` must fail
+    closed to the readable HF implementation outside evidence that has already
+    passed the formal inference and lm_eval gates.
+    """
+
+    support = _probe_native(owner, request)
+    if not support["supported"]:
+        return support
+    phase = str(support["phase"])
+    if phase == "training" or bool(request.get("grad_enabled", False)):
+        return _unsupported_native(
+            request, "production auto keeps training on the reference autograd path"
+        )
+    input_ids = request.get("input_ids")
+    if not isinstance(input_ids, torch.Tensor):
+        return _unsupported_native(request, "production auto requires input_ids")
+    if _cuda_device_name(input_ids) != _AUTO_NATIVE_GPU:
+        return _unsupported_native(
+            request,
+            "production auto native inference is validated only on desktop RTX 4080",
+        )
+    if owner.model.embeddings.weight.dtype != torch.float16:
+        return _unsupported_native(
+            request, "production auto native inference is validated only for FP16"
+        )
+    shape = (
+        int(owner.config.hidden_size),
+        int(owner.config.num_hidden_layers),
+    )
+    if shape not in _AUTO_NATIVE_MODEL_SHAPES:
+        return _unsupported_native(
+            request,
+            "production auto model shape is outside the validated 4080 release set",
+        )
+    if input_ids.ndim == 1:
+        batch, tokens = 1, int(input_ids.shape[0])
+    else:
+        batch, tokens = int(input_ids.shape[0]), int(input_ids.shape[1])
+    if batch > _AUTO_NATIVE_MAX_BATCH:
+        return _unsupported_native(
+            request, "production auto batch exceeds the validated maximum of 8"
+        )
+    if phase == "prefill" and tokens > _AUTO_NATIVE_MAX_PREFILL_TOKENS:
+        return _unsupported_native(
+            request,
+            "production auto prompt exceeds the validated maximum of 2048 tokens",
+        )
+    from .quantization import quantization_report
+
+    if quantization_report(owner) is not None:
+        return _unsupported_native(
+            request,
+            "production auto quantized inference remains behind explicit native",
+        )
+    return support_result(
+        supported=True,
+        implementation=str(support["implementation"]),
+        reason="validated RTX 4080 FP16 inference envelope selected by production auto",
+        phase=phase,
     )
 
 
@@ -472,7 +550,9 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
         "past_key_values": output_cache,
         "hidden_states": None,
         "implementation": f"{_NATIVE_PREFILL_IMPLEMENTATION}[{suffix}]",
-        "phase": _phase(request),
+        # The cache is updated above, so recomputing ``_phase(request)`` here
+        # would mislabel a successful prefill as decode after seen_tokens > 0.
+        "phase": "prefill",
     }
 
 
@@ -652,19 +732,12 @@ def probe_model_forward_v1(owner: Any, request: dict[str, Any]):
     """Return whether a migrated whole-model implementation accepts a call."""
 
     validate_model_request(request)
-    if _requested_implementation() == "dense":
+    requested = _requested_implementation()
+    if requested == "dense":
         return _probe_dense(owner, request)
-    if _requested_implementation() == "native":
+    if requested == "native":
         return _probe_native(owner, request)
-    # Keep production auto disabled until every phase in the frozen one-shot
-    # inventory has passed. Explicit dense diagnostics exercise the final ABI
-    # without advertising a half-migrated production route.
-    return support_result(
-        supported=False,
-        implementation="rwkv7-model-backend-v2",
-        reason=_NOT_MIGRATED,
-        phase=_phase(request),
-    )
+    return _probe_auto_native(owner, request)
 
 
 def model_forward_v1(owner: Any, request: dict[str, Any]):
@@ -685,8 +758,12 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
         return result
 
     implementation = _requested_implementation()
-    if implementation == "native":
-        support = _probe_native(owner, request)
+    if implementation in ("native", "auto"):
+        support = (
+            _probe_native(owner, request)
+            if implementation == "native"
+            else _probe_auto_native(owner, request)
+        )
         if not support["supported"]:
             raise RuntimeError(support["reason"])
         if bool(request["training"]):

@@ -47,7 +47,7 @@ def test_public_kernel_surface_is_versioned_and_small():
     ]
 
 
-def test_model_forward_protocol_is_explicitly_capability_gated():
+def test_model_forward_auto_is_fail_closed_outside_validated_cuda():
     kernels = importlib.import_module("rwkv7_kernels")
     request = {
         "model_kind": "base",
@@ -55,17 +55,71 @@ def test_model_forward_protocol_is_explicitly_capability_gated():
         "use_cache": True,
     }
     support = kernels.probe_model_forward_v1(object(), request)
+    assert not support["supported"]
+    assert support["phase"] == "prefill"
+    assert "causal-LM boundary" in support["reason"]
+    with pytest.raises(RuntimeError, match="causal-LM boundary"):
+        kernels.model_forward_v1(object(), request)
+
+
+def test_model_forward_auto_opens_only_validated_4080_fp16_envelope(monkeypatch):
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
+    monkeypatch.setattr(
+        dispatcher,
+        "_cuda_device_name",
+        lambda _value: "NVIDIA GeForce RTX 4080",
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_native",
+        lambda _owner, _request: {
+            "supported": True,
+            "implementation": "native-nvidia-prefill-v2",
+            "reason": "native diagnostic accepted",
+            "phase": "prefill",
+        },
+    )
+    monkeypatch.setattr(
+        importlib.import_module("rwkv7_kernels.quantization"),
+        "quantization_report",
+        lambda _owner: None,
+    )
+
+    class Config:
+        hidden_size = 1024
+        num_hidden_layers = 24
+
+    class Base:
+        embeddings = type(
+            "Embeddings",
+            (),
+            {"weight": torch.zeros(4, 4, dtype=torch.float16)},
+        )()
+
+    owner = type(
+        "Owner", (), {"model": Base(), "lm_head": object(), "config": Config()}
+    )()
+    request = {
+        "model_kind": "causal_lm",
+        "training": False,
+        "grad_enabled": False,
+        "use_cache": True,
+        "input_ids": torch.ones(8, 2048, dtype=torch.long),
+    }
+    support = dispatcher.probe_model_forward_v1(owner, request)
     assert support == {
-        "supported": False,
-        "implementation": "rwkv7-model-backend-v2",
+        "supported": True,
+        "implementation": "native-nvidia-prefill-v2",
         "reason": (
-            "whole-model backend-v2 is not available for this shape; "
-            "the adapter will use its readable reference layer loop"
+            "validated RTX 4080 FP16 inference envelope selected by production auto"
         ),
         "phase": "prefill",
     }
-    with pytest.raises(RuntimeError, match="whole-model backend-v2"):
-        kernels.model_forward_v1(object(), request)
+
+    owner.model.embeddings.weight = torch.zeros(4, 4, dtype=torch.bfloat16)
+    support = dispatcher.probe_model_forward_v1(owner, request)
+    assert not support["supported"]
+    assert "only for FP16" in support["reason"]
 
 
 def test_explicit_dense_model_diagnostic_reports_unsupported_cpu(monkeypatch):
