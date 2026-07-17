@@ -78,6 +78,13 @@ def test_hf_parameter_groups_preserve_translated_w0_semantics() -> None:
     named = [
         ("model.layers.0.attn.w_lora.lora.2.bias", _parameter(8)),
         ("model.layers.0.attn.w_lora.lora.0.weight", _parameter(8, 4)),
+        ("model.layers.0.attn.w_lora.lora.2.weight", _parameter(4, 8)),
+        ("model.layers.0.attn.a_lora.lora.0.weight", _parameter(8, 4)),
+        ("model.layers.0.attn.a_lora.lora.2.weight", _parameter(4, 8)),
+        ("model.layers.0.attn.g_lora.lora.0.weight", _parameter(8, 4)),
+        ("model.layers.0.attn.g_lora.lora.2.weight", _parameter(4, 8)),
+        ("model.layers.1.attn.v_lora.lora.0.weight", _parameter(8, 4)),
+        ("model.layers.1.attn.v_lora.lora.2.weight", _parameter(4, 8)),
         ("model.layers.0.attn.g_norm.weight", _parameter(8)),
         ("model.layers.0.ffn.value.weight", _parameter(8, 16)),
     ]
@@ -85,11 +92,18 @@ def test_hf_parameter_groups_preserve_translated_w0_semantics() -> None:
     names = _group_names(groups)
 
     assert names["lr_2x"] == {"model.layers.0.attn.w_lora.lora.2.bias"}
-    assert names["decay"] == {
+    assert names["decay"] == {"model.layers.0.ffn.value.weight"}
+    assert names["lr_1x"] == {
         "model.layers.0.attn.w_lora.lora.0.weight",
-        "model.layers.0.ffn.value.weight",
+        "model.layers.0.attn.w_lora.lora.2.weight",
+        "model.layers.0.attn.a_lora.lora.0.weight",
+        "model.layers.0.attn.a_lora.lora.2.weight",
+        "model.layers.0.attn.g_lora.lora.0.weight",
+        "model.layers.0.attn.g_lora.lora.2.weight",
+        "model.layers.1.attn.v_lora.lora.0.weight",
+        "model.layers.1.attn.v_lora.lora.2.weight",
+        "model.layers.0.attn.g_norm.weight",
     }
-    assert names["lr_1x"] == {"model.layers.0.attn.g_norm.weight"}
 
 
 def test_frozen_parameters_are_not_grouped() -> None:
@@ -121,4 +135,3 @@ def test_tensor_comparison_reports_shape_finite_and_error_metrics() -> None:
     nonfinite = compare_tensors(reference, torch.tensor([1.0, float("nan"), 3.0]))
     assert nonfinite["finite"] is False
     assert nonfinite["comparable"] is False
-
