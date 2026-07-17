@@ -11,13 +11,37 @@ This page reports status. For ordinary-user commands and PASS gates for every
 implemented capability below, start with
 [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md).
 
+## Native-default and official train_temp promotion gate
+
+The next backend promotion replaces RWKV's implicit FLA runtime with the
+canonical native model. It is not complete when only `RWKV7_NATIVE_MODEL` is
+defaulted: the native model must own the current graph/fused performance path,
+load with FLA imports blocked, and preserve the existing HF ecosystem matrix.
+FLA may remain an explicitly selected RWKV reference backend. Qwen's optimized
+full-FLA benchmark route remains unchanged.
+
+Training acceptance is pinned to both official RWKV-LM entry scripts:
+`RWKV-v7/train_temp/demo-training-prepare.sh` and
+`RWKV-v7/train_temp/demo-training-run.sh`. The stock single-card recipe is
+`x070`, L12/D768, head64, vocab65536, `ctx_len=512`, Minipile binidx,
+`magic_prime=2926181`, `micro_bsz=16`, BF16, `lr_init=6e-4`,
+`lr_final=6e-5`, betas 0.9/0.99, `adam_eps=1e-18`,
+`weight_decay=0.001`, warmup 10, `grad_cp=1`, kernel `@rwkv3`, and
+`deepspeed_stage_2` on one GPU.
+
+Promotion requires the native path to use the same initialized checkpoint,
+serialized sample order, optimizer grouping, FusedAdam update, schedule and
+bounded training steps. Exact backward/step comparison and a predeclared
+multi-seed cohort are mandatory. The earlier B1/T512 custom cohort remains
+valid operator-alignment evidence but does not substitute for this B16 recipe.
+
 ## Executive result
 
 | Requirement | Status | Current evidence | Remaining boundary |
 |---|---|---|---|
 | RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on measured V100, 4090 and 5090 lanes** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | Same-card final Albatross reruns on every target, broader optimized-Qwen shapes/cards, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
-| PEFT and RL ecosystem | **PASS for smoke/compatibility; train_temp exact lane accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 train_temp backward/step exact plus 3-seed x 1,000-step cohort | Larger models, real datasets, additional cards and distributed train_temp convergence |
+| PEFT and RL ecosystem | **PASS for smoke/compatibility; custom B1 train_temp exact lane accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 train_temp backward/step exact plus 3-seed x 1,000-step cohort | Native/no-FLA official-script B16 recipe, larger models, real datasets, additional cards and distributed convergence |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
 | Common professional and consumer cards | **PARTIAL** | V100, A100, A800, A6000, 4090, 5090, GTX 1080 Ti and Apple M5 evidence | H100, AMD/ROCm, Turing and broader Apple/50-series coverage |
 | W8/W4 inference and lower memory | **PASS functionally; PARTIAL for universal speed** | bnb compatibility plus native MM8/MM4; RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B BN/TN W4 B1/B8 all-phase closes at `0.5298x–0.6250x` footprint; Apple MLX W4 | Extend the 5090 FFN result to square/W8 paths and make full-memory quantized projections fp16-or-faster across cards/shapes |
