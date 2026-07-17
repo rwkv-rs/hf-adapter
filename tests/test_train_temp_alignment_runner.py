@@ -69,6 +69,30 @@ def test_compare_artifacts_accepts_matching_snapshots(tmp_path: Path) -> None:
     assert report["missing_in_candidate"] == []
     assert report["worst_cosine"] == 1.0
     assert report["max_relative_l2"] == 0.0
+    assert report["max_relative_l2_target"] == 0.025
+
+
+def test_step_compare_rejects_optimizer_group_mismatch(tmp_path: Path) -> None:
+    official_snapshot = tmp_path / "official.safetensors"
+    hf_snapshot = tmp_path / "hf.safetensors"
+    save_file({"delta::weight": torch.ones(2)}, official_snapshot)
+    save_file({"delta::weight": torch.ones(2)}, hf_snapshot)
+    official_json = tmp_path / "official.json"
+    hf_json = tmp_path / "hf.json"
+    _artifact(official_json, official_snapshot, loss=1.0, phase="step")
+    _artifact(hf_json, hf_snapshot, loss=1.0, phase="step")
+    official = json.loads(official_json.read_text(encoding="utf-8"))
+    candidate = json.loads(hf_json.read_text(encoding="utf-8"))
+    official["optimizer_groups"] = [{"group_name": "decay", "param_names": ["weight"]}]
+    candidate["optimizer_groups"] = [{"group_name": "lr_1x", "param_names": ["weight"]}]
+    write_json_atomic(official_json, official)
+    write_json_atomic(hf_json, candidate)
+
+    report = compare_artifacts(official_json, hf_json)
+
+    assert report["status"] == "fail"
+    assert report["optimizer_groups_match"] is False
+    assert "optimizer groups mismatch" in report["failures"]
 
 
 def test_compare_artifacts_rejects_provenance_and_tensor_failures(tmp_path: Path) -> None:

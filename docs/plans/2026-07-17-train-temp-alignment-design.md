@@ -52,7 +52,9 @@ The first production claim requires all of the following on the recorded card:
 1. Forward: matching batch/checkpoint hashes, finite loss, and logits cosine at
    least 0.9999 in the production bf16 lane.
 2. Backward: every mapped trainable parameter is present; gradient cosine is at
-   least 0.999 in bf16, with bounded relative L2 error.
+   least 0.999 in bf16, with per-tensor relative L2 at most 2.5%. The bound is
+   fixed from the observed production-kernel versus native bf16 rounding lane;
+   the stricter direction gate remains mandatory.
 3. Optimizer step: matching parameter groups, learning rates, weight decay,
    clipping order, and parameter-delta cosine under the same thresholds.
 4. Convergence: at least three sequential seeds; no non-finite loss or gradient

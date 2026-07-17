@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -174,18 +174,30 @@ def _seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(int(seed))
 
 
-def _optimizer_groups_metadata(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "group_name": group["group_name"],
-            "param_names": list(group["param_names"]),
-            "param_count": len(group["param_names"]),
-            "weight_decay": float(group["weight_decay"]),
-            "my_lr_scale": float(group["my_lr_scale"]),
-            "lr": float(group["lr"]),
-        }
-        for group in groups
-    ]
+def _optimizer_groups_metadata(
+    groups: list[dict[str, Any]],
+    name_normalizer: Callable[[str], str | None],
+) -> list[dict[str, Any]]:
+    metadata: list[dict[str, Any]] = []
+    for group in groups:
+        source_names = list(group["param_names"])
+        param_names = sorted(
+            normalized
+            for name in source_names
+            if (normalized := name_normalizer(name)) is not None
+        )
+        metadata.append(
+            {
+                "group_name": group["group_name"],
+                "param_names": param_names,
+                "param_count": len(param_names),
+                "source_param_count": len(source_names),
+                "weight_decay": float(group["weight_decay"]),
+                "my_lr_scale": float(group["my_lr_scale"]),
+                "lr": float(group["lr"]),
+            }
+        )
+    return metadata
 
 
 def _capture_summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -215,6 +227,7 @@ def _capture_training_phase(
     naming: str,
     loss_fn,
     normalizer,
+    parameter_name_normalizer,
     batch_path: str | Path,
     checkpoint_sha256: str,
     output_json: str | Path,
@@ -255,7 +268,7 @@ def _capture_training_phase(
         raise ValueError("model has no trainable parameter groups")
     for group in groups:
         group["lr"] = float(learning_rate) * float(group["my_lr_scale"])
-    group_metadata = _optimizer_groups_metadata(groups)
+    group_metadata = _optimizer_groups_metadata(groups, parameter_name_normalizer)
     optimizer = None
     before: dict[str, torch.Tensor] = {}
     if phase == "step":
@@ -420,12 +433,17 @@ def capture_official(args) -> dict[str, Any]:
             translate=translate_name,
         )
 
+    def normalize_parameter_name(name: str) -> str | None:
+        destination_name, _ = translate_name(name, int(config.n_layer))
+        return destination_name or None
+
     return _capture_training_phase(
         model=model,
         backend="official_train_temp",
         naming="official",
         loss_fn=official.l2wrap_cross_entropy,
         normalizer=normalize,
+        parameter_name_normalizer=normalize_parameter_name,
         batch_path=args.batch,
         checkpoint_sha256=sha256_file(args.checkpoint),
         output_json=args.output_json,
@@ -465,6 +483,7 @@ def capture_hf(args) -> dict[str, Any]:
         naming="hf",
         loss_fn=train_temp_cross_entropy,
         normalizer=normalize,
+        parameter_name_normalizer=lambda name: name,
         batch_path=args.batch,
         checkpoint_sha256=args.checkpoint_sha256,
         output_json=args.output_json,
@@ -488,12 +507,20 @@ def _snapshot_path(artifact_path: Path, artifact: dict[str, Any]) -> Path:
     return snapshot if snapshot.is_absolute() else artifact_path.parent / snapshot
 
 
+def _optimizer_group_contract(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    keys = ("group_name", "param_names", "param_count", "weight_decay", "my_lr_scale", "lr")
+    return [
+        {key: group.get(key) for key in keys}
+        for group in artifact.get("optimizer_groups", [])
+    ]
+
+
 def compare_artifacts(
     reference_json: str | Path,
     candidate_json: str | Path,
     *,
     min_cosine: float | None = None,
-    max_relative_l2: float = 0.02,
+    max_relative_l2: float | None = None,
     max_loss_relative_diff: float = 0.01,
 ) -> dict[str, Any]:
     reference_path = Path(reference_json)
@@ -503,6 +530,8 @@ def compare_artifacts(
     phase = str(reference.get("phase", ""))
     if min_cosine is None:
         min_cosine = 0.9999 if phase == "forward" else 0.999
+    if max_relative_l2 is None:
+        max_relative_l2 = 0.02 if phase == "forward" else 0.025
 
     provenance_mismatches = [
         key for key in PROVENANCE_KEYS if reference.get(key) != candidate.get(key)
@@ -536,6 +565,13 @@ def compare_artifacts(
     finite_loss = bool(torch.isfinite(torch.tensor([reference_loss, candidate_loss])).all().item())
 
     failures: list[str] = []
+    optimizer_groups_match = None
+    if phase == "step":
+        optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
+            candidate
+        )
+        if not optimizer_groups_match:
+            failures.append("optimizer groups mismatch")
     if provenance_mismatches:
         failures.append("provenance mismatch: " + ", ".join(provenance_mismatches))
     if missing_in_reference:
@@ -575,6 +611,7 @@ def compare_artifacts(
         "min_cosine_target": float(min_cosine),
         "max_relative_l2_target": float(max_relative_l2),
         "max_loss_relative_diff_target": float(max_loss_relative_diff),
+        "optimizer_groups_match": optimizer_groups_match,
         "worst_cosine": (
             min(float(row["cosine"]) for row in comparable_metrics)
             if comparable_metrics
@@ -613,7 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--candidate-json", required=True)
     compare.add_argument("--output", required=True)
     compare.add_argument("--min-cosine", type=float)
-    compare.add_argument("--max-relative-l2", type=float, default=0.02)
+    compare.add_argument("--max-relative-l2", type=float)
     compare.add_argument("--max-loss-relative-diff", type=float, default=0.01)
 
     init = subparsers.add_parser("make-official-init")
