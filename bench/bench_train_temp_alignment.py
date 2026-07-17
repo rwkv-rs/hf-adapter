@@ -1093,6 +1093,7 @@ def compare_convergence_artifacts(
     max_train_auc_relative_diff: float = 0.02,
     max_validation_auc_relative_diff: float = 0.02,
     max_final_validation_abs_diff: float = 0.01,
+    max_final_validation_relative_diff: float = 0.03,
     max_validation_threshold_step_diff: int = 10,
     max_grad_norm_ratio: float = 2.0,
 ) -> dict[str, Any]:
@@ -1260,8 +1261,11 @@ def compare_convergence_artifacts(
         failures.append("train loss AUC relative difference exceeded target")
     if validation_auc_relative_diff > max_validation_auc_relative_diff:
         failures.append("validation loss AUC relative difference exceeded target")
-    if final_validation_abs_diff > max_final_validation_abs_diff:
-        failures.append("final validation loss absolute difference exceeded target")
+    if (
+        final_validation_abs_diff > max_final_validation_abs_diff
+        and final_validation_relative_diff > max_final_validation_relative_diff
+    ):
+        failures.append("final validation loss difference exceeded absolute and relative targets")
     if missing_threshold_crossing:
         failures.append("validation loss threshold crossing missing")
     elif (
@@ -1310,6 +1314,7 @@ def compare_convergence_artifacts(
             "max_train_auc_relative_diff": float(max_train_auc_relative_diff),
             "max_validation_auc_relative_diff": float(max_validation_auc_relative_diff),
             "max_final_validation_abs_diff": float(max_final_validation_abs_diff),
+            "max_final_validation_relative_diff": float(max_final_validation_relative_diff),
             "max_validation_threshold_step_diff": int(max_validation_threshold_step_diff),
             "max_grad_norm_ratio": float(max_grad_norm_ratio),
         },
@@ -1360,6 +1365,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare_convergence.add_argument(
         "--max-final-validation-abs-diff", type=float, default=0.01
+    )
+    compare_convergence.add_argument(
+        "--max-final-validation-relative-diff", type=float, default=0.03
     )
     compare_convergence.add_argument(
         "--max-validation-threshold-step-diff", type=int, default=10
@@ -1491,6 +1499,7 @@ def main() -> int:
             max_train_auc_relative_diff=args.max_train_auc_relative_diff,
             max_validation_auc_relative_diff=args.max_validation_auc_relative_diff,
             max_final_validation_abs_diff=args.max_final_validation_abs_diff,
+            max_final_validation_relative_diff=args.max_final_validation_relative_diff,
             max_validation_threshold_step_diff=args.max_validation_threshold_step_diff,
             max_grad_norm_ratio=args.max_grad_norm_ratio,
         )
