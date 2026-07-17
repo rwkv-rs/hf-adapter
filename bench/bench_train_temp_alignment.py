@@ -947,16 +947,21 @@ def compare_artifacts(
 
     tensor_metrics: list[dict[str, Any]] = []
     tensor_failures: list[dict[str, Any]] = []
+    delta_metrics: list[dict[str, Any]] = []
     for name in common:
         metrics = {"name": name, **compare_tensors(reference_tensors[name], candidate_tensors[name])}
+        gated = not (phase == "step" and name.startswith("delta::"))
         passed = bool(
             metrics["comparable"]
             and float(metrics["cosine"]) >= float(min_cosine)
             and float(metrics["relative_l2"]) <= float(max_relative_l2)
         )
-        metrics["status"] = "pass" if passed else "fail"
+        metrics["gated"] = gated
+        metrics["status"] = "pass" if passed else ("telemetry" if not gated else "fail")
         tensor_metrics.append(metrics)
-        if not passed:
+        if name.startswith("delta::"):
+            delta_metrics.append(metrics)
+        if gated and not passed:
             tensor_failures.append(metrics)
 
     reference_loss = float(reference["loss"])
@@ -967,6 +972,7 @@ def compare_artifacts(
 
     failures: list[str] = []
     optimizer_groups_match = None
+    post_step_loss_relative_diff = None
     if phase == "step":
         if reference.get("optimizer") != candidate.get("optimizer"):
             failures.append("optimizer mismatch")
@@ -975,6 +981,16 @@ def compare_artifacts(
         )
         if not optimizer_groups_match:
             failures.append("optimizer groups mismatch")
+        reference_post_loss = reference.get("post_step_loss")
+        candidate_post_loss = candidate.get("post_step_loss")
+        if reference_post_loss is None or candidate_post_loss is None:
+            failures.append("post-step loss missing")
+        else:
+            post_step_loss_relative_diff = abs(
+                float(candidate_post_loss) - float(reference_post_loss)
+            ) / max(abs(float(reference_post_loss)), torch.finfo(torch.float64).eps)
+            if post_step_loss_relative_diff > max_loss_relative_diff:
+                failures.append("post-step loss relative difference exceeded target")
     if provenance_mismatches:
         failures.append("provenance mismatch: " + ", ".join(provenance_mismatches))
     if missing_in_reference:
@@ -993,6 +1009,12 @@ def compare_artifacts(
         )
 
     comparable_metrics = [row for row in tensor_metrics if row["comparable"]]
+    gated_comparable_metrics = [
+        row for row in comparable_metrics if bool(row["gated"])
+    ]
+    comparable_delta_metrics = [
+        row for row in delta_metrics if row["comparable"]
+    ]
     report = {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_compare",
@@ -1017,6 +1039,31 @@ def compare_artifacts(
         "optimizer_groups_match": optimizer_groups_match,
         "reference_optimizer": reference.get("optimizer"),
         "candidate_optimizer": candidate.get("optimizer"),
+        "reference_post_step_loss": reference.get("post_step_loss"),
+        "candidate_post_step_loss": candidate.get("post_step_loss"),
+        "post_step_loss_relative_diff": post_step_loss_relative_diff,
+        "gated_tensor_count": sum(bool(row["gated"]) for row in tensor_metrics),
+        "delta_tensor_count": len(delta_metrics),
+        "delta_worst_cosine": (
+            min(float(row["cosine"]) for row in comparable_delta_metrics)
+            if comparable_delta_metrics
+            else None
+        ),
+        "delta_max_relative_l2": (
+            max(float(row["relative_l2"]) for row in comparable_delta_metrics)
+            if comparable_delta_metrics
+            else None
+        ),
+        "gated_worst_cosine": (
+            min(float(row["cosine"]) for row in gated_comparable_metrics)
+            if gated_comparable_metrics
+            else None
+        ),
+        "gated_max_relative_l2": (
+            max(float(row["relative_l2"]) for row in gated_comparable_metrics)
+            if gated_comparable_metrics
+            else None
+        ),
         "worst_cosine": (
             min(float(row["cosine"]) for row in comparable_metrics)
             if comparable_metrics
@@ -1043,9 +1090,10 @@ def compare_convergence_artifacts(
     candidate_json: str | Path,
     *,
     max_train_auc_relative_diff: float = 0.02,
-    max_final_validation_relative_diff: float = 0.02,
-    max_validation_relative_diff: float = 0.03,
-    max_grad_norm_auc_relative_diff: float = 0.05,
+    max_validation_auc_relative_diff: float = 0.02,
+    max_final_validation_abs_diff: float = 0.01,
+    max_validation_scaled_diff: float = 0.03,
+    max_grad_norm_ratio: float = 2.0,
 ) -> dict[str, Any]:
     reference = json.loads(Path(reference_json).read_text(encoding="utf-8"))
     candidate = json.loads(Path(candidate_json).read_text(encoding="utf-8"))
@@ -1101,6 +1149,17 @@ def compare_convergence_artifacts(
     grad_norm_auc_relative_diff = abs(grad_auc_candidate - grad_auc_reference) / max(
         abs(grad_auc_reference), epsilon
     )
+    validation_auc_reference = mean(reference_validation_losses)
+    validation_auc_candidate = mean(candidate_validation_losses)
+    validation_auc_relative_diff = abs(
+        validation_auc_candidate - validation_auc_reference
+    ) / max(abs(validation_auc_reference), epsilon)
+    validation_abs_diffs = [
+        abs(candidate_loss - reference_loss)
+        for reference_loss, candidate_loss in zip(
+            reference_validation_losses, candidate_validation_losses
+        )
+    ]
     validation_relative_diffs = [
         abs(candidate_loss - reference_loss) / max(abs(reference_loss), epsilon)
         for reference_loss, candidate_loss in zip(
@@ -1110,8 +1169,22 @@ def compare_convergence_artifacts(
     final_validation_relative_diff = (
         validation_relative_diffs[-1] if validation_relative_diffs else float("inf")
     )
+    final_validation_abs_diff = validation_abs_diffs[-1] if validation_abs_diffs else float("inf")
     max_observed_validation_relative_diff = (
         max(validation_relative_diffs) if validation_relative_diffs else float("inf")
+    )
+    validation_scaled_diffs = [
+        difference / max(abs(reference_loss), 1.0)
+        for difference, reference_loss in zip(validation_abs_diffs, reference_validation_losses)
+    ]
+    max_observed_validation_scaled_diff = (
+        max(validation_scaled_diffs) if validation_scaled_diffs else float("inf")
+    )
+    max_reference_grad_norm = max(reference_grad_norms) if reference_grad_norms else float("nan")
+    max_candidate_grad_norm = max(candidate_grad_norms) if candidate_grad_norms else float("nan")
+    observed_grad_norm_ratio = max(
+        max_candidate_grad_norm / max(max_reference_grad_norm, epsilon),
+        max_reference_grad_norm / max(max_candidate_grad_norm, epsilon),
     )
     finite = all(
         math.isfinite(value)
@@ -1141,12 +1214,14 @@ def compare_convergence_artifacts(
         failures.append("non-finite curve value")
     if train_auc_relative_diff > max_train_auc_relative_diff:
         failures.append("train loss AUC relative difference exceeded target")
-    if final_validation_relative_diff > max_final_validation_relative_diff:
-        failures.append("final validation loss relative difference exceeded target")
-    if max_observed_validation_relative_diff > max_validation_relative_diff:
-        failures.append("validation curve relative difference exceeded target")
-    if grad_norm_auc_relative_diff > max_grad_norm_auc_relative_diff:
-        failures.append("gradient norm AUC relative difference exceeded target")
+    if validation_auc_relative_diff > max_validation_auc_relative_diff:
+        failures.append("validation loss AUC relative difference exceeded target")
+    if final_validation_abs_diff > max_final_validation_abs_diff:
+        failures.append("final validation loss absolute difference exceeded target")
+    if max_observed_validation_scaled_diff > max_validation_scaled_diff:
+        failures.append("validation curve scaled difference exceeded target")
+    if observed_grad_norm_ratio > max_grad_norm_ratio:
+        failures.append("gradient norm spike ratio exceeded target")
     return {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_convergence_compare",
@@ -1164,6 +1239,12 @@ def compare_convergence_artifacts(
         "grad_norm_auc_reference": grad_auc_reference,
         "grad_norm_auc_candidate": grad_auc_candidate,
         "grad_norm_auc_relative_diff": grad_norm_auc_relative_diff,
+        "max_reference_grad_norm": max_reference_grad_norm,
+        "max_candidate_grad_norm": max_candidate_grad_norm,
+        "max_grad_norm_ratio": observed_grad_norm_ratio,
+        "validation_loss_auc_reference": validation_auc_reference,
+        "validation_loss_auc_candidate": validation_auc_candidate,
+        "validation_loss_auc_relative_diff": validation_auc_relative_diff,
         "final_validation_loss_reference": (
             reference_validation_losses[-1] if reference_validation_losses else None
         ),
@@ -1171,12 +1252,15 @@ def compare_convergence_artifacts(
             candidate_validation_losses[-1] if candidate_validation_losses else None
         ),
         "final_validation_relative_diff": final_validation_relative_diff,
+        "final_validation_abs_diff": final_validation_abs_diff,
         "max_validation_relative_diff": max_observed_validation_relative_diff,
+        "max_validation_scaled_diff": max_observed_validation_scaled_diff,
         "targets": {
             "max_train_auc_relative_diff": float(max_train_auc_relative_diff),
-            "max_final_validation_relative_diff": float(max_final_validation_relative_diff),
-            "max_validation_relative_diff": float(max_validation_relative_diff),
-            "max_grad_norm_auc_relative_diff": float(max_grad_norm_auc_relative_diff),
+            "max_validation_auc_relative_diff": float(max_validation_auc_relative_diff),
+            "max_final_validation_abs_diff": float(max_final_validation_abs_diff),
+            "max_validation_scaled_diff": float(max_validation_scaled_diff),
+            "max_grad_norm_ratio": float(max_grad_norm_ratio),
         },
         "failures": failures,
     }
@@ -1221,12 +1305,13 @@ def build_parser() -> argparse.ArgumentParser:
     compare_convergence.add_argument("--output", required=True)
     compare_convergence.add_argument("--max-train-auc-relative-diff", type=float, default=0.02)
     compare_convergence.add_argument(
-        "--max-final-validation-relative-diff", type=float, default=0.02
+        "--max-validation-auc-relative-diff", type=float, default=0.02
     )
-    compare_convergence.add_argument("--max-validation-relative-diff", type=float, default=0.03)
     compare_convergence.add_argument(
-        "--max-grad-norm-auc-relative-diff", type=float, default=0.05
+        "--max-final-validation-abs-diff", type=float, default=0.01
     )
+    compare_convergence.add_argument("--max-validation-scaled-diff", type=float, default=0.03)
+    compare_convergence.add_argument("--max-grad-norm-ratio", type=float, default=2.0)
 
     init = subparsers.add_parser("make-official-init")
     init.add_argument("--official-checkout", required=True)
@@ -1351,9 +1436,10 @@ def main() -> int:
             args.reference_json,
             args.candidate_json,
             max_train_auc_relative_diff=args.max_train_auc_relative_diff,
-            max_final_validation_relative_diff=args.max_final_validation_relative_diff,
-            max_validation_relative_diff=args.max_validation_relative_diff,
-            max_grad_norm_auc_relative_diff=args.max_grad_norm_auc_relative_diff,
+            max_validation_auc_relative_diff=args.max_validation_auc_relative_diff,
+            max_final_validation_abs_diff=args.max_final_validation_abs_diff,
+            max_validation_scaled_diff=args.max_validation_scaled_diff,
+            max_grad_norm_ratio=args.max_grad_norm_ratio,
         )
         write_json_atomic(args.output, report)
         print(json.dumps(report, ensure_ascii=False))

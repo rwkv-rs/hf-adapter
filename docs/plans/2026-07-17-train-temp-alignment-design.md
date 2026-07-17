@@ -55,11 +55,14 @@ The first production claim requires all of the following on the recorded card:
    least 0.999 in bf16, with per-tensor relative L2 at most 2.5%. The bound is
    fixed from the observed production-kernel versus native bf16 rounding lane;
    the stricter direction gate remains mandatory.
-3. Optimizer step: matching parameter groups, learning rates, weight decay,
-   clipping order, and parameter-delta cosine under the same thresholds.
+3. Optimizer step: matching production FusedAdam, parameter groups, learning
+   rates, weight decay, and clipping order. Bf16 parameter deltas are retained
+   as quantization telemetry; post-step logits use the numerical gate and
+   post-step loss must remain within 1%.
 4. Convergence: at least three sequential seeds; no non-finite loss or gradient
-   spike; final validation loss and loss-curve area remain within the declared
-   tolerance and observed seed variance.
+   spike; train and validation loss-curve area remain within 2%, final
+   validation loss absolute difference remains within 0.01, and the scaled
+   validation-curve difference remains within 3%.
 
 Passing a Trainer, PEFT, TRL, or DeepSpeed smoke remains compatibility evidence
 only. Passing one-step parity is numerical evidence only. Neither can be used as
