@@ -154,7 +154,7 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
     config = AutoConfig.from_pretrained(path, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
     base = (
-        AutoModel.from_pretrained(path, dtype=torch.float16, trust_remote_code=True)
+        AutoModel.from_pretrained(path, torch_dtype=torch.float16, trust_remote_code=True)
         .cuda()
         .eval()
     )
@@ -302,7 +302,7 @@ def run_trainer(
     )
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=training_dtype(dtype_name))
+    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=training_dtype(dtype_name))
     dataset = synthetic_dataset(int(model.config.vocab_size), seed)
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-trainer-") as directory:
         training_args = TrainingArguments(
@@ -359,7 +359,7 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
     dtype = training_dtype(dtype_name)
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda()
+    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda()
     model = get_peft_model(model, lora_config()).train()
     trainable = [
         parameter for parameter in model.parameters() if parameter.requires_grad
@@ -383,7 +383,7 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
         expected = model(input_ids=probe_ids, use_cache=False).logits
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-peft-") as directory:
         model.save_pretrained(directory)
-        base = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda()
+        base = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda()
         reloaded = PeftModel.from_pretrained(base, directory).eval()
         with torch.inference_mode():
             actual = reloaded(input_ids=probe_ids, use_cache=False).logits
@@ -416,7 +416,7 @@ def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
     tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=training_dtype(dtype_name))
+    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=training_dtype(dtype_name))
     dataset = synthetic_dataset(int(model.config.vocab_size), seed)
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-trl-") as directory:
         config = SFTConfig(

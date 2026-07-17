@@ -1,0 +1,36 @@
+{
+  "schema": "rwkv7-lm-eval-composite-v1",
+  "units": 48,
+  "base_units": 36,
+  "replacement_units": [
+    "0.1b-b1-arc_easy",
+    "0.1b-b1-piqa",
+    "0.1b-b8-arc_easy",
+    "0.1b-b8-piqa",
+    "0.4b-b1-winogrande",
+    "0.4b-b8-winogrande",
+    "1.5b-b1-arc_challenge",
+    "1.5b-b1-piqa",
+    "1.5b-b1-winogrande",
+    "1.5b-b8-arc_challenge",
+    "1.5b-b8-piqa",
+    "1.5b-b8-winogrande"
+  ],
+  "base": {
+    "root": "/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-5c467e2e-candidate/4080/lm-eval-native-formal",
+    "source_sha": "5c467e2e3857e75880ab126cf34a01ef14a2ddca",
+    "wheel_sha256": {
+      "rwkv7_hf": "fa42443ecec6a02d0bb0542b76438ace0443c0ee6c46f531b1afa30af98ef4b9",
+      "rwkv7_kernels": "18edad2782f9420dcace52080e92f809d7b21d986391c0b2d4e566c6cdae6c37"
+    }
+  },
+  "replacement": {
+    "root": "/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-2baaf4b4-candidate/4080/lm-eval-native-affected",
+    "source_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+    "wheel_sha256": {
+      "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+      "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+    }
+  },
+  "reason": "Only the six model/task pairs that failed the original batch-size stability gate were rerun after the batch-invariant native projection/scan repair; both batch sizes replace the corresponding base units."
+}

@@ -159,7 +159,7 @@ def run_model(
 ) -> dict[str, Any]:
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).to(device).eval()
+    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).to(device).eval()
     vocab = int(model.config.vocab_size)
     generator = torch.Generator(device=device).manual_seed(seed)
     cases: list[dict[str, Any]] = []

@@ -1797,3 +1797,23 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `backend-v2-2baaf4b4-candidate/4080/lm-eval-native-affected`; no unaffected
   task is being repeated and no V100/RTX 4090 job may begin before this gate
   finishes.
+- The 12-unit RTX 4080 repair shard completed 12/12 with exit code zero.  All
+  six B1/B8 task pairs now have exactly equal aggregate metrics, every route is
+  an actual `native-nvidia-prefill-v2[...]` implementation, and no NaN, Inf,
+  OOM or traceback was found.  A transparent composite replaces only those 12
+  units in the original 48-unit run: 36 units retain source `5c467e2e` and 12
+  repaired units use `2baaf4b4`; `validation.json` reports 48 units, `passed`,
+  with no failures.  The compact evidence and verified manifest are committed
+  under `results/kernel-migration/backend-v2-4080-2baaf4b4/`; samples and large
+  logs remain outside Git.
+- The same two immutable candidate wheels were copied byte-for-byte to the V100
+  host.  Its wheel-only 0.1B equal-length B1/repeated-B8 smoke is bit-exact and
+  records two actual `native-nvidia-prefill-v2[cuda_graph_prefill]` calls.  The
+  authorized temporary `qwen38-27b` Docker service was stopped to release both
+  V100s.  A full 48-unit strict-native lm_eval run is active on GPU 1 (PID
+  `3890548`).  The first GPU-0 inference invocation exposed only an evaluator
+  compatibility bug: Transformers 4.52 treats the newer `dtype=` load keyword
+  as an unserializable config field.  Evaluation loaders now use the
+  backward-compatible `torch_dtype=` spelling; the immutable model/kernel
+  wheel bytes are unchanged and only that failed inference gate will be
+  rerun.

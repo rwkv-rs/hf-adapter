@@ -1,0 +1,19 @@
+{
+  "schema": "rwkv7-native-batch-invariance-v1",
+  "source_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+  "model": "/home/wzu/codex-run/models/backend-v2-5c467e2e-candidate/01b",
+  "dtype": "float16",
+  "shape": [
+    31,
+    65536
+  ],
+  "max_abs": 0.0,
+  "mean_abs": 0.0,
+  "exact": true,
+  "argmax_token_mismatch": 0,
+  "cosine": 0.9999730587005615,
+  "wheels": {
+    "rwkv7_hf-1.0.0-py3-none-any.whl": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+    "rwkv7_kernels-1.0.0.dev0-py3-none-any.whl": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+  }
+}

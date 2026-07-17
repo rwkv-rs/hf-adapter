@@ -1,0 +1,292 @@
+{
+  "schema": "rwkv7-4080-native-affected-summary-v1",
+  "source_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+  "formal_units": 12,
+  "exit_failures": 0,
+  "actual_model_calls": {
+    "native-nvidia-prefill-v2[dense_fallback]": 28042,
+    "native-nvidia-prefill-v2[cuda_graph_prefill]": 3
+  },
+  "batch_pairs": [
+    {
+      "model": "0.1b",
+      "task": "arc_easy",
+      "batch_1": {
+        "acc,none": 0.5993265993265994,
+        "acc_stderr,none": 0.010055304474255589,
+        "acc_norm,none": 0.5324074074074074,
+        "acc_norm_stderr,none": 0.010238210368801978
+      },
+      "batch_8": {
+        "acc,none": 0.5993265993265994,
+        "acc_stderr,none": 0.010055304474255589,
+        "acc_norm,none": 0.5324074074074074,
+        "acc_norm_stderr,none": 0.010238210368801978
+      },
+      "absolute_differences": {
+        "acc,none": 0.0,
+        "acc_norm,none": 0.0,
+        "acc_norm_stderr,none": 0.0,
+        "acc_stderr,none": 0.0
+      },
+      "all_exact": true
+    },
+    {
+      "model": "0.1b",
+      "task": "piqa",
+      "batch_1": {
+        "acc,none": 0.6800870511425462,
+        "acc_stderr,none": 0.010882873582092218,
+        "acc_norm,none": 0.6789989118607181,
+        "acc_norm_stderr,none": 0.01089264157470797
+      },
+      "batch_8": {
+        "acc,none": 0.6800870511425462,
+        "acc_stderr,none": 0.010882873582092218,
+        "acc_norm,none": 0.6789989118607181,
+        "acc_norm_stderr,none": 0.01089264157470797
+      },
+      "absolute_differences": {
+        "acc,none": 0.0,
+        "acc_norm,none": 0.0,
+        "acc_norm_stderr,none": 0.0,
+        "acc_stderr,none": 0.0
+      },
+      "all_exact": true
+    },
+    {
+      "model": "0.4b",
+      "task": "winogrande",
+      "batch_1": {
+        "acc,none": 0.5777426992896606,
+        "acc_stderr,none": 0.013881582030658465
+      },
+      "batch_8": {
+        "acc,none": 0.5777426992896606,
+        "acc_stderr,none": 0.013881582030658465
+      },
+      "absolute_differences": {
+        "acc,none": 0.0,
+        "acc_stderr,none": 0.0
+      },
+      "all_exact": true
+    },
+    {
+      "model": "1.5b",
+      "task": "arc_challenge",
+      "batch_1": {
+        "acc,none": 0.48208191126279865,
+        "acc_stderr,none": 0.014602005585490881,
+        "acc_norm,none": 0.5162116040955631,
+        "acc_norm_stderr,none": 0.014603708567414945
+      },
+      "batch_8": {
+        "acc,none": 0.48208191126279865,
+        "acc_stderr,none": 0.014602005585490881,
+        "acc_norm,none": 0.5162116040955631,
+        "acc_norm_stderr,none": 0.014603708567414945
+      },
+      "absolute_differences": {
+        "acc,none": 0.0,
+        "acc_norm,none": 0.0,
+        "acc_norm_stderr,none": 0.0,
+        "acc_stderr,none": 0.0
+      },
+      "all_exact": true
+    },
+    {
+      "model": "1.5b",
+      "task": "piqa",
+      "batch_1": {
+        "acc,none": 0.7725788900979326,
+        "acc_stderr,none": 0.00977985076784715,
+        "acc_norm,none": 0.7812840043525572,
+        "acc_norm_stderr,none": 0.009644731932667497
+      },
+      "batch_8": {
+        "acc,none": 0.7725788900979326,
+        "acc_stderr,none": 0.00977985076784715,
+        "acc_norm,none": 0.7812840043525572,
+        "acc_norm_stderr,none": 0.009644731932667497
+      },
+      "absolute_differences": {
+        "acc,none": 0.0,
+        "acc_norm,none": 0.0,
+        "acc_norm_stderr,none": 0.0,
+        "acc_stderr,none": 0.0
+      },
+      "all_exact": true
+    },
+    {
+      "model": "1.5b",
+      "task": "winogrande",
+      "batch_1": {
+        "acc,none": 0.6882399368587214,
+        "acc_stderr,none": 0.013018571197638454
+      },
+      "batch_8": {
+        "acc,none": 0.6882399368587214,
+        "acc_stderr,none": 0.013018571197638454
+      },
+      "absolute_differences": {
+        "acc,none": 0.0,
+        "acc_stderr,none": 0.0
+      },
+      "all_exact": true
+    }
+  ],
+  "all_batch_metrics_exact": true,
+  "composite_validation": {
+    "units": 48,
+    "status": "passed",
+    "failures": []
+  },
+  "units": [
+    {
+      "unit": "0.1b-b1-arc_easy",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 8213
+      }
+    },
+    {
+      "unit": "0.1b-b1-piqa",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 3662
+      }
+    },
+    {
+      "unit": "0.1b-b8-arc_easy",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 1027
+      }
+    },
+    {
+      "unit": "0.1b-b8-piqa",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 458
+      }
+    },
+    {
+      "unit": "0.4b-b1-winogrande",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 2534
+      }
+    },
+    {
+      "unit": "0.4b-b8-winogrande",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 317
+      }
+    },
+    {
+      "unit": "1.5b-b1-arc_challenge",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[cuda_graph_prefill]": 1,
+        "native-nvidia-prefill-v2[dense_fallback]": 4321
+      }
+    },
+    {
+      "unit": "1.5b-b1-piqa",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[cuda_graph_prefill]": 2,
+        "native-nvidia-prefill-v2[dense_fallback]": 3660
+      }
+    },
+    {
+      "unit": "1.5b-b1-winogrande",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 2534
+      }
+    },
+    {
+      "unit": "1.5b-b8-arc_challenge",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 541
+      }
+    },
+    {
+      "unit": "1.5b-b8-piqa",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 458
+      }
+    },
+    {
+      "unit": "1.5b-b8-winogrande",
+      "exit_code": 0,
+      "code_sha": "2baaf4b46bdd2e26ca2e8ce979d35065d834f55b",
+      "wheel_sha256": {
+        "rwkv7_hf": "93b5de31e27b8b1777ab6ad782e40441e02f493dd116bd3bae98be36117bb071",
+        "rwkv7_kernels": "affbd3c1b8f769eabd0361448c7f52ddf5f05b8597c64f4048f168b5b9e130ec"
+      },
+      "actual_model_calls": {
+        "native-nvidia-prefill-v2[dense_fallback]": 317
+      }
+    }
+  ]
+}

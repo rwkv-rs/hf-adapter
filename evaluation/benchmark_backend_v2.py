@@ -394,7 +394,7 @@ def load_model(kind: str, path: Path, dtype: torch.dtype, *, training: bool = Fa
 
         config = RWKV7Config.from_pretrained(path)
         route_mode(kind)
-    model = RWKV7ForCausalLM.from_pretrained(path, config=config, dtype=dtype).cuda()
+    model = RWKV7ForCausalLM.from_pretrained(path, config=config, torch_dtype=dtype).cuda()
     return model.train() if training else model.eval()
 
 

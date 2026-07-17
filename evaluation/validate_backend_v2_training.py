@@ -133,7 +133,7 @@ def main() -> int:
     if args.candidate_route == "reference-fallback" and args.dtype != "fp16":
         raise ValueError("SM70 fallback acceptance requires --dtype fp16")
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda().train()
+    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda().train()
     vocab = int(model.config.vocab_size)
     batches = tuple(args.batch or (1, 4))
     tokens = tuple(args.tokens or (16, 128))

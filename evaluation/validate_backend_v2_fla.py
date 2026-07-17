@@ -266,7 +266,7 @@ def run_operator_parity(
 def clean_model(path: Path, dtype: torch.dtype):
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    return RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda().eval()
+    return RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda().eval()
 
 
 def fla_model(path: Path, dtype: torch.dtype, *, training: bool = False):
@@ -280,7 +280,7 @@ def fla_model(path: Path, dtype: torch.dtype, *, training: bool = False):
     config.fuse_cross_entropy = False
     config.fuse_linear_cross_entropy = False
     config.use_l2warp = False
-    model = RWKV7ForCausalLM.from_pretrained(path, config=config, dtype=dtype).cuda()
+    model = RWKV7ForCausalLM.from_pretrained(path, config=config, torch_dtype=dtype).cuda()
     return model.train() if training else model.eval()
 
 

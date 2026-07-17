@@ -109,7 +109,7 @@ def load_candidate(path: Path, method: str, args: argparse.Namespace):
         report = quantize_model(model, method, policy=args.policy)
         return model, report
 
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda().eval()
+    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda().eval()
     report = quantize_model(
         model,
         method,
@@ -144,7 +144,7 @@ def validate_method(
     from rwkv7_kernels.quantization import quantization_graph_support
 
     dtype = model_dtype(method)
-    dense = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda().eval()
+    dense = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda().eval()
     with torch.inference_mode():
         route(False)
         dense_output = dense(input_ids=ids, use_cache=True)
