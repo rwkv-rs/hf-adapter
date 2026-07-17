@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import tomllib
@@ -75,3 +76,32 @@ def test_package_public_classes_are_native() -> None:
     assert rwkv7_hf.RWKV7Config is NativeRWKV7Config
     assert rwkv7_hf.RWKV7Model is NativeRWKV7Model
     assert rwkv7_hf.RWKV7ForCausalLM is NativeRWKV7ForCausalLM
+
+
+def test_repo_code_benchmark_overlay_migrates_config_without_touching_source(tmp_path) -> None:
+    from bench.bench_native_quant_e2e_decode import prepare_model_dir
+
+    source = tmp_path / "converted"
+    source.mkdir()
+    source_config = {
+        "architectures": ["RWKV7ForCausalLM"],
+        "model_type": "rwkv7_hf_adapter",
+        "auto_map": {"AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM"},
+    }
+    (source / "config.json").write_text(json.dumps(source_config), encoding="utf-8")
+    (source / "model.safetensors").write_bytes(b"weights")
+
+    prepared, temporary = prepare_model_dir(str(source), "repo")
+    try:
+        migrated = json.loads((Path(prepared) / "config.json").read_text(encoding="utf-8"))
+        original = json.loads((source / "config.json").read_text(encoding="utf-8"))
+        assert migrated["architectures"] == ["NativeRWKV7ForCausalLM"]
+        assert migrated["model_type"] == "rwkv7_native"
+        assert migrated["auto_map"]["AutoModelForCausalLM"] == (
+            "native_model.NativeRWKV7ForCausalLM"
+        )
+        assert original == source_config
+        assert (Path(prepared) / "model.safetensors").read_bytes() == b"weights"
+    finally:
+        assert temporary is not None
+        temporary.cleanup()
