@@ -365,6 +365,7 @@ def _capture_training_phase(
     grad_clip: float,
     optimizer_name: str,
     source_commit: str | None,
+    backend_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if phase not in {"forward", "backward", "step"}:
         raise ValueError(f"unsupported capture phase: {phase}")
@@ -484,6 +485,7 @@ def _capture_training_phase(
         "snapshot_sha256": sha256_file(snapshot_path),
         "snapshot_tensor_count": len(snapshot),
         "source_commit": source_commit,
+        "backend_metadata": backend_metadata or {},
         **_runtime_metadata(device),
     }
     write_json_atomic(output_json, result)
@@ -541,6 +543,7 @@ def _run_convergence(
     optimizer_name: str,
     eval_interval: int,
     source_commit: str | None,
+    backend_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if precision != "bf16":
         raise ValueError("end-to-end train_temp convergence currently requires bf16")
@@ -676,6 +679,7 @@ def _run_convergence(
         "validation_curve": validation_curve,
         "runtime_s": runtime_s,
         "source_commit": source_commit,
+        "backend_metadata": backend_metadata or {},
         **_runtime_metadata(device),
     }
     write_json_atomic(output_json, result)
@@ -799,14 +803,27 @@ def capture_hf(args) -> dict[str, Any]:
     ).to(args.device)
     model.config.use_cache = False
 
+    backend = "hf_native" if args.native else "hf_fla"
+    loss_fn = train_temp_cross_entropy
+    backend_metadata: dict[str, Any] = {}
+    if args.train_temp_cuda:
+        from rwkv7_hf.train_temp_cuda import (
+            enable_train_temp_cuda_backend,
+            train_temp_fused_cross_entropy,
+        )
+
+        backend = "hf_train_temp_cuda"
+        loss_fn = train_temp_fused_cross_entropy
+        backend_metadata = enable_train_temp_cuda_backend(model)
+
     def normalize(tensors: dict[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
         return {prefix + name: tensor for name, tensor in tensors.items()}
 
     return _capture_training_phase(
         model=model,
-        backend="hf_native" if args.native else "hf_fla",
+        backend=backend,
         naming="hf",
-        loss_fn=train_temp_cross_entropy,
+        loss_fn=loss_fn,
         normalizer=normalize,
         parameter_name_normalizer=lambda name: name,
         batch_path=args.batch,
@@ -825,6 +842,7 @@ def capture_hf(args) -> dict[str, Any]:
         grad_clip=args.grad_clip,
         optimizer_name=args.optimizer,
         source_commit=_git_commit(Path(__file__).resolve().parents[1]),
+        backend_metadata=backend_metadata,
     )
 
 
@@ -881,11 +899,25 @@ def converge_hf(args) -> dict[str, Any]:
         torch_dtype=torch.bfloat16,
     ).to(args.device)
     model.config.use_cache = False
+
+    backend = "hf_native" if args.native else "hf_fla"
+    loss_fn = train_temp_cross_entropy
+    backend_metadata: dict[str, Any] = {}
+    if args.train_temp_cuda:
+        from rwkv7_hf.train_temp_cuda import (
+            enable_train_temp_cuda_backend,
+            train_temp_fused_cross_entropy,
+        )
+
+        backend = "hf_train_temp_cuda"
+        loss_fn = train_temp_fused_cross_entropy
+        backend_metadata = enable_train_temp_cuda_backend(model)
+
     return _run_convergence(
         model=model,
-        backend="hf_native" if args.native else "hf_fla",
+        backend=backend,
         naming="hf",
-        loss_fn=train_temp_cross_entropy,
+        loss_fn=loss_fn,
         parameter_name_normalizer=lambda name: name,
         sequence_path=args.sequence,
         validation_batch_path=args.validation_batch,
@@ -906,6 +938,7 @@ def converge_hf(args) -> dict[str, Any]:
         optimizer_name=args.optimizer,
         eval_interval=args.eval_interval,
         source_commit=_git_commit(Path(__file__).resolve().parents[1]),
+        backend_metadata=backend_metadata,
     )
 
 
@@ -1416,7 +1449,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_capture_arguments(hf)
     hf.add_argument("--model", required=True)
     hf.add_argument("--checkpoint-sha256", required=True)
-    hf.add_argument("--native", action="store_true")
+    hf_backend = hf.add_mutually_exclusive_group()
+    hf_backend.add_argument("--native", action="store_true")
+    hf_backend.add_argument("--train-temp-cuda", action="store_true")
 
     def add_convergence_arguments(convergence: argparse.ArgumentParser) -> None:
         convergence.add_argument("--sequence", required=True)
@@ -1451,7 +1486,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_convergence_arguments(hf_convergence)
     hf_convergence.add_argument("--model", required=True)
     hf_convergence.add_argument("--checkpoint-sha256", required=True)
-    hf_convergence.add_argument("--native", action="store_true")
+    hf_convergence_backend = hf_convergence.add_mutually_exclusive_group()
+    hf_convergence_backend.add_argument("--native", action="store_true")
+    hf_convergence_backend.add_argument("--train-temp-cuda", action="store_true")
     return parser
 
 
