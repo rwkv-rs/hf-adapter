@@ -1860,3 +1860,16 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   lowering and fused-recurrent backward are unavailable on SM70.  Local tests
   now pass **185 tests**.  GPU 1 continues the untouched 48-unit strict-native
   lm_eval run; 13 unit results are complete with zero command/error failures.
+- V100 GPU 0 is now running the canonical same-wheel finetune chain (orchestrator
+  PID `4099419`) after ecosystem and FLA completed: 100-step SFT, DPO and GRPO,
+  followed by SFT checkpoint resume, W&B offline smoke and strict artifact
+  validation.  Datasets are the already cached pinned revisions; the model and
+  both wheel SHA256s are recorded in every run.  AutoModel remote-code modules
+  own a separate route ContextVar, so the callback now resolves the accessor
+  from the actual model class before falling back to the installed-package
+  accessor.  The nested causal-LM reference route is accepted only alongside
+  the existing nonzero-gradient, changed-parameter and adapter-save/reload
+  proof.  Local coverage for this namespace case raises the suite to **186
+  tests**.  SFT has entered the 100-step loop normally on GPU 0 while the lm_eval
+  collector continues independently on GPU 1; neither task is duplicated or
+  restarted.

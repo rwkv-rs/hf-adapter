@@ -402,13 +402,32 @@ class ReproCallback(TrainerCallback):
         self.saw_nonzero_gradient = False
         self.backend_routes = []
 
-    def _capture_backend_route(self, event: str):
+    @staticmethod
+    def _last_backend_route(model=None):
+        # A local/Hub model loaded through AutoModel uses Transformers' remote
+        # module namespace, so its ops module owns a different ContextVar from
+        # the installed package module. Resolve the accessor from the actual
+        # model class first; retain the package accessor for direct imports.
+        if model is not None:
+            get_base_model = getattr(model, "get_base_model", None)
+            base_model = get_base_model() if callable(get_base_model) else model
+            modeling_module = sys.modules.get(type(base_model).__module__)
+            maybe_forward = getattr(modeling_module, "maybe_model_forward", None)
+            ops_module = sys.modules.get(getattr(maybe_forward, "__module__", ""))
+            getter = getattr(ops_module, "get_last_model_route", None)
+            if callable(getter):
+                route = getter()
+                if isinstance(route, dict):
+                    return route
         try:
             from rwkv7_hf.ops_rwkv7 import get_last_model_route
 
-            route = get_last_model_route()
+            return get_last_model_route()
         except Exception:
-            route = None
+            return None
+
+    def _capture_backend_route(self, event: str, model=None):
+        route = self._last_backend_route(model)
         if not isinstance(route, dict):
             return
         row = {"event": event, **route}
@@ -416,7 +435,7 @@ class ReproCallback(TrainerCallback):
             self.backend_routes.append(row)
 
     def on_log(self, args, state, control, logs=None, **kwargs):
-        self._capture_backend_route("log")
+        self._capture_backend_route("log", kwargs.get("model"))
         logs = dict(logs or {})
         loss = logs.get("loss")
         if loss is not None and torch.isfinite(torch.tensor(float(loss))):
@@ -426,7 +445,7 @@ class ReproCallback(TrainerCallback):
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def on_pre_optimizer_step(self, args, state, control, model=None, **kwargs):
-        self._capture_backend_route("pre_optimizer_step")
+        self._capture_backend_route("pre_optimizer_step", model)
         if model is None:
             return
         for parameter in model.parameters():
@@ -444,7 +463,11 @@ class ReproCallback(TrainerCallback):
             and route.get("selected") == "reference"
             and route.get("phase") == "training"
             and route.get("implementation") == "torch-reference-model-v1"
-            and "adapter" in str(route.get("reason", "")).lower()
+            and (
+                "adapter" in str(route.get("reason", "")).lower()
+                or "causal-lm boundary"
+                in str(route.get("reason", "")).lower()
+            )
             for route in self.backend_routes
         )
         native_training = any(

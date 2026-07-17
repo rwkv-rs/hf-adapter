@@ -124,7 +124,10 @@ def validate_run(
             and row.get("selected") == "reference"
             and row.get("phase") == "training"
             and row.get("implementation") == "torch-reference-model-v1"
-            and "adapter" in str(row.get("reason", "")).lower()
+            and (
+                "adapter" in str(row.get("reason", "")).lower()
+                or "causal-lm boundary" in str(row.get("reason", "")).lower()
+            )
             for row in routes
         )
         if not adapter_fallback or not checks.get("adapter_reference_fallback"):
