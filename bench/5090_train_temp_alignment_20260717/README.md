@@ -23,6 +23,14 @@ commit under `rwkv7_hf/csrc/train_temp/`.
 
 ## Results
 
+![Official RWKV-LM versus HF train_temp convergence curves](official_vs_hf_convergence.png)
+
+Downloadable review tables:
+[`official_vs_hf_single_step.csv`](official_vs_hf_single_step.csv) and
+[`official_vs_hf_cohort.csv`](official_vs_hf_cohort.csv). These are generated
+directly from the committed comparison JSON rather than copied from a separate
+spreadsheet.
+
 ### Strict single-step contract
 
 | Gate | Result |
@@ -66,6 +74,10 @@ are retained so this decision is auditable.
 ## Artifact inventory
 
 - `summary.json`: compact machine-readable promoted result.
+- `official_vs_hf_convergence.png`: official/HF training and validation curves
+  for all three seeds.
+- `official_vs_hf_single_step.csv`, `official_vs_hf_cohort.csv`: downloadable
+  official-comparison attachments.
 - `compile.exit`, `compile.log`: all eight extension groups compiled and loaded.
 - `compare_backward.json`, `compare_step.json`: strict tensor gates.
 - `official_convergence_seed*.json`, `hf_convergence_seed*.json`: six complete
@@ -92,6 +104,13 @@ for the strict lane; use `make-sequence`, `converge-official`,
 three-seed lane. Every command requires explicit source/checkpoint paths and
 writes a standalone JSON artifact, so an interrupted run can resume without
 mixing rows from a different source or checkpoint.
+
+Regenerate the image and CSV attachments from the raw JSON:
+
+```bash
+python bench/plot_train_temp_alignment.py \
+  --evidence-dir bench/5090_train_temp_alignment_20260717
+```
 
 ## Boundary
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import json
+import struct
 from pathlib import Path
 
 
@@ -64,3 +66,29 @@ def test_promoted_train_temp_evidence_is_self_consistent() -> None:
     assert cohort["median_train_loss_auc_relative_diff"] < 0.01
     assert cohort["median_validation_loss_auc_relative_diff"] < 0.06
     assert cohort["median_grad_norm_ratio"] < 1.34
+
+
+def test_promoted_train_temp_review_attachments_are_complete() -> None:
+    png = (EVIDENCE / "official_vs_hf_convergence.png").read_bytes()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = struct.unpack(">II", png[16:24])
+    assert width >= 2400
+    assert height >= 1200
+
+    with (EVIDENCE / "official_vs_hf_cohort.csv").open(
+        "r", encoding="utf-8", newline=""
+    ) as handle:
+        cohort_rows = list(csv.DictReader(handle))
+    assert len(cohort_rows) == 6
+    assert {row["backend"] for row in cohort_rows} == {
+        "official_rwkv_lm_train_temp",
+        "hf_train_temp_cuda",
+    }
+    assert {int(row["seed"]) for row in cohort_rows} == {131, 232, 333}
+
+    with (EVIDENCE / "official_vs_hf_single_step.csv").open(
+        "r", encoding="utf-8", newline=""
+    ) as handle:
+        step_rows = list(csv.DictReader(handle))
+    assert [row["phase"] for row in step_rows] == ["backward", "step"]
+    assert all(row["status"] == "pass" for row in step_rows)
