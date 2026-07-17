@@ -4,7 +4,7 @@ Canonical current snapshot. Scope: Transformers loading/generation/training,
 PEFT/TRL, recurrent cache helpers, quantized HF inference, hardware validation
 and reproducible performance evidence. Native vLLM/SGLang work is separate.
 
-Last updated: **2026-07-16**.
+Last updated: **2026-07-17**.
 
 ## Overall status
 
@@ -14,7 +14,7 @@ Last updated: **2026-07-16**.
 | Transformers API | **PASS** | Auto classes, save/reload, generation/cache, masks and labels/loss |
 | Official/HF correctness | **PASS for current gates** | top-k/cosine/greedy, save/reload, cache handoff, MATH500 and compression checks |
 | PEFT | **PASS** | LoRA forward/backward and adapter save/load/merge |
-| Trainer / TRL | **PASS for compatibility matrix** | Trainer, SFT, DPO and GRPO smoke across tested CUDA and Apple paths |
+| Trainer / TRL | **PASS for compatibility matrix; train_temp exact lane accepted** | Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 backward/step exact and 3-seed x 1,000-step train_temp cohort pass |
 | DeepSpeed ZeRO-2/3 | **PASS for current smoke matrix** | base and selected resume evidence across V100/A100/A800/A6000 setups |
 | Recurrent state cache | **PASS** | select/reorder/drop/compact, offload/restore, chunked prefill and telemetry |
 | Native/no-FLA backend | **PASS as opt-in compatibility path** | load/generate/cache/PEFT/Trainer/TRL smoke; not the default wrapper |
@@ -48,7 +48,7 @@ the scopes have different acceptance gates and are not equally weighted.
 | V100 32GB | **Production-close for measured lanes** | Dense Albatross/Qwen lanes remain; packed MM4 cached decode passes exact 1.5B memory+group128+fused, 2.9B group256 speed and 7.2B memory profiles 7/7 each with decode minima `1.0255x/1.0111x/1.0810x`, lower footprint and complete greedy equality. Full-memory prefill remains open; [`bench/v100_sm70_mm4_bntn_20260716/`](bench/v100_sm70_mm4_bntn_20260716/README.md), [`bench/v100_active_b1b8_20260715/`](bench/v100_active_b1b8_20260715/README.md) |
 | RTX 4090 | **Production-close for measured 0.4B–7.2B bsz8 lanes** | Small pairs pass 54/54 with minimum dense prefill/decode `1.041959x`/`4.214362x` across the three pair minima, plus the separate 7.2B/9B 18/18 close; all use fail-closed native/full-FLA, active-work and quant-local speed/memory gates; task quality and other batches remain open; [`bench/4090_small_bsz8_20260715/`](bench/4090_small_bsz8_20260715/README.md), [`bench/4090_g1h_7p2_bsz8_20260715/`](bench/4090_g1h_7p2_bsz8_20260715/README.md) |
 | RTX 5070 Laptop | **Production-close for measured bsz8 full-FLA lane** | 1.5B RWKV vs 2B Qwen: 36/36 raw rows and 18/18 strict cells pass; minimum prefill/decode speedups are `1.082707x`/`1.795119x`, minimum tok/s per active-B ratios are `1.333940x`/`2.211641x`, and footprint/peak VRAM are no larger in 18/18; all Qwen performance rows use FLA core, norm, and Triton conv with no Torch fallback; model quality is not covered; [`bench/5070_qwen35_full_fla_bsz8_20260714/`](bench/5070_qwen35_full_fla_bsz8_20260714/README.md) |
-| RTX 5090 | **Production-close for measured B1/B8 Qwen, W4 and g1h 13.3B lanes** | The current-main full-FLA Qwen3.5 matrix passes 8/8 batch-pairs from 0.4B/0.8B through 7.2B/9B. The paired BF16/W4 matrix passes g1h 1.5B/2.9B/7.2B/13.3B at B1/B8 in both phases with minimum `1.0010x/1.1854x` prefill/decode, `0.5298x–0.6250x` footprint, cosine `>=0.9995`, same-next 8/8 and a 280/280 group-128 grid contract. Fresh official g1h 13.3B load/generate also passes; [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md), [`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md), [`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md) |
+| RTX 5090 | **Production-close for measured B1/B8 Qwen, W4, g1h 13.3B and exact train_temp lanes** | Existing inference lanes remain; additionally, the opt-in BF16 12x768 train_temp backend matches official T512 backward/step exactly and passes a 3-seed x 1,000-step cohort. This training result is single-GPU and does not promote other cards/shapes; [`bench/5090_train_temp_alignment_20260717/`](bench/5090_train_temp_alignment_20260717/README.md), [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md), [`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
 | Apple M5 | **Production-close for measured MLX pairs** | B1 speculative gates plus the separate 1.5B B8 target-only cold gate; the latter uses no draft/cache and passes active-normalized prefill/decode at `1.1406x/1.1394x` Qwen3.5 2B with lower raw peak memory; [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
 | A100 40GB / A800 80GB / A6000 48GB | **Validated** | Large-model API/training/quant/ZeRO matrices; production performance remains card-specific |
 | GTX 1080 Ti | **Smoke** | compatibility evidence, not full production-close |
@@ -67,7 +67,8 @@ These are the remaining technical boundaries, not already-completed history:
    reference live on the same card/session.
 3. Add H100, AMD/ROCm and Turing evidence.
 4. Complete broader Apple-family, CoreML INT4/ANE and formal quality coverage.
-5. Extend long training and larger ZeRO-3 checkpoint-resume evidence.
+5. Extend the accepted single-5090 train_temp lane to larger models, real
+   datasets, additional cards and distributed runs; extend ZeRO-3 resume evidence.
 6. Close production PP/TP rather than treating `device_map` smoke as TP proof.
 
 ## Canonical documents

@@ -80,7 +80,7 @@ def _validate_runtime() -> None:
     major, minor = torch.cuda.get_device_capability()
     if (major, minor) < (8, 0):
         raise RuntimeError(
-            "train_temp BF16 CUDA backend requires Ampere (sm_80) or newer; "
+            "train_temp BF16 CUDA backend requires compute capability sm_80 or newer; "
             f"found sm_{major}{minor}"
         )
 
@@ -357,6 +357,47 @@ def train_temp_fused_cross_entropy(logits: torch.Tensor, targets: torch.Tensor) 
     return _L2WrapCrossEntropy.apply(logits, targets)
 
 
+def train_temp_causal_cross_entropy(
+    logits: torch.Tensor, labels: torch.Tensor
+) -> torch.Tensor:
+    """Apply the fused train_temp loss to standard causal-LM logits and labels.
+
+    Unlike :func:`train_temp_fused_cross_entropy`, this helper performs the
+    next-token shift expected by Hugging Face causal-language-model batches.
+    The current CUDA kernel accepts dense int64 labels only; padding and the
+    usual ``-100`` ignore index are intentionally rejected by its contract.
+    """
+
+    if logits.ndim != 3:
+        raise ValueError(
+            f"logits must have shape [batch, tokens, vocab], got {tuple(logits.shape)}"
+        )
+    if labels.ndim != 2:
+        raise ValueError(f"labels must have shape [batch, tokens], got {tuple(labels.shape)}")
+    if logits.shape[:2] != labels.shape:
+        raise ValueError(
+            "logits and labels must share batch/token dimensions; got "
+            f"{tuple(logits.shape[:2])} and {tuple(labels.shape)}"
+        )
+    if logits.shape[1] < 2:
+        raise ValueError("causal train_temp loss requires at least two tokens")
+    if labels.dtype != torch.long:
+        raise TypeError(f"labels must be torch.int64, got {labels.dtype}")
+    if labels.device != logits.device:
+        raise ValueError(
+            "logits and labels must share a device, got "
+            f"{logits.device} and {labels.device}"
+        )
+    if bool(torch.any((labels < 0) | (labels >= logits.shape[-1])).item()):
+        raise ValueError(
+            "train_temp CUDA loss requires dense labels in [0, vocab_size); "
+            "-100 is unsupported"
+        )
+    return train_temp_fused_cross_entropy(
+        logits[:, :-1].contiguous(), labels[:, 1:].contiguous()
+    )
+
+
 def _dense_mask_only(attention_mask: torch.Tensor | None) -> None:
     if attention_mask is not None and not bool(torch.all(attention_mask != 0).item()):
         raise ValueError("train_temp CUDA backend does not support padded or masked batches")
@@ -442,24 +483,30 @@ def enable_train_temp_cuda_backend(model) -> dict[str, Any]:
     from fla.layers.rwkv7 import RWKV7Attention
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7FeedForward
 
-    attention_count = 0
-    ffn_count = 0
-    for module in model.modules():
-        if isinstance(module, RWKV7Attention):
-            if getattr(module, "_rwkv7_train_temp_original_forward", None) is None:
-                module._rwkv7_train_temp_original_forward = module.forward
-                module.forward = types.MethodType(_attention_forward, module)
-            attention_count += 1
-        elif isinstance(module, RWKV7FeedForward):
-            if getattr(module, "_rwkv7_train_temp_original_forward", None) is None:
-                module._rwkv7_train_temp_original_forward = module.forward
-                module.forward = types.MethodType(_ffn_forward, module)
-            ffn_count += 1
+    modules = tuple(model.modules())
+    attention_modules = tuple(
+        module for module in modules if isinstance(module, RWKV7Attention)
+    )
+    ffn_modules = tuple(
+        module for module in modules if isinstance(module, RWKV7FeedForward)
+    )
+    attention_count = len(attention_modules)
+    ffn_count = len(ffn_modules)
     if attention_count == 0 or ffn_count == 0 or attention_count != ffn_count:
         raise TypeError(
             "expected a balanced FLA RWKV-7 model, found "
             f"{attention_count} attention and {ffn_count} FFN modules"
         )
+    for module in attention_modules:
+        if getattr(module, "_rwkv7_train_temp_original_forward", None) is None:
+            module._rwkv7_train_temp_original_forward = module.forward
+            module.forward = types.MethodType(_attention_forward, module)
+    for module in ffn_modules:
+        if getattr(module, "_rwkv7_train_temp_original_forward", None) is None:
+            module._rwkv7_train_temp_original_forward = module.forward
+            module.forward = types.MethodType(_ffn_forward, module)
+    if not hasattr(model, "_rwkv7_train_temp_original_use_cache"):
+        model._rwkv7_train_temp_original_use_cache = model.config.use_cache
     model.config.use_cache = False
     model._rwkv7_train_temp_cuda_enabled = True
     return {
@@ -480,6 +527,9 @@ def disable_train_temp_cuda_backend(model) -> None:
         if original is not None:
             module.forward = original
             delattr(module, "_rwkv7_train_temp_original_forward")
+    if hasattr(model, "_rwkv7_train_temp_original_use_cache"):
+        model.config.use_cache = model._rwkv7_train_temp_original_use_cache
+        delattr(model, "_rwkv7_train_temp_original_use_cache")
     model._rwkv7_train_temp_cuda_enabled = False
 
 
@@ -490,6 +540,7 @@ __all__ = [
     "disable_train_temp_cuda_backend",
     "enable_train_temp_cuda_backend",
     "load_train_temp_cuda_extension",
+    "train_temp_causal_cross_entropy",
     "train_temp_cuda_available",
     "train_temp_fused_cross_entropy",
 ]

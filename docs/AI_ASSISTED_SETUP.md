@@ -28,6 +28,7 @@
 | `cache` | 循环状态、动态 batch、chunked prefill | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选 cache 测试所有 mode/shape 打印 `PASS` |
 | `speculative` | 投机解码 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | target greedy 完全一致、draft/target 调用计数有效、`PASS` |
 | `training` | PEFT LoRA、Trainer、保存合并、恢复 | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | 有限 loss、非零梯度/参数变化、所选精确 `PASS` |
+| `train-temp-alignment` | 在 CUDA 上复现官方 RWKV-LM train_temp 数学与训练效果 | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) | 单步逐张量报告 `pass`；长期至少 3-seed cohort `pass`；精确 GPU/模型/commit/hash 齐全 |
 | `trl` | SFT、DPO 或 GRPO | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | 所选流程 `status: pass` 或 `NATIVE ... PASS` |
 | `multi-gpu-inference` | HF `device_map` 层切分 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 至少两张可见 GPU、单卡参考一致、`PASS` |
 | `deepspeed` | ZeRO-2/ZeRO-3 smoke | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 至少两张 CUDA 卡、请求的 stage 全部 `PASS`、结果行落盘 |

@@ -1,10 +1,11 @@
 # RWKV-LM train_temp Alignment Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> Historical implementation plan. Current user instructions and accepted
+> evidence are in `docs/TRAIN_TEMP_CUDA.md` and the dated benchmark artifact.
 
 **Goal:** Build and run a reproducible single-RTX-5090 train_temp-versus-HF numerical and convergence alignment harness.
 
-**Architecture:** Keep train_temp-specific loss and optimizer semantics in one importable module, while a process-isolated benchmark runner owns official/HF loading and evidence. An idempotent shell wrapper pins inputs and refuses to start convergence runs until forward, backward, and optimizer-step gates pass.
+**Architecture:** Keep train_temp-specific loss and optimizer semantics in one importable module, while a process-isolated benchmark runner owns official/HF loading, immutable inputs, fail-closed comparison and evidence.
 
 **Tech Stack:** Python 3.10+, PyTorch, Transformers, safetensors, official RWKV-LM train_temp, pytest, Bash, JSONL.
 
@@ -48,17 +49,18 @@
 4. Record GPU, driver, CUDA, PyTorch, source commits, checkpoint SHA, batch SHA, precision, seed, and exact optimizer groups.
 5. Run runner unit tests without CUDA.
 
-### Task 4: Add an Idempotent Exact-Card Wrapper
+### Task 4: Add the Opt-in Official-Kernel CUDA Backend
 
 **Files:**
-- Create: `scripts/run_train_temp_alignment.sh`
-- Modify: `tests/test_acceptance_scripts.py`
+- Create: `rwkv7_hf/train_temp_cuda.py`
+- Create: `rwkv7_hf/csrc/train_temp/`
+- Create: `tests/test_train_temp_cuda.py`
 
 **Steps:**
-1. Add a dry-run test that verifies all phase commands and stop gates.
-2. Implement pinned official checkout, environment validation, input hashing, atomic outputs, and phase resume.
-3. Keep device selection external; do not encode a physical GPU index in evidence.
-4. Run the wrapper dry-run and acceptance-script tests.
+1. Vendor the pinned Apache-2.0 official CUDA sources with provenance.
+2. Compile and register the fused attention, FFN and L2Wrap loss operators lazily.
+3. Keep the backend explicit and default-off; reject cache, padding and unsupported shapes.
+4. Add a standard causal-LM loss helper and CPU-side contract tests.
 
 ### Task 5: Run RTX 5090 Numerical Gates
 
