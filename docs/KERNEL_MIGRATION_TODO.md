@@ -1815,5 +1815,6 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   compatibility bug: Transformers 4.52 treats the newer `dtype=` load keyword
   as an unserializable config field.  Evaluation loaders now use the
   backward-compatible `torch_dtype=` spelling; the immutable model/kernel
-  wheel bytes are unchanged and only that failed inference gate will be
-  rerun.
+  wheel bytes are unchanged.  Only that failed inference gate is being rerun
+  on GPU 0 as `inference-v2` (PID `3900773`); the original failed log remains
+  preserved.
