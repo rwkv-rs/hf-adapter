@@ -15,10 +15,14 @@ from validate_backend_v2_ecosystem import (  # noqa: E402
     expected_dense_training_route,
     native_training_route,
     reference_training_route,
+    training_parameter_dtype,
 )
 from validate_backend_v2_training import (  # noqa: E402
     candidate_route_passed,
     tensor_metric as training_tensor_metric,
+)
+from validate_backend_v2_fla_sm70 import (  # noqa: E402
+    optimized_route_passed as sm70_fla_route_passed,
 )
 from validate_backend_v2_inference import (  # noqa: E402
     annotate_metric as annotate_inference_metric,
@@ -202,6 +206,26 @@ def test_ecosystem_route_gates_distinguish_native_and_adapter_fallback():
     assert adapter_fallback_route(fallback)
     assert adapter_fallback_route(nested_fallback)
     assert not native_training_route(fallback)
+
+
+def test_ecosystem_fp16_uses_fp32_master_parameters():
+    assert training_parameter_dtype("fp16") is torch.float32
+    assert training_parameter_dtype("bf16") is torch.bfloat16
+
+
+def test_sm70_fla_gate_requires_actual_optimized_recurrent_route():
+    assert sm70_fla_route_passed(
+        {
+            "selected": "optimized",
+            "implementation": "torch-cuda-graph-reference-v1",
+        }
+    )
+    assert not sm70_fla_route_passed(
+        {
+            "selected": "reference",
+            "implementation": "torch-reference-recurrence-v1",
+        }
+    )
 
 
 def test_sm70_training_fallback_is_explicit_and_not_native():

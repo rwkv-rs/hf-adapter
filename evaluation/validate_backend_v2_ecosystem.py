@@ -94,6 +94,15 @@ def training_dtype(name: str) -> torch.dtype:
     return torch.bfloat16 if name == "bf16" else torch.float16
 
 
+def training_parameter_dtype(name: str) -> torch.dtype:
+    # Native BF16 training operates directly on BF16 checkpoint parameters.
+    # Conventional HF FP16 training instead keeps the optimizer's master
+    # parameters in FP32 and obtains FP16 compute through Accelerate/Trainer
+    # autocast. Loading FP16 parameters and then enabling GradScaler makes
+    # both libraries correctly reject the run while unscaling gradients.
+    return torch.bfloat16 if name == "bf16" else torch.float32
+
+
 def adapter_fallback_route(route: dict[str, Any] | None) -> bool:
     # A PEFT-wrapped causal LM first rejects the native whole-model training
     # path because its FFN modules are adapters.  The readable fallback then
@@ -161,81 +170,109 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
         AutoTokenizer,
     )
 
-    config = AutoConfig.from_pretrained(path, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-    base = (
-        AutoModel.from_pretrained(path, torch_dtype=torch.float16, trust_remote_code=True)
-        .cuda()
-        .eval()
-    )
-    ids = torch.randint(
-        1,
-        int(config.vocab_size),
-        (1, 17),
-        generator=torch.Generator(device="cuda").manual_seed(seed),
-        device="cuda",
-    )
-    with torch.inference_mode():
-        base_output = base(input_ids=ids, use_cache=True)
-    base_route = last_route()
-    base_ok = bool(
-        torch.isfinite(base_output.last_hidden_state).all()
-        and base_output.past_key_values is not None
-    )
-    release(base, base_output)
-
-    model = (
-        AutoModelForCausalLM.from_pretrained(
-            path, torch_dtype=torch.float16, trust_remote_code=True
-        )
-        .cuda()
-        .eval()
-    )
-    with torch.inference_mode():
-        original = model(input_ids=ids, use_cache=True).logits
-        greedy = model.generate(
-            ids[:, :8],
-            max_new_tokens=4,
-            do_sample=False,
-            use_cache=True,
-            pad_token_id=0,
-            eos_token_id=None,
-        )
-        beam = model.generate(
-            ids[:, :8],
-            max_new_tokens=4,
-            num_beams=2,
-            do_sample=False,
-            use_cache=True,
-            pad_token_id=0,
-            eos_token_id=None,
-        )
-    generation_route = last_route()
-    with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-save-") as directory:
-        model.save_pretrained(directory, safe_serialization=True)
-        tokenizer.save_pretrained(directory)
-        reloaded = (
-            AutoModelForCausalLM.from_pretrained(
-                directory, torch_dtype=torch.float16, trust_remote_code=True
+    with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-route-") as trace_dir:
+        trace_path = Path(trace_dir) / "kernel-route.json"
+        previous_trace = os.environ.get("RWKV7_KERNEL_TRACE_PATH")
+        os.environ["RWKV7_KERNEL_TRACE_PATH"] = str(trace_path)
+        try:
+            config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+            tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+            base = (
+                AutoModel.from_pretrained(
+                    path, torch_dtype=torch.float16, trust_remote_code=True
+                )
+                .cuda()
+                .eval()
             )
-            .cuda()
-            .eval()
-        )
-        with torch.inference_mode():
-            restored = reloaded(input_ids=ids, use_cache=False).logits
-        reload_equal = bool(torch.equal(original, restored))
-        saved_files = sorted(item.name for item in Path(directory).iterdir())
-        release(reloaded, restored)
+            ids = torch.randint(
+                1,
+                int(config.vocab_size),
+                (1, 17),
+                generator=torch.Generator(device="cuda").manual_seed(seed),
+                device="cuda",
+            )
+            with torch.inference_mode():
+                base_output = base(input_ids=ids, use_cache=True)
+            base_route = last_route()
+            base_ok = bool(
+                torch.isfinite(base_output.last_hidden_state).all()
+                and base_output.past_key_values is not None
+            )
+            release(base, base_output)
+
+            model = (
+                AutoModelForCausalLM.from_pretrained(
+                    path, torch_dtype=torch.float16, trust_remote_code=True
+                )
+                .cuda()
+                .eval()
+            )
+            with torch.inference_mode():
+                original = model(input_ids=ids, use_cache=True).logits
+                greedy = model.generate(
+                    ids[:, :8],
+                    max_new_tokens=4,
+                    do_sample=False,
+                    use_cache=True,
+                    pad_token_id=0,
+                    eos_token_id=None,
+                )
+                beam = model.generate(
+                    ids[:, :8],
+                    max_new_tokens=4,
+                    num_beams=2,
+                    do_sample=False,
+                    use_cache=True,
+                    pad_token_id=0,
+                    eos_token_id=None,
+                )
+            generation_route = last_route()
+            with tempfile.TemporaryDirectory(
+                prefix="rwkv7-backend-v2-save-"
+            ) as directory:
+                model.save_pretrained(directory, safe_serialization=True)
+                tokenizer.save_pretrained(directory)
+                reloaded = (
+                    AutoModelForCausalLM.from_pretrained(
+                        directory,
+                        torch_dtype=torch.float16,
+                        trust_remote_code=True,
+                    )
+                    .cuda()
+                    .eval()
+                )
+                with torch.inference_mode():
+                    restored = reloaded(input_ids=ids, use_cache=False).logits
+                reload_equal = bool(torch.equal(original, restored))
+                saved_files = sorted(item.name for item in Path(directory).iterdir())
+                release(reloaded, restored)
+            from rwkv7_kernels.trace import write_trace
+
+            write_trace()
+            actual_trace = json.loads(trace_path.read_text())
+        finally:
+            if previous_trace is None:
+                os.environ.pop("RWKV7_KERNEL_TRACE_PATH", None)
+            else:
+                os.environ["RWKV7_KERNEL_TRACE_PATH"] = previous_trace
+    actual_model_calls = actual_trace.get("actual_model_calls", {})
+    native_prefill_calls = sum(
+        int(count)
+        for implementation, count in actual_model_calls.items()
+        if str(implementation).startswith("native-nvidia-prefill-v2[")
+    )
+    native_decode_calls = sum(
+        int(count)
+        for implementation, count in actual_model_calls.items()
+        if str(implementation).startswith("native-nvidia-fused-decode-v2[")
+    )
     passed = bool(
         base_ok
         and torch.isfinite(original).all()
         and greedy.shape == beam.shape == (1, 12)
         and reload_equal
-        and base_route
-        and generation_route
-        and str(generation_route.get("implementation", "")).startswith(
-            "native-nvidia-fused-decode-v2["
-        )
+        and native_prefill_calls > 0
+        and native_decode_calls > 0
     )
     row = {
         "passed": passed,
@@ -243,6 +280,7 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
         "tokenizer_class": type(tokenizer).__name__,
         "base_route": base_route,
         "generation_route": generation_route,
+        "actual_route_trace": actual_trace,
         "greedy_shape": list(greedy.shape),
         "beam_shape": list(beam.shape),
         "save_reload_logits_equal": reload_equal,
@@ -256,24 +294,54 @@ def run_accelerate(
     path: Path, seed: int, dtype_name: str, training_mode: str
 ) -> dict[str, Any]:
     from accelerate import Accelerator
+    from accelerate.utils import GradScalerKwargs
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
     model = RWKV7ForCausalLM.from_pretrained(
-        path, torch_dtype=training_dtype(dtype_name)
+        path, torch_dtype=training_parameter_dtype(dtype_name)
     ).train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-5)
-    accelerator = Accelerator(mixed_precision=dtype_name)
+    scaler_kwargs = (
+        [GradScalerKwargs(init_scale=128.0, growth_interval=2000)]
+        if dtype_name == "fp16"
+        else []
+    )
+    accelerator = Accelerator(
+        mixed_precision=dtype_name,
+        kwargs_handlers=scaler_kwargs,
+    )
     model, optimizer = accelerator.prepare(model, optimizer)
     batch = token_batch(model, batch=1, tokens=16, seed=seed)
     optimizer.zero_grad(set_to_none=True)
-    output = model(**batch, use_cache=False, logits_to_keep=0)
+    with accelerator.autocast():
+        output = model(**batch, use_cache=False, logits_to_keep=0)
     accelerator.backward(output.loss)
+    accelerator.unscale_gradients(optimizer)
     gradients_finite, gradient_count = finite_nonzero_gradients(model)
+    tracked_parameter = None
+    tracked_index = None
+    tracked_before = None
+    for parameter in model.parameters():
+        if parameter.grad is None or not bool(parameter.grad.detach().abs().max() > 0):
+            continue
+        tracked_parameter = parameter
+        tracked_index = int(parameter.grad.detach().abs().reshape(-1).argmax())
+        tracked_before = parameter.detach().reshape(-1)[tracked_index].clone()
+        break
     optimizer.step()
+    parameter_changed = bool(
+        tracked_parameter is not None
+        and tracked_before is not None
+        and not torch.equal(
+            tracked_before,
+            tracked_parameter.detach().reshape(-1)[tracked_index],
+        )
+    )
     route = last_route()
     passed = bool(
         torch.isfinite(output.loss)
         and gradients_finite
+        and parameter_changed
         and expected_dense_training_route(route, training_mode)
     )
     row = {
@@ -281,6 +349,7 @@ def run_accelerate(
         "loss": float(output.loss.detach()),
         "finite_nonzero_gradients": gradients_finite,
         "gradient_tensor_count": gradient_count,
+        "parameters_changed": parameter_changed,
         "route": route,
         "device": str(accelerator.device),
     }
@@ -312,7 +381,9 @@ def run_trainer(
     )
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=training_dtype(dtype_name))
+    model = RWKV7ForCausalLM.from_pretrained(
+        path, torch_dtype=training_parameter_dtype(dtype_name)
+    )
     dataset = synthetic_dataset(int(model.config.vocab_size), seed)
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-trainer-") as directory:
         training_args = TrainingArguments(
@@ -368,7 +439,7 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     from peft import PeftModel, get_peft_model
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    dtype = training_dtype(dtype_name)
+    dtype = training_parameter_dtype(dtype_name)
     model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda()
     model = get_peft_model(model, lora_config()).train()
     trainable = [
@@ -378,7 +449,13 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     optimizer = torch.optim.AdamW(trainable, lr=1.0e-3)
     batch = token_batch(model, batch=1, tokens=16, seed=seed)
     optimizer.zero_grad(set_to_none=True)
-    output = model(**batch, use_cache=False, logits_to_keep=0)
+    autocast = (
+        torch.autocast(device_type="cuda", dtype=torch.float16)
+        if dtype_name == "fp16"
+        else torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    )
+    with autocast:
+        output = model(**batch, use_cache=False, logits_to_keep=0)
     output.loss.backward()
     gradients_finite, gradient_count = finite_nonzero_gradients(model)
     optimizer.step()
@@ -426,12 +503,18 @@ def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
     tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-    model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=training_dtype(dtype_name))
+    model = RWKV7ForCausalLM.from_pretrained(
+        path, torch_dtype=training_parameter_dtype(dtype_name)
+    )
     dataset = synthetic_dataset(int(model.config.vocab_size), seed)
+    max_steps = 8 if dtype_name == "fp16" else 1
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-trl-") as directory:
         config = SFTConfig(
             output_dir=directory,
-            max_steps=1,
+            # A fresh GradScaler intentionally starts conservatively high.
+            # A short FP16 smoke allows it to back off from any skipped warmup
+            # updates and still proves that LoRA parameters really change.
+            max_steps=max_steps,
             per_device_train_batch_size=1,
             learning_rate=1.0e-3,
             bf16=dtype_name == "bf16",
@@ -466,7 +549,7 @@ def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     route = last_route()
     loss = float(result.training_loss)
     passed = bool(
-        result.global_step == 1
+        result.global_step == max_steps
         and torch.isfinite(torch.tensor(loss))
         and changed
         and adapter_fallback_route(route)
@@ -554,6 +637,7 @@ def main() -> int:
         "training_expectation": {
             "mode": args.training_mode,
             "dtype": args.training_dtype,
+            "parameter_dtype": str(training_parameter_dtype(args.training_dtype)),
             "native_supported": args.training_mode == "native",
         },
         "backend_environment": {

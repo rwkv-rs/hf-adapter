@@ -1837,3 +1837,26 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   the exact candidate SHA256 pair.  GPU 1 continues the untouched 48-unit
   strict-native lm_eval run (PID `3890548`); both jobs are progressing without
   NaN/Inf, OOM or traceback and neither may be restarted or duplicated.
+- The isolated V100 ecosystem rerun was refined without touching either wheel.
+  `ecosystem-v2` preserved the original FP16-parameter/GradScaler failure;
+  `ecosystem-v3` proved AutoModel/save/reload/generation, Trainer and PEFT but
+  exposed skipped first-step updates in raw Accelerate and TRL.  The final
+  `ecosystem-v4` uses the standard HF mixed-precision contract (FP32 master
+  parameters plus FP16 autocast/scaling), a deterministic low initial scale
+  for raw Accelerate and an eight-step TRL scaler warmup.  It exits zero and
+  passes AutoModel, native prefill/decode route trace, Accelerate, Trainer,
+  PEFT adapter save/reload and TRL SFT; every training route is explicitly the
+  SM70 PyTorch reference fallback and is not claimed as native training.
+- A dedicated reproducible SM70 FLA gate now records the only supported pinned
+  FLA comparison instead of pretending its chunk/backward path works on V100.
+  `/v100/fla-sm70-fused` exits zero for B=1/4 and T=1/17/128, verifies pinned
+  FLA commit `80e494f6c588e091fc8316b612870df29375c5b8`, the exact candidate wheel
+  hashes, finite output/state cosine gates and actual optimized routes.  The
+  one-token Triton route is 1.158x (B1) and 1.128x (B4) the FLA fused-recurrent
+  throughput by the report's `FLA median / optimized median` ratio; the
+  multi-token CUDA-Graph reference recurrence is intentionally slower than
+  FLA fused recurrence and is not advertised as the whole-model native
+  prefill benchmark.  The report explicitly records that pinned FLA chunk
+  lowering and fused-recurrent backward are unavailable on SM70.  Local tests
+  now pass **185 tests**.  GPU 1 continues the untouched 48-unit strict-native
+  lm_eval run; 13 unit results are complete with zero command/error failures.
