@@ -1873,3 +1873,16 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   tests**.  SFT has entered the 100-step loop normally on GPU 0 while the lm_eval
   collector continues independently on GPU 1; neither task is duplicated or
   restarted.
+- The V100 canonical SFT stage completed at 100/100 with exit zero.  It records
+  finite loss, nonzero gradients, 144 changed LoRA tensors, explicit SM70
+  reference fallback (never native adapter bypass), exact adapter save/reload
+  logits (`max_abs=0`), four checkpoints, pinned dataset fingerprints, model
+  revision and the exact candidate wheel hashes.  DPO is now the only GPU-0
+  finetune workload and is progressing normally (10/100 at inspection).  The
+  independent strict-native lm_eval collector is at 22/48 on GPU 1: every
+  completed command exits zero and the aggregated actual route count contains
+  only `native-nvidia-prefill-v2[cuda_graph_prefill]`.  RTX 4080 remains idle;
+  its repaired composite still validates 48/48 with zero failures and its
+  wheel-only B1/B8 smoke remains bit-exact.  The three pending local commits
+  were successfully pushed to `origin/perf/optional-kernels-v1` at
+  `cd1e64d75e38f9f6960fe5a08c7eb163f701ade4`.
