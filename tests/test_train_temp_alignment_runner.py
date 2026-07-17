@@ -143,6 +143,7 @@ def test_checked_in_official_config_is_production_shaped() -> None:
     assert config["n_layer"] == 12
     assert config["n_embd"] == 768
     assert config["dim_att"] == config["n_embd"]
-    assert config["dim_ffn"] == 2688
+    # Current train_temp fast CMix fixes FFN width at 4x hidden.
+    assert config["dim_ffn"] == 4 * config["n_embd"]
     assert config["ctx_len"] >= 512
     assert config["vocab_size"] == 65536
