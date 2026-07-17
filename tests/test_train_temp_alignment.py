@@ -46,6 +46,32 @@ def test_l2wrap_respects_upstream_loss_scale() -> None:
     torch.testing.assert_close(logits.grad, base_logits.grad + expected)
 
 
+def test_low_precision_cross_entropy_accumulates_and_returns_fp32() -> None:
+    logits = torch.tensor(
+        [[[1.0, 2.0, -1.0], [3.0, 0.5, -2.0]]],
+        dtype=torch.bfloat16,
+        requires_grad=True,
+    )
+    targets = torch.tensor([[0, 2]], dtype=torch.long)
+
+    loss = train_temp_cross_entropy(logits, targets)
+    loss.backward()
+
+    reference_logits = logits.detach().clone().requires_grad_(True)
+    reference_loss = F.cross_entropy(
+        reference_logits.float().view(-1, 3),
+        targets.view(-1),
+    )
+    reference_loss.backward()
+    expected_extra = torch.zeros_like(logits)
+    expected_extra[0, 0, 1] = 2.0 * 1.0e-4 / 2
+    expected_extra[0, 1, 0] = 3.0 * 1.0e-4 / 2
+
+    assert loss.dtype == torch.float32
+    torch.testing.assert_close(loss, reference_loss)
+    torch.testing.assert_close(logits.grad, reference_logits.grad + expected_extra)
+
+
 def _parameter(*shape: int) -> torch.nn.Parameter:
     return torch.nn.Parameter(torch.zeros(shape))
 
