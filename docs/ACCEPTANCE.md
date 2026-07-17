@@ -35,6 +35,13 @@ bounded training steps. Exact backward/step comparison and a predeclared
 multi-seed cohort are mandatory. The earlier B1/T512 custom cohort remains
 valid operator-alignment evidence but does not substitute for this B16 recipe.
 
+The first RTX 5070 inference migration checkpoint passes on 0.4B/fp16:
+Native Graph B1 reaches `223.47 tok/s` versus the retained wrapper-hosted
+`226.3 tok/s` row (`0.9875x`), with logits cosine `0.99999988` and 32/32
+greedy alignment. B1/B2/B4/B8 prompt-32 probes pass prefill and decode greedy
+alignment. This is inference evidence only; the shell-recipe training gate
+above remains mandatory.
+
 ## Executive result
 
 | Requirement | Status | Current evidence | Remaining boundary |

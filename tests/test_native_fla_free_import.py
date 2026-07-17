@@ -49,6 +49,11 @@ def main() -> int:
     from transformers.cache_utils import Cache
 
     native_model = importlib.import_module("rwkv7_hf.native_model")
+    package = importlib.import_module("rwkv7_hf")
+    assert package.RWKV7Config is native_model.NativeRWKV7Config
+    assert package.RWKV7Model is native_model.NativeRWKV7Model
+    assert package.RWKV7ForCausalLM is native_model.NativeRWKV7ForCausalLM
+    assert package.RWKV7StateCache is native_model.NativeRWKV7Cache
     cache = native_model.NativeRWKV7Cache.from_legacy_cache(None, seen_tokens=7)
     assert isinstance(cache, Cache), type(cache)
     assert cache.get_seq_length() == 7

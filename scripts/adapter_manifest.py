@@ -43,6 +43,7 @@ ADAPTER_FILES = [
     "modeling_rwkv7.py",
     "native.py",
     "native_jit.py",
+    "native_graph_runtime.py",
     "native_model.py",
     "native_quant.py",
     "native_quant_a8w8.py",

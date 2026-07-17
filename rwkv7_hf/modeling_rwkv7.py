@@ -139,6 +139,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
 # ``native.py`` through ``native_model.py``; keep an explicit non-executed edge
 # here so fresh caches contain the whole native dependency set.
 if False:  # pragma: no cover
+    from .native_graph_runtime import NativeGraphRunner as _rwkv7_native_graph_runtime_dependency_sentinel
     from .ada_lora import ada_wagv_lora as _rwkv7_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _rwkv7_ada_sparse_ffn_dependency_sentinel
     from .dplr_prefill import dplr_chunk_scan as _rwkv7_dplr_dependency_sentinel
