@@ -14,7 +14,7 @@
 
 - A base install with `flash-linear-attention` blocked must import the package and load converted checkpoints through `AutoConfig`, `AutoModel`, and `AutoModelForCausalLM` without setting `RWKV7_NATIVE_MODEL`.
 - Production Auto* metadata must point directly to native classes. FLA may remain only as an explicit reference/benchmark backend; Qwen full-FLA comparison remains unchanged.
-- The official training recipe is the current RWKV-LM `RWKV-v7/train_temp/demo-training-prepare.sh` plus `demo-training-run.sh`: x070, L12/D768, head64, vocab65536, T512, Minipile binidx with matching `magic_prime`, B16, BF16, LR `6e-4 -> 6e-5`, betas `0.9/0.99`, eps `1e-18`, weight decay `0.001`, warmup 10, gradient checkpointing enabled, one GPU, DeepSpeed ZeRO-2, kernel `@rwkv3`.
+- The official training recipe is pinned to RWKV-LM `e6f74b6` and its `RWKV-v7/train_temp/demo-training-prepare.sh` plus `demo-training-run.sh`. The first script creates the L12/D768/FFN2688 initialization on CPU with B1 and eps `1e-8`; the second trains x070 on Minipile/T512 with B16 BF16, LR `6e-4 -> 6e-5`, betas `0.9/0.99`, eps `1e-18`, weight decay `0.001`, warmup 10, gradient checkpointing, one GPU, DeepSpeed ZeRO-2, and kernel `@rwkv3`.
 - The native training implementation must pass exact single-step backward and FusedAdam update gates against official code, then complete a predeclared multi-seed official-recipe cohort. A B1 custom harness is diagnostic evidence only.
 - The native default must preserve HF load/generate, recurrent cache operations, dynamic batching, chunked prefill, save/reload, Trainer, PEFT, TRL SFT/DPO/GRPO, checkpoint resume, native W8/W4, and speculative decoding contracts.
 - RTX 5070 exact-card tests must cover B1/B2/B4/B8 where memory permits. New defaults require logits/greedy parity and no material regression against the current wrapper `native_graph` lane.
@@ -149,4 +149,3 @@
 3. Run focused tests, the full local suite, wheel/clean-install tests, Markdown links, and `git diff --check`.
 4. Verify a clean environment with FLA absent and a separate reference environment with FLA present.
 5. Push `wangyue/native-default-5070`, open a draft PR as Wang Yue, attach DCO and evidence links, then wait for CI and review.
-

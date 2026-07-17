@@ -31,7 +31,9 @@ def test_official_train_temp_shell_recipe_is_an_acceptance_gate() -> None:
     for required in (
         "demo-training-prepare.sh",
         "demo-training-run.sh",
+        "micro_bsz=1",
         "micro_bsz=16",
+        "FFN2688",
         "ctx_len=512",
         "lr_init=6e-4",
         "lr_final=6e-5",
@@ -40,6 +42,7 @@ def test_official_train_temp_shell_recipe_is_an_acceptance_gate() -> None:
         "grad_cp=1",
         "deepspeed_stage_2",
         "magic_prime=2926181",
+        "train_temp_official_x070_12x768_b16.json",
     ):
         assert required in text
 

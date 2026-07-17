@@ -7,6 +7,12 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_file, save_file
 
+from scripts.run_train_temp_official_recipe import (
+    build_prepare_command,
+    build_run_command,
+    load_recipe,
+)
+
 from bench.bench_train_temp_alignment import (
     _learning_rate_at_step,
     compare_artifacts,
@@ -455,3 +461,29 @@ def test_checked_in_official_config_is_production_shaped() -> None:
     assert config["dim_ffn"] == 4 * config["n_embd"]
     assert config["ctx_len"] >= 512
     assert config["vocab_size"] == 65536
+
+
+def test_official_shell_recipe_contract_matches_pinned_prepare_and_run() -> None:
+    root = Path(__file__).resolve().parents[1]
+    recipe = load_recipe(root / "configs" / "train_temp_official_x070_12x768_b16.json")
+    model = recipe["model"]
+    assert model["n_layer"] == 12
+    assert model["n_embd"] == model["dim_att"] == 768
+    assert model["effective_dim_ffn"] == 2688
+    assert model["ctx_len"] == 512
+    assert recipe["prepare"]["micro_bsz"] == 1
+    assert recipe["prepare"]["adam_eps"] == 1e-8
+    assert recipe["run"]["micro_bsz"] == 16
+    assert recipe["run"]["adam_eps"] == 1e-18
+
+    checkout = Path("/d/references/RWKV-LM")
+    data_prefix = Path("/d/datasets/minipile/minipile")
+    output = Path("/d/bench/train-temp-official/out")
+    prepare = build_prepare_command(checkout, data_prefix, output, recipe)
+    run = build_run_command(checkout, data_prefix, output, recipe, max_steps=3)
+    assert prepare[prepare.index("--micro_bsz") + 1] == "1"
+    assert prepare[prepare.index("--accelerator") + 1] == "cpu"
+    assert run[run.index("--micro_bsz") + 1] == "16"
+    assert run[run.index("--kernel") + 1] == "@rwkv3"
+    assert run[run.index("--max_steps") + 1] == "3"
+    assert run[run.index("--my_exit_tokens") + 1] == "1498226207"
