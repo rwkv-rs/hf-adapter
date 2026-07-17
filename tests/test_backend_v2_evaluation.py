@@ -191,9 +191,16 @@ def test_ecosystem_route_gates_distinguish_native_and_adapter_fallback():
         "implementation": "torch-reference-model-v1",
         "reason": "adapter-wrapped FFN modules use reference autograd",
     }
+    nested_fallback = {
+        "selected": "reference",
+        "phase": "training",
+        "implementation": "torch-reference-model-v1",
+        "reason": "native prefill requires the causal-LM boundary",
+    }
     assert native_training_route(native)
     assert not adapter_fallback_route(native)
     assert adapter_fallback_route(fallback)
+    assert adapter_fallback_route(nested_fallback)
     assert not native_training_route(fallback)
 
 

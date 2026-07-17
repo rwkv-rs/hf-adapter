@@ -95,12 +95,22 @@ def training_dtype(name: str) -> torch.dtype:
 
 
 def adapter_fallback_route(route: dict[str, Any] | None) -> bool:
+    # A PEFT-wrapped causal LM first rejects the native whole-model training
+    # path because its FFN modules are adapters.  The readable fallback then
+    # enters the nested base-model boundary, whose (also reference) route is
+    # the last route visible through the public diagnostic accessor.  Accept
+    # either explanatory reason, but still require an explicit training-phase
+    # reference route; parameter-change and save/reload checks below prove the
+    # adapter itself stayed active.
     return bool(
         route
         and route.get("selected") == "reference"
         and route.get("phase") == "training"
         and route.get("implementation") == REFERENCE_MODEL
-        and "adapter" in str(route.get("reason", "")).lower()
+        and (
+            "adapter" in str(route.get("reason", "")).lower()
+            or "causal-lm boundary" in str(route.get("reason", "")).lower()
+        )
     )
 
 
@@ -176,7 +186,7 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
 
     model = (
         AutoModelForCausalLM.from_pretrained(
-            path, dtype=torch.float16, trust_remote_code=True
+            path, torch_dtype=torch.float16, trust_remote_code=True
         )
         .cuda()
         .eval()
@@ -206,7 +216,7 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
         tokenizer.save_pretrained(directory)
         reloaded = (
             AutoModelForCausalLM.from_pretrained(
-                directory, dtype=torch.float16, trust_remote_code=True
+                directory, torch_dtype=torch.float16, trust_remote_code=True
             )
             .cuda()
             .eval()
@@ -249,7 +259,7 @@ def run_accelerate(
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
     model = RWKV7ForCausalLM.from_pretrained(
-        path, dtype=training_dtype(dtype_name)
+        path, torch_dtype=training_dtype(dtype_name)
     ).train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-5)
     accelerator = Accelerator(mixed_precision=dtype_name)

@@ -1818,3 +1818,22 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   wheel bytes are unchanged.  Only that failed inference gate is being rerun
   on GPU 0 as `inference-v2` (PID `3900773`); the original failed log remains
   preserved.
+- The V100 `inference-v2` rerun completed with exit zero from the unchanged
+  candidate wheels.  All three models (0.1B/0.4B/1.5B) pass the release
+  precision/state/cache/greedy gates and record only real native prefill,
+  masked-prefill and fused-decode routes; the separately published strict
+  low-precision max-abs targets remain diagnostic.  The first V100 ecosystem
+  invocation is preserved as a failed infrastructure/evaluator run: two
+  remaining `dtype=` loader spellings were incompatible with Transformers
+  4.52, the shared environment exposed a broken DeepSpeed/CUDA_HOME import,
+  and its TRL 1.7/Transformers 4.52 pair was incompatible.  The evaluator now
+  uses backward-compatible `torch_dtype=` at every load boundary and accepts
+  the nested base-model reference route produced after PEFT's adapter-aware
+  causal-LM fallback; functional adapter parameter-change and save/reload
+  checks remain mandatory.  The complete local suite still passes **183
+  tests**.  Only the affected ecosystem gate is running again as
+  `ecosystem-v2` (PID `4010758`) on GPU 0 in the existing isolated
+  Transformers 4.56/TRL 0.20 environment, using a fresh wheel-only target with
+  the exact candidate SHA256 pair.  GPU 1 continues the untouched 48-unit
+  strict-native lm_eval run (PID `3890548`); both jobs are progressing without
+  NaN/Inf, OOM or traceback and neither may be restarted or duplicated.
