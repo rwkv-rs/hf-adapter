@@ -603,7 +603,10 @@ def _run_convergence(
             group["lr"] = lr * float(group["my_lr_scale"])
         input_ids = train_inputs[step].to(device=device, dtype=torch.long)
         targets = train_targets[step].to(device=device, dtype=torch.long)
-        optimizer.zero_grad(set_to_none=True)
+        if optimizer_name == "fused_adam":
+            optimizer.zero_grad()
+        else:
+            optimizer.zero_grad(set_to_none=True)
         outputs = model(input_ids)
         logits = outputs.logits if hasattr(outputs, "logits") else outputs
         loss = loss_fn(logits, targets)
