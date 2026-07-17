@@ -1,3 +1,18 @@
+### 2026-07-17 — RTX 5090 official train_temp training alignment
+
+The opt-in HF `train_temp_cuda` backend now uses the pinned official CUDA
+operator boundaries for dense BF16 training. On one RTX 5090, a production-
+shaped 12x768 model at B1/T512 matches official RWKV-LM backward gradients
+400/400 exactly and matches the DeepSpeed FusedAdam step across 800 tensors and
+deltas exactly. A separate three-seed, 1,000-step cohort completes all six runs
+and passes success-count, loss-AUC and gradient-ratio gates.
+
+This is exact evidence for one card/model/shape. It does not promote variable-
+length padding, other GPU families, larger checkpoints or distributed
+training. Usage and recovery are in [`TRAIN_TEMP_CUDA.md`](../TRAIN_TEMP_CUDA.md);
+raw evidence is in
+[`bench/5090_train_temp_alignment_20260717`](../../bench/5090_train_temp_alignment_20260717/README.md).
+
 ### 2026-07-16 — RTX 5090 g1h production BN/TN W4 model matrix
 
 The exact-card BF16 speed policy now selects model-specific group-128 Marlin

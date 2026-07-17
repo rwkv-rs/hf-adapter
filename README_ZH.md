@@ -146,6 +146,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 | 全部功能导航 | [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md) |
 | 批量转换、HF API、缓存和分块 prefill | [推理工作流](docs/INFERENCE_WORKFLOWS.md) |
 | PEFT LoRA、Trainer、SFT、DPO、GRPO | [训练工作流](docs/TRAINING_WORKFLOWS.md) |
+| 对齐官方 train_temp 数学和训练效果 | [train_temp CUDA 训练对齐教程](docs/TRAIN_TEMP_CUDA.md) |
 | 投机解码、`device_map`、DeepSpeed 多卡 | [高级使用教程](docs/ADVANCED_USAGE_ZH.md) |
 | bitsandbytes W8/W4、原生 MM8/MM4 | [量化使用教程](docs/QUANTIZATION_USAGE.md) |
 | Apple MPS、MLX、CoreML | [Apple 使用教程](docs/APPLE_USAGE.md) |

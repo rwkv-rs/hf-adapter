@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_summary",
+  "status": "pass",
+  "scope": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120",
+    "dtype": "bf16",
+    "batch_size": 1,
+    "sequence_length": 512,
+    "layers": 12,
+    "hidden_size": 768,
+    "ffn_size": 3072,
+    "vocab_size": 65536,
+    "parameters": 191084544
+  },
+  "provenance": {
+    "official_commit": "e6f74b63a06e08606d130043599d218209628bad",
+    "adapter_evidence_commit": "5bdb1185f7ddb77b55a1b810ca8723360c1e8fa9",
+    "checkpoint_sha256": "5fcb1f16231626f0fde51c30c2d51994ef1ec80e6f737735afe83093c253b943"
+  },
+  "cuda_extension": {
+    "status": "pass",
+    "compile_exit_code": 0
+  },
+  "backward": {
+    "status": "pass",
+    "tensor_count": 400,
+    "loss_abs_diff": 0.0,
+    "worst_cosine": 1.0,
+    "max_relative_l2": 0.0,
+    "max_abs": 0.0
+  },
+  "optimizer_step": {
+    "status": "pass",
+    "optimizer": "DeepSpeed FusedAdam 0.19.2",
+    "tensor_count": 800,
+    "optimizer_groups_match": true,
+    "post_step_loss_relative_diff": 0.0,
+    "worst_cosine": 1.0,
+    "max_relative_l2": 0.0,
+    "max_abs": 0.0
+  },
+  "convergence_cohort": {
+    "status": "pass",
+    "seeds": [131, 232, 333],
+    "steps_per_run": 1000,
+    "reference_success_count": 2,
+    "candidate_success_count": 2,
+    "reference_deep_success_count": 2,
+    "candidate_deep_success_count": 2,
+    "reference_median_train_loss_auc": 3.0153091545030475,
+    "candidate_median_train_loss_auc": 2.989585808409378,
+    "median_train_loss_auc_relative_diff": 0.00853091499929761,
+    "reference_median_validation_loss_auc": 4.905782562990983,
+    "candidate_median_validation_loss_auc": 4.655438246737633,
+    "median_validation_loss_auc_relative_diff": 0.051030454986312854,
+    "reference_median_max_grad_norm": 4048.0,
+    "candidate_median_max_grad_norm": 5376.0,
+    "median_grad_norm_ratio": 1.3280632411067195,
+    "reference_median_runtime_s": 48.40610851800011,
+    "candidate_median_runtime_s": 43.51841159400101,
+    "candidate_runtime_reduction": 0.1009727299640619
+  },
+  "interpretation": {
+    "strict_gate": "single backward and optimizer step",
+    "long_run_gate": "three-seed cohort statistics",
+    "reason": "both official and candidate CUDA paths show run-to-run divergence for repeated same-seed long runs"
+  }
+}

@@ -13,6 +13,7 @@ in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 |---|---|---|
 | Labels and causal LM loss | **PASS** | finite loss and parameter-update smoke |
 | HF Trainer | **PASS** | tiny and real-model smoke; checkpoint resume evidence |
+| Official `train_temp` alignment | **PASS for exact RTX 5090 lane** | BF16 12x768 T512 backward/step exact; 3-seed x 1,000-step cohort passes |
 | PEFT LoRA | **PASS** | forward/loss/backward, save/load and merge |
 | TRL SFTTrainer | **PASS** | CUDA and Apple/MPS smoke |
 | TRL DPOTrainer | **PASS** | CUDA and Apple/MPS smoke |
@@ -31,6 +32,12 @@ in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
   large-model inference/quant smoke.
 - **RTX A6000 48GB:** Trainer/SFT/DPO/resume through tested 7.2B lanes; dual-card
   ZeRO-2/3 base and resume through 2.9B.
+- **RTX 5090:** opt-in official-kernel `train_temp_cuda` lane on a 191M
+  production-shaped 12x768 model. T512 backward matches 400/400 tensors exactly;
+  FusedAdam step matches 800 tensors/deltas and post-step loss exactly. Three
+  seeds x 1,000 steps match official success counts (`2/3`) and pass the cohort
+  loss/gradient gates. See [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) and
+  [`../bench/5090_train_temp_alignment_20260717/`](../bench/5090_train_temp_alignment_20260717/README.md).
 - **Apple M5:** tiny and real-model PEFT/Trainer/TRL smoke through tested 1.5B
   workflows. This is compatibility evidence, not high-throughput training.
 
@@ -43,7 +50,8 @@ Detailed matrices:
 
 ## Remaining production work
 
-- Longer runs with loss curves, throughput and memory telemetry.
+- Extend exact `train_temp` alignment to larger checkpoints, real datasets,
+  additional cards and longer runs; the current accepted lane is one RTX 5090.
 - Larger ZeRO-3 checkpoint-resume matrix.
 - Optimizer/scheduler/RNG continuity checks after distributed resume.
 - H100 and AMD/ROCm training validation.

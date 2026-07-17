@@ -1,0 +1,3 @@
+phase,status,tensor_count,reference_loss,candidate_loss,loss_abs_diff,worst_cosine,max_relative_l2,max_abs,reference_post_step_loss,candidate_post_step_loss,post_step_loss_relative_diff
+backward,pass,400,11.18958568572998,11.18958568572998,0.0,1.0,0.0,0.0,,,
+step,pass,800,11.18958568572998,11.18958568572998,0.0,1.0,0.0,0.0,8.01020622253418,8.01020622253418,0.0

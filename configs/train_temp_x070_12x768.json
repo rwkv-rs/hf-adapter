@@ -1,0 +1,19 @@
+{
+  "n_layer": 12,
+  "n_embd": 768,
+  "dim_att": 768,
+  "dim_ffn": 3072,
+  "vocab_size": 65536,
+  "head_size": 64,
+  "ctx_len": 512,
+  "my_testing": "x070",
+  "grad_cp": 0,
+  "accelerator": "GPU",
+  "lr_init": 0.0006,
+  "weight_decay": 0.001,
+  "betas": [
+    0.9,
+    0.99
+  ],
+  "adam_eps": 1e-18
+}
