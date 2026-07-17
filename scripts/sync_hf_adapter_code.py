@@ -43,12 +43,12 @@ def sync_one(model_dir: Path, *, dry_run: bool = False) -> dict:
             shutil.copyfile(src, dst)
 
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    cfg["architectures"] = ["RWKV7ForCausalLM"]
-    cfg["model_type"] = "rwkv7_hf_adapter"
+    cfg["architectures"] = ["NativeRWKV7ForCausalLM"]
+    cfg["model_type"] = "rwkv7_native"
     cfg["auto_map"] = {
-        "AutoConfig": "configuration_rwkv7.RWKV7Config",
-        "AutoModel": "modeling_rwkv7.RWKV7Model",
-        "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
+        "AutoConfig": "native_model.NativeRWKV7Config",
+        "AutoModel": "native_model.NativeRWKV7Model",
+        "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
     }
     if not dry_run:
         cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

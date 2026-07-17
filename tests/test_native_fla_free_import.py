@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Fla-free import smoke for the opt-in native RWKV-7 backend.
+"""FLA-free import smoke for the default native RWKV-7 backend.
 
 This test blocks any ``fla`` import and verifies that:
 1. remote-code config/modeling modules are still importable,
 2. ``NativeRWKV7Cache`` falls back to the HF ``Cache`` base, and
-3. ``RWKV7_NATIVE_MODEL=1`` can route the wrapper class to
-   ``NativeRWKV7ForCausalLM.from_pretrained`` when a model directory is given.
+3. converted native Auto* metadata loads ``NativeRWKV7ForCausalLM`` without a
+   backend-selection environment variable.
 
 Usage:
   python tests/test_native_fla_free_import.py
@@ -42,7 +42,7 @@ def main() -> int:
     ap.add_argument("--model", default="")
     args = ap.parse_args()
 
-    os.environ["RWKV7_NATIVE_MODEL"] = "1"
+    os.environ.pop("RWKV7_NATIVE_MODEL", None)
     sys.meta_path.insert(0, BlockFla())
     _clear_modules()
 
@@ -98,14 +98,19 @@ def main() -> int:
         # beside symlinked checkpoint files so AutoModel imports this PR's
         # modeling/config files while FLA remains blocked.
         src = Path(args.model).resolve()
-        tmp = Path(tempfile.mkdtemp(prefix="rwkv7_fla_free_model_"))
+        temporary_model = tempfile.TemporaryDirectory(
+            prefix="rwkv7_fla_free_model_", dir=str(src.parent)
+        )
+        tmp = Path(temporary_model.name)
         code_dir = Path(modeling.__file__).resolve().parent
         for item in src.iterdir():
             target = tmp / item.name
             if item.is_dir():
-                os.symlink(item, target, target_is_directory=True)
+                continue
+            if item.suffix in {".safetensors", ".bin", ".pth"}:
+                os.link(item, target)
             else:
-                os.symlink(item, target)
+                shutil.copy2(item, target)
         for py_file in code_dir.glob("*.py"):
             target = tmp / py_file.name
             if target.exists() or target.is_symlink():
@@ -114,8 +119,29 @@ def main() -> int:
 
         from transformers import AutoModelForCausalLM
 
-        model = AutoModelForCausalLM.from_pretrained(tmp, trust_remote_code=True, torch_dtype="auto")
+        config_path = tmp / "config.json"
+        config = __import__("json").loads(config_path.read_text(encoding="utf-8"))
+        config["architectures"] = ["NativeRWKV7ForCausalLM"]
+        config["model_type"] = "rwkv7_native"
+        config["auto_map"] = {
+            "AutoConfig": "native_model.NativeRWKV7Config",
+            "AutoModel": "native_model.NativeRWKV7Model",
+            "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
+        }
+        config_path.write_text(
+            __import__("json").dumps(config, indent=2) + "\n", encoding="utf-8"
+        )
+
+        from transformers import AutoConfig, AutoModelForCausalLM
+
+        loaded_config = AutoConfig.from_pretrained(tmp, trust_remote_code=True)
+        assert loaded_config.__class__.__name__ == "NativeRWKV7Config"
+        model = AutoModelForCausalLM.from_pretrained(
+            tmp, trust_remote_code=True, torch_dtype="auto"
+        )
         assert model.__class__.__name__ == "NativeRWKV7ForCausalLM", type(model)
+        del model
+        temporary_model.cleanup()
 
     print("NATIVE FLA-FREE IMPORT PASS")
     return 0

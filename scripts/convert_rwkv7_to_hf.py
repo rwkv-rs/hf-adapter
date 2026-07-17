@@ -2,9 +2,10 @@
 # coding=utf-8
 """Convert official RWKV-7 .pth checkpoints to a Hugging Face model directory.
 
-This first-stage adapter uses the FLA RWKV7 PreTrainedModel implementation but emits a
-normal HF-style directory with config.json, generation_config.json, model.safetensors,
-remote-code wrapper files, tokenizer_config.json, and the RWKV trie vocab.
+The converted directory uses the repository-native RWKV-7 PreTrainedModel by
+default and does not require FLA at load time. It contains config.json,
+generation_config.json, model.safetensors, remote-code files,
+tokenizer_config.json, and the RWKV trie vocab.
 """
 from __future__ import annotations
 
@@ -23,8 +24,7 @@ try:
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
     from adapter_manifest import ADAPTER_FILES
 
-# Importing rwkv7_hf imports FLA-backed PreTrainedModel classes.
-from rwkv7_hf import RWKV7Config, RWKV7ForCausalLM
+from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
 
 DTYPES = {
@@ -108,7 +108,12 @@ def validate_layer_shapes(weights: Dict[str, torch.Tensor], num_layers: int, hid
             )
 
 
-def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: str, fuse_norm: bool) -> RWKV7Config:
+def infer_config(
+    weights: Dict[str, torch.Tensor],
+    dtype_name: str,
+    attn_mode: str,
+    fuse_norm: bool,
+) -> NativeRWKV7Config:
     hidden_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[1]
     intermediate_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[0]
     num_layers = infer_num_layers(weights)
@@ -122,7 +127,7 @@ def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: s
         v_low_rank_dim = tensor_shape(weights, "blocks.1.att.v1")[1]
     except KeyError:
         v_low_rank_dim = 32
-    cfg = RWKV7Config(
+    cfg = NativeRWKV7Config(
         attn_mode=attn_mode,
         vocab_size=tensor_shape(weights, "emb.weight")[0],
         hidden_size=hidden_size,
@@ -146,28 +151,15 @@ def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: s
     return cfg
 
 
-def build_template_model(config: RWKV7Config, dtype: torch.dtype):
+def build_template_model(config: NativeRWKV7Config, dtype: torch.dtype):
     """Construct the HF-shaped model used as the state_dict template.
 
-    Conversion only needs module names and tensor shapes.  Prefer the optimized
-    FLA wrapper when it is installed, but allow offline/no-FLA conversion through
-    the native backend, which intentionally uses the same converted key layout.
+    Conversion only needs module names and tensor shapes. The canonical native
+    model intentionally uses the same converted key layout as the historical
+    wrapper, so conversion has no FLA dependency.
     """
 
-    try:
-        return RWKV7ForCausalLM(config).to(dtype=dtype)
-    except ImportError as exc:
-        message = str(exc).lower()
-        if (
-            "flash-linear-attention" not in message
-            and "`fla`" not in message
-            and "no module named 'fla'" not in message
-        ):
-            raise
-        from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
-
-        print("FLA unavailable; using native RWKV-7 template for conversion.")
-        return NativeRWKV7ForCausalLM(config).to(dtype=dtype)
+    return NativeRWKV7ForCausalLM(config).to(dtype=dtype)
 
 
 def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
@@ -219,12 +211,12 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
 def patch_hf_metadata(output: Path) -> None:
     cfg_path = output / "config.json"
     cfg = json.loads(cfg_path.read_text())
-    cfg["architectures"] = ["RWKV7ForCausalLM"]
-    cfg["model_type"] = "rwkv7_hf_adapter"
+    cfg["architectures"] = ["NativeRWKV7ForCausalLM"]
+    cfg["model_type"] = "rwkv7_native"
     cfg["auto_map"] = {
-        "AutoConfig": "configuration_rwkv7.RWKV7Config",
-        "AutoModel": "modeling_rwkv7.RWKV7Model",
-        "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
+        "AutoConfig": "native_model.NativeRWKV7Config",
+        "AutoModel": "native_model.NativeRWKV7Model",
+        "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
     }
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
 
@@ -275,7 +267,7 @@ def prepare_translated_weight(
 def save_low_memory_model(
     *,
     weights: Dict[str, torch.Tensor],
-    config: RWKV7Config,
+    config: NativeRWKV7Config,
     dtype: torch.dtype,
     output: Path,
     max_shard_size: str,
