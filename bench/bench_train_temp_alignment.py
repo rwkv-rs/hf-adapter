@@ -102,6 +102,44 @@ def make_deterministic_batch(
     }
 
 
+def make_deterministic_sequence(
+    output: str | Path,
+    *,
+    vocab_size: int,
+    batch_size: int,
+    seq_len: int,
+    steps: int,
+    seed: int,
+) -> dict[str, Any]:
+    if steps <= 0:
+        raise ValueError("steps must be positive")
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    tokens = torch.randint(
+        low=0,
+        high=int(vocab_size),
+        size=(int(steps), int(batch_size), int(seq_len) + 1),
+        dtype=torch.long,
+        generator=generator,
+    )
+    output = Path(output)
+    save_safetensors_atomic(
+        {"input_ids": tokens[..., :-1], "targets": tokens[..., 1:]},
+        output,
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "axis": "train_temp_alignment_sequence",
+        "vocab_size": int(vocab_size),
+        "batch_size": int(batch_size),
+        "seq_len": int(seq_len),
+        "steps": int(steps),
+        "seed": int(seed),
+        "content_sha256": sha256_file(output),
+        "path": str(output),
+    }
+
+
 def normalize_official_tensors(
     tensors: dict[str, torch.Tensor],
     *,
@@ -221,6 +259,44 @@ def _capture_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _create_optimizer(
+    groups: list[dict[str, Any]],
+    *,
+    optimizer_name: str,
+    learning_rate: float,
+    beta1: float,
+    beta2: float,
+    adam_eps: float,
+):
+    if optimizer_name == "fused_adam":
+        import deepspeed
+        from deepspeed.ops.adam import FusedAdam
+
+        optimizer = FusedAdam(
+            groups,
+            lr=float(learning_rate),
+            betas=(float(beta1), float(beta2)),
+            eps=float(adam_eps),
+            weight_decay=0.0,
+            bias_correction=True,
+            adam_w_mode=True,
+            amsgrad=False,
+        )
+        return optimizer, str(deepspeed.__version__)
+    if optimizer_name == "torch_adamw":
+        optimizer = torch.optim.AdamW(
+            groups,
+            lr=float(learning_rate),
+            betas=(float(beta1), float(beta2)),
+            eps=float(adam_eps),
+            weight_decay=0.0,
+            foreach=False,
+            fused=False,
+        )
+        return optimizer, str(torch.__version__)
+    raise ValueError(f"unsupported optimizer: {optimizer_name}")
+
+
 def _capture_training_phase(
     *,
     model,
@@ -275,34 +351,14 @@ def _capture_training_phase(
     optimizer_version = None
     before: dict[str, torch.Tensor] = {}
     if phase == "step":
-        if optimizer_name == "fused_adam":
-            import deepspeed
-            from deepspeed.ops.adam import FusedAdam
-
-            optimizer = FusedAdam(
-                groups,
-                lr=float(learning_rate),
-                betas=(float(beta1), float(beta2)),
-                eps=float(adam_eps),
-                weight_decay=0.0,
-                bias_correction=True,
-                adam_w_mode=True,
-                amsgrad=False,
-            )
-            optimizer_version = str(deepspeed.__version__)
-        elif optimizer_name == "torch_adamw":
-            optimizer = torch.optim.AdamW(
-                groups,
-                lr=float(learning_rate),
-                betas=(float(beta1), float(beta2)),
-                eps=float(adam_eps),
-                weight_decay=0.0,
-                foreach=False,
-                fused=False,
-            )
-            optimizer_version = str(torch.__version__)
-        else:
-            raise ValueError(f"unsupported optimizer: {optimizer_name}")
+        optimizer, optimizer_version = _create_optimizer(
+            groups,
+            optimizer_name=optimizer_name,
+            learning_rate=learning_rate,
+            beta1=beta1,
+            beta2=beta2,
+            adam_eps=adam_eps,
+        )
         before = {
             name: parameter.detach().to(device="cpu", dtype=torch.float32).clone()
             for name, parameter in named_parameters
@@ -381,6 +437,192 @@ def _capture_training_phase(
         "snapshot_file": str(Path(snapshot_path).resolve()),
         "snapshot_sha256": sha256_file(snapshot_path),
         "snapshot_tensor_count": len(snapshot),
+        "source_commit": source_commit,
+        **_runtime_metadata(device),
+    }
+    write_json_atomic(output_json, result)
+    return result
+
+
+def _learning_rate_at_step(
+    step: int,
+    *,
+    learning_rate: float,
+    learning_rate_final: float,
+    schedule_total_steps: int,
+    warmup_steps: int,
+) -> float:
+    if schedule_total_steps <= 0:
+        lr = float(learning_rate)
+    else:
+        progress = (int(step) - max(0, int(warmup_steps))) / max(
+            1, int(schedule_total_steps) - max(0, int(warmup_steps))
+        )
+        progress = max(0.0, min(1.0, progress))
+        final_factor = float(learning_rate_final) / float(learning_rate)
+        multiplier = (0.5 + final_factor / 2) + (0.5 - final_factor / 2) * math.cos(
+            math.pi * progress
+        )
+        lr = float(learning_rate) * multiplier
+    if warmup_steps > 0 and step < warmup_steps:
+        lr *= 0.01 + 0.99 * int(step) / int(warmup_steps)
+    return lr
+
+
+def _run_convergence(
+    *,
+    model,
+    backend: str,
+    naming: str,
+    loss_fn,
+    parameter_name_normalizer,
+    sequence_path: str | Path,
+    validation_batch_path: str | Path,
+    checkpoint_sha256: str,
+    output_json: str | Path,
+    precision: str,
+    device: str,
+    seed: int,
+    learning_rate: float,
+    learning_rate_final: float,
+    schedule_total_steps: int,
+    warmup_steps: int,
+    weight_decay: float,
+    beta1: float,
+    beta2: float,
+    adam_eps: float,
+    grad_clip: float,
+    optimizer_name: str,
+    eval_interval: int,
+    source_commit: str | None,
+) -> dict[str, Any]:
+    if precision != "bf16":
+        raise ValueError("end-to-end train_temp convergence currently requires bf16")
+    if eval_interval <= 0:
+        raise ValueError("eval_interval must be positive")
+    _seed_everything(seed)
+    sequence_path = Path(sequence_path)
+    validation_batch_path = Path(validation_batch_path)
+    sequence = load_file(sequence_path)
+    train_inputs = sequence["input_ids"]
+    train_targets = sequence["targets"]
+    if train_inputs.ndim != 3 or tuple(train_inputs.shape) != tuple(train_targets.shape):
+        raise ValueError("convergence sequence must have matching [steps, batch, tokens] tensors")
+    validation = load_file(validation_batch_path)
+    validation_inputs = validation["input_ids"].to(device=device, dtype=torch.long)
+    validation_targets = validation["targets"].to(device=device, dtype=torch.long)
+
+    named_parameters = [(name, parameter) for name, parameter in model.named_parameters()]
+    groups = build_train_temp_param_groups(
+        named_parameters,
+        weight_decay=float(weight_decay),
+        naming=naming,
+    )
+    for group in groups:
+        group["lr"] = float(learning_rate) * float(group["my_lr_scale"])
+    group_metadata = _optimizer_groups_metadata(groups, parameter_name_normalizer)
+    optimizer, optimizer_version = _create_optimizer(
+        groups,
+        optimizer_name=optimizer_name,
+        learning_rate=learning_rate,
+        beta1=beta1,
+        beta2=beta2,
+        adam_eps=adam_eps,
+    )
+
+    def evaluate(step: int) -> dict[str, Any]:
+        model.eval()
+        with torch.no_grad():
+            outputs = model(validation_inputs)
+            logits = outputs.logits if hasattr(outputs, "logits") else outputs
+            loss = float(loss_fn(logits, validation_targets).detach().float().item())
+        model.train()
+        return {"step": int(step), "loss": loss, "finite": math.isfinite(loss)}
+
+    if device.startswith("cuda"):
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+    started = time.perf_counter()
+    model.train()
+    validation_curve = [evaluate(0)]
+    train_curve: list[dict[str, Any]] = []
+    status = "pass"
+    failure = None
+    for step in range(int(train_inputs.shape[0])):
+        lr = _learning_rate_at_step(
+            step,
+            learning_rate=learning_rate,
+            learning_rate_final=learning_rate_final,
+            schedule_total_steps=schedule_total_steps,
+            warmup_steps=warmup_steps,
+        )
+        for group in optimizer.param_groups:
+            group["lr"] = lr * float(group["my_lr_scale"])
+        input_ids = train_inputs[step].to(device=device, dtype=torch.long)
+        targets = train_targets[step].to(device=device, dtype=torch.long)
+        optimizer.zero_grad(set_to_none=True)
+        outputs = model(input_ids)
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs
+        loss = loss_fn(logits, targets)
+        loss.backward()
+        grad_norm = float(
+            torch.nn.utils.clip_grad_norm_(
+                [parameter for _, parameter in named_parameters if parameter.requires_grad],
+                max_norm=float(grad_clip),
+            ).item()
+        )
+        optimizer.step()
+        loss_value = float(loss.detach().float().item())
+        finite = math.isfinite(loss_value) and math.isfinite(grad_norm)
+        train_curve.append(
+            {
+                "step": step + 1,
+                "loss": loss_value,
+                "grad_norm": grad_norm,
+                "lr": lr,
+                "finite": finite,
+            }
+        )
+        if not finite:
+            status = "fail"
+            failure = f"non-finite training value at step {step + 1}"
+            break
+        if (step + 1) % eval_interval == 0 or step + 1 == int(train_inputs.shape[0]):
+            row = evaluate(step + 1)
+            validation_curve.append(row)
+            if not row["finite"]:
+                status = "fail"
+                failure = f"non-finite validation loss at step {step + 1}"
+                break
+    if device.startswith("cuda"):
+        torch.cuda.synchronize()
+    runtime_s = time.perf_counter() - started
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "axis": "train_temp_alignment_convergence",
+        "status": status,
+        "failure": failure,
+        "backend": backend,
+        "precision": precision,
+        "seed": int(seed),
+        "checkpoint_sha256": str(checkpoint_sha256),
+        "sequence_sha256": sha256_file(sequence_path),
+        "validation_batch_sha256": sha256_file(validation_batch_path),
+        "steps_requested": int(train_inputs.shape[0]),
+        "steps_completed": len(train_curve),
+        "batch_size": int(train_inputs.shape[1]),
+        "seq_len": int(train_inputs.shape[2]),
+        "learning_rate": float(learning_rate),
+        "learning_rate_final": float(learning_rate_final),
+        "schedule_total_steps": int(schedule_total_steps),
+        "warmup_steps": int(warmup_steps),
+        "grad_clip": float(grad_clip),
+        "optimizer": optimizer_name,
+        "optimizer_version": optimizer_version,
+        "optimizer_groups": group_metadata,
+        "train_curve": train_curve,
+        "validation_curve": validation_curve,
+        "runtime_s": runtime_s,
         "source_commit": source_commit,
         **_runtime_metadata(device),
     }
@@ -534,6 +776,87 @@ def capture_hf(args) -> dict[str, Any]:
     )
 
 
+def converge_official(args) -> dict[str, Any]:
+    from scripts.convert_rwkv7_to_hf import translate_name
+
+    official = _load_official_module(args.official_checkout)
+    config = _load_official_config(args.official_config)
+    model = official.RWKV(config)
+    state = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
+    model.load_state_dict(state, strict=True)
+    model = model.to(device=args.device, dtype=torch.bfloat16)
+
+    def normalize_parameter_name(name: str) -> str | None:
+        destination_name, _ = translate_name(name, int(config.n_layer))
+        return destination_name or None
+
+    return _run_convergence(
+        model=model,
+        backend="official_train_temp",
+        naming="official",
+        loss_fn=official.l2wrap_cross_entropy,
+        parameter_name_normalizer=normalize_parameter_name,
+        sequence_path=args.sequence,
+        validation_batch_path=args.validation_batch,
+        checkpoint_sha256=sha256_file(args.checkpoint),
+        output_json=args.output_json,
+        precision=args.precision,
+        device=args.device,
+        seed=args.seed,
+        learning_rate=args.learning_rate,
+        learning_rate_final=args.learning_rate_final,
+        schedule_total_steps=args.schedule_total_steps,
+        warmup_steps=args.warmup_steps,
+        weight_decay=args.weight_decay,
+        beta1=args.beta1,
+        beta2=args.beta2,
+        adam_eps=args.adam_eps,
+        grad_clip=args.grad_clip,
+        optimizer_name=args.optimizer,
+        eval_interval=args.eval_interval,
+        source_commit=_git_commit(args.official_checkout),
+    )
+
+
+def converge_hf(args) -> dict[str, Any]:
+    if args.native:
+        os.environ["RWKV7_NATIVE_MODEL"] = "1"
+    from transformers import AutoModelForCausalLM
+
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+    ).to(args.device)
+    model.config.use_cache = False
+    return _run_convergence(
+        model=model,
+        backend="hf_native" if args.native else "hf_fla",
+        naming="hf",
+        loss_fn=train_temp_cross_entropy,
+        parameter_name_normalizer=lambda name: name,
+        sequence_path=args.sequence,
+        validation_batch_path=args.validation_batch,
+        checkpoint_sha256=args.checkpoint_sha256,
+        output_json=args.output_json,
+        precision=args.precision,
+        device=args.device,
+        seed=args.seed,
+        learning_rate=args.learning_rate,
+        learning_rate_final=args.learning_rate_final,
+        schedule_total_steps=args.schedule_total_steps,
+        warmup_steps=args.warmup_steps,
+        weight_decay=args.weight_decay,
+        beta1=args.beta1,
+        beta2=args.beta2,
+        adam_eps=args.adam_eps,
+        grad_clip=args.grad_clip,
+        optimizer_name=args.optimizer,
+        eval_interval=args.eval_interval,
+        source_commit=_git_commit(Path(__file__).resolve().parents[1]),
+    )
+
+
 def _snapshot_path(artifact_path: Path, artifact: dict[str, Any]) -> Path:
     snapshot = Path(str(artifact["snapshot_file"]))
     return snapshot if snapshot.is_absolute() else artifact_path.parent / snapshot
@@ -669,6 +992,150 @@ def compare_artifacts(
     return report
 
 
+def compare_convergence_artifacts(
+    reference_json: str | Path,
+    candidate_json: str | Path,
+    *,
+    max_train_auc_relative_diff: float = 0.02,
+    max_final_validation_relative_diff: float = 0.02,
+    max_validation_relative_diff: float = 0.03,
+    max_grad_norm_auc_relative_diff: float = 0.05,
+) -> dict[str, Any]:
+    reference = json.loads(Path(reference_json).read_text(encoding="utf-8"))
+    candidate = json.loads(Path(candidate_json).read_text(encoding="utf-8"))
+    provenance_keys = (
+        "precision",
+        "checkpoint_sha256",
+        "sequence_sha256",
+        "validation_batch_sha256",
+        "steps_requested",
+        "batch_size",
+        "seq_len",
+        "learning_rate",
+        "learning_rate_final",
+        "schedule_total_steps",
+        "warmup_steps",
+        "grad_clip",
+        "optimizer",
+    )
+    provenance_mismatches = [
+        key for key in provenance_keys if reference.get(key) != candidate.get(key)
+    ]
+    optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
+        candidate
+    )
+    reference_train = reference.get("train_curve", [])
+    candidate_train = candidate.get("train_curve", [])
+    reference_validation = reference.get("validation_curve", [])
+    candidate_validation = candidate.get("validation_curve", [])
+    train_steps_match = [row.get("step") for row in reference_train] == [
+        row.get("step") for row in candidate_train
+    ]
+    validation_steps_match = [row.get("step") for row in reference_validation] == [
+        row.get("step") for row in candidate_validation
+    ]
+
+    def mean(values: list[float]) -> float:
+        return sum(values) / len(values) if values else float("nan")
+
+    reference_train_losses = [float(row["loss"]) for row in reference_train]
+    candidate_train_losses = [float(row["loss"]) for row in candidate_train]
+    reference_grad_norms = [float(row["grad_norm"]) for row in reference_train]
+    candidate_grad_norms = [float(row["grad_norm"]) for row in candidate_train]
+    reference_validation_losses = [float(row["loss"]) for row in reference_validation]
+    candidate_validation_losses = [float(row["loss"]) for row in candidate_validation]
+    train_auc_reference = mean(reference_train_losses)
+    train_auc_candidate = mean(candidate_train_losses)
+    grad_auc_reference = mean(reference_grad_norms)
+    grad_auc_candidate = mean(candidate_grad_norms)
+    epsilon = torch.finfo(torch.float64).eps
+    train_auc_relative_diff = abs(train_auc_candidate - train_auc_reference) / max(
+        abs(train_auc_reference), epsilon
+    )
+    grad_norm_auc_relative_diff = abs(grad_auc_candidate - grad_auc_reference) / max(
+        abs(grad_auc_reference), epsilon
+    )
+    validation_relative_diffs = [
+        abs(candidate_loss - reference_loss) / max(abs(reference_loss), epsilon)
+        for reference_loss, candidate_loss in zip(
+            reference_validation_losses, candidate_validation_losses
+        )
+    ]
+    final_validation_relative_diff = (
+        validation_relative_diffs[-1] if validation_relative_diffs else float("inf")
+    )
+    max_observed_validation_relative_diff = (
+        max(validation_relative_diffs) if validation_relative_diffs else float("inf")
+    )
+    finite = all(
+        math.isfinite(value)
+        for value in (
+            reference_train_losses
+            + candidate_train_losses
+            + reference_grad_norms
+            + candidate_grad_norms
+            + reference_validation_losses
+            + candidate_validation_losses
+        )
+    )
+    failures: list[str] = []
+    if reference.get("status") != "pass" or candidate.get("status") != "pass":
+        failures.append("a convergence run did not pass")
+    if provenance_mismatches:
+        failures.append("provenance mismatch: " + ", ".join(provenance_mismatches))
+    if not optimizer_groups_match:
+        failures.append("optimizer groups mismatch")
+    if not train_steps_match or not validation_steps_match:
+        failures.append("curve steps mismatch")
+    if not reference_train or not candidate_train:
+        failures.append("empty training curve")
+    if not reference_validation or not candidate_validation:
+        failures.append("empty validation curve")
+    if not finite:
+        failures.append("non-finite curve value")
+    if train_auc_relative_diff > max_train_auc_relative_diff:
+        failures.append("train loss AUC relative difference exceeded target")
+    if final_validation_relative_diff > max_final_validation_relative_diff:
+        failures.append("final validation loss relative difference exceeded target")
+    if max_observed_validation_relative_diff > max_validation_relative_diff:
+        failures.append("validation curve relative difference exceeded target")
+    if grad_norm_auc_relative_diff > max_grad_norm_auc_relative_diff:
+        failures.append("gradient norm AUC relative difference exceeded target")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "axis": "train_temp_alignment_convergence_compare",
+        "status": "pass" if not failures else "fail",
+        "reference_backend": reference.get("backend"),
+        "candidate_backend": candidate.get("backend"),
+        "steps": len(reference_train),
+        "provenance_mismatches": provenance_mismatches,
+        "optimizer_groups_match": optimizer_groups_match,
+        "train_steps_match": train_steps_match,
+        "validation_steps_match": validation_steps_match,
+        "train_loss_auc_reference": train_auc_reference,
+        "train_loss_auc_candidate": train_auc_candidate,
+        "train_loss_auc_relative_diff": train_auc_relative_diff,
+        "grad_norm_auc_reference": grad_auc_reference,
+        "grad_norm_auc_candidate": grad_auc_candidate,
+        "grad_norm_auc_relative_diff": grad_norm_auc_relative_diff,
+        "final_validation_loss_reference": (
+            reference_validation_losses[-1] if reference_validation_losses else None
+        ),
+        "final_validation_loss_candidate": (
+            candidate_validation_losses[-1] if candidate_validation_losses else None
+        ),
+        "final_validation_relative_diff": final_validation_relative_diff,
+        "max_validation_relative_diff": max_observed_validation_relative_diff,
+        "targets": {
+            "max_train_auc_relative_diff": float(max_train_auc_relative_diff),
+            "max_final_validation_relative_diff": float(max_final_validation_relative_diff),
+            "max_validation_relative_diff": float(max_validation_relative_diff),
+            "max_grad_norm_auc_relative_diff": float(max_grad_norm_auc_relative_diff),
+        },
+        "failures": failures,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -681,6 +1148,15 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--seq-len", type=int, default=16)
     batch.add_argument("--seed", type=int, default=42)
 
+    sequence = subparsers.add_parser("make-sequence")
+    sequence.add_argument("--output", required=True)
+    sequence.add_argument("--metadata")
+    sequence.add_argument("--vocab-size", type=int, required=True)
+    sequence.add_argument("--batch-size", type=int, default=1)
+    sequence.add_argument("--seq-len", type=int, default=16)
+    sequence.add_argument("--steps", type=int, required=True)
+    sequence.add_argument("--seed", type=int, required=True)
+
     compare = subparsers.add_parser("compare")
     compare.add_argument("--reference-json", required=True)
     compare.add_argument("--candidate-json", required=True)
@@ -688,6 +1164,19 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--min-cosine", type=float)
     compare.add_argument("--max-relative-l2", type=float)
     compare.add_argument("--max-loss-relative-diff", type=float, default=0.01)
+
+    compare_convergence = subparsers.add_parser("compare-convergence")
+    compare_convergence.add_argument("--reference-json", required=True)
+    compare_convergence.add_argument("--candidate-json", required=True)
+    compare_convergence.add_argument("--output", required=True)
+    compare_convergence.add_argument("--max-train-auc-relative-diff", type=float, default=0.02)
+    compare_convergence.add_argument(
+        "--max-final-validation-relative-diff", type=float, default=0.02
+    )
+    compare_convergence.add_argument("--max-validation-relative-diff", type=float, default=0.03)
+    compare_convergence.add_argument(
+        "--max-grad-norm-auc-relative-diff", type=float, default=0.05
+    )
 
     init = subparsers.add_parser("make-official-init")
     init.add_argument("--official-checkout", required=True)
@@ -727,6 +1216,41 @@ def build_parser() -> argparse.ArgumentParser:
     hf.add_argument("--model", required=True)
     hf.add_argument("--checkpoint-sha256", required=True)
     hf.add_argument("--native", action="store_true")
+
+    def add_convergence_arguments(convergence: argparse.ArgumentParser) -> None:
+        convergence.add_argument("--sequence", required=True)
+        convergence.add_argument("--validation-batch", required=True)
+        convergence.add_argument("--output-json", required=True)
+        convergence.add_argument("--precision", choices=["bf16"], default="bf16")
+        convergence.add_argument("--device", default="cuda")
+        convergence.add_argument("--seed", type=int, required=True)
+        convergence.add_argument("--learning-rate", type=float, default=6.0e-4)
+        convergence.add_argument("--learning-rate-final", type=float, default=1.0e-5)
+        convergence.add_argument("--schedule-total-steps", type=int, default=500_000)
+        convergence.add_argument("--warmup-steps", type=int, default=-1)
+        convergence.add_argument("--weight-decay", type=float, default=0.001)
+        convergence.add_argument("--beta1", type=float, default=0.9)
+        convergence.add_argument("--beta2", type=float, default=0.99)
+        convergence.add_argument("--adam-eps", type=float, default=1.0e-18)
+        convergence.add_argument("--grad-clip", type=float, default=1.0)
+        convergence.add_argument("--eval-interval", type=int, default=10)
+        convergence.add_argument(
+            "--optimizer",
+            choices=["fused_adam", "torch_adamw"],
+            default="fused_adam",
+        )
+
+    official_convergence = subparsers.add_parser("converge-official")
+    add_convergence_arguments(official_convergence)
+    official_convergence.add_argument("--official-checkout", required=True)
+    official_convergence.add_argument("--official-config", required=True)
+    official_convergence.add_argument("--checkpoint", required=True)
+
+    hf_convergence = subparsers.add_parser("converge-hf")
+    add_convergence_arguments(hf_convergence)
+    hf_convergence.add_argument("--model", required=True)
+    hf_convergence.add_argument("--checkpoint-sha256", required=True)
+    hf_convergence.add_argument("--native", action="store_true")
     return parser
 
 
@@ -744,6 +1268,19 @@ def main() -> int:
             write_json_atomic(args.metadata, metadata)
         print(json.dumps(metadata, ensure_ascii=False))
         return 0
+    if args.command == "make-sequence":
+        metadata = make_deterministic_sequence(
+            args.output,
+            vocab_size=args.vocab_size,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            steps=args.steps,
+            seed=args.seed,
+        )
+        if args.metadata:
+            write_json_atomic(args.metadata, metadata)
+        print(json.dumps(metadata, ensure_ascii=False))
+        return 0
     if args.command == "compare":
         report = compare_artifacts(
             args.reference_json,
@@ -751,6 +1288,18 @@ def main() -> int:
             min_cosine=args.min_cosine,
             max_relative_l2=args.max_relative_l2,
             max_loss_relative_diff=args.max_loss_relative_diff,
+        )
+        write_json_atomic(args.output, report)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0 if report["status"] == "pass" else 1
+    if args.command == "compare-convergence":
+        report = compare_convergence_artifacts(
+            args.reference_json,
+            args.candidate_json,
+            max_train_auc_relative_diff=args.max_train_auc_relative_diff,
+            max_final_validation_relative_diff=args.max_final_validation_relative_diff,
+            max_validation_relative_diff=args.max_validation_relative_diff,
+            max_grad_norm_auc_relative_diff=args.max_grad_norm_auc_relative_diff,
         )
         write_json_atomic(args.output, report)
         print(json.dumps(report, ensure_ascii=False))
@@ -773,6 +1322,44 @@ def main() -> int:
         result = capture_hf(args)
         print(json.dumps(_capture_summary(result), ensure_ascii=False))
         return 0
+    if args.command == "converge-official":
+        result = converge_official(args)
+        print(
+            json.dumps(
+                {
+                    key: result.get(key)
+                    for key in (
+                        "status",
+                        "backend",
+                        "steps_completed",
+                        "runtime_s",
+                        "peak_memory_mb",
+                        "failure",
+                    )
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if result["status"] == "pass" else 1
+    if args.command == "converge-hf":
+        result = converge_hf(args)
+        print(
+            json.dumps(
+                {
+                    key: result.get(key)
+                    for key in (
+                        "status",
+                        "backend",
+                        "steps_completed",
+                        "runtime_s",
+                        "peak_memory_mb",
+                        "failure",
+                    )
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if result["status"] == "pass" else 1
     raise AssertionError(args.command)
 
 

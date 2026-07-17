@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import torch
 from safetensors.torch import load_file, save_file
 
 from bench.bench_train_temp_alignment import (
+    _learning_rate_at_step,
     compare_artifacts,
+    compare_convergence_artifacts,
     make_deterministic_batch,
+    make_deterministic_sequence,
     normalize_official_tensors,
     write_json_atomic,
 )
@@ -45,6 +49,51 @@ def test_make_deterministic_batch_is_shifted_and_repeatable(tmp_path: Path) -> N
     assert torch.equal(a["input_ids"], b["input_ids"])
     assert a["input_ids"].untyped_storage().data_ptr() != a["targets"].untyped_storage().data_ptr()
     assert first_meta["content_sha256"] == second_meta["content_sha256"]
+
+
+def test_make_deterministic_sequence_is_shifted_and_repeatable(tmp_path: Path) -> None:
+    first = tmp_path / "first.safetensors"
+    second = tmp_path / "second.safetensors"
+    first_meta = make_deterministic_sequence(
+        first, vocab_size=32, batch_size=2, seq_len=4, steps=3, seed=101
+    )
+    second_meta = make_deterministic_sequence(
+        second, vocab_size=32, batch_size=2, seq_len=4, steps=3, seed=101
+    )
+
+    a = load_file(first)
+    b = load_file(second)
+    assert tuple(a["input_ids"].shape) == (3, 2, 4)
+    assert torch.equal(a["input_ids"][..., 1:], a["targets"][..., :-1])
+    assert torch.equal(a["input_ids"], b["input_ids"])
+    assert first_meta["content_sha256"] == second_meta["content_sha256"]
+
+
+def test_learning_rate_matches_train_temp_cosine_and_warmup_shape() -> None:
+    initial = _learning_rate_at_step(
+        0,
+        learning_rate=6e-4,
+        learning_rate_final=1e-5,
+        schedule_total_steps=100,
+        warmup_steps=-1,
+    )
+    final = _learning_rate_at_step(
+        100,
+        learning_rate=6e-4,
+        learning_rate_final=1e-5,
+        schedule_total_steps=100,
+        warmup_steps=-1,
+    )
+    warmup = _learning_rate_at_step(
+        0,
+        learning_rate=6e-4,
+        learning_rate_final=1e-5,
+        schedule_total_steps=100,
+        warmup_steps=10,
+    )
+    assert math.isclose(initial, 6e-4)
+    assert math.isclose(final, 1e-5)
+    assert math.isclose(warmup, 6e-6)
 
 
 def test_compare_artifacts_accepts_matching_snapshots(tmp_path: Path) -> None:
@@ -93,6 +142,67 @@ def test_step_compare_rejects_optimizer_group_mismatch(tmp_path: Path) -> None:
     assert report["status"] == "fail"
     assert report["optimizer_groups_match"] is False
     assert "optimizer groups mismatch" in report["failures"]
+
+
+def test_compare_convergence_artifacts_gates_curves_and_provenance(tmp_path: Path) -> None:
+    common = {
+        "schema_version": 1,
+        "axis": "train_temp_alignment_convergence",
+        "status": "pass",
+        "precision": "bf16",
+        "checkpoint_sha256": "checkpoint",
+        "sequence_sha256": "sequence",
+        "validation_batch_sha256": "validation",
+        "steps_requested": 2,
+        "batch_size": 1,
+        "seq_len": 4,
+        "learning_rate": 6e-4,
+        "learning_rate_final": 1e-5,
+        "schedule_total_steps": 500_000,
+        "warmup_steps": -1,
+        "grad_clip": 1.0,
+        "optimizer": "fused_adam",
+        "optimizer_groups": [
+            {
+                "group_name": "lr_1x",
+                "param_names": ["weight"],
+                "param_count": 1,
+                "source_param_count": 1,
+                "weight_decay": 0.0,
+                "my_lr_scale": 1.0,
+                "lr": 6e-4,
+            }
+        ],
+        "train_curve": [
+            {"step": 1, "loss": 4.0, "grad_norm": 2.0},
+            {"step": 2, "loss": 3.0, "grad_norm": 1.5},
+        ],
+        "validation_curve": [
+            {"step": 0, "loss": 4.5},
+            {"step": 2, "loss": 3.5},
+        ],
+    }
+    official = {**common, "backend": "official_train_temp"}
+    candidate = {**common, "backend": "hf_native"}
+    official_path = tmp_path / "official.json"
+    candidate_path = tmp_path / "candidate.json"
+    write_json_atomic(official_path, official)
+    write_json_atomic(candidate_path, candidate)
+
+    passing = compare_convergence_artifacts(official_path, candidate_path)
+    assert passing["status"] == "pass"
+    assert passing["optimizer_groups_match"] is True
+
+    candidate["sequence_sha256"] = "wrong"
+    candidate["validation_curve"] = [
+        {"step": 0, "loss": 4.5},
+        {"step": 2, "loss": 4.5},
+    ]
+    write_json_atomic(candidate_path, candidate)
+    failing = compare_convergence_artifacts(official_path, candidate_path)
+    assert failing["status"] == "fail"
+    assert "sequence_sha256" in failing["provenance_mismatches"]
+    assert failing["final_validation_relative_diff"] > 0.02
 
 
 def test_compare_artifacts_rejects_provenance_and_tensor_failures(tmp_path: Path) -> None:
