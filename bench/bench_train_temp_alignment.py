@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from statistics import median
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -1360,6 +1361,227 @@ def compare_convergence_artifacts(
     }
 
 
+def compare_convergence_cohorts(
+    reference_jsons: list[str | Path],
+    candidate_jsons: list[str | Path],
+    *,
+    min_runs: int = 3,
+    success_threshold: float = 1.0,
+    deep_success_threshold: float = 0.1,
+    max_median_train_auc_relative_diff: float = 0.10,
+    max_median_validation_auc_relative_diff: float = 0.15,
+    max_median_min_validation_abs_increase: float = 0.05,
+    max_median_min_validation_relative_ratio: float = 1.25,
+    max_median_grad_norm_ratio: float = 2.0,
+) -> dict[str, Any]:
+    """Compare multi-seed convergence distributions for a non-deterministic backend.
+
+    The official train_temp CUDA path is not bitwise deterministic across long
+    runs. Exact forward/backward/step alignment is therefore gated separately;
+    this cohort gate compares completion, convergence success rates, and robust
+    medians without pairing chaotic trajectories point by point.
+    """
+
+    reference = [json.loads(Path(path).read_text(encoding="utf-8")) for path in reference_jsons]
+    candidate = [json.loads(Path(path).read_text(encoding="utf-8")) for path in candidate_jsons]
+
+    def by_seed(runs: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+        indexed: dict[int, dict[str, Any]] = {}
+        for run in runs:
+            seed = int(run["seed"])
+            if seed in indexed:
+                raise ValueError(f"duplicate convergence seed: {seed}")
+            indexed[seed] = run
+        return indexed
+
+    reference_by_seed = by_seed(reference)
+    candidate_by_seed = by_seed(candidate)
+    reference_seeds = sorted(reference_by_seed)
+    candidate_seeds = sorted(candidate_by_seed)
+    seeds_match = reference_seeds == candidate_seeds
+    shared_seeds = sorted(set(reference_seeds) & set(candidate_seeds))
+    provenance_keys = (
+        "precision",
+        "checkpoint_sha256",
+        "sequence_sha256",
+        "validation_batch_sha256",
+        "steps_requested",
+        "batch_size",
+        "seq_len",
+        "learning_rate",
+        "learning_rate_final",
+        "schedule_total_steps",
+        "warmup_steps",
+        "grad_clip",
+        "optimizer",
+        "eval_interval",
+    )
+    provenance_mismatches = [
+        {"seed": seed, "keys": mismatches}
+        for seed in shared_seeds
+        if (
+            mismatches := [
+                key
+                for key in provenance_keys
+                if reference_by_seed[seed].get(key) != candidate_by_seed[seed].get(key)
+            ]
+        )
+    ]
+    optimizer_groups_match = all(
+        _optimizer_group_contract(reference_by_seed[seed])
+        == _optimizer_group_contract(candidate_by_seed[seed])
+        for seed in shared_seeds
+    )
+
+    def summarize(run: dict[str, Any]) -> dict[str, Any]:
+        train = run.get("train_curve", [])
+        validation = run.get("validation_curve", [])
+        train_losses = [float(row["loss"]) for row in train]
+        grad_norms = [float(row["grad_norm"]) for row in train]
+        validation_losses = [float(row["loss"]) for row in validation]
+        values = train_losses + grad_norms + validation_losses
+        return {
+            "seed": int(run["seed"]),
+            "status": run.get("status"),
+            "steps_requested": int(run.get("steps_requested", 0)),
+            "steps_completed": int(run.get("steps_completed", 0)),
+            "finite": bool(values) and all(math.isfinite(value) for value in values),
+            "train_loss_auc": sum(train_losses) / len(train_losses) if train_losses else float("nan"),
+            "validation_loss_auc": (
+                sum(validation_losses) / len(validation_losses)
+                if validation_losses
+                else float("nan")
+            ),
+            "final_validation_loss": validation_losses[-1] if validation_losses else float("inf"),
+            "min_validation_loss": min(validation_losses) if validation_losses else float("inf"),
+            "max_grad_norm": max(grad_norms) if grad_norms else float("inf"),
+            "runtime_s": float(run.get("runtime_s", float("nan"))),
+        }
+
+    reference_rows = [summarize(reference_by_seed[seed]) for seed in reference_seeds]
+    candidate_rows = [summarize(candidate_by_seed[seed]) for seed in candidate_seeds]
+
+    def cohort_medians(rows: list[dict[str, Any]]) -> dict[str, float]:
+        keys = (
+            "train_loss_auc",
+            "validation_loss_auc",
+            "final_validation_loss",
+            "min_validation_loss",
+            "max_grad_norm",
+            "runtime_s",
+        )
+        return {key: float(median(float(row[key]) for row in rows)) for key in keys}
+
+    reference_medians = cohort_medians(reference_rows) if reference_rows else {}
+    candidate_medians = cohort_medians(candidate_rows) if candidate_rows else {}
+    epsilon = torch.finfo(torch.float64).eps
+
+    def relative_diff(key: str) -> float:
+        reference_value = reference_medians.get(key, float("nan"))
+        candidate_value = candidate_medians.get(key, float("nan"))
+        return abs(candidate_value - reference_value) / max(abs(reference_value), epsilon)
+
+    train_auc_relative_diff = relative_diff("train_loss_auc")
+    validation_auc_relative_diff = relative_diff("validation_loss_auc")
+    median_grad_norm_ratio = max(
+        candidate_medians.get("max_grad_norm", float("inf"))
+        / max(reference_medians.get("max_grad_norm", 0.0), epsilon),
+        reference_medians.get("max_grad_norm", float("inf"))
+        / max(candidate_medians.get("max_grad_norm", 0.0), epsilon),
+    )
+    reference_successes = sum(
+        row["min_validation_loss"] <= success_threshold for row in reference_rows
+    )
+    candidate_successes = sum(
+        row["min_validation_loss"] <= success_threshold for row in candidate_rows
+    )
+    reference_deep_successes = sum(
+        row["min_validation_loss"] <= deep_success_threshold for row in reference_rows
+    )
+    candidate_deep_successes = sum(
+        row["min_validation_loss"] <= deep_success_threshold for row in candidate_rows
+    )
+    reference_min_median = reference_medians.get("min_validation_loss", float("inf"))
+    candidate_min_median = candidate_medians.get("min_validation_loss", float("inf"))
+    min_validation_regressed = (
+        candidate_min_median > reference_min_median + max_median_min_validation_abs_increase
+        and candidate_min_median
+        > reference_min_median * max_median_min_validation_relative_ratio
+    )
+    runs_complete = all(
+        row["status"] == "pass"
+        and row["finite"]
+        and row["steps_completed"] == row["steps_requested"]
+        for row in reference_rows + candidate_rows
+    )
+
+    failures: list[str] = []
+    if len(reference_rows) < min_runs or len(candidate_rows) < min_runs:
+        failures.append("convergence cohort has fewer runs than required")
+    if not seeds_match:
+        failures.append("reference and candidate seed sets differ")
+    if provenance_mismatches:
+        failures.append("per-seed convergence provenance mismatch")
+    if not optimizer_groups_match:
+        failures.append("optimizer groups mismatch")
+    if not runs_complete:
+        failures.append("a convergence cohort run is incomplete or non-finite")
+    if candidate_successes < reference_successes:
+        failures.append("candidate convergence success count is below reference")
+    if candidate_deep_successes < reference_deep_successes:
+        failures.append("candidate deep convergence success count is below reference")
+    if train_auc_relative_diff > max_median_train_auc_relative_diff:
+        failures.append("median train loss AUC relative difference exceeded target")
+    if validation_auc_relative_diff > max_median_validation_auc_relative_diff:
+        failures.append("median validation loss AUC relative difference exceeded target")
+    if min_validation_regressed:
+        failures.append("median minimum validation loss regressed")
+    if median_grad_norm_ratio > max_median_grad_norm_ratio:
+        failures.append("median gradient norm ratio exceeded target")
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "axis": "train_temp_alignment_convergence_cohort_compare",
+        "status": "pass" if not failures else "fail",
+        "reference_backend": reference[0].get("backend") if reference else None,
+        "candidate_backend": candidate[0].get("backend") if candidate else None,
+        "reference_seeds": reference_seeds,
+        "candidate_seeds": candidate_seeds,
+        "seeds_match": seeds_match,
+        "provenance_mismatches": provenance_mismatches,
+        "optimizer_groups_match": optimizer_groups_match,
+        "runs_complete": runs_complete,
+        "reference_rows": reference_rows,
+        "candidate_rows": candidate_rows,
+        "reference_medians": reference_medians,
+        "candidate_medians": candidate_medians,
+        "median_train_loss_auc_relative_diff": train_auc_relative_diff,
+        "median_validation_loss_auc_relative_diff": validation_auc_relative_diff,
+        "median_grad_norm_ratio": median_grad_norm_ratio,
+        "reference_success_count": reference_successes,
+        "candidate_success_count": candidate_successes,
+        "reference_deep_success_count": reference_deep_successes,
+        "candidate_deep_success_count": candidate_deep_successes,
+        "targets": {
+            "min_runs": int(min_runs),
+            "success_threshold": float(success_threshold),
+            "deep_success_threshold": float(deep_success_threshold),
+            "max_median_train_auc_relative_diff": float(max_median_train_auc_relative_diff),
+            "max_median_validation_auc_relative_diff": float(
+                max_median_validation_auc_relative_diff
+            ),
+            "max_median_min_validation_abs_increase": float(
+                max_median_min_validation_abs_increase
+            ),
+            "max_median_min_validation_relative_ratio": float(
+                max_median_min_validation_relative_ratio
+            ),
+            "max_median_grad_norm_ratio": float(max_median_grad_norm_ratio),
+        },
+        "failures": failures,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1411,6 +1633,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-validation-threshold-step-diff", type=int, default=10
     )
     compare_convergence.add_argument("--max-grad-norm-ratio", type=float, default=2.0)
+
+    compare_cohort = subparsers.add_parser("compare-convergence-cohort")
+    compare_cohort.add_argument("--reference-json", action="append", required=True)
+    compare_cohort.add_argument("--candidate-json", action="append", required=True)
+    compare_cohort.add_argument("--output", required=True)
+    compare_cohort.add_argument("--min-runs", type=int, default=3)
+    compare_cohort.add_argument("--success-threshold", type=float, default=1.0)
+    compare_cohort.add_argument("--deep-success-threshold", type=float, default=0.1)
+    compare_cohort.add_argument(
+        "--max-median-train-auc-relative-diff", type=float, default=0.10
+    )
+    compare_cohort.add_argument(
+        "--max-median-validation-auc-relative-diff", type=float, default=0.15
+    )
+    compare_cohort.add_argument(
+        "--max-median-min-validation-abs-increase", type=float, default=0.05
+    )
+    compare_cohort.add_argument(
+        "--max-median-min-validation-relative-ratio", type=float, default=1.25
+    )
+    compare_cohort.add_argument("--max-median-grad-norm-ratio", type=float, default=2.0)
 
     init = subparsers.add_parser("make-official-init")
     init.add_argument("--official-checkout", required=True)
@@ -1544,6 +1787,28 @@ def main() -> int:
             max_final_validation_relative_diff=args.max_final_validation_relative_diff,
             max_validation_threshold_step_diff=args.max_validation_threshold_step_diff,
             max_grad_norm_ratio=args.max_grad_norm_ratio,
+        )
+        write_json_atomic(args.output, report)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0 if report["status"] == "pass" else 1
+    if args.command == "compare-convergence-cohort":
+        report = compare_convergence_cohorts(
+            args.reference_json,
+            args.candidate_json,
+            min_runs=args.min_runs,
+            success_threshold=args.success_threshold,
+            deep_success_threshold=args.deep_success_threshold,
+            max_median_train_auc_relative_diff=args.max_median_train_auc_relative_diff,
+            max_median_validation_auc_relative_diff=(
+                args.max_median_validation_auc_relative_diff
+            ),
+            max_median_min_validation_abs_increase=(
+                args.max_median_min_validation_abs_increase
+            ),
+            max_median_min_validation_relative_ratio=(
+                args.max_median_min_validation_relative_ratio
+            ),
+            max_median_grad_norm_ratio=args.max_median_grad_norm_ratio,
         )
         write_json_atomic(args.output, report)
         print(json.dumps(report, ensure_ascii=False))
