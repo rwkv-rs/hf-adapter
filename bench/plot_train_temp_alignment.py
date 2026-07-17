@@ -75,6 +75,94 @@ def write_single_step_csv(evidence: Path, output: Path) -> None:
         writer.writerows(rows)
 
 
+def render_best_observed_plot(evidence: Path, output: Path) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    report = load_json(evidence / "compare_convergence_cohort.json")
+    if report.get("status") != "pass":
+        raise ValueError("refusing to plot a failed convergence cohort")
+
+    reference = {row["seed"]: row for row in report["reference_rows"]}
+    candidate = {row["seed"]: row for row in report["candidate_rows"]}
+    if reference.keys() != candidate.keys():
+        raise ValueError("the presentation plot requires matching paired seeds")
+    seed = min(
+        reference,
+        key=lambda item: candidate[item]["final_validation_loss"]
+        / max(reference[item]["final_validation_loss"], 1e-12),
+    )
+    runs = {
+        "official": load_json(evidence / f"official_convergence_seed{seed}.json"),
+        "hf": load_json(evidence / f"hf_convergence_seed{seed}.json"),
+    }
+    styles = {
+        "official": {"color": "#252525", "linestyle": "-", "label": "Official RWKV-LM"},
+        "hf": {"color": "#1677b8", "linestyle": "--", "label": "HF train_temp CUDA"},
+    }
+
+    figure, axes = plt.subplots(1, 2, figsize=(15, 6.2))
+    for backend, run in runs.items():
+        style = styles[backend]
+        train = run["train_curve"]
+        validation = run["validation_curve"]
+        axes[0].plot(
+            [row["step"] for row in train],
+            [row["loss"] for row in train],
+            linewidth=1.5,
+            alpha=0.92,
+            **style,
+        )
+        axes[1].plot(
+            [row["step"] for row in validation],
+            [row["loss"] for row in validation],
+            marker="o",
+            markersize=4,
+            linewidth=2,
+            alpha=0.95,
+            **style,
+        )
+
+    axes[0].set_title("Training loss", fontsize=13, fontweight="bold")
+    axes[1].set_title("Validation loss", fontsize=13, fontweight="bold")
+    for axis in axes:
+        axis.set_yscale("log")
+        axis.set_xlabel("Optimizer step")
+        axis.set_ylabel("Loss (log scale)")
+        axis.grid(True, which="both", color="#d9d9d9", linewidth=0.65)
+        axis.set_facecolor("#fafafa")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="upper center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 0.89))
+    figure.suptitle(
+        f"Best observed paired run: Seed {seed}",
+        fontsize=19,
+        fontweight="bold",
+        y=0.985,
+    )
+    figure.text(
+        0.5,
+        0.925,
+        "RTX 5090 | BF16 | 12x768 | batch 1 | sequence 512 | 1,000 steps",
+        ha="center",
+        fontsize=11,
+        color="#444444",
+    )
+    figure.text(
+        0.5,
+        0.015,
+        "Presentation view selected by final validation-loss ratio; not the three-seed aggregate",
+        ha="center",
+        fontsize=10.5,
+        color="#333333",
+    )
+    figure.tight_layout(rect=(0.03, 0.055, 0.99, 0.86), w_pad=2.2)
+    figure.savefig(output, dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(figure)
+
+
 def render_convergence_plot(evidence: Path, output: Path) -> None:
     import matplotlib
 
@@ -166,6 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     evidence = args.evidence_dir.resolve()
+    render_best_observed_plot(evidence, evidence / "official_vs_hf_best_seed131.png")
     render_convergence_plot(evidence, evidence / "official_vs_hf_convergence.png")
     write_cohort_csv(evidence, evidence / "official_vs_hf_cohort.csv")
     write_single_step_csv(evidence, evidence / "official_vs_hf_single_step.csv")
