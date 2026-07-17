@@ -8,7 +8,7 @@ running the official and Hugging Face models on a GPU.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, Literal
 
 import torch
@@ -16,6 +16,73 @@ import torch.nn.functional as F
 
 
 ParameterNaming = Literal["official", "hf"]
+
+
+_HF_TOP_LEVEL_TO_OFFICIAL = {
+    "model.embeddings.weight": "emb.weight",
+    "model.norm.weight": "ln_out.weight",
+    "model.norm.bias": "ln_out.bias",
+    "lm_head.weight": "head.weight",
+}
+_HF_LAYER_MODULE_TO_OFFICIAL = {
+    "pre_norm": "ln0",
+    "attn_norm": "ln1",
+    "ffn_norm": "ln2",
+    "attn": "att",
+    "ffn": "ffn",
+}
+_HF_ATTN_PROJECTION_TO_OFFICIAL = {
+    "r_proj": "receptance",
+    "k_proj": "key",
+    "v_proj": "value",
+    "g_norm": "ln_x",
+    "o_proj": "output",
+}
+_HF_LORA_SLOT_TO_OFFICIAL = {
+    "2.bias": "0",
+    "0.weight": "1",
+    "2.weight": "2",
+}
+
+
+def train_temp_official_parameter_name(name: str, *, naming: ParameterNaming) -> str:
+    """Return the parameter's official train_temp optimizer-order name."""
+
+    if naming == "official":
+        return name
+    if naming != "hf":
+        raise ValueError(f"unsupported parameter naming: {naming!r}")
+    if name in _HF_TOP_LEVEL_TO_OFFICIAL:
+        return _HF_TOP_LEVEL_TO_OFFICIAL[name]
+
+    parts = name.split(".", 3)
+    if len(parts) != 4 or parts[0] != "model" or parts[1] != "layers":
+        raise KeyError(f"unexpected HF train_temp parameter name: {name}")
+    layer_idx = int(parts[2])
+    tail = parts[3]
+    layer_module, separator, field = tail.partition(".")
+    if not separator or layer_module not in _HF_LAYER_MODULE_TO_OFFICIAL:
+        raise KeyError(f"unexpected HF train_temp layer parameter name: {name}")
+    official_module = _HF_LAYER_MODULE_TO_OFFICIAL[layer_module]
+
+    if layer_module == "attn":
+        lora_parts = field.split(".")
+        if (
+            len(lora_parts) == 4
+            and lora_parts[0] in {"w_lora", "v_lora", "a_lora", "g_lora"}
+            and lora_parts[1] == "lora"
+        ):
+            slot = ".".join(lora_parts[2:])
+            if slot not in _HF_LORA_SLOT_TO_OFFICIAL:
+                raise KeyError(f"unexpected HF train_temp LoRA parameter name: {name}")
+            field = f"{lora_parts[0][0]}{_HF_LORA_SLOT_TO_OFFICIAL[slot]}"
+        else:
+            projection, dot, suffix = field.partition(".")
+            if projection in _HF_ATTN_PROJECTION_TO_OFFICIAL:
+                if not dot:
+                    raise KeyError(f"missing HF train_temp projection suffix: {name}")
+                field = f"{_HF_ATTN_PROJECTION_TO_OFFICIAL[projection]}.{suffix}"
+    return f"blocks.{layer_idx}.{official_module}.{field}"
 
 
 class _TrainTempL2Wrap(torch.autograd.Function):
@@ -103,6 +170,7 @@ def build_train_temp_param_groups(
     *,
     weight_decay: float,
     naming: ParameterNaming,
+    sort_key: Callable[[str], str] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify parameters using the official train_temp optimizer recipe."""
 
@@ -134,7 +202,10 @@ def build_train_temp_param_groups(
         ("lr_2x", 2.0, 0.0),
         ("decay", 1.0, float(weight_decay)),
     ):
-        entries = sorted(buckets[group_name], key=lambda item: item[0])
+        entries = sorted(
+            buckets[group_name],
+            key=lambda item: sort_key(item[0]) if sort_key is not None else item[0],
+        )
         if not entries:
             continue
         groups.append(
