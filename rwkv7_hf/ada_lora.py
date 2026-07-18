@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Optional sm_89 fused W/A/G/V low-rank decode kernels.
+"""Optional sm_89/sm_120 fused W/A/G/V low-rank decode kernels.
 
 The layer>0 RWKV-7 time-mix path contains four independent rank-in projections
 and four rank-out projections.  For one to four decode rows, launching each as
@@ -40,13 +40,14 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
     torch::Tensor wh, torch::Tensor ah, torch::Tensor gh, torch::Tensor vh,
     torch::Tensor w2, torch::Tensor a2, torch::Tensor g2, torch::Tensor v2,
     torch::Tensor w0, torch::Tensor a0, torch::Tensor v0,
-    torch::Tensor v, torch::Tensor v_first, bool sigmoid_a, bool compute_v);
+    torch::Tensor v, torch::Tensor v_first, bool sigmoid_a, bool compute_v,
+    bool add_bias);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("rank_in", &rwkv7_ada_wagv_rank_in_cuda,
-        "RWKV-7 sm_89 fused W/A/G/V rank-in");
+        "RWKV-7 small-row fused W/A/G/V rank-in");
   m.def("rank_out", &rwkv7_ada_wagv_rank_out_cuda,
-        "RWKV-7 sm_89 fused W/A/G/V rank-out and V interpolation");
+        "RWKV-7 small-row fused W/A/G/V rank-out and V interpolation");
 }
 """
 
@@ -198,7 +199,8 @@ __global__ __launch_bounds__(Threads, 2) void wagv_rank_out_kernel(
     scalar_t* __restrict__ a,
     scalar_t* __restrict__ g,
     scalar_t* __restrict__ v_out,
-    bool sigmoid_a) {
+    bool sigmoid_a,
+    bool add_bias) {
   const int hidden_start = blockIdx.x * OutTile;
   const int row = blockIdx.y;
   const int group = blockIdx.z;
@@ -259,9 +261,11 @@ __global__ __launch_bounds__(Threads, 2) void wagv_rank_out_kernel(
         }
         const int64_t index = static_cast<int64_t>(row) * hidden + hidden_index;
         if (group == 0) {
-          output[index] = store_float<scalar_t>(sum + load_float(w0 + hidden_index));
+          if (add_bias) sum += load_float(w0 + hidden_index);
+          output[index] = store_float<scalar_t>(sum);
         } else if (group == 1) {
-          float value = sum + load_float(a0 + hidden_index);
+          float value = sum;
+          if (add_bias) value += load_float(a0 + hidden_index);
           if (sigmoid_a) value = 1.0f / (1.0f + expf(-value));
           output[index] = store_float<scalar_t>(value);
         } else if (group == 3) {
@@ -356,7 +360,8 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
     torch::Tensor wh, torch::Tensor ah, torch::Tensor gh, torch::Tensor vh,
     torch::Tensor w2, torch::Tensor a2, torch::Tensor g2, torch::Tensor v2,
     torch::Tensor w0, torch::Tensor a0, torch::Tensor v0,
-    torch::Tensor v, torch::Tensor v_first, bool sigmoid_a, bool compute_v) {
+    torch::Tensor v, torch::Tensor v_first, bool sigmoid_a, bool compute_v,
+    bool add_bias) {
   check_tensor(wh, "wh"); check_tensor(ah, "ah");
   check_tensor(gh, "gh"); check_tensor(vh, "vh");
   check_tensor(w2, "w2"); check_tensor(a2, "a2");
@@ -412,7 +417,8 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
         reinterpret_cast<half*>(a.data_ptr<at::Half>()),
         reinterpret_cast<half*>(g.data_ptr<at::Half>()),
         reinterpret_cast<half*>(v_out.data_ptr<at::Half>()),
-        sigmoid_a);
+        sigmoid_a,
+        add_bias);
   } else {
     wagv_rank_out_kernel<nv_bfloat16, 128, 4><<<dim3(hidden / 4, rows, compute_v ? 4 : 3), 128, 0, stream>>>(
         rows, hidden, static_cast<int>(wh.size(1)), static_cast<int>(ah.size(1)),
@@ -434,7 +440,8 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
         reinterpret_cast<nv_bfloat16*>(a.data_ptr<at::BFloat16>()),
         reinterpret_cast<nv_bfloat16*>(g.data_ptr<at::BFloat16>()),
         reinterpret_cast<nv_bfloat16*>(v_out.data_ptr<at::BFloat16>()),
-        sigmoid_a);
+        sigmoid_a,
+        add_bias);
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {w, a, g, v_out};
@@ -447,13 +454,18 @@ _EXTENSION_ERROR: str | None = None
 _EXTENSION_LOCK = threading.Lock()
 
 
-def _is_sm89(device: Any = None) -> bool:
+def _is_small_row_cuda_device(device: Any = None) -> bool:
     if torch is None or not torch.cuda.is_available():
         return False
     try:
         resolved = torch.device("cuda" if device is None else device)
+        if resolved.type != "cuda":
+            return False
         index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
-        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) == (8, 9)
+        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) in {
+            (8, 9),
+            (12, 0),
+        }
     except Exception:
         return False
 
@@ -462,7 +474,7 @@ def _load_extension() -> Any | None:
     global _EXTENSION, _EXTENSION_ERROR
     if _EXTENSION is not None:
         return _EXTENSION
-    if _EXTENSION_ERROR is not None or torch is None or not _is_sm89():
+    if _EXTENSION_ERROR is not None or torch is None or not _is_small_row_cuda_device():
         return None
     with _EXTENSION_LOCK:
         if _EXTENSION is not None:
@@ -470,22 +482,43 @@ def _load_extension() -> Any | None:
         if _EXTENSION_ERROR is not None:
             return None
         try:
-            python_bin = str(Path(sys.executable).resolve().parent)
+            # Keep the virtualenv bin directory. Resolving the Python symlink
+            # can incorrectly replace it with /usr/bin and hide venv tools
+            # such as Ninja from torch.utils.cpp_extension.
+            python_bin = str(Path(sys.executable).absolute().parent)
             if python_bin not in os.environ.get("PATH", "").split(os.pathsep):
                 os.environ["PATH"] = python_bin + os.pathsep + os.environ.get("PATH", "")
             nvcc = Path(python_bin) / "nvcc"
             if nvcc.exists() and "CUDA_HOME" not in os.environ:
                 os.environ["CUDA_HOME"] = str(nvcc.parent.parent)
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.9")
+            capability = torch.cuda.get_device_capability()
+            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{capability[0]}.{capability[1]}")
+            runtime_lib = (
+                Path(sys.prefix)
+                / "lib"
+                / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                / "site-packages"
+                / "nvidia"
+                / "cuda_runtime"
+                / "lib"
+            )
+            extra_ldflags: list[str] = []
+            if runtime_lib.is_dir():
+                for variable in ("LIBRARY_PATH", "LD_LIBRARY_PATH"):
+                    items = os.environ.get(variable, "").split(os.pathsep)
+                    if str(runtime_lib) not in items:
+                        os.environ[variable] = str(runtime_lib) + os.pathsep + os.environ.get(variable, "")
+                extra_ldflags.append(f"-Wl,-rpath,{runtime_lib}")
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_ada_lora_v6",
+                name="rwkv7_ada_lora_v8",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
                 extra_cflags=["-O3"],
                 extra_cuda_cflags=["-O3", "--use_fast_math", "--extra-device-vectorization"],
+                extra_ldflags=extra_ldflags,
                 with_cuda=True,
                 verbose=os.environ.get("RWKV7_ADA_LORA_BUILD_VERBOSE", "0").lower()
                 in {"1", "true", "yes", "on"},
@@ -497,7 +530,7 @@ def _load_extension() -> Any | None:
 
 
 def ada_wagv_lora_available(device: Any = None, *, build: bool = False) -> bool:
-    if not _is_sm89(device):
+    if not _is_small_row_cuda_device(device):
         return False
     return _load_extension() is not None if build else True
 
@@ -571,7 +604,7 @@ def ada_wagv_lora(
         and tuple(g2.shape) == (hidden, int(g1.shape[0]))
         and tuple(v2.shape) == (hidden, int(v1.shape[0]))
         and all(int(item.numel()) == hidden for item in (w0, a0, v0))
-        and _is_sm89(xw2.device)
+        and _is_small_row_cuda_device(xw2.device)
     )
     extension = _load_extension() if valid else None
     if extension is None:
@@ -595,14 +628,100 @@ def ada_wagv_lora(
         )
         outputs = extension.rank_out(
             *hidden_states, w2, a2, g2, v2, w0, a0, v0, v_current, v_first2,
-            bool(sigmoid_a), bool(compute_v),
+            bool(sigmoid_a), bool(compute_v), True,
         )
     if scalar:
         return tuple(item.reshape(hidden) for item in outputs)  # type: ignore[return-value]
     return tuple(outputs)  # type: ignore[return-value]
 
 
+def ada_wag_lora(
+    xw: Any,
+    xa: Any,
+    xg: Any,
+    w1: Any,
+    a1: Any,
+    g1: Any,
+    w2: Any,
+    a2: Any,
+    g2: Any,
+    w0: Any,
+    a0: Any,
+    *,
+    force_fallback: bool = False,
+) -> tuple[Any, Any, Any]:
+    """Return W/A/G outputs while leaving the V gate on its normal path.
+
+    The small-row CUDA extension is used for rows 1..4. Larger batches retain
+    the grouped PyTorch formulation so callers can select one graph route for
+    both latency and throughput validation without extending the small-row
+    kernel beyond its measured range.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("ada_wag_lora requires torch")
+    scalar = xw.dim() == 1
+    xw2, xa2, xg2 = (
+        item.reshape(1, -1) if scalar else item for item in (xw, xa, xg)
+    )
+    rows, hidden = int(xw2.shape[0]), int(xw2.shape[1])
+    max_rank = max(int(item.shape[0]) for item in (w1, a1, g1))
+    tensors = [xw2, xa2, xg2, w1, a1, g1, w2, a2, g2, w0, a0]
+    valid = bool(
+        not force_fallback
+        and not torch.is_grad_enabled()
+        and ada_wagv_lora_should_use(rows, hidden, max_rank)
+        and xw2.dtype in {torch.float16, torch.bfloat16}
+        and all(
+            item.is_cuda and item.dtype == xw2.dtype and item.is_contiguous()
+            for item in tensors
+        )
+        and tuple(xa2.shape) == tuple(xw2.shape)
+        and tuple(xg2.shape) == tuple(xw2.shape)
+        and all(int(item.shape[1]) == hidden for item in (w1, a1, g1))
+        and tuple(w2.shape) == (hidden, int(w1.shape[0]))
+        and tuple(a2.shape) == (hidden, int(a1.shape[0]))
+        and tuple(g2.shape) == (hidden, int(g1.shape[0]))
+        and int(w0.numel()) == hidden
+        and int(a0.numel()) == hidden
+        and _is_small_row_cuda_device(xw2.device)
+    )
+    extension = _load_extension() if valid else None
+    if extension is None:
+        outputs = (
+            F.linear(torch.tanh(F.linear(xw2, w1)), w2, w0),
+            F.linear(F.linear(xa2, a1), a2, a0),
+            F.linear(torch.sigmoid(F.linear(xg2, g1)), g2),
+        )
+    else:
+        hidden_states = extension.rank_in(
+            xw2, xa2, xg2, xg2, w1, a1, g1, g1, False
+        )
+        w, a, g, _unused_v = extension.rank_out(
+            *hidden_states,
+            w2,
+            a2,
+            g2,
+            g2,
+            w0,
+            a0,
+            a0,
+            xg2,
+            xg2,
+            False,
+            False,
+            False,
+        )
+        # Match the official two-stage WAG boundary exactly: rank-out rounds to
+        # the model dtype first, then the W/A biases are added pointwise.
+        outputs = (w + w0, a + a0, g)
+    if scalar:
+        return tuple(item.reshape(hidden) for item in outputs)  # type: ignore[return-value]
+    return tuple(outputs)  # type: ignore[return-value]
+
+
 __all__ = [
+    "ada_wag_lora",
     "ada_wagv_lora",
     "ada_wagv_lora_available",
     "ada_wagv_lora_build_error",

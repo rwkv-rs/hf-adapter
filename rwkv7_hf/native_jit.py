@@ -602,6 +602,7 @@ try:  # pragma: no cover - optional sm_89 sparse FFN contraction
         ada_linear_should_use,
         ada_sparse_ffn_down_add,
         ada_sparse_ffn_pack_weight,
+        ada_sparse_ffn_prepare_fp32_scratch,
         ada_sparse_ffn_should_use,
     )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
@@ -612,6 +613,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             ada_linear_should_use,
             ada_sparse_ffn_down_add,
             ada_sparse_ffn_pack_weight,
+            ada_sparse_ffn_prepare_fp32_scratch,
             ada_sparse_ffn_should_use,
         )
     except Exception:
@@ -620,15 +622,28 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_linear_should_use = None  # type: ignore[assignment]
         ada_sparse_ffn_down_add = None  # type: ignore[assignment]
         ada_sparse_ffn_pack_weight = None  # type: ignore[assignment]
+        ada_sparse_ffn_prepare_fp32_scratch = None  # type: ignore[assignment]
         ada_sparse_ffn_should_use = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional sm_89 grouped W/A/G/V LoRA
-    from .ada_lora import ada_wagv_lora, ada_wagv_lora_should_use
+try:  # pragma: no cover - optional sm_89/sm_120 grouped W/A/G/V LoRA
+    from .ada_lora import (
+        ada_wag_lora,
+        ada_wagv_lora,
+        ada_wagv_lora_available,
+        ada_wagv_lora_should_use,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from ada_lora import ada_wagv_lora, ada_wagv_lora_should_use
+        from ada_lora import (
+            ada_wag_lora,
+            ada_wagv_lora,
+            ada_wagv_lora_available,
+            ada_wagv_lora_should_use,
+        )
     except Exception:
+        ada_wag_lora = None  # type: ignore[assignment]
         ada_wagv_lora = None  # type: ignore[assignment]
+        ada_wagv_lora_available = None  # type: ignore[assignment]
         ada_wagv_lora_should_use = None  # type: ignore[assignment]
 
 
@@ -1665,6 +1680,19 @@ def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: i
     )
 
 
+def _native_graph_ada_wag_lora_enabled() -> bool:
+    """Whether the exact-card W/A/G-only low-rank route may be captured."""
+
+    if not env_flag("RWKV7_NATIVE_GRAPH_ADA_WAG_LORA", False):
+        return False
+    if ada_wag_lora is None or ada_wagv_lora_available is None:
+        return False
+    try:
+        return bool(ada_wagv_lora_available())
+    except Exception:
+        return False
+
+
 def _native_graph_linear_dispatch(x: torch.Tensor, weight, *, role: str) -> torch.Tensor:
     """Dispatch dense or native-quantized linears during graph capture."""
 
@@ -1823,6 +1851,11 @@ def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
         if not ada_sparse_ffn_should_use(1, outputs, inputs):
             continue
         ada_sparse_ffn_pack_weight(down_weight, cache_tag=int(rows))
+        if (
+            env_flag("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM", False)
+            and ada_sparse_ffn_prepare_fp32_scratch is not None
+        ):
+            ada_sparse_ffn_prepare_fp32_scratch(down_weight, int(rows))
         packed += 1
     return packed
 
@@ -3176,6 +3209,12 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
             w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
         )
+    elif equal_width and lora_dense and _native_graph_ada_wag_lora_enabled():
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
+        w, a, g = ada_wag_lora(
+            xw, xa, xg, w1, a1, g1, w2, a2, g2, w0, a0,
+        )
+        a = torch.sigmoid(a)
     elif equal_width and i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(1, D):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
         w, a, g, v = sm70_wagv_lora(
@@ -3454,6 +3493,12 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
             w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
         )
+    elif equal_width and lora_dense and _native_graph_ada_wag_lora_enabled():
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
+        w, a, g = ada_wag_lora(
+            xw, xa, xg, w1, a1, g1, w2, a2, g2, w0, a0,
+        )
+        a = torch.sigmoid(a)
     elif equal_width and i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(B, D):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
         w, a, g, v = sm70_wagv_lora(

@@ -1241,6 +1241,11 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         """Return the backend used by the previous native-model prefill call."""
         return getattr(self, "_rwkv7_native_model_last_prefill_backend", None)
 
+    def rwkv7_last_fast_token_backend(self) -> str | None:
+        """Return the backend selected by the previous fast-token call."""
+
+        return self.rwkv7_native_model_last_decode_backend()
+
     def _native_prefill_can_run(
         self,
         input_ids: torch.Tensor | None,
@@ -1461,6 +1466,83 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 chosen = "eager"
             warmed[batch_size] = chosen
         return warmed
+
+    @torch.inference_mode()
+    def rwkv7_forward_token(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: NativeRWKV7Cache | tuple | list | None = None,
+        return_dict: bool | None = True,
+        *,
+        copy_logits: bool = True,
+    ):
+        """Decode one token per sequence through the canonical native backend.
+
+        ``copy_logits=False`` exposes the CUDA-graph output buffer directly for
+        serving loops that consume logits before the next replay. The default
+        returns an owning tensor and preserves ordinary HF output semantics.
+        """
+
+        if self.training:
+            raise RuntimeError("rwkv7_forward_token is inference-only; call model.eval() first")
+        if input_ids.dim() == 1:
+            token_ids = input_ids.reshape(-1, 1)
+        elif input_ids.dim() == 2 and int(input_ids.shape[1]) == 1:
+            token_ids = input_ids
+        else:
+            raise ValueError("rwkv7_forward_token expects input_ids shaped [batch] or [batch, 1]")
+        if int(token_ids.shape[0]) == 0:
+            raise ValueError("rwkv7_forward_token requires a non-empty batch")
+
+        cache = past_key_values
+        if cache is not None and not isinstance(cache, NativeRWKV7Cache):
+            cache = NativeRWKV7Cache.from_legacy_cache(cache)
+        if (
+            isinstance(cache, NativeRWKV7Cache)
+            and self._native_graph_can_run(
+                token_ids,
+                cache,
+                attention_mask=None,
+                output_hidden_states=False,
+            )
+        ):
+            runner = self._native_graph_runner(int(token_ids.shape[0]))
+            logits = runner.replay(token_ids, cache, copy_logits=bool(copy_logits))
+            cache.seen_tokens = _cache_seen(cache) + 1
+            self._rwkv7_native_model_last_decode_backend = "native_graph"
+            if not return_dict:
+                return logits, cache
+            return CausalLMOutputWithPast(logits=logits, past_key_values=cache)
+
+        result = self(
+            token_ids,
+            past_key_values=cache,
+            use_cache=True,
+            logits_to_keep=1,
+            return_dict=return_dict,
+        )
+        return result
+
+    @torch.inference_mode()
+    def rwkv7_forward_one(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: NativeRWKV7Cache | tuple | list | None = None,
+        return_dict: bool | None = True,
+        *,
+        copy_logits: bool = True,
+    ):
+        """Backward-compatible batch-one alias for ``rwkv7_forward_token``."""
+
+        batch_size = 1 if input_ids.dim() == 1 and input_ids.numel() == 1 else int(input_ids.shape[0])
+        if batch_size != 1:
+            raise ValueError("rwkv7_forward_one expects batch size 1")
+        return self.rwkv7_forward_token(
+            input_ids,
+            past_key_values=past_key_values,
+            return_dict=return_dict,
+            copy_logits=copy_logits,
+        )
 
     def _native_model_quantized(self) -> bool:
         """True if layer projections were replaced by quantized modules.
