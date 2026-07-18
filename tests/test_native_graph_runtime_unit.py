@@ -115,7 +115,7 @@ def test_allocated_zero_length_cache_is_initialized_without_history() -> None:
         seen_tokens=0,
     )
 
-    assert cache.is_initialized() is True
+    assert cache.is_initialized is True
     assert cache.has_previous_state() is False
     cache.seen_tokens = 1
     assert cache.has_previous_state() is True
