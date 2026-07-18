@@ -12,6 +12,7 @@ htmlcov/
 
 # Virtualenvs
 .venv/
+.venv-cpu-demo/
 venv/
 env/
 

@@ -14,6 +14,7 @@ For normal inference, start here instead of the benchmark sections below:
 
 - [English step-by-step guide](docs/USER_GUIDE.md)
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
+- [Windows and CPU inference/tiny-training demo](docs/WINDOWS_CPU.md)
 - [唯一 AI 操作入口：安装、推理、训练、量化与多卡](docs/AI_ASSISTED_SETUP.md)
 - [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md)
@@ -21,7 +22,8 @@ For normal inference, start here instead of the benchmark sections below:
 - [Run the official RWKV-Gradio-3 UI with Native HF](docs/GRADIO_NATIVE_HF.md)
 
 After first generation, use the complete index to find copyable tutorials for
-conversion and cache workflows, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
+conversion and cache workflows, Windows/CPU inference and tiny training,
+PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
 speculative decoding, and multi-GPU execution. Each tutorial provides an
 observable PASS gate, recovery steps, and guidance for choosing a suitable
 model and device route.
