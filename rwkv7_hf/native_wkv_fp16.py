@@ -29,9 +29,16 @@ torch::Tensor rwkv7_native_fp16_recurrent_output_raw_cuda(
     torch::Tensor norm_weight, torch::Tensor norm_bias,
     torch::Tensor elapsed, bool advance_elapsed, double eps);
 
+torch::Tensor rwkv7_native_fp16_sequence_cuda(
+    torch::Tensor r, torch::Tensor w, torch::Tensor k, torch::Tensor v,
+    torch::Tensor neg_kk, torch::Tensor kka, torch::Tensor state,
+    torch::Tensor elapsed, torch::Tensor w0, bool add_w0);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("recurrent_output_raw", &rwkv7_native_fp16_recurrent_output_raw_cuda,
         "RWKV-7 native FP16-state recurrent update and output preparation");
+  m.def("sequence", &rwkv7_native_fp16_sequence_cuda,
+        "RWKV-7 native FP16-state sequence recurrence");
 }
 """
 
@@ -89,6 +96,76 @@ __device__ __forceinline__ half w_delta(half w_raw, int phase) {
   const float d = exp2f(NEXP_HALF_LOG2_E / (1.0f + exp2f(NLOG2_E * w)))
                   - 1.0f + rotator1(phase);
   return __float2half_rn(d);
+}
+
+template <bool AddW0>
+__device__ __forceinline__ half w_delta_maybe_w0(
+    half w_raw, const half* __restrict__ w0_ptr, int channel, int phase) {
+  float value = __half2float(w_raw);
+  if constexpr (AddW0) value += __half2float(w0_ptr[channel]);
+  const float d = exp2f(NEXP_HALF_LOG2_E / (1.0f + exp2f(NLOG2_E * value)))
+                  - 1.0f + rotator1(phase);
+  return __float2half_rn(d);
+}
+
+template <int Bytes>
+__device__ __forceinline__ void sequence_cp_async(
+    void* shared_ptr, const void* global_ptr, bool predicate) {
+  static_assert(Bytes == 4, "the sequence kernel copies one half2 per lane");
+#if __CUDA_ARCH__ >= 800
+  const int source_bytes = predicate ? Bytes : 0;
+  const unsigned int shared_address = __cvta_generic_to_shared(shared_ptr);
+  asm volatile(
+      "cp.async.ca.shared.global [%0], [%1], %2, %3;"
+      :: "r"(shared_address), "l"(global_ptr), "n"(Bytes), "r"(source_bytes));
+#else
+  *reinterpret_cast<half2*>(shared_ptr) = predicate
+      ? *reinterpret_cast<const half2*>(global_ptr)
+      : __float2half2_rn(0.0f);
+#endif
+}
+
+__device__ __forceinline__ void sequence_cp_commit() {
+#if __CUDA_ARCH__ >= 800
+  asm volatile("cp.async.commit_group;\n" ::);
+#endif
+}
+
+__device__ __forceinline__ void sequence_cp_wait() {
+#if __CUDA_ARCH__ >= 800
+  asm volatile("cp.async.wait_all;\n" ::);
+#endif
+}
+
+__device__ __forceinline__ void sequence_prefetch_token(
+    int thread_id,
+    int lane,
+    int token,
+    half2* r,
+    half2* w,
+    half2* k,
+    half2* neg_kk,
+    half2* kka,
+    half2* dummy,
+    const half* r_ptr,
+    const half* w_ptr,
+    const half* k_ptr,
+    const half* neg_kk_ptr,
+    const half* kka_ptr) {
+  sequence_cp_async<4>(
+      (thread_id < 32 ? w : neg_kk) + lane,
+      reinterpret_cast<const half2*>(thread_id < 32 ? w_ptr + token : neg_kk_ptr + token) + lane,
+      true);
+  sequence_cp_commit();
+  sequence_cp_async<4>(
+      (thread_id < 32 ? r : k) + lane,
+      reinterpret_cast<const half2*>(thread_id < 32 ? r_ptr + token : k_ptr + token) + lane,
+      true);
+  sequence_cp_async<4>(
+      (thread_id < 32 ? kka : dummy) + lane,
+      reinterpret_cast<const half2*>(kka_ptr + token) + lane,
+      thread_id < 32);
+  sequence_cp_commit();
 }
 
 __global__ __launch_bounds__(N, 2) void native_fp16_recurrent_output_raw_kernel(
@@ -226,6 +303,125 @@ __global__ __launch_bounds__(N, 2) void native_fp16_recurrent_output_raw_kernel(
   if (advance_elapsed && h == 0 && i == 0) elapsed_ptr[b] += 1;
 }
 
+template <bool AddW0>
+__global__ __launch_bounds__(N, 2) void native_fp16_sequence_kernel(
+    int T,
+    int C,
+    int H,
+    half* __restrict__ state_ptr,
+    const half* __restrict__ r_ptr,
+    const half* __restrict__ w_ptr,
+    const half* __restrict__ w0_ptr,
+    const half* __restrict__ k_ptr,
+    const half* __restrict__ v_ptr,
+    const half* __restrict__ neg_kk_ptr,
+    const half* __restrict__ kka_ptr,
+    half* __restrict__ output_ptr,
+    const int* __restrict__ elapsed_ptr) {
+  const int bh = blockIdx.x;
+  const int batch = bh / H;
+  const int head = bh - batch * H;
+  const int i = threadIdx.x;
+  const int lane = i & 31;
+
+  __shared__ __align__(256) half2 state_smem[N][HALF2_N];
+  half* state_base = state_ptr
+      + static_cast<int64_t>(batch) * C * N
+      + head * N * N;
+
+  #pragma unroll
+  for (int j0 = 0; j0 < N / LDG_ELEMS; ++j0) {
+    const int4 state_vec = reinterpret_cast<int4*>(state_base)[j0 * N + i];
+    #pragma unroll
+    for (int j1 = 0; j1 < LDG_ELEMS / 2; ++j1) {
+      const int row = j0 * LDG_ELEMS + i * LDG_ELEMS / N;
+      const int col = i * LDG_ELEMS % N / 2 + j1;
+      state_smem[row][(row & 31) ^ col] =
+          reinterpret_cast<const half2*>(&state_vec)[j1];
+    }
+  }
+  __syncthreads();
+
+  half2 state[HALF2_N];
+  #pragma unroll
+  for (int j = 0; j < HALF2_N; ++j) state[j] = state_smem[i][lane ^ j];
+
+  __shared__ __align__(128) half2 r[2][HALF2_N];
+  __shared__ __align__(128) half2 w[2][HALF2_N];
+  __shared__ __align__(128) half2 k[2][HALF2_N];
+  __shared__ __align__(128) half2 neg_kk[2][HALF2_N];
+  __shared__ __align__(128) half2 kka[2][HALF2_N];
+  __shared__ __align__(128) half2 dummy[HALF2_N];
+
+  int token = (batch * T) * C + head * N;
+  sequence_prefetch_token(
+      i, lane, token, r[0], w[0], k[0], neg_kk[0], kka[0], dummy,
+      r_ptr, w_ptr, k_ptr, neg_kk_ptr, kka_ptr);
+
+  for (int tt = 0; tt < T; ++tt) {
+    const int current = tt & 1;
+    sequence_cp_wait();
+    __syncthreads();
+
+    half2 state_a = __float2half2_rn(0.0f);
+    #pragma unroll
+    for (int j = 0; j < HALF2_N; ++j) {
+      state_a = __hfma2(neg_kk[current][j], state[j], state_a);
+    }
+    const half state_a_sum = __hadd(state_a.x, state_a.y);
+    const half2 state_a_broadcast = __halves2half2(state_a_sum, state_a_sum);
+    reinterpret_cast<half*>(w[current])[i] = w_delta_maybe_w0<AddW0>(
+        reinterpret_cast<half*>(w[current])[i],
+        w0_ptr,
+        head * N + i,
+        elapsed_ptr[batch] + head * N + i + tt);
+    __syncthreads();
+
+    if (tt + 1 < T) {
+      sequence_prefetch_token(
+          i, lane, token + C,
+          r[current ^ 1], w[current ^ 1], k[current ^ 1],
+          neg_kk[current ^ 1], kka[current ^ 1], dummy,
+          r_ptr, w_ptr, k_ptr, neg_kk_ptr, kka_ptr);
+    }
+
+    const half value = v_ptr[token + i];
+    const half2 value2 = __halves2half2(value, value);
+    half2 output2 = __float2half2_rn(0.0f);
+    #pragma unroll
+    for (int j = 0; j < HALF2_N; ++j) {
+      half2 updated = state[j];
+      updated = __hfma2(
+          updated,
+          w[current][j],
+          __hfma2(
+              k[current][j],
+              value2,
+              __hfma2(state_a_broadcast, kka[current][j], updated)));
+      state[j] = updated;
+      output2 = __hfma2(updated, r[current][j], output2);
+    }
+    output_ptr[token + i] = __hadd(output2.x, output2.y);
+    token += C;
+  }
+
+  #pragma unroll
+  for (int j = 0; j < HALF2_N; ++j) state_smem[i][lane ^ j] = state[j];
+  __syncthreads();
+  #pragma unroll
+  for (int j0 = 0; j0 < N / LDG_ELEMS; ++j0) {
+    int4 state_vec;
+    #pragma unroll
+    for (int j1 = 0; j1 < LDG_ELEMS / 2; ++j1) {
+      const int row = j0 * LDG_ELEMS + i * LDG_ELEMS / N;
+      const int col = i * LDG_ELEMS % N / 2 + j1;
+      reinterpret_cast<half2*>(&state_vec)[j1] =
+          state_smem[row][(row & 31) ^ col];
+    }
+    reinterpret_cast<int4*>(state_base)[j0 * N + i] = state_vec;
+  }
+}
+
 void check_half_cuda(const torch::Tensor& tensor, const char* name) {
   TORCH_CHECK(tensor.is_cuda(), name, " must be CUDA");
   TORCH_CHECK(tensor.scalar_type() == at::kHalf, name, " must be fp16");
@@ -290,6 +486,74 @@ torch::Tensor rwkv7_native_fp16_recurrent_output_raw_cuda(
       reinterpret_cast<half*>(output.data_ptr<at::Half>()),
       advance_elapsed,
       static_cast<float>(eps));
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
+}
+
+torch::Tensor rwkv7_native_fp16_sequence_cuda(
+    torch::Tensor r, torch::Tensor w, torch::Tensor k, torch::Tensor v,
+    torch::Tensor neg_kk, torch::Tensor kka, torch::Tensor state,
+    torch::Tensor elapsed, torch::Tensor w0, bool add_w0) {
+  check_half_cuda(r, "r");
+  check_half_cuda(w, "w");
+  check_half_cuda(k, "k");
+  check_half_cuda(v, "v");
+  check_half_cuda(neg_kk, "neg_kk");
+  check_half_cuda(kka, "kka");
+  check_half_cuda(state, "state");
+  TORCH_CHECK(r.dim() == 4 && r.size(3) == N, "r must be [B,T,H,64]");
+  TORCH_CHECK(state.dim() == 4 && state.size(2) == N && state.size(3) == N,
+              "state must be [B,H,64,64]");
+  const int B = static_cast<int>(r.size(0));
+  const int T = static_cast<int>(r.size(1));
+  const int H = static_cast<int>(r.size(2));
+  const int C = H * N;
+  TORCH_CHECK(T > 0, "sequence requires at least one token");
+  TORCH_CHECK(state.size(0) == B && state.size(1) == H,
+              "state batch/head shape does not match sequence");
+  TORCH_CHECK(w.sizes() == r.sizes(), "w shape must match r");
+  TORCH_CHECK(k.sizes() == r.sizes(), "k shape must match r");
+  TORCH_CHECK(v.sizes() == r.sizes(), "v shape must match r");
+  TORCH_CHECK(neg_kk.sizes() == r.sizes(), "neg_kk shape must match r");
+  TORCH_CHECK(kka.sizes() == r.sizes(), "kka shape must match r");
+  TORCH_CHECK(elapsed.is_cuda() && elapsed.scalar_type() == at::kInt
+              && elapsed.is_contiguous() && elapsed.numel() == B,
+              "elapsed must be contiguous CUDA int32 [B]");
+  if (add_w0) {
+    check_half_cuda(w0, "w0");
+    TORCH_CHECK(w0.numel() == C, "w0 must have H*64 elements");
+  }
+
+  c10::cuda::CUDAGuard guard(r.device());
+  auto output = torch::empty_like(r);
+  auto stream = at::cuda::getCurrentCUDAStream(r.get_device());
+  if (add_w0) {
+    native_fp16_sequence_kernel<true><<<B * H, N, 0, stream>>>(
+        T, C, H,
+        reinterpret_cast<half*>(state.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(r.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(w.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(w0.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(k.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(v.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(neg_kk.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(kka.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        elapsed.data_ptr<int>());
+  } else {
+    native_fp16_sequence_kernel<false><<<B * H, N, 0, stream>>>(
+        T, C, H,
+        reinterpret_cast<half*>(state.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(r.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(w.data_ptr<at::Half>()),
+        nullptr,
+        reinterpret_cast<const half*>(k.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(v.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(neg_kk.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(kka.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        elapsed.data_ptr<int>());
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
 }
@@ -362,13 +626,16 @@ def _load_extension() -> Any | None:
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_native_wkv_fp16_v4",
+                name="rwkv7_native_wkv_fp16_v7",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
                 extra_cflags=["-O3"],
                 extra_cuda_cflags=[
                     "-O3",
+                    # This path is promoted only behind model-level FP16-state
+                    # logits, recurrent-state and greedy-token gates. Fast
+                    # exp2 is the measured long-prefill speed win for this route.
                     "--use_fast_math",
                     "--extra-device-vectorization",
                 ],
@@ -473,9 +740,78 @@ def native_fp16_recurrent_output_prepare_raw(
     )
 
 
+def native_fp16_sequence(
+    r: Any,
+    w: Any,
+    k: Any,
+    v: Any,
+    neg_kk: Any,
+    kka: Any,
+    state: Any,
+    elapsed: Any,
+    *,
+    w0: Any | None = None,
+) -> Any:
+    """Run the official-order FP16 recurrent scan over ``[B,T,H,64]``.
+
+    ``w0`` is supplied separately for the official short-sequence path. Long
+    prompts pass an already rounded ``w + w0`` tensor and leave it unset.
+    State is updated in place and the returned sequence uses the same layout as
+    the input projections.
+    """
+
+    if torch is None:
+        raise RuntimeError("native FP16 sequence recurrence requires torch")
+    if state.dim() != 4 or r.dim() != 4:
+        raise ValueError("state and sequence tensors must be rank four")
+    if not native_fp16_recurrent_should_use(
+        state_dtype=state.dtype,
+        input_dtype=r.dtype,
+        head_dim=int(state.shape[-1]),
+    ):
+        raise ValueError("native FP16 sequence received an unsupported dtype or shape")
+    extension = _load_extension()
+    if extension is None:
+        raise RuntimeError(
+            "native FP16 sequence extension is unavailable: "
+            f"{native_fp16_recurrent_build_error()}"
+        )
+    tensors = (r, w, k, v, neg_kk, kka, state)
+    if not all(
+        item.is_cuda and item.dtype == torch.float16 and item.is_contiguous()
+        for item in tensors
+    ):
+        raise ValueError("native FP16 sequence requires contiguous CUDA fp16 tensors")
+    if not (
+        elapsed.is_cuda
+        and elapsed.dtype == torch.int32
+        and elapsed.is_contiguous()
+        and int(elapsed.numel()) == int(r.shape[0])
+    ):
+        raise ValueError("elapsed must be a contiguous CUDA int32 [B] tensor")
+    add_w0 = w0 is not None
+    if w0 is None:
+        w0 = torch.empty(0, device=r.device, dtype=torch.float16)
+    elif not (w0.is_cuda and w0.dtype == torch.float16 and w0.is_contiguous()):
+        raise ValueError("w0 must be contiguous CUDA fp16")
+    return extension.sequence(
+        r,
+        w,
+        k,
+        v,
+        neg_kk,
+        kka,
+        state,
+        elapsed,
+        w0,
+        bool(add_w0),
+    )
+
+
 __all__ = [
     "native_fp16_recurrent_available",
     "native_fp16_recurrent_build_error",
     "native_fp16_recurrent_output_prepare_raw",
     "native_fp16_recurrent_should_use",
+    "native_fp16_sequence",
 ]

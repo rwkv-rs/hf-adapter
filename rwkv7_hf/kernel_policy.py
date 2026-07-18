@@ -119,6 +119,7 @@ class KernelPolicy:
     prefill_sequence_ffn_large_blocks: tuple[int, int, int, int, int] = (128, 128, 32, 64, 8)
     prefill_sequence_ffn_num_stages: int = 3
     prefill_sequence_ffn_num_warps: int = 4
+    prefill_fp16_accum_ffn_key_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     fused_recurrent_output: bool = False
     fused_recurrent_raw: bool = False
     fused_output: bool = False
@@ -736,6 +737,12 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_sequence_ffn_large_blocks=(64, 128, 32, 64, 8),
             prefill_sequence_ffn_num_stages=3,
             prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
+            # RTX 5090 / g1h-7.2B / B8 / P128: limiting reduced-precision
+            # accumulation to the FFN key GEMM keeps the strict official
+            # FP16-state tensor gates while closing the final prefill gap.
+            prefill_fp16_accum_ffn_key_model_shapes=(
+                (4096, 32, 8, 128),
+            ) if is_5090 else (),
             marlin_w4_ffn_shapes=(
                 (8192, 2048),
                 (2048, 8192),
@@ -751,7 +758,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 selects stacked R/K/V only; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 uses an exact-shape FFN-key FP16-accumulation route validated against official FP16-state tensors; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 
