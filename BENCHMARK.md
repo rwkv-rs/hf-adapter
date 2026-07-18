@@ -36,7 +36,7 @@ Status vocabulary:
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
 | RTX 5090 | official train_temp vs opt-in HF train_temp CUDA, 12x768 BF16, B1/T512 | backward 400/400 and FusedAdam step 800 tensors/deltas exactly match; 3-seed x 1,000-step cohort passes | median runtime 48.4061 s official vs 43.5184 s HF; candidate 10.10% lower in this synthetic cohort | **PASS exact lane** |
 | RTX 5090 | official train_temp vs Native/no-FLA train_temp CUDA, 12x768 BF16, B16/T512 | 399/399 gradients and 399/399 parameter deltas exact; 3-seed x 1,000-step, 500+500 resume and steady-memory gates pass | median runtime `82.3114s` official vs `86.6517s` Native; Native throughput `0.9499x` | **PASS alignment; performance partial** |
-| RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, g1h 7.2B FP16, B1/B8 | real browser generation and same-prompt output smoke pass; fastest sparse direct greedy is only 6/8 | Native `95.2/651.7 tok/s` vs v3a `138.8/841.7`; Native process memory is higher | **PARTIAL; sparse opt-in** |
+| RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, g1h 7.2B FP16 weights + FP32 state, B1/B8 | extensions active; three 512-token repeats share one trace hash; min logits cosine `0.99999344`, top-1 `64/64` and `512/512` | Native median `145.06/845.57 tok/s` vs precision-matched v3a `144.47/841.77`, or `1.0041x/1.0045x` | **PASS precision-matched exact lane; opt-in** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
 ## RTX 5090 official train_temp alignment
@@ -75,9 +75,34 @@ Evidence:
 The unchanged official `demo-training-prepare.sh` and
 `demo-training-run.sh` entry points also pass a bounded B16/T512/ZeRO-2 run on
 the same card. The Native equivalent reports finite `399/399` ZeRO gradients
-and a changed model hash. The same artifact records a real Gradio Native HF
-page and its strict performance gap to official v3a:
+and a changed model hash. The same artifact records the original real Gradio
+Native HF page and official shell validation. Its direct-decode numbers are
+historical; the newer precision-matched fused close is recorded separately:
 [`bench/5090_native_hf_gradio_train_temp_20260718/`](bench/5090_native_hf_gradio_train_temp_20260718/README.md).
+
+## RTX 5090 Native cached-decode parity
+
+Implementation commit `cf42c0e` adds a public Native fast-token path that can
+borrow the CUDA-graph logits buffer for immediate consumption, FP32 sparse-FFN
+accumulation, SM120 W/A/G low-rank grouping, and fail-closed extension checks.
+The exact-card candidate keeps every new route opt-in.
+
+On official g1h 7.2B with FP16 weights and FP32 recurrent state, three fresh
+512-token process repeats produce B1/B8 medians of `145.06/845.57 tok/s`.
+The official Space commit `cc57df4` in matching `fp32io16` mode measures
+`144.47/841.77 tok/s`, so the ratios are `1.0041x/1.0045x`. Both requested
+CUDA extensions are active in all six rows. All rows share the same complete
+greedy-trace SHA256. The repository alignment script passes 64 teacher-forced
+steps with minimum logits cosine `0.9999934435`, max absolute difference
+`0.0625`, and exact top-1 at B1 and B8.
+
+The official lower-precision fp16-state route remains faster at
+`146.28/890.21 tok/s`; Native is `0.9917x/0.9499x` of that reference. The
+official harness reports static T1 graph p50, while the Native loop includes
+autoregressive argmax and GPU trace copies, so the raw timing boundaries are
+retained in the artifact. This is an exact RTX 5090/7.2B/T1 decode close, not a
+prefill, memory-parity, other-model, or other-card claim. Evidence:
+[`bench/5090_native_decode_fused_20260718/`](bench/5090_native_decode_fused_20260718/README.md).
 
 ## V100 production-close
 

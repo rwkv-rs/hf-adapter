@@ -1,0 +1,94 @@
+{
+  "date": "2026-07-18",
+  "status": "pass_exact_card_precision_matched",
+  "implementation_commit": "cf42c0e43777e4767b70c1cd0f2605c284bb8224",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120",
+    "driver": "595.58.03",
+    "nvidia_smi_cuda": "13.2",
+    "torch": "2.11.0+cu128",
+    "torch_cuda": "12.8",
+    "transformers": "5.12.1",
+    "triton": "3.6.0",
+    "python": "3.10.12"
+  },
+  "model": {
+    "checkpoint": "rwkv7-g1h-7.2b-20260710-ctx10240.pth",
+    "checkpoint_bytes": 14400007869,
+    "weights_dtype": "fp16",
+    "recurrent_state_dtype": "fp32",
+    "hidden_size": 4096,
+    "layers": 32,
+    "heads": 64,
+    "head_dim": 64
+  },
+  "native_candidate": {
+    "api": "NativeRWKV7ForCausalLM.rwkv7_forward_token(copy_logits=False)",
+    "backend": "native_graph",
+    "prompt_tokens": 8,
+    "decode_steps": 512,
+    "warmup_steps": 5,
+    "process_repeats": 3,
+    "extensions_active_in_all_rows": true,
+    "greedy_trace_sha256": "d70d6c1a89e682ae573f3ecc471eb65d5d2b3c1e90709d2445968808a8339c93",
+    "batch_1": {
+      "tokps": [145.08, 145.03, 145.06],
+      "median_tokps": 145.06,
+      "median_ms": 6.8936,
+      "peak_allocated_mib": 17922.8
+    },
+    "batch_8": {
+      "tokps": [846.35, 845.57, 845.45],
+      "median_tokps": 845.57,
+      "median_ms": 9.4611,
+      "peak_allocated_mib": 22497.2
+    }
+  },
+  "official_reference": {
+    "source": "https://huggingface.co/spaces/BlinkDL/RWKV-Gradio-3",
+    "commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+    "license": "apache-2.0",
+    "fp32io16_state": {
+      "batch_1_tokps": 144.47393,
+      "batch_8_tokps": 841.769281
+    },
+    "fp16_state": {
+      "batch_1_tokps": 146.277184,
+      "batch_8_tokps": 890.210359
+    }
+  },
+  "performance_ratios": {
+    "native_over_official_fp32io16_batch_1": 1.00405658,
+    "native_over_official_fp32io16_batch_8": 1.00451516,
+    "native_over_official_fp16_state_batch_1": 0.99167892,
+    "native_over_official_fp16_state_batch_8": 0.94985415
+  },
+  "alignment_vs_conservative_native": {
+    "steps": 64,
+    "batch_1": {
+      "min_logits_cosine": 0.9999934434890747,
+      "max_logits_abs_diff": 0.0625,
+      "top1": "64/64"
+    },
+    "batch_8": {
+      "min_logits_cosine": 0.9999934434890747,
+      "max_logits_abs_diff": 0.0625,
+      "top1": "512/512"
+    }
+  },
+  "acceptance": {
+    "requested_extensions_active": true,
+    "three_repeat_median_no_slower_than_precision_matched_official": true,
+    "all_512_token_traces_identical": true,
+    "min_logits_cosine_at_least_0_9999": true,
+    "top1_exact": true
+  },
+  "boundaries": [
+    "The result is exact-card evidence for RTX 5090 and this 7.2B checkpoint only.",
+    "The official fp16-state route is not precision-matched and remains faster, especially at batch 8.",
+    "Official timing is static T1 graph p50; Native timing includes autoregressive argmax and GPU trace copies over 512 steps.",
+    "No prefill, training-speed, memory-parity, other-model, or other-card claim is implied.",
+    "All new fusion routes remain opt-in and default-off."
+  ]
+}

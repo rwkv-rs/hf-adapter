@@ -5,6 +5,10 @@ official `RWKV-Gradio-3` page can generate through the repository Native HF
 backend, and whether the unchanged official `train_temp` shell entry points can
 run alongside the equivalent Native B16/T512/ZeRO-2 recipe.
 
+The UI and shell evidence remains current. Its original direct-decode tuning
+numbers are superseded by the precision-matched fused artifact at
+[`../5090_native_decode_fused_20260718`](../5090_native_decode_fused_20260718/README.md).
+
 ## Pinned environment
 
 | Item | Value |

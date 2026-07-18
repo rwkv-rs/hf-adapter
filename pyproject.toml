@@ -17,10 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda = [
-  "triton>=3.3.0; platform_system == 'Linux'",
-  "ninja; platform_system == 'Linux'",
-]
+cuda = ["triton>=3.3.0; platform_system == 'Linux'", "ninja; platform_system == 'Linux'"]
 fla = ["flash-linear-attention"]
 fla-reference = ["flash-linear-attention"]
 test = [
