@@ -52,6 +52,19 @@ def test_official_capture_exposes_low_memory_runtime_options() -> None:
     assert prefill_args.official_lowrank_weight == "transpose"
     assert prefill_args.official_orig_linear_groups == "none"
 
+    prefill_compare = prefill_parser().parse_args(
+        [
+            "--mode",
+            "compare",
+            "--official-self-envelope",
+            "envelope.json",
+            "--official-envelope-multiplier",
+            "1.5",
+        ]
+    )
+    assert prefill_compare.official_self_envelope == "envelope.json"
+    assert prefill_compare.official_envelope_multiplier == 1.5
+
 
 def test_official_envelope_gate_is_bounded_by_explicit_multiplier() -> None:
     metrics = {

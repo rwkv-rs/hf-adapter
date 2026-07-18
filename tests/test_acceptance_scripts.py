@@ -194,6 +194,10 @@ def test_official_prefill_matrix_forwards_low_memory_runtime() -> None:
     assert '"--official-emb"' in matrix
     assert '"--official-lowrank-weight"' in matrix
     assert '"--official-orig-linear-groups"' in matrix
+    assert '"--native-torch-extensions-dir"' in matrix
+    assert '"--official-torch-extensions-dir"' in matrix
+    assert '"--official-self-envelope-dir"' in matrix
+    assert 'env_overrides=' in matrix
 
 
 def test_converter_exposes_low_memory_path() -> None:

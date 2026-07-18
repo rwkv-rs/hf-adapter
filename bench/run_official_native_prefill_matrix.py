@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -25,11 +26,20 @@ def parse_cases(value: str) -> list[tuple[int, int]]:
     return cases
 
 
-def run(command: list[str], log_path: Path) -> int:
+def run(
+    command: list[str],
+    log_path: Path,
+    *,
+    env_overrides: dict[str, str] | None = None,
+) -> int:
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
     with log_path.open("w", encoding="utf-8") as log:
         completed = subprocess.run(
             command,
             cwd=REPO_ROOT,
+            env=env,
             stdout=log,
             stderr=subprocess.STDOUT,
             check=False,
@@ -63,6 +73,10 @@ def main() -> int:
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--repeats", type=int, default=5)
     ap.add_argument("--native-source-revision", default="working-tree")
+    ap.add_argument("--native-torch-extensions-dir")
+    ap.add_argument("--official-torch-extensions-dir")
+    ap.add_argument("--official-self-envelope-dir")
+    ap.add_argument("--official-envelope-multiplier", type=float, default=1.25)
     ap.add_argument("--skip-existing", action="store_true")
     args = ap.parse_args()
 
@@ -106,6 +120,11 @@ def main() -> int:
                     str(native_capture),
                 ],
                 output_dir / f"{name}_native.log",
+                env_overrides=(
+                    {"TORCH_EXTENSIONS_DIR": args.native_torch_extensions_dir}
+                    if args.native_torch_extensions_dir
+                    else None
+                ),
             )
         row["native_exit_code"] = native_code
 
@@ -147,14 +166,18 @@ def main() -> int:
                     str(official_capture),
                 ],
                 output_dir / f"{name}_official.log",
+                env_overrides=(
+                    {"TORCH_EXTENSIONS_DIR": args.official_torch_extensions_dir}
+                    if args.official_torch_extensions_dir
+                    else None
+                ),
             )
         row["official_exit_code"] = official_code
 
         compare_code = 0
         if native_capture.exists() and official_capture.exists():
             if not (args.skip_existing and report.exists()):
-                compare_code = run(
-                    [
+                compare_command = [
                         sys.executable,
                         str(COMPARE),
                         "--mode",
@@ -165,7 +188,23 @@ def main() -> int:
                         str(official_capture),
                         "--output",
                         str(report),
-                    ],
+                    ]
+                if args.official_self_envelope_dir:
+                    envelope = (
+                        Path(args.official_self_envelope_dir)
+                        / f"{name}_envelope.json"
+                    )
+                    if envelope.exists():
+                        compare_command.extend(
+                            [
+                                "--official-self-envelope",
+                                str(envelope),
+                                "--official-envelope-multiplier",
+                                str(args.official_envelope_multiplier),
+                            ]
+                        )
+                compare_code = run(
+                    compare_command,
                     output_dir / f"{name}_compare.log",
                 )
             if report.exists():

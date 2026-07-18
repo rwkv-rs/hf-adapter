@@ -1114,13 +1114,67 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
     return value
 
 
-def _native_prefill_fused_shift_mix_enabled() -> bool:
+def _native_prefill_model_shape_selected(
+    env_name: str,
+    policy_name: str,
+    batch_size: int | None,
+    prompt_tokens: int | None,
+    hidden_size: int | None,
+    num_layers: int | None,
+) -> bool:
+    """Apply an optional exact model-shape restriction to a prefill route."""
+
+    policy = _kernel_policy()
+    raw = os.environ.get(env_name)
+    if raw is None:
+        shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, policy_name, ())
+            if len(shape) == 4
+        }
+    else:
+        shapes = set()
+        try:
+            for item in raw.replace(",", " ").split():
+                values = tuple(int(value) for value in item.lower().split("x"))
+                if len(values) != 4 or any(value <= 0 for value in values):
+                    raise ValueError
+                shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(f"{env_name} must contain HxLxBxT tuples") from exc
+    if not shapes:
+        return True
+    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+        return False
+    return (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    ) in shapes
+
+
+def _native_prefill_fused_shift_mix_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
     policy = _kernel_policy()
     if not env_flag(
         "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX",
         bool(getattr(policy, "fused_prefill_shift_mix", False)),
+    ):
+        return False
+    if not _native_prefill_model_shape_selected(
+        "RWKV7_NATIVE_PREFILL_SHIFT_MIX_MODEL_SHAPES",
+        "prefill_shift_mix_model_shapes",
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
     ):
         return False
     if fused_attn_shift_mix is None or fused_attn_shift_mix_available is None:
@@ -1131,7 +1185,12 @@ def _native_prefill_fused_shift_mix_enabled() -> bool:
         return False
 
 
-def _native_prefill_fused_state_prep_enabled() -> bool:
+def _native_prefill_fused_state_prep_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for the native prefill state-prep fusion probe."""
 
     policy = _kernel_policy()
@@ -1140,12 +1199,72 @@ def _native_prefill_fused_state_prep_enabled() -> bool:
         bool(getattr(policy, "fused_prefill_state_prep", False)),
     ):
         return False
+    if not _native_prefill_model_shape_selected(
+        "RWKV7_NATIVE_PREFILL_STATE_PREP_MODEL_SHAPES",
+        "prefill_state_prep_model_shapes",
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
+    ):
+        return False
     if fused_prefill_state_prep is None or fused_prefill_state_prep_available is None:
         return False
     try:
         return bool(fused_prefill_state_prep_available())
     except Exception:
         return False
+
+
+def _native_prefill_state_prep_layers(
+    batch_size: int,
+    prompt_tokens: int,
+    hidden_size: int,
+    num_layers: int,
+) -> set[int] | None:
+    """Return selected state-prep layers, or ``None`` for every layer."""
+
+    specific = f"RWKV7_NATIVE_PREFILL_STATE_PREP_LAYERS_B{batch_size}_T{prompt_tokens}"
+    raw = os.environ.get(
+        specific,
+        os.environ.get("RWKV7_NATIVE_PREFILL_STATE_PREP_LAYERS"),
+    )
+    if raw is not None:
+        selected: set[int] = set()
+        try:
+            for item in raw.replace(" ", ",").split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "-" in item:
+                    start, end = (int(value) for value in item.split("-", 1))
+                    if start < 0 or end < start:
+                        raise ValueError
+                    selected.update(range(start, end + 1))
+                else:
+                    value = int(item)
+                    if value < 0:
+                        raise ValueError
+                    selected.add(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{specific} must contain non-negative layers or inclusive ranges"
+            ) from exc
+        return {value for value in selected if value < int(num_layers)}
+
+    target = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    for profile in getattr(
+        _kernel_policy(), "prefill_state_prep_layer_counts", ()
+    ):
+        if len(profile) == 5 and tuple(int(value) for value in profile[:4]) == target:
+            count = min(max(int(profile[4]), 0), int(num_layers))
+            return set(range(count))
+    return None
 
 
 def _native_prefill_fused_state_scan_max_batch() -> int | None:
@@ -2835,6 +2954,17 @@ def prefill(
         dtype,
     )
     fp16_accum_ffn_key_used = False
+    use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled(
+        B, T, residual_hidden, len(packs)
+    )
+    use_prefill_state_prep = _native_prefill_fused_state_prep_enabled(
+        B, T, residual_hidden, len(packs)
+    )
+    prefill_state_prep_layers = (
+        _native_prefill_state_prep_layers(B, T, residual_hidden, len(packs))
+        if use_prefill_state_prep
+        else set()
+    )
     capture_layer_outputs = env_flag(
         "RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS",
         False,
@@ -2860,16 +2990,22 @@ def prefill(
         attention_hidden = H * N
         residual_hidden = int(an_w.numel())
         use_fp16_recurrent = _native_prefill_fp16_recurrent_enabled(state[layer_idx])
+        use_layer_state_prep = bool(
+            use_prefill_state_prep
+            and (
+                prefill_state_prep_layers is None
+                or layer_idx in prefill_state_prep_layers
+            )
+        )
         residual = F.layer_norm(x, [residual_hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [residual_hidden], an_w, an_b, 1e-5)
         defer_state_sigmoid = bool(
             not use_fp16_recurrent
-            and _native_prefill_fused_state_prep_enabled()
+            and use_layer_state_prep
             and not _native_prefill_fused_state_scan_enabled(B)
             and not use_clampw_scan_requested
         )
         state_sigmoid_is_raw = False
-        use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled()
         use_sequence_attn_mix = use_prefill_shift_mix and fused_attn_sequence_shift_mix is not None
         v_gate = None
         prequantized_rkv = None
@@ -3037,7 +3173,7 @@ def prefill(
             and _native_prefill_fused_state_scan_enabled(B)
             and not use_fused_scan_output
         )
-        if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
+        if use_clampw_scan and use_layer_state_prep and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
         state_scan_done = False
         if use_fused_state_scan:
@@ -3078,7 +3214,7 @@ def prefill(
             k = k.reshape(B, T, attention_hidden)
             v = v.reshape(B, T, attention_hidden)
             state_scan_done = True
-        elif _native_prefill_fused_state_prep_enabled() and use_fp16_recurrent:
+        elif use_layer_state_prep and use_fp16_recurrent:
             if fused_prefill_kv_kk_prep is None:
                 raise RuntimeError(
                     "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP requires the fused K/V/KK prep kernel"
@@ -3106,7 +3242,7 @@ def prefill(
                     num_heads=H,
                     head_dim=N,
                 )
-        elif _native_prefill_fused_state_prep_enabled() and not use_fp16_recurrent:
+        elif use_layer_state_prep and not use_fp16_recurrent:
             self_chunk_w_is_log = bool(use_self_chunk and not use_clampw_scan)
             if use_clampw_scan:
                 if layer_idx == 0:
