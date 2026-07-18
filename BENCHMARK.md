@@ -103,6 +103,16 @@ greedy-trace SHA256. The repository alignment script passes 64 teacher-forced
 steps with minimum logits cosine `0.9999934435`, max absolute difference
 `0.0625`, and exact top-1 at B1 and B8.
 
+A fresh real-browser run through the current official Gradio page also exercises
+the committed bridge rather than the standalone benchmark. Its stable 100-token
+labels are Native/official `138.5/137.7 tok/s` at B1 and `831.8/837.7 tok/s`
+at B8. A separate readable B1 prompt ends at 54 tokens with byte-identical
+official and Native text. The post-B1/B8 process allocations are 15,520 MiB
+Native and 14,886 MiB official, so this browser smoke proves output parity and
+near speed parity, not memory parity or an all-shape lead. Screenshots, full
+text, environment and logs are in
+[`bench/5090_gradio_native_hf_frontend_ab_20260719/`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md).
+
 The follow-up fp16-state profile closes that former gap. Three deterministic
 512-token runs produce Native B1/B8 medians `146.42/899.51 tok/s` against the
 pinned official `146.277/890.21`, or `1.00098x/1.01045x`. A separate 16-step

@@ -1,0 +1,6 @@
+[app3] model_path=/home/ubuntu/models/rwkv7/rwkv7-g1h-7.2b-hf
+[app3] t=0.000s model_init_start_module
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:  49%|████▉     | 520/1059 [00:00<00:00, 5199.01it/s]Loading weights: 100%|██████████| 1059/1059 [00:00<00:00, 5709.18it/s]
+[app3] t=3.407s model_init_module_rwkv_done seconds=3.407
+[app3] t=5.291s pipeline_init_module_done seconds=1.884

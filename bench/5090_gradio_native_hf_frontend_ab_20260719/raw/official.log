@@ -1,0 +1,29 @@
+[app3] model_path=/home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-7.2b-20260710-ctx10240.pth
+[app3] t=0.000s model_init_start_module
+[rwkv7_fast_v3a] loading weights from /home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-7.2b-20260710-ctx10240.pth
+[rwkv7_fast_v3a] weights mmap loaded in 0.134s tensors=1062
+[rwkv7_fast_v3a] detected model C=4096 H=64 N=64 V=65536
+[rwkv7_fast_v3a] cmix no-fc path: rows<=19 row20_t<=5
+[rwkv7_fast_v3a] moving and preprocessing weights to CUDA emb=cuda
+[rwkv7_fast_v3a] model ready in 7.099s L=32 C=4096 H=64 N=64 V=65536
+[app3] t=7.472s model_init_module_rwkv_done seconds=7.472
+[app3] t=9.104s pipeline_init_module_done seconds=1.632
+* Running on local URL:  http://0.0.0.0:7860
+* To create a public link, set `share=True` in `launch()`.
+[app3] 2026-07-19 07:13:38 B=1 T=100 In=50 TPS=137.7 Time=82.058s Token=100 Char=107 VRAM=15.33G/33.67G
+[app3] 2026-07-19 07:14:22 B=1 T=100 In=50 TPS=137.7 Time=0.786s Token=100 Char=107 VRAM=15.33G/33.67G
+[app3] 2026-07-19 07:15:17 B=8 T=100 In=50 TPS=818.1 Time=1.088s Token=800 Char=898 VRAM=15.62G/33.67G
+[app3] 2026-07-19 07:15:34 B=8 T=100 In=50 TPS=837.6 Time=1.031s Token=800 Char=902 VRAM=15.62G/33.67G
+[app3] model_path=/home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-7.2b-20260710-ctx10240.pth
+[app3] t=0.001s model_init_start_module
+[rwkv7_fast_v3a] loading weights from /home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-7.2b-20260710-ctx10240.pth
+[rwkv7_fast_v3a] weights mmap loaded in 0.135s tensors=1062
+[rwkv7_fast_v3a] detected model C=4096 H=64 N=64 V=65536
+[rwkv7_fast_v3a] cmix no-fc path: rows<=19 row20_t<=5
+[rwkv7_fast_v3a] moving and preprocessing weights to CUDA emb=cuda
+[rwkv7_fast_v3a] model ready in 7.995s L=32 C=4096 H=64 N=64 V=65536
+[app3] t=8.374s model_init_module_rwkv_done seconds=8.373
+[app3] t=10.042s pipeline_init_module_done seconds=1.668
+* Running on local URL:  http://0.0.0.0:7860
+* To create a public link, set `share=True` in `launch()`.
+[app3] 2026-07-19 07:29:42 B=1 T=100 In=89 TPS=135.0 Time=0.902s Token=54 Char=58 VRAM=15.48G/33.67G
