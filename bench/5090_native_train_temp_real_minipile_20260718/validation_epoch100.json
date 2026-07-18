@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_official_dataset_batch",
+  "data_prefix": "/home/ubuntu/datasets/rwkv-minipile-e6f74b6/minipile",
+  "bin_sha256": "9917a52991b9ce5b0b05f92101962ba704cf3c4c20b64431ff8c45ba9d4141a5",
+  "idx_sha256": "f526abddaa06d376443e69c9a6c0fcbe4302afc0cb1aed08faf3fb97fc5acd10",
+  "token_count": 1498226207,
+  "batch_size": 16,
+  "seq_len": 512,
+  "steps": 1,
+  "epoch": 100,
+  "samples_per_epoch": 40320,
+  "magic_prime": 2926181,
+  "first_position": 261747712,
+  "last_position": 34853376,
+  "content_sha256": "562255da4ead0c9ef25d3102078f51552ed3098d800cae43136566a3f9d20355",
+  "path": "/home/ubuntu/bench/native_train_temp_real_minipile_20260718/validation_epoch100.safetensors"
+}

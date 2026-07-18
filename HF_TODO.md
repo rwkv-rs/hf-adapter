@@ -4,7 +4,7 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-16**.
+Last updated: **2026-07-18**.
 
 ## Current milestone — COMPLETE
 
@@ -98,9 +98,13 @@ template in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### 4. Longer training evidence
 
-- [ ] Record loss curve, samples/s or tokens/s, peak memory and trainable delta.
+- [x] Record the exact RTX 5090 12x768 B16/T512 real-MiniPile loss curves,
+      tokens/s, peak/steady memory and all 399 trainable deltas. Broader model
+      sizes and cards remain in the items below.
 - [ ] Extend 0.4B/1.5B/2.9B/7.2B SFT/DPO/GRPO beyond smoke steps.
-- [ ] Add checkpoint resume with optimizer/scheduler/RNG continuity checks.
+- [x] Add single-card 2,500+2,500 checkpoint resume with model, optimizer,
+      scheduler/sample position and Python/NumPy/torch CPU/CUDA RNG continuity
+      checks. Distributed resume remains part of the ZeRO item below.
 - [ ] Expand ZeRO-3 resume to larger models and more card combinations.
 - [ ] Add H100 and AMD training matrices.
 

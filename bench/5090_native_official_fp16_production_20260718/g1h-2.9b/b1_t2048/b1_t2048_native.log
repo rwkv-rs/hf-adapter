@@ -1,0 +1,36 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:  12%|█▏        | 129/1059 [00:00<00:00, 1212.77it/s]Loading weights:  24%|██▍       | 257/1059 [00:00<00:00, 1186.49it/s]Loading weights:  37%|███▋      | 390/1059 [00:00<00:00, 1196.29it/s]Loading weights:  50%|████▉     | 525/1059 [00:00<00:00, 1252.49it/s]Loading weights:  61%|██████▏   | 651/1059 [00:00<00:00, 1239.24it/s]Loading weights:  74%|███████▍  | 787/1059 [00:00<00:00, 1268.86it/s]Loading weights:  86%|████████▋ | 915/1059 [00:00<00:00, 1254.70it/s]Loading weights:  99%|█████████▉| 1052/1059 [00:00<00:00, 1273.66it/s]Loading weights: 100%|██████████| 1059/1059 [00:00<00:00, 1249.04it/s]
+{
+  "engine": "native_hf_sequence",
+  "batch_size": 1,
+  "prompt_tokens": 2048,
+  "timing": {
+    "times_ms": [
+      90.97798156738281,
+      90.93270111083984,
+      90.90255737304688,
+      90.93049621582031,
+      90.66582489013672,
+      90.534912109375,
+      90.58560180664062,
+      91.13983917236328,
+      90.62825775146484,
+      90.64361572265625,
+      91.12137603759766,
+      91.12608337402344,
+      91.13993835449219,
+      91.12348937988281,
+      91.18291473388672,
+      91.14966583251953,
+      91.16297912597656,
+      91.17100524902344,
+      91.17132568359375,
+      91.17529296875,
+      91.09161376953125
+    ],
+    "median_ms": 91.12137603759766,
+    "aggregate_tokps": 22475.516602766987
+  },
+  "peak_vram_mb": 8240.54150390625
+}

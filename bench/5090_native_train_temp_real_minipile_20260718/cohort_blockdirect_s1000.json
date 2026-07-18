@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_convergence_cohort_compare",
+  "status": "fail",
+  "reference_backend": "official_train_temp",
+  "candidate_backend": "hf_native_train_temp_cuda",
+  "reference_seeds": [
+    131,
+    232,
+    333
+  ],
+  "candidate_seeds": [
+    131,
+    232,
+    333
+  ],
+  "seeds_match": true,
+  "provenance_mismatches": [],
+  "optimizer_groups_match": true,
+  "runs_complete": true,
+  "reference_rows": [
+    {
+      "seed": 131,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 5.533553376197815,
+      "validation_loss_auc": 5.48227950504848,
+      "final_validation_loss": 4.62276554107666,
+      "min_validation_loss": 4.62276554107666,
+      "max_grad_norm": 824.0,
+      "runtime_s": 81.89728877600282
+    },
+    {
+      "seed": 232,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 5.540596711635589,
+      "validation_loss_auc": 5.509566556839716,
+      "final_validation_loss": 4.646356582641602,
+      "min_validation_loss": 4.646356582641602,
+      "max_grad_norm": 224.0,
+      "runtime_s": 81.87227479300054
+    },
+    {
+      "seed": 333,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 5.563909125328064,
+      "validation_loss_auc": 5.48340182077317,
+      "final_validation_loss": 4.684480667114258,
+      "min_validation_loss": 4.684480667114258,
+      "max_grad_norm": 216.0,
+      "runtime_s": 82.78251920999901
+    }
+  ],
+  "candidate_rows": [
+    {
+      "seed": 131,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 5.527681833744049,
+      "validation_loss_auc": 5.475092887878418,
+      "final_validation_loss": 4.638833522796631,
+      "min_validation_loss": 4.638833522796631,
+      "max_grad_norm": 247.0,
+      "runtime_s": 81.98621398799878
+    },
+    {
+      "seed": 232,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 5.537709387779236,
+      "validation_loss_auc": 5.506377946762812,
+      "final_validation_loss": 4.6518754959106445,
+      "min_validation_loss": 4.6518754959106445,
+      "max_grad_norm": 231.0,
+      "runtime_s": 82.0394018740044
+    },
+    {
+      "seed": 333,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 5.559557222366333,
+      "validation_loss_auc": 5.475249472118559,
+      "final_validation_loss": 4.673031330108643,
+      "min_validation_loss": 4.673031330108643,
+      "max_grad_norm": 216.0,
+      "runtime_s": 82.53281924400653
+    }
+  ],
+  "reference_medians": {
+    "train_loss_auc": 5.540596711635589,
+    "validation_loss_auc": 5.48340182077317,
+    "final_validation_loss": 4.646356582641602,
+    "min_validation_loss": 4.646356582641602,
+    "max_grad_norm": 224.0,
+    "runtime_s": 81.89728877600282
+  },
+  "candidate_medians": {
+    "train_loss_auc": 5.537709387779236,
+    "validation_loss_auc": 5.475249472118559,
+    "final_validation_loss": 4.6518754959106445,
+    "min_validation_loss": 4.6518754959106445,
+    "max_grad_norm": 231.0,
+    "runtime_s": 82.0394018740044
+  },
+  "median_train_loss_auc_relative_diff": 0.0005211214615729098,
+  "median_validation_loss_auc_relative_diff": 0.0014867319450722655,
+  "median_grad_norm_ratio": 1.03125,
+  "candidate_over_reference_median_grad_norm_ratio": 1.03125,
+  "reference_over_candidate_median_grad_norm_ratio": 0.9696969696969697,
+  "bidirectional_median_grad_norm_ratio": 1.03125,
+  "reference_median_runtime_s": 81.89728877600282,
+  "candidate_median_runtime_s": 82.0394018740044,
+  "candidate_over_reference_throughput_ratio": 0.998267745805609,
+  "reference_success_count": 3,
+  "candidate_success_count": 3,
+  "reference_deep_success_count": 3,
+  "candidate_deep_success_count": 3,
+  "targets": {
+    "min_runs": 3,
+    "success_threshold": 5.0,
+    "deep_success_threshold": 4.8,
+    "max_median_train_auc_relative_diff": 0.1,
+    "max_median_validation_auc_relative_diff": 0.15,
+    "max_median_min_validation_abs_increase": 0.05,
+    "max_median_min_validation_relative_ratio": 1.25,
+    "max_median_grad_norm_ratio": 2.0,
+    "min_candidate_over_reference_throughput_ratio": 1.0
+  },
+  "failures": [
+    "candidate median training throughput ratio is below target"
+  ]
+}

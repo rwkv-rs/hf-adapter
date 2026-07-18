@@ -1,0 +1,3 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 6035.45it/s]
+{"status": "pass", "backend": "hf_native_train_temp_cuda", "phase": "step", "precision": "bf16", "loss": 11.193662643432617, "runtime_s": 0.8220686290005688, "raw_grad_norm": 541.9493435335517, "clip_returned_grad_norm": 544.0, "post_step_loss": 7.862283706665039, "snapshot_tensor_count": 798, "snapshot_sha256": "5a03211de8be2482e9867f805f11056b85529a41bcd9c6bf44090e480504615b", "gpu_name": "NVIDIA GeForce RTX 5090", "peak_memory_mb": 2724.80908203125}
