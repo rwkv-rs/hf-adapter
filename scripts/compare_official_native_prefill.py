@@ -24,11 +24,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from compare_official_native_inference import (  # noqa: E402
-    DEFAULT_PROMPT,
-    load_official,
-    tensor_metrics,
-)
+try:  # noqa: E402
+    from scripts.compare_official_native_inference import (
+        DEFAULT_PROMPT,
+        load_official,
+        tensor_metrics,
+    )
+except ImportError:  # direct ``python scripts/...`` execution
+    from compare_official_native_inference import (
+        DEFAULT_PROMPT,
+        load_official,
+        tensor_metrics,
+    )
 
 
 THRESHOLDS = {
@@ -323,6 +330,14 @@ def capture_official(args: argparse.Namespace) -> dict[str, Any]:
         "engine": "official_v3a_sequence",
         "source_revision": revision,
         "source_verification": verification,
+        "runtime": {
+            "wkv": "fp16",
+            "emb": args.official_emb,
+            "batched_rkv": args.official_batched_rkv,
+            "cmix_sparse": args.official_cmix_sparse,
+            "lowrank_weight": args.official_lowrank_weight,
+            "orig_linear_groups": args.official_orig_linear_groups,
+        },
         "batch_size": args.batch_size,
         "prompt_tokens": args.prompt_tokens,
         "prompt_ids": ids.cpu(),
@@ -442,6 +457,21 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--official-module", default="rwkv7_fast_v3a")
     ap.add_argument("--official-commit", default="cc57df475465c6cacd42ecd4f2f05a588ee5473b")
     ap.add_argument("--official-source-manifest")
+    ap.add_argument("--official-emb", choices=("gpu", "cpu"), default="gpu")
+    ap.add_argument(
+        "--official-batched-rkv", choices=("auto", "on", "off"), default="off"
+    )
+    ap.add_argument(
+        "--official-cmix-sparse", choices=("auto", "no-fc", "off"), default="no-fc"
+    )
+    ap.add_argument(
+        "--official-lowrank-weight",
+        choices=("orig", "transpose", "both"),
+        default="both",
+    )
+    ap.add_argument(
+        "--official-orig-linear-groups", default="att_c2c,ffn_key,head"
+    )
     ap.add_argument("--native-capture")
     ap.add_argument("--official-capture")
     return ap

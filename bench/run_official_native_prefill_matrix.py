@@ -43,6 +43,21 @@ def main() -> int:
     ap.add_argument("--official-dir", required=True)
     ap.add_argument("--official-model", required=True)
     ap.add_argument("--official-source-manifest", required=True)
+    ap.add_argument("--official-emb", choices=("gpu", "cpu"), default="gpu")
+    ap.add_argument(
+        "--official-batched-rkv", choices=("auto", "on", "off"), default="off"
+    )
+    ap.add_argument(
+        "--official-cmix-sparse", choices=("auto", "no-fc", "off"), default="no-fc"
+    )
+    ap.add_argument(
+        "--official-lowrank-weight",
+        choices=("orig", "transpose", "both"),
+        default="both",
+    )
+    ap.add_argument(
+        "--official-orig-linear-groups", default="att_c2c,ffn_key,head"
+    )
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--cases", default="1x128,1x512,1x2048,8x128,8x512,8x2048")
     ap.add_argument("--warmup", type=int, default=2)
@@ -118,6 +133,16 @@ def main() -> int:
                     args.official_model,
                     "--official-source-manifest",
                     args.official_source_manifest,
+                    "--official-emb",
+                    args.official_emb,
+                    "--official-batched-rkv",
+                    args.official_batched_rkv,
+                    "--official-cmix-sparse",
+                    args.official_cmix_sparse,
+                    "--official-lowrank-weight",
+                    args.official_lowrank_weight,
+                    "--official-orig-linear-groups",
+                    args.official_orig_linear_groups,
                     "--output",
                     str(official_capture),
                 ],

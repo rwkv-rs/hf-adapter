@@ -187,6 +187,15 @@ def test_blackwell_matrix_supports_paired_baselines() -> None:
     assert "quantization != \"none\" and args.paired_baseline" in decode
 
 
+def test_official_prefill_matrix_forwards_low_memory_runtime() -> None:
+    matrix = (ROOT / "bench/run_official_native_prefill_matrix.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"--official-emb"' in matrix
+    assert '"--official-lowrank-weight"' in matrix
+    assert '"--official-orig-linear-groups"' in matrix
+
+
 def test_converter_exposes_low_memory_path() -> None:
     converter = (ROOT / "scripts/convert_rwkv7_to_hf.py").read_text(encoding="utf-8")
     assert '"--low-memory"' in converter
