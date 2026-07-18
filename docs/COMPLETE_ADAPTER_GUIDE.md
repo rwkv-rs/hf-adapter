@@ -15,7 +15,7 @@
 | 投机解码或对齐较小 draft | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 与 target greedy 完全一致并打印 `PASS`；配对 benchmark 给出接受率和速度 | 先验证 token 对齐，再根据目标模型选择 draft 大小 |
 | 多卡 `device_map` 推理 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 分卡输出与单卡参考一致并打印 `PASS` | 适合按层分配模型；可用 `max_memory` 控制每张卡的预算 |
 | PEFT LoRA、adapter 保存/加载/合并、Trainer 和断点恢复 | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | loss/梯度有限且打印对应 `PASS` | 先运行小模型 smoke，再替换为自己的数据和训练配置 |
-| 对齐官方 RWKV-LM train_temp 数学、FusedAdam 单步和收敛效果 | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) | 单步逐张量 `pass`，至少三组 seed 的 cohort `pass` | RTX 5090 12x768 BF16 已有精确证据；其他卡和模型按教程重新验收 |
+| 对齐官方 RWKV-LM train_temp 数学、FusedAdam、收敛和断点恢复 | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) | 单步逐张量、至少三组 seed cohort、恢复哈希和稳态显存均 `pass` | RTX 5090 12x768 BF16 B1/B16 已有精确证据；其他卡和模型按教程重新验收 |
 | 在官方 RWKV-Gradio-3 页面运行 Native HF | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) | B1/B8 生成、切换后复用、速度标签和截图通过 | 5090 7.2B 页面已通过；当前 Native 仍慢于官方 v3a，实验 sparse 保持关闭 |
 | TRL SFT、DPO 和 GRPO | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | `NATIVE SFT/DPO/GRPO PASS` | 示例提供兼容性起点，正式训练时按数据规模调整 batch 和 checkpoint |
 | DeepSpeed ZeRO-2/ZeRO-3 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 所请求的结果行为 `PASS` | 推荐 Linux/WSL2 和至少两张 CUDA 卡，并为断点恢复保留输出目录 |

@@ -16,6 +16,7 @@ historical rows remain in platform documents and `bench/` artifacts.
 | RTX 5090 BF16/W4 | g1h 1.5B/2.9B/7.2B/13.3B paired BF16 at B1/B8, prompt128/decode128 | all-phase prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x`; model-level head/final-layer policy is automatic | prompt/final cosine `>=0.9995`, same-next 8/8; 280/280 group-128 grid contract | Production-close for measured all-phase W4 matrix |
 | RTX 5090 MATH500 / 13.3B | 0.4B MATH500 generation `16,925.6 tok/s`, steady decode `19,339.5 tok/s`; latest g1h 13.3B load/generate passes | 13.3B selected speed-policy MM8/MM4 decode `1.0013x/0.9845x` paired fp16 with footprint `0.9899x/0.9848x` | MATH500 pass@64 `0.38`; 13.3B cosine above `0.99985` and same-next pass | Production-close artifacts |
 | RTX 5090 Native HF Gradio | official g1h 7.2B FP16 through the real Space UI: Native `95.2/651.7 tok/s` vs v3a `138.8/841.7` at B1/B8 | not a quant lane; shared graph packs reduce two-graph process memory to 22,530 MiB but remain above v3a | same-prompt UI smoke passes; fastest sparse direct B8 greedy is only 6/8 | Partial; all sparse flags remain opt-in |
+| RTX 5090 Native train_temp | L12/D768/FFN3072 BF16 B16/T512 median `94,539.4 tok/s` vs official `99,524.5 tok/s` (`0.9499x`) | not a quant lane; peak allocated `3,588.5 MiB`, steady reserved growth `0 MiB` | exact 399 gradients/deltas, 3-seed cohort and 500+500 resume pass | Alignment/stability pass; training speed partial |
 | Apple M5 | Tiled DPLR and guarded compiled decode close selected same-device Qwen3.5 gates | W4 lowers memory; selected production pair gates pass | target-greedy oracle and state/session checks pass | Production-close for measured MLX pairs |
 
 V100 optimized-Qwen evidence:
@@ -27,6 +28,8 @@ RTX 5090 evidence:
 [`5090_bntn_all_models_20260716`](../bench/5090_bntn_all_models_20260716/README.md).
 Native HF Gradio and official-shell evidence:
 [`5090_native_hf_gradio_train_temp_20260718`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md).
+Native B16 train_temp evidence:
+[`5090_native_train_temp_b16_20260718`](../bench/5090_native_train_temp_b16_20260718/README.md).
 
 ## Interpretation rules
 

@@ -1,3 +1,19 @@
+### 2026-07-18 — RTX 5090 Native train_temp B16 alignment and resume
+
+The Native/no-FLA `train_temp_cuda` route now matches the official shell
+training shape at BF16, B16, T512 and gradient checkpointing. Backward loss and
+399/399 gradients are exact; FusedAdam grouping/order, 399/399 parameter deltas
+and post-step loss are also exact. Official and Native both complete seeds
+131/232/333 for 1,000 steps with `3/3` finite deep-success runs. Median
+train/validation AUC relative differences are `0.001798%/0.002455%`.
+
+A Native 500+500 resume restores model, optimizer and RNG state hashes and
+passes against a continuous run. A separate 1,000-step stability row records 20
+steady memory samples: allocated range `0.375 MiB`, reserved growth `0 MiB`.
+Native median training throughput is `0.9499x` official, so numerical alignment
+and bounded stability pass while training performance remains open. Evidence:
+[`bench/5090_native_train_temp_b16_20260718`](../../bench/5090_native_train_temp_b16_20260718/README.md).
+
 ### 2026-07-17 — RTX 5090 official train_temp training alignment
 
 The opt-in HF `train_temp_cuda` backend now uses the pinned official CUDA

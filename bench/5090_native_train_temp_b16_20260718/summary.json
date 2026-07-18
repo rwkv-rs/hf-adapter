@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "axis": "native_train_temp_b16_alignment_summary",
+  "status": "pass",
+  "provenance": {
+    "adapter_commit": "eabbfdf",
+    "official_commit": "e6f74b63a06e08606d130043599d218209628bad",
+    "checkpoint_sha256": "5fcb1f16231626f0fde51c30c2d51994ef1ec80e6f737735afe83093c253b943"
+  },
+  "scope": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "precision": "bf16",
+    "layers": 12,
+    "hidden_size": 768,
+    "ffn_hidden_size": 3072,
+    "batch_size": 16,
+    "seq_len": 512,
+    "gradient_checkpointing": true,
+    "seeds": [131, 232, 333],
+    "steps_per_seed": 1000,
+    "training_tokens_per_run": 8192000
+  },
+  "single_step": {
+    "status": "pass",
+    "loss": 11.193662643432617,
+    "gradient_tensors_exact": 399,
+    "parameter_deltas_exact": 399,
+    "post_step_loss": 8.379091262817383,
+    "worst_cosine": 1.0,
+    "max_relative_l2": 0.0,
+    "max_abs": 0.0
+  },
+  "convergence_cohort": {
+    "status": "pass",
+    "official_complete_finite": 3,
+    "native_complete_finite": 3,
+    "official_deep_success_count": 3,
+    "native_deep_success_count": 3,
+    "median_train_loss_auc_relative_diff": 1.7980092649390558e-05,
+    "median_validation_loss_auc_relative_diff": 2.455222790864542e-05,
+    "median_grad_norm_ratio": 1.0,
+    "official_median_runtime_s": 82.31138783400093,
+    "native_median_runtime_s": 86.65168149799865,
+    "native_runtime_ratio": 1.0527301723152924,
+    "native_training_throughput_ratio": 0.9499110278189122
+  },
+  "checkpoint_resume": {
+    "status": "pass",
+    "partial_steps": 500,
+    "final_steps": 1000,
+    "model_state_restored": true,
+    "optimizer_state_restored": true,
+    "rng_state_restored": true,
+    "train_loss_auc_relative_diff": 7.192065922806513e-06,
+    "validation_loss_auc_relative_diff": 1.4807872402220386e-05,
+    "final_validation_loss_abs_diff": 7.361450116150081e-08,
+    "validation_threshold_step_diff": 0
+  },
+  "memory_stability": {
+    "status": "pass",
+    "sample_count": 20,
+    "first_step": 50,
+    "last_step": 1000,
+    "allocated_growth_mb": -0.375,
+    "allocated_range_mb": 0.375,
+    "reserved_growth_mb": 0.0,
+    "reserved_range_mb": 0.0,
+    "peak_allocated_mb": 3588.4794921875,
+    "peak_reserved_mb": 4896.0
+  },
+  "interpretation": {
+    "training_math": "accepted for this exact RTX 5090 B16/T512 BF16 lane",
+    "bounded_stability": "accepted for 1000 steps and one 500+500 resume",
+    "performance": "native median runtime is 5.273% higher than official",
+    "quality_boundary": "synthetic increment data is not a real-dataset quality or capacity evaluation"
+  }
+}
