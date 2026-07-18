@@ -51,6 +51,12 @@ torch::Tensor rwkv7_ada_sparse_ffn_official_cuda(
 torch::Tensor rwkv7_ada_sparse_ffn_official_out_cuda(
     torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
     torch::Tensor output);
+torch::Tensor rwkv7_ada_sparse_ffn_deterministic4_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
+    torch::Tensor scratch);
+torch::Tensor rwkv7_ada_sparse_ffn_deterministic4_out_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
+    torch::Tensor scratch, torch::Tensor output);
 torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -66,6 +72,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "RWKV-7 sparse ReLU2 FFN with official accumulate-round-add boundary");
   m.def("sparse_down_add_official_out", &rwkv7_ada_sparse_ffn_official_out_cuda,
         "RWKV-7 sparse ReLU2 FFN with official accumulate-round-add boundary (out)");
+  m.def("sparse_down_add_deterministic4", &rwkv7_ada_sparse_ffn_deterministic4_cuda,
+        "RWKV-7 sparse ReLU2 FFN with deterministic four-way reduction");
+  m.def("sparse_down_add_deterministic4_out", &rwkv7_ada_sparse_ffn_deterministic4_out_cuda,
+        "RWKV-7 sparse ReLU2 FFN with deterministic four-way reduction (out)");
   m.def("ffn_up", &rwkv7_ada_linear_cuda,
         "RWKV-7 sm_89 small-row FFN expansion projection");
   m.def("linear", &rwkv7_ada_linear_cuda,
@@ -470,6 +480,122 @@ __global__ __launch_bounds__(256, 2) void sparse_relu2_down_rows_t512_kernel(
       accumulator);
 }
 
+__global__ __launch_bounds__(256, 2) void sparse_relu2_down_deterministic4_kernel(
+    int hidden,
+    int ffn,
+    int rows,
+    const half* __restrict__ preact,
+    const half* __restrict__ packed_value,
+    half* __restrict__ scratch) {
+  constexpr int TILE = 512;
+  constexpr int TILE_THREADS = 256;
+  constexpr int SPLITS = 4;
+  __shared__ __align__(256) half values[TILE];
+  __shared__ __align__(256) int nonzero_ids[TILE];
+  __shared__ int nonzero_count;
+  __shared__ int warp_counts[TILE / 32];
+  __shared__ int warp_prefix[TILE / 32];
+
+  const int split = blockIdx.x;
+  const int hidden_block = blockIdx.y;
+  const int row = blockIdx.z;
+  const int tid = threadIdx.x;
+  const int lane = tid & 31;
+  const int warp = tid >> 5;
+  const int tiles_per_split = ffn / (SPLITS * TILE);
+  const half* pre_row = preact + static_cast<int64_t>(row) * ffn;
+  half2 accumulator = __float2half2_rn(0.0f);
+
+  #pragma unroll 1
+  for (int tile = 0; tile < tiles_per_split; ++tile) {
+    const int start_f = (split * tiles_per_split + tile) * TILE;
+    #pragma unroll
+    for (int u = 0; u < 2; ++u) {
+      const int local_f = tid + u * TILE_THREADS;
+      const float positive = fmaxf(load_h1(pre_row + start_f + local_f), 0.0f);
+      values[local_f] = __float2half_rn(positive * positive);
+    }
+    __syncthreads();
+
+    #pragma unroll
+    for (int u = 0; u < 2; ++u) {
+      const int local_f = tid + u * TILE_THREADS;
+      const bool nonzero = (__half_as_ushort(values[local_f]) << 1) != 0;
+      const unsigned mask = __ballot_sync(0xffffffffu, nonzero);
+      if (lane == 0) {
+        warp_counts[warp + u * (TILE_THREADS / 32)] = __popc(mask);
+      }
+    }
+    __syncthreads();
+
+    if (tid == 0) {
+      int prefix = 0;
+      #pragma unroll
+      for (int w = 0; w < TILE / 32; ++w) {
+        warp_prefix[w] = prefix;
+        prefix += warp_counts[w];
+      }
+      nonzero_count = prefix;
+    }
+    __syncthreads();
+
+    #pragma unroll
+    for (int u = 0; u < 2; ++u) {
+      const int local_f = tid + u * TILE_THREADS;
+      const bool nonzero = (__half_as_ushort(values[local_f]) << 1) != 0;
+      const unsigned mask = __ballot_sync(0xffffffffu, nonzero);
+      const int local_position = __popc(mask & ((1u << lane) - 1u));
+      const int group = warp + u * (TILE_THREADS / 32);
+      if (nonzero) {
+        nonzero_ids[warp_prefix[group] + local_position] = local_f;
+      }
+    }
+    __syncthreads();
+
+    half2 tile_accumulator = __float2half2_rn(0.0f);
+    for (int i = 0; i < nonzero_count; ++i) {
+      const int actual_f = start_f + nonzero_ids[i];
+      const half2 matrix = *reinterpret_cast<const half2*>(
+          packed_value + static_cast<int64_t>(actual_f) * hidden
+          + hidden_block * (2 * TILE_THREADS) + tid * 2);
+      tile_accumulator = __hfma2(
+          __half2half2(values[nonzero_ids[i]]), matrix, tile_accumulator);
+    }
+    accumulator = __hadd2(accumulator, tile_accumulator);
+    __syncthreads();
+  }
+
+  half2* destination = reinterpret_cast<half2*>(
+      scratch + (static_cast<int64_t>(split) * rows + row) * hidden
+      + hidden_block * (2 * TILE_THREADS));
+  destination[tid] = accumulator;
+}
+
+__global__ __launch_bounds__(256, 2) void finalize_sparse_deterministic4_kernel(
+    int hidden,
+    int rows,
+    const half* __restrict__ scratch,
+    const half* __restrict__ residual,
+    half* __restrict__ output) {
+  constexpr int TILE_THREADS = 256;
+  constexpr int SPLITS = 4;
+  const int hidden_block = blockIdx.x;
+  const int row = blockIdx.y;
+  const int tid = threadIdx.x;
+  const int pair_offset = hidden_block * TILE_THREADS + tid;
+  half2 accumulator = __float2half2_rn(0.0f);
+  #pragma unroll
+  for (int split = 0; split < SPLITS; ++split) {
+    const half2 value = reinterpret_cast<const half2*>(
+        scratch + (static_cast<int64_t>(split) * rows + row) * hidden)[pair_offset];
+    accumulator = __hadd2(accumulator, value);
+  }
+  const half2 residual_value = reinterpret_cast<const half2*>(
+      residual + static_cast<int64_t>(row) * hidden)[pair_offset];
+  reinterpret_cast<half2*>(output + static_cast<int64_t>(row) * hidden)[pair_offset] =
+      __hadd2(residual_value, accumulator);
+}
+
 __global__ __launch_bounds__(THREADS, 4) void sparse_relu2_down_fp32_kernel(
     int hidden,
     int ffn,
@@ -790,6 +916,65 @@ torch::Tensor rwkv7_ada_sparse_ffn_official_cuda(
   return rwkv7_ada_sparse_ffn_official_out_cuda(
       preact, packed_value, residual, output);
 }
+
+torch::Tensor rwkv7_ada_sparse_ffn_deterministic4_out_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual,
+    torch::Tensor scratch,
+    torch::Tensor output) {
+  TORCH_CHECK(preact.is_cuda() && packed_value.is_cuda() && residual.is_cuda()
+              && scratch.is_cuda() && output.is_cuda(), "CUDA tensors required");
+  TORCH_CHECK(preact.scalar_type() == at::kHalf && packed_value.scalar_type() == at::kHalf
+              && residual.scalar_type() == at::kHalf && scratch.scalar_type() == at::kHalf
+              && output.scalar_type() == at::kHalf, "fp16 tensors required");
+  TORCH_CHECK(preact.dim() == 2 && packed_value.dim() == 2 && residual.dim() == 2
+              && scratch.dim() == 3 && output.dim() == 2, "invalid tensor ranks");
+  TORCH_CHECK(preact.is_contiguous() && packed_value.is_contiguous()
+              && residual.is_contiguous() && scratch.is_contiguous()
+              && output.is_contiguous(), "contiguous tensors required");
+  const int64_t rows = preact.size(0);
+  const int64_t ffn = preact.size(1);
+  const int64_t hidden = residual.size(1);
+  TORCH_CHECK(rows >= 8 && rows <= 19, "deterministic four-way FFN supports 8..19 rows");
+  TORCH_CHECK(residual.size(0) == rows && output.sizes() == residual.sizes(),
+              "residual/output shape mismatch");
+  TORCH_CHECK(packed_value.size(0) == ffn && packed_value.size(1) == hidden,
+              "packed value weight must have shape [ffn, hidden]");
+  TORCH_CHECK(scratch.size(0) == 4 && scratch.size(1) == rows && scratch.size(2) == hidden,
+              "scratch must have shape [4, rows, hidden]");
+  TORCH_CHECK(ffn == 4 * hidden && (ffn % 2048) == 0 && (hidden % 512) == 0,
+              "deterministic four-way FFN requires aligned RWKV 4x expansion");
+
+  c10::cuda::CUDAGuard device_guard(preact.device());
+  auto stream = at::cuda::getCurrentCUDAStream(preact.get_device());
+  sparse_relu2_down_deterministic4_kernel<<<
+      dim3(4, static_cast<unsigned>(hidden / 512), static_cast<unsigned>(rows)),
+      256, 0, stream>>>(
+      static_cast<int>(hidden), static_cast<int>(ffn), static_cast<int>(rows),
+      reinterpret_cast<const half*>(preact.data_ptr<at::Half>()),
+      reinterpret_cast<const half*>(packed_value.data_ptr<at::Half>()),
+      reinterpret_cast<half*>(scratch.data_ptr<at::Half>()));
+  finalize_sparse_deterministic4_kernel<<<
+      dim3(static_cast<unsigned>(hidden / 512), static_cast<unsigned>(rows), 1),
+      256, 0, stream>>>(
+      static_cast<int>(hidden), static_cast<int>(rows),
+      reinterpret_cast<const half*>(scratch.data_ptr<at::Half>()),
+      reinterpret_cast<const half*>(residual.data_ptr<at::Half>()),
+      reinterpret_cast<half*>(output.data_ptr<at::Half>()));
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
+}
+
+torch::Tensor rwkv7_ada_sparse_ffn_deterministic4_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual,
+    torch::Tensor scratch) {
+  auto output = torch::empty_like(residual);
+  return rwkv7_ada_sparse_ffn_deterministic4_out_cuda(
+      preact, packed_value, residual, scratch, output);
+}
 """
 
 
@@ -799,6 +984,7 @@ _EXTENSION_LOCK = threading.Lock()
 _PACK_LOCK = threading.Lock()
 _PACKED_WEIGHTS: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
 _FP32_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
+_DETERMINISTIC_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
 
 
 def _is_sparse_ffn_device(device: Any = None) -> bool:
@@ -861,7 +1047,7 @@ def _load_extension() -> Any | None:
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_sparse_ffn_v16",
+                name="rwkv7_sparse_ffn_v18",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
@@ -984,10 +1170,39 @@ def ada_sparse_ffn_prepare_fp32_scratch(weight: Any, rows: int) -> Any:
         return scratch
 
 
+def ada_sparse_ffn_prepare_deterministic_scratch(weight: Any, rows: int) -> Any:
+    """Preallocate graph-stable four-way FP16 partial sums for B8+ decode."""
+
+    rows = int(rows)
+    key = _weight_cache_key(weight, ("deterministic4_scratch", rows))
+    cached = _DETERMINISTIC_SCRATCH.get(key)
+    if cached is not None and cached[0]() is weight:
+        return cached[1]
+    with _PACK_LOCK:
+        cached = _DETERMINISTIC_SCRATCH.get(key)
+        if cached is not None and cached[0]() is weight:
+            return cached[1]
+        if torch is not None and weight.is_cuda and torch.cuda.is_current_stream_capturing():
+            raise RuntimeError(
+                "sparse FFN deterministic scratch must be allocated before CUDA graph capture; "
+                "call prewarm_ada_sparse_ffn first"
+            )
+        scratch = torch.empty(
+            4,
+            rows,
+            int(weight.shape[0]),
+            dtype=torch.float16,
+            device=weight.device,
+        )
+        _DETERMINISTIC_SCRATCH[key] = (weakref.ref(weight), scratch)
+        return scratch
+
+
 def clear_ada_sparse_ffn_weight_cache() -> None:
     with _PACK_LOCK:
         _PACKED_WEIGHTS.clear()
         _FP32_SCRATCH.clear()
+        _DETERMINISTIC_SCRATCH.clear()
 
 
 def ada_sparse_ffn_down_add(
@@ -1045,11 +1260,26 @@ def ada_sparse_ffn_down_add(
     official_boundary = os.environ.get(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY", "0"
     ).strip().lower() in {"1", "true", "yes", "on"}
+    deterministic_splits = int(
+        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS", "0")
+    )
+    if deterministic_splits not in {0, 4}:
+        raise ValueError("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS must be 0 or 4")
+    deterministic = deterministic_splits == 4 and rows >= 8
     scratch = ada_sparse_ffn_prepare_fp32_scratch(weight, rows) if fp32_accum else None
+    deterministic_scratch = (
+        ada_sparse_ffn_prepare_deterministic_scratch(weight, rows)
+        if deterministic and not fp32_accum
+        else None
+    )
     if out is None:
         if fp32_accum:
             output = extension.sparse_down_add_fp32(
                 preact2, packed, residual2, scratch
+            )
+        elif deterministic:
+            output = extension.sparse_down_add_deterministic4(
+                preact2, packed, residual2, deterministic_scratch
             )
         elif official_boundary:
             output = extension.sparse_down_add_official(
@@ -1066,6 +1296,10 @@ def ada_sparse_ffn_down_add(
         if fp32_accum:
             output = extension.sparse_down_add_fp32_out(
                 preact2, packed, residual2, scratch, out2
+            )
+        elif deterministic:
+            output = extension.sparse_down_add_deterministic4_out(
+                preact2, packed, residual2, deterministic_scratch, out2
             )
         elif official_boundary:
             output = extension.sparse_down_add_official_out(
@@ -1145,6 +1379,7 @@ __all__ = [
     "ada_sparse_ffn_build_error",
     "ada_sparse_ffn_down_add",
     "ada_sparse_ffn_pack_weight",
+    "ada_sparse_ffn_prepare_deterministic_scratch",
     "ada_sparse_ffn_prepare_fp32_scratch",
     "ada_sparse_ffn_should_use",
     "clear_ada_sparse_ffn_weight_cache",

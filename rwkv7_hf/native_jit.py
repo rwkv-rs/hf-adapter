@@ -602,6 +602,7 @@ try:  # pragma: no cover - optional sm_89 sparse FFN contraction
         ada_linear_should_use,
         ada_sparse_ffn_down_add,
         ada_sparse_ffn_pack_weight,
+        ada_sparse_ffn_prepare_deterministic_scratch,
         ada_sparse_ffn_prepare_fp32_scratch,
         ada_sparse_ffn_should_use,
     )
@@ -613,6 +614,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             ada_linear_should_use,
             ada_sparse_ffn_down_add,
             ada_sparse_ffn_pack_weight,
+            ada_sparse_ffn_prepare_deterministic_scratch,
             ada_sparse_ffn_prepare_fp32_scratch,
             ada_sparse_ffn_should_use,
         )
@@ -622,6 +624,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_linear_should_use = None  # type: ignore[assignment]
         ada_sparse_ffn_down_add = None  # type: ignore[assignment]
         ada_sparse_ffn_pack_weight = None  # type: ignore[assignment]
+        ada_sparse_ffn_prepare_deterministic_scratch = None  # type: ignore[assignment]
         ada_sparse_ffn_prepare_fp32_scratch = None  # type: ignore[assignment]
         ada_sparse_ffn_should_use = None  # type: ignore[assignment]
 
@@ -645,6 +648,14 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_wagv_lora = None  # type: ignore[assignment]
         ada_wagv_lora_available = None  # type: ignore[assignment]
         ada_wagv_lora_should_use = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional exact-shape FP16 recurrent state
+    from .native_wkv_fp16 import native_fp16_recurrent_output_prepare_raw
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from native_wkv_fp16 import native_fp16_recurrent_output_prepare_raw
+    except Exception:
+        native_fp16_recurrent_output_prepare_raw = None  # type: ignore[assignment]
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -1470,6 +1481,16 @@ def _native_graph_fused_recurrent_raw_enabled() -> bool:
     return bool(fused_recurrent_output_prepare_raw is not None and _native_graph_fused_recurrent_output_enabled())
 
 
+def _native_graph_fp16_recurrent_enabled(state: torch.Tensor, elapsed) -> bool:
+    return bool(
+        env_flag("RWKV7_NATIVE_GRAPH_FP16_RECURRENT", False)
+        and native_fp16_recurrent_output_prepare_raw is not None
+        and elapsed is not None
+        and state.dtype == torch.float16
+        and int(state.shape[-1]) == 64
+    )
+
+
 def _native_graph_fused_output_enabled() -> bool:
     """Runtime switch for the experimental native-graph output-prep Triton path."""
 
@@ -1856,6 +1877,15 @@ def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
             and ada_sparse_ffn_prepare_fp32_scratch is not None
         ):
             ada_sparse_ffn_prepare_fp32_scratch(down_weight, int(rows))
+        elif (
+            os.environ.get(
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS", "0"
+            ).strip()
+            == "4"
+            and int(rows) >= 8
+            and ada_sparse_ffn_prepare_deterministic_scratch is not None
+        ):
+            ada_sparse_ffn_prepare_deterministic_scratch(down_weight, int(rows))
         packed += 1
     return packed
 
@@ -3120,7 +3150,17 @@ def decode_speed(model, ids, packs, n=128):
     return n / dt
 
 
-def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
+def _block_ip(
+    x,
+    state,
+    xpa,
+    xpf,
+    v_first,
+    p,
+    sparse_ffn_out=None,
+    fp16_elapsed=None,
+    fp16_advance_elapsed=False,
+):
     """In-place (eager) block step for CUDA-graph capture: state/xpa/xpf/v_first
     are fixed buffers updated in place. Same math as block_step."""
     (i, H, N, eps, has_pre,
@@ -3287,8 +3327,13 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
-    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
-    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    use_fused_recurrent_output = (
+        use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
+    )
+    use_fused_recurrent_raw = use_fp16_recurrent or (
+        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(A)
         k = k * (1 + (a - 1) * k_a)
@@ -3298,7 +3343,26 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         if v_gate is None:
             v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
-    if use_fused_recurrent_raw:
+    new_state = None
+    if use_fp16_recurrent:
+        out = native_fp16_recurrent_output_prepare_raw(
+            r.view(1, H, N),
+            w.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            a.view(1, H, N),
+            state.view(1, H, N, N),
+            g.view(1, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            fp16_elapsed,
+            advance_elapsed=fp16_advance_elapsed,
+            eps=eps,
+        ).view(A)
+    elif use_fused_recurrent_raw:
         out, new_state = fused_recurrent_output_prepare_raw(
             r.view(1, H, N),
             w.view(1, H, N),
@@ -3380,7 +3444,8 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(H, N)).view(A)) * g
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
-    state.copy_(new_state)
+    if new_state is not None:
+        state.copy_(new_state)
     if use_fused_norm_mix:
         residual, fk = fused_ffn_add_norm_mix_decode(
             residual,
@@ -3401,7 +3466,17 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     return _native_graph_ffn_dispatch(fk, fK, fV, residual, sparse_out=sparse_ffn_out)
 
 
-def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
+def _block_ip_batched(
+    x,
+    state,
+    xpa,
+    xpf,
+    v_first,
+    p,
+    sparse_ffn_out=None,
+    fp16_elapsed=None,
+    fp16_advance_elapsed=False,
+):
     """In-place batched block step for CUDA-graph capture.
 
     Shapes:
@@ -3563,8 +3638,13 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
-    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
-    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    use_fused_recurrent_output = (
+        use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
+    )
+    use_fused_recurrent_raw = use_fp16_recurrent or (
+        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, A)
         k = k * (1 + (a - 1) * k_a)
@@ -3574,7 +3654,26 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         if v_gate is None:
             v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
-    if use_fused_recurrent_raw:
+    new_state = None
+    if use_fp16_recurrent:
+        out = native_fp16_recurrent_output_prepare_raw(
+            r.view(B, H, N),
+            w.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            a.view(B, H, N),
+            state,
+            g.view(B, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            fp16_elapsed,
+            advance_elapsed=fp16_advance_elapsed,
+            eps=eps,
+        ).reshape(B, A)
+    elif use_fused_recurrent_raw:
         out, new_state = fused_recurrent_output_prepare_raw(
             r.view(B, H, N),
             w.view(B, H, N),
@@ -3654,7 +3753,8 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(B, H, N)).view(B, A)) * g
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
-    state.copy_(new_state)
+    if new_state is not None:
+        state.copy_(new_state)
     if use_fused_norm_mix:
         residual, fk = fused_ffn_add_norm_mix_decode(
             residual,
