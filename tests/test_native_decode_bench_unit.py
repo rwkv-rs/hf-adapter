@@ -8,7 +8,7 @@ from bench.bench_native_model_decode import (
     summarize_iteration_times,
 )
 from bench.bench_native_model_decode_alignment import compare_traces, decode_environment
-from rwkv7_hf import native_wkv_fp16
+from rwkv7_hf import blackwell_norm_mix, native_wkv_fp16
 
 
 def test_decode_environment_restores_managed_values(monkeypatch) -> None:
@@ -56,6 +56,30 @@ def test_fp16_state_extension_is_reported_and_built(monkeypatch) -> None:
 
     assert calls == [True]
     assert status["native_wkv_fp16"] == {
+        "requested": True,
+        "active": True,
+        "error": None,
+    }
+
+
+def test_blackwell_norm_extension_is_reported_and_built(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX", "1")
+    monkeypatch.setattr(
+        blackwell_norm_mix,
+        "blackwell_norm_mix_available",
+        lambda *, build=False: calls.append(build) or True,
+    )
+    monkeypatch.setattr(
+        blackwell_norm_mix,
+        "blackwell_norm_mix_build_error",
+        lambda: None,
+    )
+
+    status = requested_extension_status("cuda")
+
+    assert calls == [True]
+    assert status["blackwell_norm_mix"] == {
         "requested": True,
         "active": True,
         "error": None,

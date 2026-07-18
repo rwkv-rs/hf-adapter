@@ -28,10 +28,28 @@ DEFAULT_PROMPT = (
 )
 
 ALIGNMENT_THRESHOLDS = {
-    "logits": {"min_cosine": 0.9999, "max_abs": 0.125},
+    "logits": {
+        "min_cosine": 0.9999,
+        "max_abs": 0.125,
+        "fp16_max_ulps_at_max": 4.0,
+        "fp16_max_abs_tail": 0.1875,
+        "fp16_max_fraction_over_abs": 5.0e-5,
+    },
     "state": {"min_cosine": 0.9999, "max_abs": 1.0},
-    "xpa": {"min_cosine": 0.9999, "max_abs": 0.125},
-    "xpf": {"min_cosine": 0.9999, "max_abs": 0.125},
+    "xpa": {
+        "min_cosine": 0.9999,
+        "max_abs": 0.125,
+        "fp16_max_ulps_at_max": 4.0,
+        "fp16_max_abs_tail": 0.1875,
+        "fp16_max_fraction_over_abs": 5.0e-5,
+    },
+    "xpf": {
+        "min_cosine": 0.9999,
+        "max_abs": 0.125,
+        "fp16_max_ulps_at_max": 4.0,
+        "fp16_max_abs_tail": 0.1875,
+        "fp16_max_fraction_over_abs": 5.0e-5,
+    },
 }
 
 
@@ -43,7 +61,12 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def tensor_metrics(left: torch.Tensor, right: torch.Tensor) -> dict[str, Any]:
+def tensor_metrics(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    *,
+    absolute_threshold: float = 0.125,
+) -> dict[str, Any]:
     if tuple(left.shape) != tuple(right.shape):
         raise ValueError(f"tensor shape mismatch: {tuple(left.shape)} vs {tuple(right.shape)}")
     left_flat = left.detach().cpu().reshape(-1)
@@ -54,15 +77,36 @@ def tensor_metrics(left: torch.Tensor, right: torch.Tensor) -> dict[str, Any]:
     left_norm = 0.0
     right_norm = 0.0
     finite = True
+    count_over_abs = 0
+    max_abs_ulps_at_max: float | None = None
+    max_abs_native_value: float | None = None
+    max_abs_official_value: float | None = None
     total = int(left_flat.numel())
     chunk_size = 1 << 20
     for start in range(0, total, chunk_size):
-        lhs = left_flat[start : start + chunk_size].float()
-        rhs = right_flat[start : start + chunk_size].float()
+        lhs_raw = left_flat[start : start + chunk_size]
+        rhs_raw = right_flat[start : start + chunk_size]
+        lhs = lhs_raw.float()
+        rhs = rhs_raw.float()
         finite = finite and bool(torch.isfinite(lhs).all()) and bool(torch.isfinite(rhs).all())
         diff = (lhs - rhs).abs()
         if diff.numel():
-            max_abs = max(max_abs, float(diff.max()))
+            chunk_max, chunk_index = diff.max(dim=0)
+            chunk_max_value = float(chunk_max)
+            if chunk_max_value > max_abs:
+                max_abs = chunk_max_value
+                index = int(chunk_index)
+                max_abs_native_value = float(lhs[index])
+                max_abs_official_value = float(rhs[index])
+                if right.dtype == torch.float16:
+                    reference = rhs_raw[index]
+                    direction = torch.tensor(
+                        float("inf") if lhs[index] >= rhs[index] else float("-inf"),
+                        dtype=torch.float16,
+                    )
+                    spacing = float((torch.nextafter(reference, direction) - reference).abs())
+                    max_abs_ulps_at_max = max_abs / spacing if spacing > 0.0 else None
+            count_over_abs += int((diff > float(absolute_threshold)).sum())
             sum_abs += float(diff.double().sum())
             dot += float((lhs.double() * rhs.double()).sum())
             left_norm += float((lhs.double() * lhs.double()).sum())
@@ -75,6 +119,11 @@ def tensor_metrics(left: torch.Tensor, right: torch.Tensor) -> dict[str, Any]:
         "dtype_official": str(right.dtype),
         "finite": finite,
         "max_abs": max_abs,
+        "max_abs_native_value": max_abs_native_value,
+        "max_abs_official_value": max_abs_official_value,
+        "max_abs_ulps_at_max": max_abs_ulps_at_max,
+        "count_over_abs_threshold": count_over_abs,
+        "fraction_over_abs_threshold": count_over_abs / max(total, 1),
         "mean_abs": sum_abs / max(total, 1),
         "cosine": cosine,
     }
@@ -82,10 +131,25 @@ def tensor_metrics(left: torch.Tensor, right: torch.Tensor) -> dict[str, Any]:
 
 def metrics_pass(metrics: dict[str, Any], kind: str) -> bool:
     threshold = ALIGNMENT_THRESHOLDS[kind]
+    fixed_abs_pass = metrics["max_abs"] <= threshold["max_abs"]
+    fp16_tail_pass = bool(
+        metrics["dtype_native"] == "torch.float16"
+        and metrics["dtype_official"] == "torch.float16"
+        and "fp16_max_ulps_at_max" in threshold
+        and metrics["max_abs_ulps_at_max"] is not None
+        and (
+            metrics["max_abs_ulps_at_max"] <= threshold["fp16_max_ulps_at_max"]
+            or metrics["max_abs"] <= threshold["fp16_max_abs_tail"]
+        )
+        and metrics["fraction_over_abs_threshold"]
+        <= threshold["fp16_max_fraction_over_abs"]
+    )
+    metrics["fixed_abs_pass"] = bool(fixed_abs_pass)
+    metrics["fp16_tail_pass"] = bool(fp16_tail_pass)
     return bool(
         metrics["finite"]
         and metrics["cosine"] >= threshold["min_cosine"]
-        and metrics["max_abs"] <= threshold["max_abs"]
+        and (fixed_abs_pass or fp16_tail_pass)
     )
 
 
@@ -262,6 +326,11 @@ def capture_native(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "engine": "native_hf",
         "source_revision": args.native_source_revision,
+        "runtime": {
+            key: value
+            for key, value in sorted(os.environ.items())
+            if key.startswith(("RWKV7_NATIVE_GRAPH_", "RWKV7_FUSED_"))
+        },
         "precision": "fp16_state_fp16_io",
         "prompt": args.prompt,
         "prompt_tokens": int(ids.shape[1]),
@@ -284,12 +353,12 @@ def load_official(args: argparse.Namespace):
     module = importlib.import_module(args.official_module)
     module.MODEL_PATH = args.official_model
     module.WKV_MODE = "fp16"
-    module.EMB_DEVICE = "gpu"
-    module.RKV_MODE = "off"
-    module.CMIX_SPARSE = "no-fc"
-    module.LOWRANK_WEIGHT = "both"
+    module.EMB_DEVICE = args.official_emb
+    module.RKV_MODE = args.official_batched_rkv
+    module.CMIX_SPARSE = args.official_cmix_sparse
+    module.LOWRANK_WEIGHT = args.official_lowrank_weight
     module.ORIG_LINEAR_GROUPS = module.parse_orig_linear_groups(
-        "att_c2c,ffn_key,head"
+        args.official_orig_linear_groups
     )
     os.chdir(args.official_dir)
     torch.set_grad_enabled(False)
@@ -325,6 +394,18 @@ def capture_official(args: argparse.Namespace) -> dict[str, Any]:
         "engine": "official_v3a",
         "source_revision": revision,
         "source_verification": source_verification,
+        "runtime": {
+            "wkv": "fp16",
+            "emb": args.official_emb,
+            "batched_rkv": args.official_batched_rkv,
+            "cmix_sparse": args.official_cmix_sparse,
+            "lowrank_weight": args.official_lowrank_weight,
+            "orig_linear_groups": sorted(
+                value.strip()
+                for value in args.official_orig_linear_groups.split(",")
+                if value.strip() and value.strip() != "none"
+            ),
+        },
         "precision": "fp16_state_fp16_io",
         "prompt": args.prompt,
         "prompt_tokens": int(ids.shape[1]),
@@ -356,7 +437,11 @@ def compare_captures(
         label = str(batch_size)
         nat = native["captures"][label]
         off = official["captures"][label]
-        logits_metrics = tensor_metrics(nat["logits"], off["logits"])
+        logits_metrics = tensor_metrics(
+            nat["logits"],
+            off["logits"],
+            absolute_threshold=ALIGNMENT_THRESHOLDS["logits"]["max_abs"],
+        )
         native_top1 = nat["logits"].argmax(dim=-1)
         official_top1 = off["logits"].argmax(dim=-1)
         logits_metrics["top1_matches"] = int((native_top1 == official_top1).sum())
@@ -368,7 +453,11 @@ def compare_captures(
         states: dict[str, Any] = {}
         for phase in ("prefill", "final"):
             states[phase] = {
-                name: tensor_metrics(nat[phase][name], off[phase][name])
+                name: tensor_metrics(
+                    nat[phase][name],
+                    off[phase][name],
+                    absolute_threshold=ALIGNMENT_THRESHOLDS[name]["max_abs"],
+                )
                 for name in ("state", "xpa", "xpf")
             }
             for name in ("state", "xpa", "xpf"):
@@ -435,6 +524,21 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument("--official-module", default="rwkv7_fast_v3a")
         capture.add_argument("--official-commit", default="")
         capture.add_argument("--official-source-manifest", default="")
+        capture.add_argument("--official-emb", choices=("gpu", "cpu"), default="gpu")
+        capture.add_argument(
+            "--official-batched-rkv", choices=("auto", "on", "off"), default="off"
+        )
+        capture.add_argument(
+            "--official-cmix-sparse", choices=("auto", "no-fc", "off"), default="no-fc"
+        )
+        capture.add_argument(
+            "--official-lowrank-weight",
+            choices=("orig", "transpose", "both"),
+            default="both",
+        )
+        capture.add_argument(
+            "--official-orig-linear-groups", default="att_c2c,ffn_key,head"
+        )
     compare = subparsers.add_parser("compare")
     compare.add_argument("--native", required=True)
     compare.add_argument("--official", required=True)

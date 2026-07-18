@@ -84,6 +84,34 @@ def _graph_linear_shape(operand) -> tuple[int, int]:
     return int(operand.out_features), int(operand.in_features)
 
 
+def _native_graph_sparse_ffn_low_memory_pack_enabled() -> bool:
+    return env_flag("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK", False)
+
+
+def _native_graph_relayout_ffn_value_weight(module):
+    """Store an FFN down weight in the sparse kernel's transposed layout.
+
+    The exposed parameter keeps its original ``[hidden, ffn]`` shape, so
+    ``F.linear`` and state-dict names remain compatible. Its backing storage is
+    contiguous as ``[ffn, hidden]``, allowing the sparse decode kernel to reuse
+    the same bytes instead of allocating a second full-size model copy.
+    """
+
+    if type(module) is not torch.nn.Linear or module.bias is not None:
+        raise TypeError("low-memory sparse FFN packing requires a bias-free nn.Linear")
+    if getattr(module, "_rwkv7_sparse_low_memory_layout", False):
+        return module.weight
+    weight = module.weight
+    if weight.dim() != 2:
+        raise ValueError("low-memory sparse FFN packing requires a rank-2 weight")
+    packed = weight.detach().transpose(0, 1).contiguous()
+    module.weight = torch.nn.Parameter(
+        packed.transpose(0, 1), requires_grad=bool(weight.requires_grad)
+    )
+    module._rwkv7_sparse_low_memory_layout = True
+    return module.weight
+
+
 def _native_bnb8_policy_flag(env_name: str, policy_name: str) -> bool:
     try:
         default = bool(getattr(_kernel_policy(), policy_name, False))
@@ -686,6 +714,21 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
     except Exception:
         native_fp16_recurrent_output_prepare_raw = None  # type: ignore[assignment]
         native_fp16_sequence = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional exact official-order Blackwell norm/mix
+    from .blackwell_norm_mix import (
+        blackwell_ffn_add_norm_mix,
+        blackwell_norm_mix_should_use,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from blackwell_norm_mix import (
+            blackwell_ffn_add_norm_mix,
+            blackwell_norm_mix_should_use,
+        )
+    except Exception:
+        blackwell_ffn_add_norm_mix = None  # type: ignore[assignment]
+        blackwell_norm_mix_should_use = None  # type: ignore[assignment]
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -1726,6 +1769,33 @@ def _native_graph_fused_norm_mix_num_warps() -> int:
     return value
 
 
+def _native_graph_blackwell_norm_mix_enabled(
+    residual, attention, previous, *, layer_index: int
+) -> bool:
+    if not env_flag("RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX", False):
+        return False
+    batch_size = int(residual.shape[0]) if residual.ndim > 1 else 1
+    selected = os.environ.get(
+        f"RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS_B{batch_size}",
+        os.environ.get("RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS", ""),
+    ).strip()
+    if selected:
+        try:
+            layers = {int(value.strip()) for value in selected.split(",") if value.strip()}
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS must be comma-separated integers"
+            ) from exc
+        if int(layer_index) not in layers:
+            return False
+    if blackwell_ffn_add_norm_mix is None or blackwell_norm_mix_should_use is None:
+        return False
+    try:
+        return bool(blackwell_norm_mix_should_use(residual, attention, previous))
+    except Exception:
+        return False
+
+
 def _native_graph_sm70_linear_enabled() -> bool:
     """Whether measured sm_70 small-row linear routes may be captured."""
 
@@ -2434,6 +2504,17 @@ def extract_graph(model):
     stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     embed_ref = model.model.embeddings.weight
     for i, layer in enumerate(layers):
+        if _native_graph_sparse_ffn_low_memory_pack_enabled():
+            if model.training or torch.is_grad_enabled():
+                raise RuntimeError(
+                    "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK is inference-only"
+                )
+            value_weight = layer.ffn.value.weight
+            if value_weight.device.type != "cuda" or value_weight.dtype != torch.float16:
+                raise RuntimeError(
+                    "low-memory sparse FFN packing requires CUDA fp16 value weights"
+                )
+            _native_graph_relayout_ffn_value_weight(layer.ffn.value)
         a = layer.attn
         vl = getattr(a, "v_lora", None)
         if vl is not None:
@@ -3679,15 +3760,22 @@ def _block_ip(
     if new_state is not None:
         state.copy_(new_state)
     if use_fused_norm_mix:
-        residual, fk = fused_ffn_add_norm_mix_decode(
-            residual,
-            out,
-            xpf,
-            fn_w,
-            fn_b,
-            fx_k,
-            num_warps=_native_graph_fused_norm_mix_num_warps(),
-        )
+        if _native_graph_blackwell_norm_mix_enabled(
+            residual, out, xpf, layer_index=int(i)
+        ):
+            residual, fk = blackwell_ffn_add_norm_mix(
+                residual, out, xpf, fn_w, fn_b, fx_k, eps=1.0e-5
+            )
+        else:
+            residual, fk = fused_ffn_add_norm_mix_decode(
+                residual,
+                out,
+                xpf,
+                fn_w,
+                fn_b,
+                fx_k,
+                num_warps=_native_graph_fused_norm_mix_num_warps(),
+            )
     else:
         xpa.copy_(h)
         residual = residual + out
@@ -3988,15 +4076,22 @@ def _block_ip_batched(
     if new_state is not None:
         state.copy_(new_state)
     if use_fused_norm_mix:
-        residual, fk = fused_ffn_add_norm_mix_decode(
-            residual,
-            out,
-            xpf,
-            fn_w,
-            fn_b,
-            fx_k,
-            num_warps=_native_graph_fused_norm_mix_num_warps(),
-        )
+        if _native_graph_blackwell_norm_mix_enabled(
+            residual, out, xpf, layer_index=int(i)
+        ):
+            residual, fk = blackwell_ffn_add_norm_mix(
+                residual, out, xpf, fn_w, fn_b, fx_k, eps=1.0e-5
+            )
+        else:
+            residual, fk = fused_ffn_add_norm_mix_decode(
+                residual,
+                out,
+                xpf,
+                fn_w,
+                fn_b,
+                fx_k,
+                num_warps=_native_graph_fused_norm_mix_num_warps(),
+            )
     else:
         xpa.copy_(h)
         residual = residual + out
