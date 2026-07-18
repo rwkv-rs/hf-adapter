@@ -12,6 +12,7 @@ from __future__ import annotations
 ADAPTER_FILES = [
     "ada_lora.py",
     "ada_sparse_ffn.py",
+    "blackwell_norm_mix.py",
     "dplr_prefill.py",
     "dplr_prefill_triton.py",
     "fused_attention_projection.py",

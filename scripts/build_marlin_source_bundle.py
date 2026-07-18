@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic remote-code Marlin source bundle."""
+"""Build the remote-code Marlin source bundle from canonical source bytes."""
 from __future__ import annotations
 
 import base64

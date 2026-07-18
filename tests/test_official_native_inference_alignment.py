@@ -10,6 +10,9 @@ from scripts.compare_official_native_inference import (
     tensor_metrics,
     verify_official_source,
 )
+from scripts.compare_official_native_prefill import (
+    metric_pass_official_self_envelope,
+)
 from scripts.compare_official_self_repeats import compare_repeats
 from scripts.compare_official_native_prefill import (
     compare as compare_prefill,
@@ -86,6 +89,30 @@ def test_official_envelope_gate_is_bounded_by_explicit_multiplier() -> None:
     }
     assert metrics_pass_official_envelope(metrics, envelope, multiplier=1.25)
     assert not metrics_pass_official_envelope(metrics, envelope, multiplier=1.0)
+
+
+def test_prefill_envelope_only_applies_to_first_decode_logits() -> None:
+    metrics = {
+        "finite": True,
+        "max_abs": 0.15,
+        "fraction_over_abs_threshold": 0.00006,
+        "cosine": 0.9999999,
+    }
+    envelope = {
+        "max_abs": 0.20,
+        "max_fraction_over_abs_threshold": 0.0001,
+        "min_cosine": 0.9999998,
+    }
+
+    assert metric_pass_official_self_envelope(
+        "first_decode_logits", metrics, envelope, multiplier=1.25
+    )
+    assert not metric_pass_official_self_envelope(
+        "logits", metrics, envelope, multiplier=1.25
+    )
+    assert not metric_pass_official_self_envelope(
+        "layer_outputs", metrics, envelope, multiplier=1.25
+    )
 
 
 def test_tensor_metrics_reports_exact_and_close_values() -> None:

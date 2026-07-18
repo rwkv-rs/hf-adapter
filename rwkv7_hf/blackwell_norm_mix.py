@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Opt-in official-order FP16 FFN norm/mix boundary for Blackwell decode.
+"""Opt-in official-order FP16 FFN norm/mix boundary for SM120 decode.
 
 The CUDA reduction and half2 output order are derived from the Apache-2.0
 RWKV-Gradio-3 ``rwkv7_v3a_ops`` implementation pinned by the official/native
@@ -251,14 +251,14 @@ def blackwell_ffn_add_norm_mix(
     eps: float = 1.0e-5,
 ) -> tuple[Any, Any]:
     if not blackwell_norm_mix_should_use(residual, attention, previous):
-        raise ValueError("Blackwell norm/mix received an unsupported device, dtype, or shape")
+        raise ValueError("SM120 norm/mix received an unsupported device, dtype, or shape")
     tensors = (residual, attention, previous, weight, bias, mix)
     if not all(item.is_contiguous() and item.dtype == torch.float16 for item in tensors):
-        raise ValueError("Blackwell norm/mix requires contiguous CUDA fp16 tensors")
+        raise ValueError("SM120 norm/mix requires contiguous CUDA fp16 tensors")
     extension = _load_extension()
     if extension is None:
         raise RuntimeError(
-            "Blackwell norm/mix extension is unavailable: "
+            "SM120 norm/mix extension is unavailable: "
             f"{blackwell_norm_mix_build_error()}"
         )
     residual_out, mixed = extension.ffn_add_norm_mix(
