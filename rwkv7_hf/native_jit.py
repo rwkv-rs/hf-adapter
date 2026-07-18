@@ -85,7 +85,11 @@ def _graph_linear_shape(operand) -> tuple[int, int]:
 
 
 def _native_graph_sparse_ffn_low_memory_pack_enabled() -> bool:
-    return env_flag("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK", False)
+    policy = _kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK",
+        bool(getattr(policy, "ada_sparse_ffn_low_memory_pack", False)),
+    )
 
 
 def _native_graph_relayout_ffn_value_weight(module):
@@ -774,7 +778,11 @@ def _native_prefill_fused_scan_enabled() -> bool:
 def _native_prefill_fp16_recurrent_requested() -> bool:
     """Select official-precision sequence recurrence without changing defaults."""
 
-    return env_flag("RWKV7_NATIVE_PREFILL_FP16_RECURRENT", False)
+    policy = _kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_PREFILL_FP16_RECURRENT",
+        bool(getattr(policy, "prefill_fp16_recurrent", False)),
+    )
 
 
 def _native_prefill_fp16_recurrent_enabled(state: torch.Tensor) -> bool:
@@ -1154,6 +1162,30 @@ def _native_prefill_model_shape_selected(
     ) in shapes
 
 
+def _native_prefill_policy_model_shape_selected(
+    policy_name: str,
+    batch_size: int | None,
+    prompt_tokens: int | None,
+    hidden_size: int | None,
+    num_layers: int | None,
+) -> bool:
+    """Return whether an exact shape is explicitly promoted by policy."""
+
+    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+        return False
+    target = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    return target in {
+        tuple(int(value) for value in shape)
+        for shape in getattr(_kernel_policy(), policy_name, ())
+        if len(shape) == 4
+    }
+
+
 def _native_prefill_fused_shift_mix_enabled(
     batch_size: int | None = None,
     prompt_tokens: int | None = None,
@@ -1222,10 +1254,36 @@ def _native_prefill_shift_mix_layers(
     return {value for value in selected if value < int(num_layers)}
 
 
-def _native_prefill_attn_shift_mix_block_size(strict_fp16_rounding: bool) -> int:
+def _native_prefill_shift_mix_launch_profile(
+    role: str,
+    batch_size: int | None,
+    prompt_tokens: int | None,
+    hidden_size: int | None,
+    num_layers: int | None,
+) -> tuple[int, int] | None:
+    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+        return None
+    policy_name = f"prefill_{role.lower()}_shift_mix_launch_profiles"
+    target = (int(hidden_size), int(num_layers), int(batch_size), int(prompt_tokens))
+    for profile in getattr(_kernel_policy(), policy_name, ()):
+        if len(profile) == 6 and tuple(int(value) for value in profile[:4]) == target:
+            return int(profile[4]), int(profile[5])
+    return None
+
+
+def _native_prefill_attn_shift_mix_block_size(
+    strict_fp16_rounding: bool,
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> int:
     """Choose a validated elementwise tile for sequence attention shift-mix."""
 
-    default = 2048 if strict_fp16_rounding else 256
+    profile = _native_prefill_shift_mix_launch_profile(
+        "attn", batch_size, prompt_tokens, hidden_size, num_layers
+    )
+    default = profile[0] if profile is not None else (2048 if strict_fp16_rounding else 256)
     value = env_int(
         "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE",
         default,
@@ -1240,15 +1298,24 @@ def _native_prefill_attn_shift_mix_block_size(strict_fp16_rounding: bool) -> int
     return value
 
 
-def _native_prefill_shift_mix_num_warps(role: str) -> int:
+def _native_prefill_shift_mix_num_warps(
+    role: str,
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> int:
     """Return a validated launch width for attention or FFN sequence mix."""
 
     role = role.strip().upper()
     if role not in ("ATTN", "FFN"):
         raise ValueError("shift-mix role must be ATTN or FFN")
+    profile = _native_prefill_shift_mix_launch_profile(
+        role.lower(), batch_size, prompt_tokens, hidden_size, num_layers
+    )
     value = env_int(
         f"RWKV7_NATIVE_PREFILL_{role}_SHIFT_MIX_NUM_WARPS",
-        4,
+        profile[1] if profile is not None else 4,
         lower=1,
         upper=8,
     )
@@ -1259,12 +1326,20 @@ def _native_prefill_shift_mix_num_warps(role: str) -> int:
     return value
 
 
-def _native_prefill_ffn_shift_mix_block_size() -> int:
+def _native_prefill_ffn_shift_mix_block_size(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> int:
     """Return a validated elementwise tile for FFN sequence shift-mix."""
 
+    profile = _native_prefill_shift_mix_launch_profile(
+        "ffn", batch_size, prompt_tokens, hidden_size, num_layers
+    )
     value = env_int(
         "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE",
-        256,
+        profile[0] if profile is not None else 256,
         lower=64,
         upper=2048,
     )
@@ -1905,8 +1980,12 @@ def _native_graph_fused_recurrent_raw_enabled() -> bool:
 
 
 def _native_graph_fp16_recurrent_enabled(state: torch.Tensor, elapsed) -> bool:
+    policy = _kernel_policy()
     return bool(
-        env_flag("RWKV7_NATIVE_GRAPH_FP16_RECURRENT", False)
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_FP16_RECURRENT",
+            bool(getattr(policy, "native_graph_fp16_recurrent", False)),
+        )
         and native_fp16_recurrent_output_prepare_raw is not None
         and elapsed is not None
         and state.dtype == torch.float16
@@ -2131,7 +2210,9 @@ def _native_graph_ada_linear_should_route(rows: int, role: str) -> bool:
         enabled_rows = {2}
     raw_roles = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES")
     if raw_roles is None:
-        raw_roles = "hidden" if int(rows) == 4 else "hidden,ffn_up,ffn_down"
+        raw_roles = str(getattr(policy, "ada_linear_roles", "auto"))
+        if raw_roles.strip().lower() == "auto":
+            raw_roles = "hidden" if int(rows) == 4 else "hidden,ffn_up,ffn_down"
     enabled_roles = {item.strip().lower() for item in raw_roles.replace(",", " ").split() if item.strip()}
     return int(rows) in enabled_rows and role.lower() in enabled_roles
 
@@ -2154,7 +2235,11 @@ def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: i
 def _native_graph_ada_wag_lora_enabled() -> bool:
     """Whether the exact-card W/A/G-only low-rank route may be captured."""
 
-    if not env_flag("RWKV7_NATIVE_GRAPH_ADA_WAG_LORA", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA",
+        bool(getattr(policy, "ada_wag_lora", False)),
+    ):
         return False
     if ada_wag_lora is None or ada_wagv_lora_available is None:
         return False
@@ -2323,13 +2408,17 @@ def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
             continue
         ada_sparse_ffn_pack_weight(down_weight, cache_tag=int(rows))
         if (
-            env_flag("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM", False)
+            env_flag(
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM",
+                bool(getattr(_kernel_policy(), "ada_sparse_ffn_fp32_accum", False)),
+            )
             and ada_sparse_ffn_prepare_fp32_scratch is not None
         ):
             ada_sparse_ffn_prepare_fp32_scratch(down_weight, int(rows))
         elif (
             os.environ.get(
-                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS", "0"
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS",
+                str(getattr(_kernel_policy(), "ada_sparse_ffn_deterministic_splits", 0)),
             ).strip()
             == "4"
             and int(rows) >= 8
@@ -3130,11 +3219,18 @@ def prefill(
         dtype == torch.float16
         and env_flag("RWKV7_NATIVE_PREFILL_SHIFT_MIX_STRICT_FP16", False)
     )
+    strict_attn_default = _native_prefill_policy_model_shape_selected(
+        "prefill_attn_shift_mix_strict_fp16_model_shapes",
+        B,
+        T,
+        residual_hidden,
+        len(packs),
+    )
     strict_attn_shift_mix_fp16 = bool(
         dtype == torch.float16
         and env_flag(
             "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16",
-            strict_shift_mix_fp16,
+            strict_shift_mix_fp16 or strict_attn_default,
         )
         and _native_prefill_model_shape_selected(
             "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16_MODEL_SHAPES",
@@ -3145,11 +3241,18 @@ def prefill(
             len(packs),
         )
     )
+    strict_ffn_default = _native_prefill_policy_model_shape_selected(
+        "prefill_ffn_shift_mix_strict_fp16_model_shapes",
+        B,
+        T,
+        residual_hidden,
+        len(packs),
+    )
     strict_ffn_shift_mix_fp16 = bool(
         dtype == torch.float16
         and env_flag(
             "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16",
-            strict_shift_mix_fp16,
+            strict_shift_mix_fp16 or strict_ffn_default,
         )
         and _native_prefill_model_shape_selected(
             "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16_MODEL_SHAPES",
@@ -3161,11 +3264,21 @@ def prefill(
         )
     )
     attn_shift_mix_block_size = _native_prefill_attn_shift_mix_block_size(
-        strict_attn_shift_mix_fp16
+        strict_attn_shift_mix_fp16,
+        B,
+        T,
+        residual_hidden,
+        len(packs),
     )
-    attn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps("ATTN")
-    ffn_shift_mix_block_size = _native_prefill_ffn_shift_mix_block_size()
-    ffn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps("FFN")
+    attn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps(
+        "ATTN", B, T, residual_hidden, len(packs)
+    )
+    ffn_shift_mix_block_size = _native_prefill_ffn_shift_mix_block_size(
+        B, T, residual_hidden, len(packs)
+    )
+    ffn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps(
+        "FFN", B, T, residual_hidden, len(packs)
+    )
     prefill_shift_mix_layers = (
         _native_prefill_shift_mix_layers(B, T, len(packs))
         if use_prefill_shift_mix

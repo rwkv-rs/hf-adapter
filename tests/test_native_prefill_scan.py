@@ -272,6 +272,10 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
         fused_prefill_state_prep=True,
         prefill_state_prep_model_shapes=((2048, 24, 8, 512),),
         prefill_state_prep_layer_counts=((2048, 24, 8, 512, 12),),
+        prefill_attn_shift_mix_strict_fp16_model_shapes=((4096, 61, 1, 128),),
+        prefill_ffn_shift_mix_strict_fp16_model_shapes=((4096, 61, 1, 128),),
+        prefill_attn_shift_mix_launch_profiles=((4096, 61, 1, 128, 2048, 8),),
+        prefill_ffn_shift_mix_launch_profiles=((4096, 61, 1, 128, 2048, 8),),
     )
     monkeypatch.setattr(native_jit, "_kernel_policy", lambda: policy)
     monkeypatch.setattr(native_jit, "fused_attn_shift_mix", object())
@@ -320,6 +324,13 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
     monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", "0")
     assert not native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
 
+    assert native_jit._native_prefill_policy_model_shape_selected(
+        "prefill_attn_shift_mix_strict_fp16_model_shapes", 1, 128, 4096, 61
+    )
+    assert not native_jit._native_prefill_policy_model_shape_selected(
+        "prefill_attn_shift_mix_strict_fp16_model_shapes", 8, 128, 4096, 61
+    )
+
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", raising=False)
     assert native_jit._native_prefill_attn_shift_mix_block_size(False) == 256
     assert native_jit._native_prefill_attn_shift_mix_block_size(True) == 2048
@@ -329,12 +340,22 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
     with pytest.raises(ValueError, match="power of two"):
         native_jit._native_prefill_attn_shift_mix_block_size(True)
 
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", raising=False)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_NUM_WARPS", raising=False)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE", raising=False)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_NUM_WARPS", raising=False)
     assert native_jit._native_prefill_shift_mix_num_warps("attn") == 4
     assert native_jit._native_prefill_ffn_shift_mix_block_size() == 256
     assert native_jit._native_prefill_shift_mix_num_warps("ffn") == 4
+    assert native_jit._native_prefill_attn_shift_mix_block_size(
+        False, 1, 128, 4096, 61
+    ) == 2048
+    assert native_jit._native_prefill_shift_mix_num_warps(
+        "attn", 1, 128, 4096, 61
+    ) == 8
+    assert native_jit._native_prefill_ffn_shift_mix_block_size(
+        1, 128, 4096, 61
+    ) == 2048
     monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_NUM_WARPS", "8")
     monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE", "2048")
     monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_NUM_WARPS", "2")

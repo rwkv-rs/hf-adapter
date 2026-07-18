@@ -31,6 +31,35 @@ except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
     F = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - direct remote-file execution fallback
+    from .kernel_policy import current_kernel_policy, env_flag
+except Exception:  # pragma: no cover
+    try:
+        from kernel_policy import current_kernel_policy, env_flag
+    except Exception:
+        current_kernel_policy = None  # type: ignore[assignment]
+        env_flag = None  # type: ignore[assignment]
+
+
+def _kernel_policy():
+    if current_kernel_policy is None:
+        return None
+    try:
+        return current_kernel_policy(torch_module=torch)
+    except Exception:
+        return None
+
+
+def _policy_flag(env_name: str, policy_name: str) -> bool:
+    policy = _kernel_policy()
+    default = bool(getattr(policy, policy_name, False)) if policy is not None else False
+    if env_flag is not None:
+        return bool(env_flag(env_name, default))
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 
 _CPP_SOURCE = r"""
 #include <torch/extension.h>
@@ -1230,8 +1259,7 @@ def blackwell_cmix_should_use(rows: int, outputs: int, inputs: int) -> bool:
 
 def _blackwell_cmix_enabled(device: Any = None) -> bool:
     return (
-        os.environ.get("RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX", "0").strip().lower()
-        in {"1", "true", "yes", "on"}
+        _policy_flag("RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX", "blackwell_cmix")
         and _is_blackwell_device(device)
     )
 
@@ -1347,12 +1375,10 @@ def _weight_cache_key(weight: Any, cache_tag: Any = None) -> tuple[Any, ...]:
 def ada_sparse_ffn_pack_weight(weight: Any, *, cache_tag: Any = None) -> Any:
     """Return a cached contiguous ``[ffn, hidden]`` inference layout."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_SHARE_PACK", "0").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
+    if _policy_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_SHARE_PACK",
+        "ada_sparse_ffn_share_pack",
+    ):
         cache_tag = None
     key = _weight_cache_key(weight, cache_tag)
     cached = _PACKED_WEIGHTS.get(key)
@@ -1502,14 +1528,20 @@ def ada_sparse_ffn_down_add(
             preact2, packed, residual2, out2
         )
         return output.reshape(outputs) if scalar else output
-    fp32_accum = os.environ.get(
-        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM", "0"
-    ).strip().lower() in {"1", "true", "yes", "on"}
-    official_boundary = os.environ.get(
-        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY", "0"
-    ).strip().lower() in {"1", "true", "yes", "on"}
+    fp32_accum = _policy_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM",
+        "ada_sparse_ffn_fp32_accum",
+    )
+    official_boundary = _policy_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY",
+        "ada_sparse_ffn_official_boundary",
+    )
+    policy = _kernel_policy()
     deterministic_splits = int(
-        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS", "0")
+        os.environ.get(
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS",
+            str(getattr(policy, "ada_sparse_ffn_deterministic_splits", 0)),
+        )
     )
     if deterministic_splits not in {0, 4}:
         raise ValueError("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS must be 0 or 4")

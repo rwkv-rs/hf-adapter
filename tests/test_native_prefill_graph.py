@@ -44,6 +44,24 @@ def test_native_prefill_graph_signature_tracks_shift_mix_precision(monkeypatch) 
     assert ("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16", "1") in split
 
 
+def test_native_prefill_graph_policy_is_exact_shape_allowlisted(monkeypatch) -> None:
+    policy = SimpleNamespace(
+        prefill_graph=True,
+        prefill_graph_model_shapes=((4096, 61, 8, 512),),
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(native_model, "_native_jit_prefill", object())
+    monkeypatch.setattr(native_model, "current_kernel_policy", lambda **_kwargs: policy)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_GRAPH", raising=False)
+
+    assert native_model._native_prefill_graph_enabled(8, 512, 4096, 61)
+    assert not native_model._native_prefill_graph_enabled(8, 2048, 4096, 61)
+    assert not native_model._native_prefill_graph_enabled()
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GRAPH", "1")
+    assert native_model._native_prefill_graph_enabled(8, 2048, 4096, 61)
+
+
 def test_native_prefill_graph_runner_cache_is_shape_keyed_lru(monkeypatch) -> None:
     created = []
 

@@ -22,6 +22,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 
 from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
+from .kernel_policy import current_kernel_policy
 
 # Some Transformers releases only copy files directly referenced by the
 # remote-code entrypoint. Keep static discovery edges to the dependencies
@@ -646,9 +647,35 @@ def _native_model_backend_requested() -> str:
     return backend
 
 
-def _native_prefill_graph_enabled() -> bool:
+def _native_prefill_graph_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH")
+    if raw is not None:
+        selected = raw not in _FALSE_VALUES
+    else:
+        policy = current_kernel_policy(torch_module=torch)
+        selected = bool(getattr(policy, "prefill_graph", False))
+        shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, "prefill_graph_model_shapes", ())
+            if len(shape) == 4
+        }
+        if selected and shapes:
+            if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+                selected = False
+            else:
+                selected = (
+                    int(hidden_size),
+                    int(num_layers),
+                    int(batch_size),
+                    int(prompt_tokens),
+                ) in shapes
     return bool(
-        os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH", "0") not in _FALSE_VALUES
+        selected
         and torch.cuda.is_available()
         and _native_jit_prefill is not None
     )
@@ -1138,7 +1165,12 @@ class _NativePrefillGraphRunner:
         prompt_tokens: int,
         logits_to_keep: int | None,
     ) -> None:
-        if not _native_prefill_graph_enabled():
+        if not _native_prefill_graph_enabled(
+            batch_size,
+            prompt_tokens,
+            int(owner.config.hidden_size),
+            int(owner.config.num_hidden_layers),
+        ):
             raise RuntimeError("native prefill graph is not enabled or available")
         self.owner = owner
         self.packs = packs
@@ -1448,9 +1480,14 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         logits_to_keep,
         seen_tokens: int,
     ):
-        if _native_prefill_graph_enabled():
-            batch_size = int(input_ids.shape[0])
-            prompt_tokens = int(input_ids.shape[1])
+        batch_size = int(input_ids.shape[0])
+        prompt_tokens = int(input_ids.shape[1])
+        if _native_prefill_graph_enabled(
+            batch_size,
+            prompt_tokens,
+            int(self.config.hidden_size),
+            int(self.config.num_hidden_layers),
+        ):
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
                 batch_size,
