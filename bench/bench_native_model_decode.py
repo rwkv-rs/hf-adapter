@@ -98,7 +98,11 @@ def peak_mb(device: str) -> float | None:
 
 
 def encode(tok, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
-    ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
+    ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids
+    if int(ids.shape[1]) <= 0:
+        raise ValueError("decode benchmark seed produced no tokens")
+    repeats = (int(prompt_tokens) + int(ids.shape[1]) - 1) // int(ids.shape[1])
+    ids = ids.repeat(1, repeats)[:, :prompt_tokens]
     ids = ids.repeat(batch_size, 1)
     return ids.to(device) if device.startswith("cuda") else ids
 

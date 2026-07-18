@@ -2,7 +2,19 @@ import os
 
 import torch
 
+from bench.bench_native_model_decode import encode
 from bench.bench_native_model_decode_alignment import compare_traces, decode_environment
+
+
+class _ShortTokenizer:
+    def __call__(self, *args, **kwargs):
+        return type("Encoding", (), {"input_ids": torch.tensor([[1, 2, 3]])})()
+
+
+def test_decode_benchmark_encode_honors_requested_prompt_length() -> None:
+    ids = encode(_ShortTokenizer(), prompt_tokens=8, batch_size=2, device="cpu")
+    assert ids.shape == (2, 8)
+    assert torch.equal(ids[0], torch.tensor([1, 2, 3, 1, 2, 3, 1, 2]))
 
 
 def test_decode_environment_restores_managed_values(monkeypatch) -> None:

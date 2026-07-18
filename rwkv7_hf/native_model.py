@@ -1277,12 +1277,20 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         *,
         logits_to_keep,
         seen_tokens: int,
+        cache: NativeRWKV7Cache | tuple | list | None = None,
     ):
         packs = self._native_graph_packs()
+        state = xpa = xpf = None
+        native_cache = _native_cache_tuple_or_none(cache)
+        if native_cache is not None:
+            state, xpa, xpf, _ = _copy_native_cache_tuple(native_cache)
         logits, state, xpa, xpf = _native_jit_prefill(
             self,
             input_ids,
             packs,
+            state=state,
+            xpa=xpa,
+            xpf=xpf,
             logits_to_keep=logits_to_keep,
         )
         v_first = torch.zeros(
@@ -1888,7 +1896,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             )
 
         logits_to_keep = _resolve_native_logits_to_keep(logits_to_keep, num_logits_to_keep)
-        if native_cache is None and self._native_prefill_can_run(
+        if self._native_prefill_can_run(
             input_ids,
             attention_mask=native_attention_mask,
             output_hidden_states=output_hidden_states,
@@ -1898,7 +1906,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             logits, new_cache = self._native_prefill(
                 input_ids,
                 logits_to_keep=logits_to_keep,
-                seen_tokens=seq_len,
+                seen_tokens=_cache_seen(past_key_values) + seq_len,
+                cache=native_cache,
             )
             logits = _slice_native_logits(logits, logits_to_keep)
             new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)
