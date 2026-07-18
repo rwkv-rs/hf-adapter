@@ -3110,6 +3110,14 @@ def prefill(
                 or layer_idx in prefill_shift_mix_layers
             )
         )
+        use_layer_attn_shift_mix = bool(
+            use_layer_shift_mix
+            and env_flag("RWKV7_NATIVE_PREFILL_FUSED_ATTN_SHIFT_MIX", True)
+        )
+        use_layer_ffn_shift_mix = bool(
+            use_layer_shift_mix
+            and env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+        )
         residual = F.layer_norm(x, [residual_hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [residual_hidden], an_w, an_b, 1e-5)
         defer_state_sigmoid = bool(
@@ -3120,7 +3128,7 @@ def prefill(
         )
         state_sigmoid_is_raw = False
         use_sequence_attn_mix = (
-            use_layer_shift_mix and fused_attn_sequence_shift_mix is not None
+            use_layer_attn_shift_mix and fused_attn_sequence_shift_mix is not None
         )
         v_gate = None
         prequantized_rkv = None
@@ -3559,7 +3567,7 @@ def prefill(
             x = residual + ffn_out
         else:
             ffn_up_prequantized = False
-            if use_layer_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
+            if use_layer_ffn_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
                 (
                     qfk,
                     sfk,
@@ -3580,7 +3588,7 @@ def prefill(
                 bnb8_ffn_scale_workspace = sfk
                 fk = _bnb8_prequant_linear(qfk, sfk, fK, dtype=h2.dtype, output_shape=(B, T))
                 ffn_up_prequantized = True
-            elif use_layer_shift_mix and fused_ffn_sequence_shift_mix is not None:
+            elif use_layer_ffn_shift_mix and fused_ffn_sequence_shift_mix is not None:
                 if sequence_ffn_mix_workspace is None:
                     sequence_ffn_mix_workspace = torch.empty_like(h2)
                 fk, next_xpf = fused_ffn_sequence_shift_mix(
@@ -3631,7 +3639,7 @@ def prefill(
             elif fused_up_relu2:
                 x = _native_prefill_project_residual(fk, fV, residual)
             elif (
-                use_layer_shift_mix
+                use_layer_ffn_shift_mix
                 and fused_relu_square is not None
                 and fused_relu_square_available is not None
                 and fused_relu_square_available()
