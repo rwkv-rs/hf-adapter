@@ -296,6 +296,13 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
         7,
     }
 
+    assert native_jit._native_prefill_shift_mix_layers(8, 128, 24) is None
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SHIFT_MIX_LAYERS_B8_T128", "0-19,23")
+    assert native_jit._native_prefill_shift_mix_layers(8, 128, 24) == {
+        *range(20),
+        23,
+    }
+
 
 def test_self_chunk_safe_gate_is_explicitly_tunable(monkeypatch) -> None:
     from rwkv7_hf import native_jit
