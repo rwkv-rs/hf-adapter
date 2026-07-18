@@ -1562,6 +1562,60 @@ def _native_prefill_fp16_accum_ffn_key_enabled(
     )
 
 
+def _native_prefill_fp16_accum_ffn_key_layers(
+    batch_size: int,
+    prompt_tokens: int,
+    hidden_size: int,
+    num_layers: int,
+) -> set[int] | None:
+    """Return selected FFN-key accumulation layers, or ``None`` for all."""
+
+    specific = (
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS_"
+        f"B{batch_size}_T{prompt_tokens}"
+    )
+    raw = os.environ.get(
+        specific,
+        os.environ.get("RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS"),
+    )
+    if raw is not None:
+        selected: set[int] = set()
+        try:
+            for item in raw.replace(" ", ",").split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "-" in item:
+                    start, end = (int(value) for value in item.split("-", 1))
+                    if start < 0 or end < start:
+                        raise ValueError
+                    selected.update(range(start, end + 1))
+                else:
+                    value = int(item)
+                    if value < 0:
+                        raise ValueError
+                    selected.add(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{specific} must contain non-negative layers or inclusive ranges"
+            ) from exc
+        return {value for value in selected if value < int(num_layers)}
+
+    target = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    for profile in getattr(
+        _kernel_policy(), "prefill_fp16_accum_ffn_key_layer_counts", ()
+    ):
+        if len(profile) == 5 and tuple(int(value) for value in profile[:4]) == target:
+            count = min(max(int(profile[4]), 0), int(num_layers))
+            return set(range(count))
+    return None
+
+
 def _native_prefill_stacked_rkv_enabled(
     total_rows: int,
     batch_size: int | None = None,
@@ -2953,6 +3007,16 @@ def prefill(
         len(packs),
         dtype,
     )
+    fp16_accum_ffn_key_layers = (
+        _native_prefill_fp16_accum_ffn_key_layers(
+            B,
+            T,
+            residual_hidden,
+            len(packs),
+        )
+        if use_fp16_accum_ffn_key
+        else set()
+    )
     fp16_accum_ffn_key_used = False
     use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled(
         B, T, residual_hidden, len(packs)
@@ -3491,13 +3555,20 @@ def prefill(
                 if fused_up_relu2:
                     fk = fused(fk)
                 else:
-                    fp16_accum_ffn_key_used = bool(
+                    fp16_accum_ffn_key_layer = bool(
                         use_fp16_accum_ffn_key and _graph_linear_is_dense(fK)
+                        and (
+                            fp16_accum_ffn_key_layers is None
+                            or layer_idx in fp16_accum_ffn_key_layers
+                        )
+                    )
+                    fp16_accum_ffn_key_used = bool(
+                        fp16_accum_ffn_key_used or fp16_accum_ffn_key_layer
                     )
                     fk = _native_prefill_linear(
                         fk,
                         fK,
-                        allow_fp16_accumulation=fp16_accum_ffn_key_used,
+                        allow_fp16_accumulation=fp16_accum_ffn_key_layer,
                     )
             fused_bnb8_ffn = (
                 None

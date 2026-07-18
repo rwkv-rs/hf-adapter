@@ -147,6 +147,23 @@ def test_prefill_first_decode_reuses_the_bounded_decode_tail_gate() -> None:
     assert metrics["fp16_tail_pass"] is False
 
 
+def test_prefill_shift_states_reuse_the_bounded_decode_tail_gate() -> None:
+    official = torch.full((100_000,), -70.0, dtype=torch.float16)
+    native = official.clone()
+    native[17] = torch.nextafter(
+        torch.nextafter(
+            torch.nextafter(official[17], torch.tensor(float("inf"), dtype=torch.float16)),
+            torch.tensor(float("inf"), dtype=torch.float16),
+        ),
+        torch.tensor(float("inf"), dtype=torch.float16),
+    )
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+
+    assert prefill_metric_pass(metrics, "xpf") is True
+    assert metrics["fixed_abs_pass"] is False
+    assert metrics["fp16_tail_pass"] is True
+
+
 def make_capture(engine: str, revision: str) -> dict:
     state = torch.zeros(1, 1, 1, 2, 2, dtype=torch.float16)
     shift = torch.zeros(1, 1, 2, dtype=torch.float16)
