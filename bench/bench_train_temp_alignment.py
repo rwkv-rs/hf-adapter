@@ -26,11 +26,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rwkv7_hf.train_temp_alignment import (
+from rwkv7_hf.train_temp_alignment import (  # noqa: E402
     build_train_temp_param_groups,
     compare_tensors,
     train_temp_cross_entropy,
     train_temp_official_parameter_name,
+)
+from rwkv7_hf.train_temp_resume import (  # noqa: E402
+    restore_training_checkpoint,
+    save_training_checkpoint,
 )
 
 
@@ -57,7 +61,9 @@ def write_json_atomic(path: str | Path, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     os.replace(temporary, output)
 
 
@@ -207,11 +213,9 @@ def normalize_official_tensors(
         if not destination_name:
             continue
         value = tensor.t().contiguous() if transposed else tensor.contiguous()
-        preserves_mix_shape = (
-            ".attn." in destination_name
-            and destination_name.rsplit(".", 1)[-1]
-            in {"x_r", "x_w", "x_k", "x_v", "x_a", "x_g"}
-        )
+        preserves_mix_shape = ".attn." in destination_name and destination_name.rsplit(
+            ".", 1
+        )[-1] in {"x_r", "x_w", "x_k", "x_v", "x_a", "x_g"}
         if (
             not preserves_mix_shape
             and value.ndim > 1
@@ -391,8 +395,13 @@ def _capture_training_phase(
 
     model.train()
     model.zero_grad(set_to_none=True)
-    parameter_sort_key = lambda name: train_temp_official_parameter_name(name, naming=naming)
-    named_parameters = sorted(model.named_parameters(), key=lambda item: parameter_sort_key(item[0]))
+
+    def parameter_sort_key(name: str) -> str:
+        return train_temp_official_parameter_name(name, naming=naming)
+
+    named_parameters = sorted(
+        model.named_parameters(), key=lambda item: parameter_sort_key(item[0])
+    )
     groups = build_train_temp_param_groups(
         named_parameters,
         weight_decay=float(weight_decay),
@@ -443,13 +452,20 @@ def _capture_training_phase(
             if parameter.requires_grad and parameter.grad is not None
         }
         raw_grad_norm = math.sqrt(
-            sum(float(value.detach().float().pow(2).sum().item()) for value in raw_gradient_tensors.values())
+            sum(
+                float(value.detach().float().pow(2).sum().item())
+                for value in raw_gradient_tensors.values()
+            )
         )
         snapshot.update(normalizer(raw_gradient_tensors, "grad::"))
         if phase == "step":
             clipped_grad_norm = float(
                 torch.nn.utils.clip_grad_norm_(
-                    [parameter for _, parameter in named_parameters if parameter.requires_grad],
+                    [
+                        parameter
+                        for _, parameter in named_parameters
+                        if parameter.requires_grad
+                    ],
                     max_norm=float(grad_clip),
                 ).item()
             )
@@ -460,16 +476,24 @@ def _capture_training_phase(
                 if not parameter.requires_grad:
                     continue
                 previous = before.pop(name)
-                deltas[name] = parameter.detach().to(device="cpu", dtype=torch.float32).sub_(
-                    previous.to(dtype=torch.float32)
+                deltas[name] = (
+                    parameter.detach()
+                    .to(device="cpu", dtype=torch.float32)
+                    .sub_(previous.to(dtype=torch.float32))
                 )
             snapshot.update(normalizer(deltas, "delta::"))
             if not snapshot_logits:
                 del outputs, logits
             with torch.no_grad():
                 post_outputs = model(input_ids)
-                post_logits = post_outputs.logits if hasattr(post_outputs, "logits") else post_outputs
-                post_step_loss = float(loss_fn(post_logits, targets).detach().float().item())
+                post_logits = (
+                    post_outputs.logits
+                    if hasattr(post_outputs, "logits")
+                    else post_outputs
+                )
+                post_step_loss = float(
+                    loss_fn(post_logits, targets).detach().float().item()
+                )
                 if snapshot_logits:
                     snapshot["post_step_logits"] = post_logits.detach()
     if device.startswith("cuda"):
@@ -537,6 +561,33 @@ def _learning_rate_at_step(
     return lr
 
 
+def _memory_stability_summary(
+    validation_curve: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    rows = [
+        row
+        for row in validation_curve
+        if int(row.get("step", 0)) > 0 and "memory_allocated_mb" in row
+    ]
+    if not rows:
+        return None
+    allocated = [float(row["memory_allocated_mb"]) for row in rows]
+    reserved = [float(row["memory_reserved_mb"]) for row in rows]
+    return {
+        "sample_count": len(rows),
+        "first_step": int(rows[0]["step"]),
+        "last_step": int(rows[-1]["step"]),
+        "allocated_first_mb": allocated[0],
+        "allocated_last_mb": allocated[-1],
+        "allocated_growth_mb": allocated[-1] - allocated[0],
+        "allocated_range_mb": max(allocated) - min(allocated),
+        "reserved_first_mb": reserved[0],
+        "reserved_last_mb": reserved[-1],
+        "reserved_growth_mb": reserved[-1] - reserved[0],
+        "reserved_range_mb": max(reserved) - min(reserved),
+    }
+
+
 def _run_convergence(
     *,
     model,
@@ -563,26 +614,43 @@ def _run_convergence(
     optimizer_name: str,
     eval_interval: int,
     source_commit: str | None,
+    gradient_checkpointing: bool = False,
     backend_metadata: dict[str, Any] | None = None,
+    resume_from: str | Path | None = None,
+    checkpoint_out: str | Path | None = None,
+    checkpoint_every: int = 0,
+    stop_after_step: int = 0,
 ) -> dict[str, Any]:
     if precision != "bf16":
         raise ValueError("end-to-end train_temp convergence currently requires bf16")
     if eval_interval <= 0:
         raise ValueError("eval_interval must be positive")
+    if checkpoint_every < 0:
+        raise ValueError("checkpoint_every must be non-negative")
+    if checkpoint_every and checkpoint_out is None:
+        raise ValueError("checkpoint_every requires checkpoint_out")
     _seed_everything(seed)
     sequence_path = Path(sequence_path)
     validation_batch_path = Path(validation_batch_path)
     sequence = load_file(sequence_path)
     train_inputs = sequence["input_ids"]
     train_targets = sequence["targets"]
-    if train_inputs.ndim != 3 or tuple(train_inputs.shape) != tuple(train_targets.shape):
-        raise ValueError("convergence sequence must have matching [steps, batch, tokens] tensors")
+    if train_inputs.ndim != 3 or tuple(train_inputs.shape) != tuple(
+        train_targets.shape
+    ):
+        raise ValueError(
+            "convergence sequence must have matching [steps, batch, tokens] tensors"
+        )
     validation = load_file(validation_batch_path)
     validation_inputs = validation["input_ids"].to(device=device, dtype=torch.long)
     validation_targets = validation["targets"].to(device=device, dtype=torch.long)
 
-    parameter_sort_key = lambda name: train_temp_official_parameter_name(name, naming=naming)
-    named_parameters = sorted(model.named_parameters(), key=lambda item: parameter_sort_key(item[0]))
+    def parameter_sort_key(name: str) -> str:
+        return train_temp_official_parameter_name(name, naming=naming)
+
+    named_parameters = sorted(
+        model.named_parameters(), key=lambda item: parameter_sort_key(item[0])
+    )
     groups = build_train_temp_param_groups(
         named_parameters,
         weight_decay=float(weight_decay),
@@ -601,25 +669,96 @@ def _run_convergence(
         adam_eps=adam_eps,
     )
 
+    sequence_sha256 = sha256_file(sequence_path)
+    validation_batch_sha256 = sha256_file(validation_batch_path)
+    total_steps = int(train_inputs.shape[0])
+    provenance = {
+        "backend": backend,
+        "precision": precision,
+        "seed": int(seed),
+        "checkpoint_sha256": str(checkpoint_sha256),
+        "sequence_sha256": sequence_sha256,
+        "validation_batch_sha256": validation_batch_sha256,
+        "steps_requested": total_steps,
+        "batch_size": int(train_inputs.shape[1]),
+        "seq_len": int(train_inputs.shape[2]),
+        "learning_rate": float(learning_rate),
+        "learning_rate_final": float(learning_rate_final),
+        "schedule_total_steps": int(schedule_total_steps),
+        "warmup_steps": int(warmup_steps),
+        "weight_decay": float(weight_decay),
+        "beta1": float(beta1),
+        "beta2": float(beta2),
+        "adam_eps": float(adam_eps),
+        "grad_clip": float(grad_clip),
+        "optimizer": optimizer_name,
+        "eval_interval": int(eval_interval),
+        "gradient_checkpointing": bool(gradient_checkpointing),
+        "source_commit": source_commit,
+    }
+
     def evaluate(step: int) -> dict[str, Any]:
         model.eval()
         with torch.no_grad():
             outputs = model(validation_inputs)
             logits = outputs.logits if hasattr(outputs, "logits") else outputs
             loss = float(loss_fn(logits, validation_targets).detach().float().item())
+        del outputs, logits
+        row = {"step": int(step), "loss": loss, "finite": math.isfinite(loss)}
+        if device.startswith("cuda"):
+            torch.cuda.synchronize()
+            row.update(
+                {
+                    "memory_allocated_mb": torch.cuda.memory_allocated() / (1024**2),
+                    "memory_reserved_mb": torch.cuda.memory_reserved() / (1024**2),
+                }
+            )
         model.train()
-        return {"step": int(step), "loss": loss, "finite": math.isfinite(loss)}
+        return row
+
+    start_step = 0
+    train_curve: list[dict[str, Any]] = []
+    validation_curve: list[dict[str, Any]] = []
+    prior_runtime_s = 0.0
+    resume_report = None
+    if resume_from is not None:
+        progress, resume_report = restore_training_checkpoint(
+            resume_from,
+            model=model,
+            optimizer=optimizer,
+            expected_provenance=provenance,
+        )
+        start_step = int(progress["next_step"])
+        train_curve = list(progress["train_curve"])
+        validation_curve = list(progress["validation_curve"])
+        prior_runtime_s = float(progress["runtime_s_accumulated"])
+        if start_step != len(train_curve):
+            raise RuntimeError(
+                f"checkpoint progress mismatch: next_step={start_step} curve={len(train_curve)}"
+            )
+    if start_step < 0 or start_step > total_steps:
+        raise ValueError(f"resume step {start_step} is outside [0, {total_steps}]")
+    end_step = (
+        total_steps if stop_after_step <= 0 else min(total_steps, int(stop_after_step))
+    )
+    if end_step < start_step:
+        raise ValueError(
+            f"stop_after_step {end_step} precedes restored next_step {start_step}"
+        )
 
     if device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
     started = time.perf_counter()
     model.train()
-    validation_curve = [evaluate(0)]
-    train_curve: list[dict[str, Any]] = []
+    if not validation_curve:
+        validation_curve = [evaluate(0)]
     status = "pass"
     failure = None
-    for step in range(int(train_inputs.shape[0])):
+    checkpoint_runtime_s = 0.0
+    checkpoint_metadata = None
+    first_resumed_lr = None
+    for step in range(start_step, end_step):
         lr = _learning_rate_at_step(
             step,
             learning_rate=learning_rate,
@@ -629,6 +768,8 @@ def _run_convergence(
         )
         for group in optimizer.param_groups:
             group["lr"] = lr * float(group["my_lr_scale"])
+        if first_resumed_lr is None and resume_from is not None:
+            first_resumed_lr = lr
         input_ids = train_inputs[step].to(device=device, dtype=torch.long)
         targets = train_targets[step].to(device=device, dtype=torch.long)
         if optimizer_name == "fused_adam":
@@ -641,7 +782,11 @@ def _run_convergence(
         loss.backward()
         grad_norm = float(
             torch.nn.utils.clip_grad_norm_(
-                [parameter for _, parameter in named_parameters if parameter.requires_grad],
+                [
+                    parameter
+                    for _, parameter in named_parameters
+                    if parameter.requires_grad
+                ],
                 max_norm=float(grad_clip),
             ).item()
         )
@@ -661,16 +806,59 @@ def _run_convergence(
             status = "fail"
             failure = f"non-finite training value at step {step + 1}"
             break
-        if (step + 1) % eval_interval == 0 or step + 1 == int(train_inputs.shape[0]):
+        if (step + 1) % eval_interval == 0 or step + 1 == total_steps:
             row = evaluate(step + 1)
             validation_curve.append(row)
             if not row["finite"]:
                 status = "fail"
                 failure = f"non-finite validation loss at step {step + 1}"
                 break
+        if (
+            checkpoint_out is not None
+            and checkpoint_every > 0
+            and (step + 1) % checkpoint_every == 0
+            and step + 1 < end_step
+        ):
+            checkpoint_started = time.perf_counter()
+            runtime_so_far = (
+                prior_runtime_s + time.perf_counter() - started - checkpoint_runtime_s
+            )
+            checkpoint_metadata = save_training_checkpoint(
+                checkpoint_out,
+                model=model,
+                optimizer=optimizer,
+                provenance=provenance,
+                next_step=step + 1,
+                train_curve=train_curve,
+                validation_curve=validation_curve,
+                runtime_s_accumulated=runtime_so_far,
+            )
+            checkpoint_runtime_s += time.perf_counter() - checkpoint_started
     if device.startswith("cuda"):
         torch.cuda.synchronize()
-    runtime_s = time.perf_counter() - started
+    runtime_s = time.perf_counter() - started - checkpoint_runtime_s
+    runtime_s_accumulated = prior_runtime_s + runtime_s
+    if failure is None and len(train_curve) < total_steps:
+        status = "partial"
+    if checkpoint_out is not None:
+        checkpoint_started = time.perf_counter()
+        checkpoint_metadata = save_training_checkpoint(
+            checkpoint_out,
+            model=model,
+            optimizer=optimizer,
+            provenance=provenance,
+            next_step=len(train_curve),
+            train_curve=train_curve,
+            validation_curve=validation_curve,
+            runtime_s_accumulated=runtime_s_accumulated,
+        )
+        checkpoint_runtime_s += time.perf_counter() - checkpoint_started
+    peak_memory_mb = None
+    peak_reserved_memory_mb = None
+    if device.startswith("cuda"):
+        peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
+        peak_reserved_memory_mb = torch.cuda.max_memory_reserved() / (1024**2)
+    memory_stability = _memory_stability_summary(validation_curve)
     result = {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_convergence",
@@ -680,9 +868,9 @@ def _run_convergence(
         "precision": precision,
         "seed": int(seed),
         "checkpoint_sha256": str(checkpoint_sha256),
-        "sequence_sha256": sha256_file(sequence_path),
-        "validation_batch_sha256": sha256_file(validation_batch_path),
-        "steps_requested": int(train_inputs.shape[0]),
+        "sequence_sha256": sequence_sha256,
+        "validation_batch_sha256": validation_batch_sha256,
+        "steps_requested": total_steps,
         "steps_completed": len(train_curve),
         "batch_size": int(train_inputs.shape[1]),
         "seq_len": int(train_inputs.shape[2]),
@@ -694,10 +882,22 @@ def _run_convergence(
         "optimizer": optimizer_name,
         "optimizer_version": optimizer_version,
         "eval_interval": int(eval_interval),
+        "gradient_checkpointing": bool(gradient_checkpointing),
         "optimizer_groups": group_metadata,
         "train_curve": train_curve,
         "validation_curve": validation_curve,
         "runtime_s": runtime_s,
+        "runtime_s_accumulated": runtime_s_accumulated,
+        "checkpoint_runtime_s": checkpoint_runtime_s,
+        "checkpoint_every": int(checkpoint_every),
+        "training_checkpoint": checkpoint_metadata,
+        "resumed_from": resume_report,
+        "start_step": start_step,
+        "stop_after_step": end_step,
+        "first_resumed_lr": first_resumed_lr,
+        "peak_memory_mb": peak_memory_mb,
+        "peak_reserved_memory_mb": peak_reserved_memory_mb,
+        "memory_stability": memory_stability,
         "source_commit": source_commit,
         "backend_metadata": backend_metadata or {},
         **_runtime_metadata(device),
@@ -711,7 +911,9 @@ def _load_official_module(checkout: str | Path):
 
     train_temp = Path(checkout).resolve() / "RWKV-v7" / "train_temp"
     if not (train_temp / "src" / "model.py").is_file():
-        raise FileNotFoundError(f"official train_temp model not found under {train_temp}")
+        raise FileNotFoundError(
+            f"official train_temp model not found under {train_temp}"
+        )
     extension_dir = Path(
         os.environ.get(
             "TORCH_EXTENSIONS_DIR",
@@ -804,7 +1006,9 @@ def capture_official(args) -> dict[str, Any]:
     model.load_state_dict(state, strict=True)
     model = model.to(device=args.device, dtype=torch.bfloat16)
 
-    def normalize(tensors: dict[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
+    def normalize(
+        tensors: dict[str, torch.Tensor], prefix: str
+    ) -> dict[str, torch.Tensor]:
         return normalize_official_tensors(
             tensors,
             num_layers=int(config.n_layer),
@@ -874,7 +1078,9 @@ def capture_hf(args) -> dict[str, Any]:
         loss_fn = train_temp_fused_cross_entropy
         backend_metadata = enable_train_temp_cuda_backend(model)
 
-    def normalize(tensors: dict[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
+    def normalize(
+        tensors: dict[str, torch.Tensor], prefix: str
+    ) -> dict[str, torch.Tensor]:
         return {prefix + name: tensor for name, tensor in tensors.items()}
 
     return _capture_training_phase(
@@ -945,9 +1151,14 @@ def converge_official(args) -> dict[str, Any]:
         optimizer_name=args.optimizer,
         eval_interval=args.eval_interval,
         source_commit=_git_commit(args.official_checkout),
+        gradient_checkpointing=bool(int(getattr(config, "grad_cp", 0))),
         backend_metadata={
             "build_environment": getattr(official, "_rwkv7_build_environment", {})
         },
+        resume_from=args.resume_from,
+        checkpoint_out=args.checkpoint_out,
+        checkpoint_every=args.checkpoint_every,
+        stop_after_step=args.stop_after_step,
     )
 
 
@@ -962,6 +1173,8 @@ def converge_hf(args) -> dict[str, Any]:
         torch_dtype=torch.bfloat16,
     ).to(args.device)
     model.config.use_cache = False
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
 
     backend = "hf_native" if args.native else "hf_fla"
     loss_fn = train_temp_cross_entropy
@@ -1001,7 +1214,12 @@ def converge_hf(args) -> dict[str, Any]:
         optimizer_name=args.optimizer,
         eval_interval=args.eval_interval,
         source_commit=_git_commit(Path(__file__).resolve().parents[1]),
+        gradient_checkpointing=bool(args.gradient_checkpointing),
         backend_metadata=backend_metadata,
+        resume_from=args.resume_from,
+        checkpoint_out=args.checkpoint_out,
+        checkpoint_every=args.checkpoint_every,
+        stop_after_step=args.stop_after_step,
     )
 
 
@@ -1011,7 +1229,14 @@ def _snapshot_path(artifact_path: Path, artifact: dict[str, Any]) -> Path:
 
 
 def _optimizer_group_contract(artifact: dict[str, Any]) -> list[dict[str, Any]]:
-    keys = ("group_name", "param_names", "param_count", "weight_decay", "my_lr_scale", "lr")
+    keys = (
+        "group_name",
+        "param_names",
+        "param_count",
+        "weight_decay",
+        "my_lr_scale",
+        "lr",
+    )
     return [
         {key: group.get(key) for key in keys}
         for group in artifact.get("optimizer_groups", [])
@@ -1023,7 +1248,9 @@ def _effective_eval_interval(artifact: dict[str, Any]) -> int | None:
     if configured is not None:
         return int(configured)
     steps = [int(row["step"]) for row in artifact.get("validation_curve", [])]
-    positive_diffs = [later - earlier for earlier, later in zip(steps, steps[1:]) if later > earlier]
+    positive_diffs = [
+        later - earlier for earlier, later in zip(steps, steps[1:]) if later > earlier
+    ]
     return min(positive_diffs) if positive_diffs else None
 
 
@@ -1066,7 +1293,10 @@ def compare_artifacts(
     tensor_failures: list[dict[str, Any]] = []
     delta_metrics: list[dict[str, Any]] = []
     for name in common:
-        metrics = {"name": name, **compare_tensors(reference_tensors[name], candidate_tensors[name])}
+        metrics = {
+            "name": name,
+            **compare_tensors(reference_tensors[name], candidate_tensors[name]),
+        }
         gated = not (phase == "step" and name.startswith("delta::"))
         passed = bool(
             metrics["comparable"]
@@ -1084,8 +1314,12 @@ def compare_artifacts(
     reference_loss = float(reference["loss"])
     candidate_loss = float(candidate["loss"])
     loss_abs_diff = abs(candidate_loss - reference_loss)
-    loss_relative_diff = loss_abs_diff / max(abs(reference_loss), torch.finfo(torch.float64).eps)
-    finite_loss = bool(torch.isfinite(torch.tensor([reference_loss, candidate_loss])).all().item())
+    loss_relative_diff = loss_abs_diff / max(
+        abs(reference_loss), torch.finfo(torch.float64).eps
+    )
+    finite_loss = bool(
+        torch.isfinite(torch.tensor([reference_loss, candidate_loss])).all().item()
+    )
 
     failures: list[str] = []
     optimizer_groups_match = None
@@ -1093,9 +1327,9 @@ def compare_artifacts(
     if phase == "step":
         if reference.get("optimizer") != candidate.get("optimizer"):
             failures.append("optimizer mismatch")
-        optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
-            candidate
-        )
+        optimizer_groups_match = _optimizer_group_contract(
+            reference
+        ) == _optimizer_group_contract(candidate)
         if not optimizer_groups_match:
             failures.append("optimizer groups mismatch")
         reference_post_loss = reference.get("post_step_loss")
@@ -1126,12 +1360,8 @@ def compare_artifacts(
         )
 
     comparable_metrics = [row for row in tensor_metrics if row["comparable"]]
-    gated_comparable_metrics = [
-        row for row in comparable_metrics if bool(row["gated"])
-    ]
-    comparable_delta_metrics = [
-        row for row in delta_metrics if row["comparable"]
-    ]
+    gated_comparable_metrics = [row for row in comparable_metrics if bool(row["gated"])]
+    comparable_delta_metrics = [row for row in delta_metrics if row["comparable"]]
     report = {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_compare",
@@ -1230,6 +1460,7 @@ def compare_convergence_artifacts(
         "grad_clip",
         "optimizer",
         "eval_interval",
+        "gradient_checkpointing",
     )
     provenance_mismatches = [
         key
@@ -1237,9 +1468,9 @@ def compare_convergence_artifacts(
         if _convergence_provenance_value(reference, key)
         != _convergence_provenance_value(candidate, key)
     ]
-    optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
-        candidate
-    )
+    optimizer_groups_match = _optimizer_group_contract(
+        reference
+    ) == _optimizer_group_contract(candidate)
     reference_train = reference.get("train_curve", [])
     candidate_train = candidate.get("train_curve", [])
     reference_validation = reference.get("validation_curve", [])
@@ -1291,13 +1522,17 @@ def compare_convergence_artifacts(
     final_validation_relative_diff = (
         validation_relative_diffs[-1] if validation_relative_diffs else float("inf")
     )
-    final_validation_abs_diff = validation_abs_diffs[-1] if validation_abs_diffs else float("inf")
+    final_validation_abs_diff = (
+        validation_abs_diffs[-1] if validation_abs_diffs else float("inf")
+    )
     max_observed_validation_relative_diff = (
         max(validation_relative_diffs) if validation_relative_diffs else float("inf")
     )
     validation_scaled_diffs = [
         difference / max(abs(reference_loss), 1.0)
-        for difference, reference_loss in zip(validation_abs_diffs, reference_validation_losses)
+        for difference, reference_loss in zip(
+            validation_abs_diffs, reference_validation_losses
+        )
     ]
     max_observed_validation_scaled_diff = (
         max(validation_scaled_diffs) if validation_scaled_diffs else float("inf")
@@ -1344,8 +1579,12 @@ def compare_convergence_artifacts(
         if comparable_threshold_steps
         else None
     )
-    max_reference_grad_norm = max(reference_grad_norms) if reference_grad_norms else float("nan")
-    max_candidate_grad_norm = max(candidate_grad_norms) if candidate_grad_norms else float("nan")
+    max_reference_grad_norm = (
+        max(reference_grad_norms) if reference_grad_norms else float("nan")
+    )
+    max_candidate_grad_norm = (
+        max(candidate_grad_norms) if candidate_grad_norms else float("nan")
+    )
     observed_grad_norm_ratio = max(
         max_candidate_grad_norm / max(max_reference_grad_norm, epsilon),
         max_reference_grad_norm / max(max_candidate_grad_norm, epsilon),
@@ -1384,13 +1623,14 @@ def compare_convergence_artifacts(
         final_validation_abs_diff > max_final_validation_abs_diff
         and final_validation_relative_diff > max_final_validation_relative_diff
     ):
-        failures.append("final validation loss difference exceeded absolute and relative targets")
+        failures.append(
+            "final validation loss difference exceeded absolute and relative targets"
+        )
     if missing_threshold_crossing:
         failures.append("validation loss threshold crossing missing")
-    elif (
-        max_observed_threshold_step_diff is not None
-        and int(max_observed_threshold_step_diff) > int(max_validation_threshold_step_diff)
-    ):
+    elif max_observed_threshold_step_diff is not None and int(
+        max_observed_threshold_step_diff
+    ) > int(max_validation_threshold_step_diff):
         failures.append("validation loss threshold step difference exceeded target")
     if observed_grad_norm_ratio > max_grad_norm_ratio:
         failures.append("gradient norm spike ratio exceeded target")
@@ -1433,8 +1673,12 @@ def compare_convergence_artifacts(
             "max_train_auc_relative_diff": float(max_train_auc_relative_diff),
             "max_validation_auc_relative_diff": float(max_validation_auc_relative_diff),
             "max_final_validation_abs_diff": float(max_final_validation_abs_diff),
-            "max_final_validation_relative_diff": float(max_final_validation_relative_diff),
-            "max_validation_threshold_step_diff": int(max_validation_threshold_step_diff),
+            "max_final_validation_relative_diff": float(
+                max_final_validation_relative_diff
+            ),
+            "max_validation_threshold_step_diff": int(
+                max_validation_threshold_step_diff
+            ),
             "max_grad_norm_ratio": float(max_grad_norm_ratio),
         },
         "failures": failures,
@@ -1462,8 +1706,12 @@ def compare_convergence_cohorts(
     medians without pairing chaotic trajectories point by point.
     """
 
-    reference = [json.loads(Path(path).read_text(encoding="utf-8")) for path in reference_jsons]
-    candidate = [json.loads(Path(path).read_text(encoding="utf-8")) for path in candidate_jsons]
+    reference = [
+        json.loads(Path(path).read_text(encoding="utf-8")) for path in reference_jsons
+    ]
+    candidate = [
+        json.loads(Path(path).read_text(encoding="utf-8")) for path in candidate_jsons
+    ]
 
     def by_seed(runs: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
         indexed: dict[int, dict[str, Any]] = {}
@@ -1495,6 +1743,7 @@ def compare_convergence_cohorts(
         "grad_clip",
         "optimizer",
         "eval_interval",
+        "gradient_checkpointing",
     )
     provenance_mismatches = [
         {"seed": seed, "keys": mismatches}
@@ -1527,14 +1776,20 @@ def compare_convergence_cohorts(
             "steps_requested": int(run.get("steps_requested", 0)),
             "steps_completed": int(run.get("steps_completed", 0)),
             "finite": bool(values) and all(math.isfinite(value) for value in values),
-            "train_loss_auc": sum(train_losses) / len(train_losses) if train_losses else float("nan"),
+            "train_loss_auc": sum(train_losses) / len(train_losses)
+            if train_losses
+            else float("nan"),
             "validation_loss_auc": (
                 sum(validation_losses) / len(validation_losses)
                 if validation_losses
                 else float("nan")
             ),
-            "final_validation_loss": validation_losses[-1] if validation_losses else float("inf"),
-            "min_validation_loss": min(validation_losses) if validation_losses else float("inf"),
+            "final_validation_loss": validation_losses[-1]
+            if validation_losses
+            else float("inf"),
+            "min_validation_loss": min(validation_losses)
+            if validation_losses
+            else float("inf"),
             "max_grad_norm": max(grad_norms) if grad_norms else float("inf"),
             "runtime_s": float(run.get("runtime_s", float("nan"))),
         }
@@ -1560,7 +1815,9 @@ def compare_convergence_cohorts(
     def relative_diff(key: str) -> float:
         reference_value = reference_medians.get(key, float("nan"))
         candidate_value = candidate_medians.get(key, float("nan"))
-        return abs(candidate_value - reference_value) / max(abs(reference_value), epsilon)
+        return abs(candidate_value - reference_value) / max(
+            abs(reference_value), epsilon
+        )
 
     train_auc_relative_diff = relative_diff("train_loss_auc")
     validation_auc_relative_diff = relative_diff("validation_loss_auc")
@@ -1585,7 +1842,8 @@ def compare_convergence_cohorts(
     reference_min_median = reference_medians.get("min_validation_loss", float("inf"))
     candidate_min_median = candidate_medians.get("min_validation_loss", float("inf"))
     min_validation_regressed = (
-        candidate_min_median > reference_min_median + max_median_min_validation_abs_increase
+        candidate_min_median
+        > reference_min_median + max_median_min_validation_abs_increase
         and candidate_min_median
         > reference_min_median * max_median_min_validation_relative_ratio
     )
@@ -1614,7 +1872,9 @@ def compare_convergence_cohorts(
     if train_auc_relative_diff > max_median_train_auc_relative_diff:
         failures.append("median train loss AUC relative difference exceeded target")
     if validation_auc_relative_diff > max_median_validation_auc_relative_diff:
-        failures.append("median validation loss AUC relative difference exceeded target")
+        failures.append(
+            "median validation loss AUC relative difference exceeded target"
+        )
     if min_validation_regressed:
         failures.append("median minimum validation loss regressed")
     if median_grad_norm_ratio > max_median_grad_norm_ratio:
@@ -1647,7 +1907,9 @@ def compare_convergence_cohorts(
             "min_runs": int(min_runs),
             "success_threshold": float(success_threshold),
             "deep_success_threshold": float(deep_success_threshold),
-            "max_median_train_auc_relative_diff": float(max_median_train_auc_relative_diff),
+            "max_median_train_auc_relative_diff": float(
+                max_median_train_auc_relative_diff
+            ),
             "max_median_validation_auc_relative_diff": float(
                 max_median_validation_auc_relative_diff
             ),
@@ -1685,7 +1947,9 @@ def build_parser() -> argparse.ArgumentParser:
     sequence.add_argument("--seq-len", type=int, default=16)
     sequence.add_argument("--steps", type=int, required=True)
     sequence.add_argument("--seed", type=int, required=True)
-    sequence.add_argument("--pattern", choices=["random", "increment"], default="random")
+    sequence.add_argument(
+        "--pattern", choices=["random", "increment"], default="random"
+    )
     sequence.add_argument("--active-vocab-size", type=int)
 
     compare = subparsers.add_parser("compare")
@@ -1700,7 +1964,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare_convergence.add_argument("--reference-json", required=True)
     compare_convergence.add_argument("--candidate-json", required=True)
     compare_convergence.add_argument("--output", required=True)
-    compare_convergence.add_argument("--max-train-auc-relative-diff", type=float, default=0.02)
+    compare_convergence.add_argument(
+        "--max-train-auc-relative-diff", type=float, default=0.02
+    )
     compare_convergence.add_argument(
         "--max-validation-auc-relative-diff", type=float, default=0.02
     )
@@ -1747,7 +2013,9 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument("--batch", required=True)
         capture.add_argument("--output-json", required=True)
         capture.add_argument("--snapshot", required=True)
-        capture.add_argument("--phase", choices=["forward", "backward", "step"], required=True)
+        capture.add_argument(
+            "--phase", choices=["forward", "backward", "step"], required=True
+        )
         capture.add_argument("--precision", choices=["bf16"], default="bf16")
         capture.add_argument("--device", default="cuda")
         capture.add_argument("--seed", type=int, default=42)
@@ -1807,6 +2075,26 @@ def build_parser() -> argparse.ArgumentParser:
         convergence.add_argument("--grad-clip", type=float, default=1.0)
         convergence.add_argument("--eval-interval", type=int, default=10)
         convergence.add_argument(
+            "--resume-from",
+            help="Resume model, optimizer, curves and RNG from this fail-closed checkpoint.",
+        )
+        convergence.add_argument(
+            "--checkpoint-out",
+            help="Atomically write the latest resumable training checkpoint here.",
+        )
+        convergence.add_argument(
+            "--checkpoint-every",
+            type=int,
+            default=0,
+            help="Overwrite --checkpoint-out every N completed steps; zero saves only at exit.",
+        )
+        convergence.add_argument(
+            "--stop-after-step",
+            type=int,
+            default=0,
+            help="Stop after this absolute step and emit a partial resumable artifact.",
+        )
+        convergence.add_argument(
             "--optimizer",
             choices=["fused_adam", "torch_adamw"],
             default="fused_adam",
@@ -1824,7 +2112,17 @@ def build_parser() -> argparse.ArgumentParser:
     hf_convergence.add_argument("--checkpoint-sha256", required=True)
     hf_convergence.add_argument("--native", action="store_true")
     hf_convergence.add_argument("--train-temp-cuda", action="store_true")
+    hf_convergence.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Match the official train_temp grad_cp=1 full-sequence route.",
+    )
     return parser
+
+
+def _convergence_exit_code(result: dict[str, Any]) -> int:
+    expected_status = result.get("status") in {"pass", "partial"}
+    return 0 if expected_status and result.get("failure") is None else 1
 
 
 def main() -> int:
@@ -1941,7 +2239,7 @@ def main() -> int:
                 ensure_ascii=False,
             )
         )
-        return 0 if result["status"] == "pass" else 1
+        return _convergence_exit_code(result)
     if args.command == "converge-hf":
         result = converge_hf(args)
         print(
@@ -1960,7 +2258,7 @@ def main() -> int:
                 ensure_ascii=False,
             )
         )
-        return 0 if result["status"] == "pass" else 1
+        return _convergence_exit_code(result)
     raise AssertionError(args.command)
 
 

@@ -17,8 +17,10 @@ from scripts.run_train_temp_official_recipe import (
 )
 
 from bench.bench_train_temp_alignment import (
+    _convergence_exit_code,
     _load_official_config,
     _learning_rate_at_step,
+    _memory_stability_summary,
     build_parser,
     compare_artifacts,
     compare_convergence_artifacts,
@@ -28,6 +30,37 @@ from bench.bench_train_temp_alignment import (
     normalize_official_tensors,
     write_json_atomic,
 )
+
+
+def test_controlled_partial_convergence_is_a_successful_resumable_exit() -> None:
+    assert _convergence_exit_code({"status": "pass", "failure": None}) == 0
+    assert _convergence_exit_code({"status": "partial", "failure": None}) == 0
+    assert _convergence_exit_code({"status": "fail", "failure": "nan"}) == 1
+
+
+def test_memory_stability_summary_uses_steady_validation_points() -> None:
+    summary = _memory_stability_summary(
+        [
+            {"step": 0, "memory_allocated_mb": 10.0, "memory_reserved_mb": 20.0},
+            {"step": 50, "memory_allocated_mb": 30.0, "memory_reserved_mb": 40.0},
+            {"step": 100, "memory_allocated_mb": 31.5, "memory_reserved_mb": 40.0},
+            {"step": 150, "memory_allocated_mb": 31.0, "memory_reserved_mb": 42.0},
+        ]
+    )
+
+    assert summary == {
+        "sample_count": 3,
+        "first_step": 50,
+        "last_step": 150,
+        "allocated_first_mb": 30.0,
+        "allocated_last_mb": 31.0,
+        "allocated_growth_mb": 1.0,
+        "allocated_range_mb": 1.5,
+        "reserved_first_mb": 40.0,
+        "reserved_last_mb": 42.0,
+        "reserved_growth_mb": 2.0,
+        "reserved_range_mb": 2.0,
+    }
 
 
 def _convergence_artifact(
@@ -75,7 +108,9 @@ def _convergence_artifact(
     )
 
 
-def _artifact(path: Path, snapshot: Path, *, loss: float, phase: str = "backward") -> None:
+def _artifact(
+    path: Path, snapshot: Path, *, loss: float, phase: str = "backward"
+) -> None:
     write_json_atomic(
         path,
         {
@@ -95,8 +130,12 @@ def _artifact(path: Path, snapshot: Path, *, loss: float, phase: str = "backward
 def test_make_deterministic_batch_is_shifted_and_repeatable(tmp_path: Path) -> None:
     first = tmp_path / "first.safetensors"
     second = tmp_path / "second.safetensors"
-    first_meta = make_deterministic_batch(first, vocab_size=32, batch_size=2, seq_len=16, seed=42)
-    second_meta = make_deterministic_batch(second, vocab_size=32, batch_size=2, seq_len=16, seed=42)
+    first_meta = make_deterministic_batch(
+        first, vocab_size=32, batch_size=2, seq_len=16, seed=42
+    )
+    second_meta = make_deterministic_batch(
+        second, vocab_size=32, batch_size=2, seq_len=16, seed=42
+    )
 
     a = load_file(first)
     b = load_file(second)
@@ -104,7 +143,10 @@ def test_make_deterministic_batch_is_shifted_and_repeatable(tmp_path: Path) -> N
     assert tuple(a["targets"].shape) == (2, 16)
     assert torch.equal(a["input_ids"][:, 1:], a["targets"][:, :-1])
     assert torch.equal(a["input_ids"], b["input_ids"])
-    assert a["input_ids"].untyped_storage().data_ptr() != a["targets"].untyped_storage().data_ptr()
+    assert (
+        a["input_ids"].untyped_storage().data_ptr()
+        != a["targets"].untyped_storage().data_ptr()
+    )
     assert first_meta["content_sha256"] == second_meta["content_sha256"]
 
 
@@ -272,6 +314,41 @@ def test_capture_parser_exposes_memory_bounded_b16_contract() -> None:
     assert args.omit_logits is True
 
 
+def test_convergence_parser_exposes_fail_closed_resume_contract() -> None:
+    args = build_parser().parse_args(
+        [
+            "converge-hf",
+            "--sequence",
+            "sequence.safetensors",
+            "--validation-batch",
+            "validation.safetensors",
+            "--output-json",
+            "curve.json",
+            "--seed",
+            "131",
+            "--model",
+            "model",
+            "--checkpoint-sha256",
+            "checkpoint",
+            "--resume-from",
+            "resume.pt",
+            "--checkpoint-out",
+            "latest.pt",
+            "--checkpoint-every",
+            "50",
+            "--stop-after-step",
+            "500",
+            "--gradient-checkpointing",
+        ]
+    )
+
+    assert args.resume_from == "resume.pt"
+    assert args.checkpoint_out == "latest.pt"
+    assert args.checkpoint_every == 50
+    assert args.stop_after_step == 500
+    assert args.gradient_checkpointing is True
+
+
 def test_step_compare_keeps_bf16_delta_as_telemetry(tmp_path: Path) -> None:
     official_snapshot = tmp_path / "official.safetensors"
     hf_snapshot = tmp_path / "hf.safetensors"
@@ -312,7 +389,9 @@ def test_step_compare_keeps_bf16_delta_as_telemetry(tmp_path: Path) -> None:
     assert report["tensor_failures"] == []
 
 
-def test_compare_convergence_artifacts_gates_curves_and_provenance(tmp_path: Path) -> None:
+def test_compare_convergence_artifacts_gates_curves_and_provenance(
+    tmp_path: Path,
+) -> None:
     common = {
         "schema_version": 1,
         "axis": "train_temp_alignment_convergence",
@@ -408,7 +487,9 @@ def test_compare_convergence_cohorts_accepts_matching_success_distribution(
     assert report["candidate_deep_success_count"] == 3
 
 
-def test_compare_convergence_cohorts_rejects_lower_success_count(tmp_path: Path) -> None:
+def test_compare_convergence_cohorts_rejects_lower_success_count(
+    tmp_path: Path,
+) -> None:
     references: list[Path] = []
     candidates: list[Path] = []
     for seed in (11, 22, 33):
@@ -433,14 +514,21 @@ def test_compare_convergence_cohorts_rejects_lower_success_count(tmp_path: Path)
 
     assert report["status"] == "fail"
     assert report["candidate_success_count"] == 0
-    assert "candidate convergence success count is below reference" in report["failures"]
+    assert (
+        "candidate convergence success count is below reference" in report["failures"]
+    )
 
 
-def test_compare_artifacts_rejects_provenance_and_tensor_failures(tmp_path: Path) -> None:
+def test_compare_artifacts_rejects_provenance_and_tensor_failures(
+    tmp_path: Path,
+) -> None:
     official_snapshot = tmp_path / "official.safetensors"
     hf_snapshot = tmp_path / "hf.safetensors"
     save_file({"grad::x": torch.tensor([1.0, 0.0])}, official_snapshot)
-    save_file({"grad::x": torch.tensor([-1.0, 0.0]), "grad::extra": torch.ones(1)}, hf_snapshot)
+    save_file(
+        {"grad::x": torch.tensor([-1.0, 0.0]), "grad::extra": torch.ones(1)},
+        hf_snapshot,
+    )
     official_json = tmp_path / "official.json"
     hf_json = tmp_path / "hf.json"
     _artifact(official_json, official_snapshot, loss=1.0)
@@ -462,7 +550,10 @@ def test_compare_artifacts_rejects_provenance_and_tensor_failures(tmp_path: Path
 def test_write_json_atomic_leaves_valid_json(tmp_path: Path) -> None:
     output = tmp_path / "nested" / "result.json"
     write_json_atomic(output, {"status": "pass", "value": 3})
-    assert json.loads(output.read_text(encoding="utf-8")) == {"status": "pass", "value": 3}
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "status": "pass",
+        "value": 3,
+    }
     assert not output.with_suffix(output.suffix + ".tmp").exists()
 
 
@@ -499,7 +590,9 @@ def test_normalize_official_tensors_applies_converter_transpose() -> None:
         normalized["grad::model.layers.0.attn.w_lora.lora.0.weight"],
         tensors["blocks.0.att.w1"].t(),
     )
-    assert tuple(normalized["grad::model.layers.0.attn.w_lora.lora.2.bias"].shape) == (3,)
+    assert tuple(normalized["grad::model.layers.0.attn.w_lora.lora.2.bias"].shape) == (
+        3,
+    )
     assert tuple(normalized["grad::model.layers.0.attn.x_r"].shape) == (1, 1, 3)
 
 
@@ -562,7 +655,9 @@ def test_official_recipe_runtime_uses_active_python_and_local_extension_cache(
     extension_dir = tmp_path / "torch-extensions"
     env, metadata = build_official_runtime_env(extension_dir)
 
-    assert env["PATH"].split(os.pathsep)[0] == str(Path(sys.executable).resolve().parent)
+    assert env["PATH"].split(os.pathsep)[0] == str(
+        Path(sys.executable).resolve().parent
+    )
     assert env["TORCH_EXTENSIONS_DIR"] == str(extension_dir.resolve())
     assert metadata["torch_extensions_dir"] == str(extension_dir.resolve())
     assert metadata["max_jobs"] == env["MAX_JOBS"]
