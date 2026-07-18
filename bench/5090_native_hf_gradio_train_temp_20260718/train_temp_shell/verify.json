@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_official_shell_recipe",
+  "phase": "verify",
+  "recipe": "/home/ubuntu/rwkv7-hf-native-width/configs/train_temp_official_x070_12x768_b16.json",
+  "checkout": {
+    "status": "pass",
+    "commit": "e6f74b63a06e08606d130043599d218209628bad",
+    "scripts": {
+      "prepare": {
+        "path": "/home/ubuntu/RWKV-LM-train-temp/RWKV-v7/train_temp/demo-training-prepare.sh",
+        "sha256": "ee4b7ee41645feb9acd9eb347e45b5c75e7ec7b10bfbc9d9da8e480da4f630d2"
+      },
+      "run": {
+        "path": "/home/ubuntu/RWKV-LM-train-temp/RWKV-v7/train_temp/demo-training-run.sh",
+        "sha256": "850bc983c27555af6769fab3767d7b29e57c7057e84e02987b5b1b7a3d0c976e"
+      }
+    },
+    "failures": []
+  },
+  "dataset": {
+    "status": "pass",
+    "data_prefix": "/home/ubuntu/datasets/rwkv-minipile-e6f74b6/minipile",
+    "bin_bytes": 2996452414,
+    "idx_bytes": 20210042,
+    "bin_sha256": "9917a52991b9ce5b0b05f92101962ba704cf3c4c20b64431ff8c45ba9d4141a5",
+    "idx_sha256": "f526abddaa06d376443e69c9a6c0fcbe4302afc0cb1aed08faf3fb97fc5acd10",
+    "failures": []
+  },
+  "output_dir": "/home/ubuntu/bench/train-temp-shell-5090-20260718/official",
+  "status": "pass"
+}

@@ -55,7 +55,8 @@ if _HAS_TRITON:
         w_mid_ptr,
         a_mid_ptr,
         g_mid_ptr,
-        hidden: tl.constexpr,
+        input_dim: tl.constexpr,
+        output_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -72,17 +73,17 @@ if _HAS_TRITON:
 
         if block_id < H_BLOCKS:
             offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
-            mask_m = offs_m < hidden
+            mask_m = offs_m < output_dim
             acc_r = tl.zeros((BLOCK_M,), tl.float32)
             acc_k = tl.zeros((BLOCK_M,), tl.float32)
             acc_v = tl.zeros((BLOCK_M,), tl.float32)
-            for start in range(0, hidden, BLOCK_K):
+            for start in range(0, input_dim, BLOCK_K):
                 kidx = start + offs_k
-                mask_k = kidx < hidden
-                xr = tl.load(xr_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xk = tl.load(xk_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xv = tl.load(xv_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                weight_offsets = offs_m[:, None] * hidden + kidx[None, :]
+                mask_k = kidx < input_dim
+                xr = tl.load(xr_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xk = tl.load(xk_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xv = tl.load(xv_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                weight_offsets = offs_m[:, None] * input_dim + kidx[None, :]
                 mask_w = mask_m[:, None] & mask_k[None, :]
                 rw = tl.load(r_weight_ptr + weight_offsets, mask=mask_w, other=0.0).to(tl.float32)
                 kw = tl.load(k_weight_ptr + weight_offsets, mask=mask_w, other=0.0).to(tl.float32)
@@ -90,7 +91,7 @@ if _HAS_TRITON:
                 acc_r += tl.sum(rw * xr[None, :], axis=1)
                 acc_k += tl.sum(kw * xk[None, :], axis=1)
                 acc_v += tl.sum(vw * xv[None, :], axis=1)
-            out_base = batch_id * hidden + offs_m
+            out_base = batch_id * output_dim + offs_m
             tl.store(r_out_ptr + out_base, acc_r, mask=mask_m)
             tl.store(k_out_ptr + out_base, acc_k, mask=mask_m)
             tl.store(v_out_ptr + out_base, acc_v, mask=mask_m)
@@ -103,15 +104,15 @@ if _HAS_TRITON:
             acc_w = tl.zeros((BLOCK_R,), tl.float32)
             acc_a = tl.zeros((BLOCK_R,), tl.float32)
             acc_g = tl.zeros((BLOCK_R,), tl.float32)
-            for start in range(0, hidden, BLOCK_K):
+            for start in range(0, input_dim, BLOCK_K):
                 kidx = start + offs_k
-                mask_k = kidx < hidden
-                xw = tl.load(xw_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xa = tl.load(xa_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xg = tl.load(xg_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                w_offsets = offs_r[:, None] * hidden + kidx[None, :]
-                a_offsets = offs_r[:, None] * hidden + kidx[None, :]
-                g_offsets = offs_r[:, None] * hidden + kidx[None, :]
+                mask_k = kidx < input_dim
+                xw = tl.load(xw_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xa = tl.load(xa_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xg = tl.load(xg_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                w_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+                a_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+                g_offsets = offs_r[:, None] * input_dim + kidx[None, :]
                 wd = tl.load(w_down_ptr + w_offsets, mask=mask_w_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
                 ad = tl.load(a_down_ptr + a_offsets, mask=mask_a_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
                 gd = tl.load(g_down_ptr + g_offsets, mask=mask_g_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
@@ -138,7 +139,7 @@ if _HAS_TRITON:
         w_out_ptr,
         a_out_ptr,
         g_out_ptr,
-        hidden: tl.constexpr,
+        output_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -153,7 +154,7 @@ if _HAS_TRITON:
         block_id = tl.program_id(1)
         offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_r = tl.arange(0, BLOCK_R)
-        mask_m = offs_m < hidden
+        mask_m = offs_m < output_dim
         acc_w = tl.zeros((BLOCK_M,), tl.float32)
         acc_a = tl.zeros((BLOCK_M,), tl.float32)
         acc_g = tl.zeros((BLOCK_M,), tl.float32)
@@ -183,7 +184,7 @@ if _HAS_TRITON:
         if HAS_G_BIAS:
             gb = tl.load(g_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_g += gb
-        out_base = batch_id * hidden + offs_m
+        out_base = batch_id * output_dim + offs_m
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
         tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
@@ -210,7 +211,8 @@ if _HAS_TRITON:
         a_mid_ptr,
         g_mid_ptr,
         vg_mid_ptr,
-        hidden: tl.constexpr,
+        input_dim: tl.constexpr,
+        output_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -228,17 +230,17 @@ if _HAS_TRITON:
 
         if block_id < H_BLOCKS:
             offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
-            mask_m = offs_m < hidden
+            mask_m = offs_m < output_dim
             acc_r = tl.zeros((BLOCK_M,), tl.float32)
             acc_k = tl.zeros((BLOCK_M,), tl.float32)
             acc_v = tl.zeros((BLOCK_M,), tl.float32)
-            for start in range(0, hidden, BLOCK_K):
+            for start in range(0, input_dim, BLOCK_K):
                 kidx = start + offs_k
-                mask_k = kidx < hidden
-                xr = tl.load(xr_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xk = tl.load(xk_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xv = tl.load(xv_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                weight_offsets = offs_m[:, None] * hidden + kidx[None, :]
+                mask_k = kidx < input_dim
+                xr = tl.load(xr_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xk = tl.load(xk_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xv = tl.load(xv_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                weight_offsets = offs_m[:, None] * input_dim + kidx[None, :]
                 mask_w = mask_m[:, None] & mask_k[None, :]
                 rw = tl.load(r_weight_ptr + weight_offsets, mask=mask_w, other=0.0).to(tl.float32)
                 kw = tl.load(k_weight_ptr + weight_offsets, mask=mask_w, other=0.0).to(tl.float32)
@@ -246,7 +248,7 @@ if _HAS_TRITON:
                 acc_r += tl.sum(rw * xr[None, :], axis=1)
                 acc_k += tl.sum(kw * xk[None, :], axis=1)
                 acc_v += tl.sum(vw * xv[None, :], axis=1)
-            out_base = batch_id * hidden + offs_m
+            out_base = batch_id * output_dim + offs_m
             tl.store(r_out_ptr + out_base, acc_r, mask=mask_m)
             tl.store(k_out_ptr + out_base, acc_k, mask=mask_m)
             tl.store(v_out_ptr + out_base, acc_v, mask=mask_m)
@@ -261,17 +263,17 @@ if _HAS_TRITON:
             acc_a = tl.zeros((BLOCK_R,), tl.float32)
             acc_g = tl.zeros((BLOCK_R,), tl.float32)
             acc_vg = tl.zeros((BLOCK_R,), tl.float32)
-            for start in range(0, hidden, BLOCK_K):
+            for start in range(0, input_dim, BLOCK_K):
                 kidx = start + offs_k
-                mask_k = kidx < hidden
-                xw = tl.load(xw_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xa = tl.load(xa_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xg = tl.load(xg_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                xv_gate = tl.load(xv_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-                w_offsets = offs_r[:, None] * hidden + kidx[None, :]
-                a_offsets = offs_r[:, None] * hidden + kidx[None, :]
-                g_offsets = offs_r[:, None] * hidden + kidx[None, :]
-                vg_offsets = offs_r[:, None] * hidden + kidx[None, :]
+                mask_k = kidx < input_dim
+                xw = tl.load(xw_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xa = tl.load(xa_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xg = tl.load(xg_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xv_gate = tl.load(xv_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                w_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+                a_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+                g_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+                vg_offsets = offs_r[:, None] * input_dim + kidx[None, :]
                 wd = tl.load(w_down_ptr + w_offsets, mask=mask_w_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
                 ad = tl.load(a_down_ptr + a_offsets, mask=mask_a_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
                 gd = tl.load(g_down_ptr + g_offsets, mask=mask_g_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
@@ -305,7 +307,7 @@ if _HAS_TRITON:
         a_out_ptr,
         g_out_ptr,
         vg_out_ptr,
-        hidden: tl.constexpr,
+        output_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -322,7 +324,7 @@ if _HAS_TRITON:
         block_id = tl.program_id(1)
         offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_r = tl.arange(0, BLOCK_R)
-        mask_m = offs_m < hidden
+        mask_m = offs_m < output_dim
         acc_w = tl.zeros((BLOCK_M,), tl.float32)
         acc_a = tl.zeros((BLOCK_M,), tl.float32)
         acc_g = tl.zeros((BLOCK_M,), tl.float32)
@@ -361,7 +363,7 @@ if _HAS_TRITON:
         if HAS_VG_BIAS:
             vgb = tl.load(vg_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_vg += vgb
-        out_base = batch_id * hidden + offs_m
+        out_base = batch_id * output_dim + offs_m
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
         tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
@@ -394,19 +396,27 @@ def _flatten(x: Any, hidden: int | None = None, *, name: str):
     raise ValueError(f"{name} must be [batch, tokens, hidden] or [batch, hidden]")
 
 
-def _validate_square_weight(w: Any, hidden: int, *, name: str) -> None:
-    if w.dim() != 2 or int(w.shape[0]) != hidden or int(w.shape[1]) != hidden:
-        raise ValueError(f"{name} must be [{hidden}, {hidden}], got {tuple(w.shape)}")
+def _validate_projection_weight(w: Any, input_dim: int, output_dim: int, *, name: str) -> None:
+    if w.dim() != 2 or int(w.shape[0]) != output_dim or int(w.shape[1]) != input_dim:
+        raise ValueError(f"{name} must be [{output_dim}, {input_dim}], got {tuple(w.shape)}")
 
 
-def _validate_lora_weight(down: Any, up: Any, bias: Any | None, hidden: int, *, name: str) -> int:
-    if down.dim() != 2 or int(down.shape[1]) != hidden:
-        raise ValueError(f"{name}_down must be [rank, {hidden}], got {tuple(down.shape)}")
+def _validate_lora_weight(
+    down: Any,
+    up: Any,
+    bias: Any | None,
+    input_dim: int,
+    output_dim: int,
+    *,
+    name: str,
+) -> int:
+    if down.dim() != 2 or int(down.shape[1]) != input_dim:
+        raise ValueError(f"{name}_down must be [rank, {input_dim}], got {tuple(down.shape)}")
     rank = int(down.shape[0])
-    if up.dim() != 2 or int(up.shape[0]) != hidden or int(up.shape[1]) != rank:
-        raise ValueError(f"{name}_up must be [{hidden}, {rank}], got {tuple(up.shape)}")
-    if bias is not None and (bias.dim() != 1 or int(bias.shape[0]) != hidden):
-        raise ValueError(f"{name}_bias must be [{hidden}], got {tuple(bias.shape)}")
+    if up.dim() != 2 or int(up.shape[0]) != output_dim or int(up.shape[1]) != rank:
+        raise ValueError(f"{name}_up must be [{output_dim}, {rank}], got {tuple(up.shape)}")
+    if bias is not None and (bias.dim() != 1 or int(bias.shape[0]) != output_dim):
+        raise ValueError(f"{name}_bias must be [{output_dim}], got {tuple(bias.shape)}")
     return rank
 
 
@@ -445,19 +455,22 @@ def fused_rkv_wag_projection(
     if torch is None or F is None:
         raise RuntimeError("fused_rkv_wag_projection requires torch")
     xr2, restore_shape = _flatten(xr, name="xr")
-    hidden = int(xr2.shape[1])
+    input_dim = int(xr2.shape[1])
     inputs = [xr2]
     for name, value in (("xk", xk), ("xv", xv), ("xw", xw), ("xa", xa), ("xg", xg)):
-        flat, shape = _flatten(value, hidden, name=name)
+        flat, shape = _flatten(value, input_dim, name=name)
         if shape != restore_shape or tuple(flat.shape) != tuple(xr2.shape):
             raise ValueError("all projection inputs must have identical flattened shape/layout")
         inputs.append(flat)
     xk2, xv2, xw2, xa2, xg2 = inputs[1:]
+    if r_weight.dim() != 2:
+        raise ValueError(f"r_weight must be a matrix, got {tuple(r_weight.shape)}")
+    output_dim = int(r_weight.shape[0])
     for name, weight in (("r_weight", r_weight), ("k_weight", k_weight), ("v_weight", v_weight)):
-        _validate_square_weight(weight, hidden, name=name)
-    w_rank = _validate_lora_weight(w_down_weight, w_up_weight, w_up_bias, hidden, name="w")
-    a_rank = _validate_lora_weight(a_down_weight, a_up_weight, a_up_bias, hidden, name="a")
-    g_rank = _validate_lora_weight(g_down_weight, g_up_weight, g_up_bias, hidden, name="g")
+        _validate_projection_weight(weight, input_dim, output_dim, name=name)
+    w_rank = _validate_lora_weight(w_down_weight, w_up_weight, w_up_bias, input_dim, output_dim, name="w")
+    a_rank = _validate_lora_weight(a_down_weight, a_up_weight, a_up_bias, input_dim, output_dim, name="a")
+    g_rank = _validate_lora_weight(g_down_weight, g_up_weight, g_up_bias, input_dim, output_dim, name="g")
     max_rank = max(w_rank, a_rank, g_rank)
 
     tensors = [
@@ -506,7 +519,7 @@ def fused_rkv_wag_projection(
         wb_c = w_up_bias.contiguous() if w_up_bias is not None else wu_c
         ab_c = a_up_bias.contiguous() if a_up_bias is not None else au_c
         gb_c = g_up_bias.contiguous() if g_up_bias is not None else gu_c
-        r = torch.empty((batch, hidden), device=xr2.device, dtype=xr2.dtype)
+        r = torch.empty((batch, output_dim), device=xr2.device, dtype=xr2.dtype)
         k = torch.empty_like(r)
         v = torch.empty_like(r)
         w_mid = torch.empty((batch, w_rank), device=xr2.device, dtype=xr2.dtype)
@@ -515,7 +528,7 @@ def fused_rkv_wag_projection(
         w = torch.empty_like(r)
         a = torch.empty_like(r)
         g = torch.empty_like(r)
-        h_blocks = triton.cdiv(hidden, int(block_m))
+        h_blocks = triton.cdiv(output_dim, int(block_m))
         r_blocks = triton.cdiv(max_rank, int(block_r))
         _rkv_wag_down_kernel[(batch, max(h_blocks, r_blocks))](
             xr_c,
@@ -536,7 +549,8 @@ def fused_rkv_wag_projection(
             w_mid,
             a_mid,
             g_mid,
-            hidden,
+            input_dim,
+            output_dim,
             w_rank,
             a_rank,
             g_rank,
@@ -561,7 +575,7 @@ def fused_rkv_wag_projection(
             w,
             a,
             g,
-            hidden,
+            output_dim,
             w_rank,
             a_rank,
             g_rank,
@@ -574,7 +588,8 @@ def fused_rkv_wag_projection(
             num_warps=4,
         )
     if restore_shape is not None:
-        return tuple(t.reshape(restore_shape) for t in (r, k, v, w, a, g))
+        output_shape = (*restore_shape[:-1], output_dim)
+        return tuple(t.reshape(output_shape) for t in (r, k, v, w, a, g))
     return r, k, v, w, a, g
 
 
@@ -618,20 +633,23 @@ def fused_rkv_wavg_projection(
     if torch is None or F is None:
         raise RuntimeError("fused_rkv_wavg_projection requires torch")
     xr2, restore_shape = _flatten(xr, name="xr")
-    hidden = int(xr2.shape[1])
+    input_dim = int(xr2.shape[1])
     inputs = [xr2]
     for name, value in (("xk", xk), ("xv", xv), ("xw", xw), ("xa", xa), ("xg", xg)):
-        flat, shape = _flatten(value, hidden, name=name)
+        flat, shape = _flatten(value, input_dim, name=name)
         if shape != restore_shape or tuple(flat.shape) != tuple(xr2.shape):
             raise ValueError("all projection inputs must have identical flattened shape/layout")
         inputs.append(flat)
     xk2, xv2, xw2, xa2, xg2 = inputs[1:]
+    if r_weight.dim() != 2:
+        raise ValueError(f"r_weight must be a matrix, got {tuple(r_weight.shape)}")
+    output_dim = int(r_weight.shape[0])
     for name, weight in (("r_weight", r_weight), ("k_weight", k_weight), ("v_weight", v_weight)):
-        _validate_square_weight(weight, hidden, name=name)
-    w_rank = _validate_lora_weight(w_down_weight, w_up_weight, w_up_bias, hidden, name="w")
-    a_rank = _validate_lora_weight(a_down_weight, a_up_weight, a_up_bias, hidden, name="a")
-    g_rank = _validate_lora_weight(g_down_weight, g_up_weight, g_up_bias, hidden, name="g")
-    vg_rank = _validate_lora_weight(vg_down_weight, vg_up_weight, vg_up_bias, hidden, name="vg")
+        _validate_projection_weight(weight, input_dim, output_dim, name=name)
+    w_rank = _validate_lora_weight(w_down_weight, w_up_weight, w_up_bias, input_dim, output_dim, name="w")
+    a_rank = _validate_lora_weight(a_down_weight, a_up_weight, a_up_bias, input_dim, output_dim, name="a")
+    g_rank = _validate_lora_weight(g_down_weight, g_up_weight, g_up_bias, input_dim, output_dim, name="g")
+    vg_rank = _validate_lora_weight(vg_down_weight, vg_up_weight, vg_up_bias, input_dim, output_dim, name="vg")
     max_rank = max(w_rank, a_rank, g_rank, vg_rank)
 
     tensors = [
@@ -686,7 +704,7 @@ def fused_rkv_wavg_projection(
         ab_c = a_up_bias.contiguous() if a_up_bias is not None else au_c
         gb_c = g_up_bias.contiguous() if g_up_bias is not None else gu_c
         vgb_c = vg_up_bias.contiguous() if vg_up_bias is not None else vgu_c
-        r = torch.empty((batch, hidden), device=xr2.device, dtype=xr2.dtype)
+        r = torch.empty((batch, output_dim), device=xr2.device, dtype=xr2.dtype)
         k = torch.empty_like(r)
         v = torch.empty_like(r)
         w_mid = torch.empty((batch, w_rank), device=xr2.device, dtype=xr2.dtype)
@@ -697,7 +715,7 @@ def fused_rkv_wavg_projection(
         a = torch.empty_like(r)
         g = torch.empty_like(r)
         v_gate = torch.empty_like(r)
-        h_blocks = triton.cdiv(hidden, int(block_m))
+        h_blocks = triton.cdiv(output_dim, int(block_m))
         r_blocks = triton.cdiv(max_rank, int(block_r))
         _rkv_wavg_down_kernel[(batch, max(h_blocks, r_blocks))](
             xr_c,
@@ -720,7 +738,8 @@ def fused_rkv_wavg_projection(
             a_mid,
             g_mid,
             vg_mid,
-            hidden,
+            input_dim,
+            output_dim,
             w_rank,
             a_rank,
             g_rank,
@@ -750,7 +769,7 @@ def fused_rkv_wavg_projection(
             a,
             g,
             v_gate,
-            hidden,
+            output_dim,
             w_rank,
             a_rank,
             g_rank,
@@ -765,5 +784,6 @@ def fused_rkv_wavg_projection(
             num_warps=4,
         )
     if restore_shape is not None:
-        return tuple(t.reshape(restore_shape) for t in (r, k, v, w, a, g, v_gate))
+        output_shape = (*restore_shape[:-1], output_dim)
+        return tuple(t.reshape(output_shape) for t in (r, k, v, w, a, g, v_gate))
     return r, k, v, w, a, g, v_gate

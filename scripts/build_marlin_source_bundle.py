@@ -113,7 +113,7 @@ __all__ = ["materialize_marlin_sources"]
 
 
 def main() -> int:
-    OUTPUT.write_text(render(), encoding="utf-8")
+    OUTPUT.write_text(render(), encoding="utf-8", newline="\n")
     print(OUTPUT)
     return 0
 

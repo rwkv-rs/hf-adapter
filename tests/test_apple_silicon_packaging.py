@@ -18,7 +18,10 @@ def test_fla_is_optional_dependency() -> None:
     deps_block = deps_match.group(1)
     assert "flash-linear-attention" not in deps_block
     assert "fla = [\"flash-linear-attention\"]" in text
-    assert "cuda = [\"flash-linear-attention\"" in text
+    assert "fla-reference = [\"flash-linear-attention\"]" in text
+    cuda_match = re.search(r"(?m)^cuda\s*=\s*\[(.*?)\]", text)
+    assert cuda_match is not None
+    assert "flash-linear-attention" not in cuda_match.group(1)
 
 
 def test_mlx_extra_is_apple_optional_dependency() -> None:

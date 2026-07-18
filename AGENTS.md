@@ -151,6 +151,29 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
   `bench/5090_marlin_w4_hybrid_20260716/` and
   `bench/5090_torchao_w4_hybrid_20260716/`.
 
+## RTX 5090 Native HF Gradio and Official-Shell Snapshot (2026-07-18)
+
+- The official `BlinkDL/RWKV-Gradio-3` Space at commit `cc57df4` runs through
+  `NativeRWKV7ForCausalLM` using the opt-in bridge under `examples/gradio/`.
+  Real-browser B1/B8 generation and graph-cache reuse pass on g1h 7.2B FP16.
+- Native decode improved from `44.5/276.9` to `95.2/651.7 tok/s` at B1/B8,
+  but official v3a remains `138.8/841.7 tok/s` and uses less process memory.
+  This is a working UI/compatibility path, not performance parity.
+- The fastest SM120 sparse FFN direct row matches only 6/8 B8 greedy
+  sequences over 48 measured tokens. `RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN` and
+  `RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_SHARE_PACK` must remain independently
+  default-off until exact B1/B8 logits and complete greedy gates pass.
+- The unchanged official `demo-training-prepare.sh` and
+  `demo-training-run.sh` commands pass on the 5090 for the pinned B16/T512/
+  BF16/ZeRO-2 recipe when the run is bounded to one step externally. The
+  equivalent Native runner passes with 399/399 finite ZeRO gradient tensors
+  and a changed model hash. Do not compare the two runtime numbers because
+  their harness boundaries differ.
+- Canonical evidence is
+  `bench/5090_native_hf_gradio_train_temp_20260718/README.md`. Ordinary users
+  start from `docs/GRADIO_NATIVE_HF.md`; AI execution remains centralized in
+  `docs/AI_ASSISTED_SETUP.md`.
+
 ## V100 Decode Milestone Snapshot (2026-07-10)
 
 The 2026-07-10 sm70 pass adds decode norm/mix fusion, grouped shape-routed

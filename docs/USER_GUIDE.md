@@ -62,7 +62,7 @@ Install one of these profiles:
 python -m pip install -U pip
 python -m pip install -e .
 
-# Optimized NVIDIA CUDA/FLA path, normally on Linux.
+# Native CUDA kernels, normally on Linux NVIDIA.
 python -m pip install -e ".[cuda]"
 
 # Optional training or quantization dependencies.
@@ -75,8 +75,8 @@ python -m pip install -e ".[mlx]"
 
 Install a PyTorch build appropriate for your hardware before these commands if
 the default PyPI build does not provide the CUDA or platform support you need.
-If `flash-linear-attention` cannot be installed, the base profile and native
-backend remain usable.
+The ordinary RWKV runtime does not require `flash-linear-attention`. Install
+`.[fla-reference]` only to reproduce a dedicated reference benchmark.
 
 Verify the base environment before downloading a model:
 
@@ -167,8 +167,8 @@ The result must include `[PASS] Model directory` and `RESULT: READY`.
 
 ## 3. Run generation
 
-The included example automatically selects CUDA, MPS, or CPU. It uses FLA on
-CUDA when available and otherwise selects the native backend:
+The included example automatically selects CUDA, MPS, or CPU and always loads
+the canonical native backend:
 
 ```bash
 python examples/generate.py \
@@ -180,9 +180,9 @@ python examples/generate.py \
 Useful explicit configurations:
 
 ```bash
-# NVIDIA CUDA with the optimized FLA backend.
+# NVIDIA CUDA with native fused kernels selected by the card policy.
 python examples/generate.py --model /path/to/model-hf \
-  --prompt "Hello" --device cuda --backend fla --dtype fp16
+  --prompt "Hello" --device cuda --backend native --dtype fp16
 
 # CPU fallback. Start with a small checkpoint.
 python examples/generate.py --model /path/to/model-hf \
@@ -212,18 +212,12 @@ The direct API does not require `accelerate` or `device_map` for a single
 device:
 
 ```python
-import importlib.util
-import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model_path = "models/rwkv7-g1d-0.4b-hf"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float16 if device.type == "cuda" else torch.float32
-
-# Enable the native backend for CPU, MPS, or a CUDA installation without FLA.
-if device.type != "cuda" or importlib.util.find_spec("fla") is None:
-    os.environ["RWKV7_NATIVE_MODEL"] = "1"
 
 tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
@@ -315,7 +309,7 @@ for the model you downloaded.
 
 ### Windows CUDA installation is difficult
 
-Start with the base package and `--backend native`. The optimized FLA/Triton
+Start with the base package and `--backend native`. The native CUDA/Triton
 path is primarily validated on Linux. WSL2 is another option for a Linux CUDA
 environment.
 

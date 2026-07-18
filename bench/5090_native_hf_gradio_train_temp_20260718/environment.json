@@ -1,0 +1,20 @@
+{
+  "date": "2026-07-18",
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "compute_capability": [12, 0],
+  "gpu_memory_mib": 32607,
+  "driver": "595.58.03",
+  "platform": "Linux 5.15.0-140-generic x86_64",
+  "python": "3.10.12",
+  "torch": "2.11.0+cu128",
+  "torch_cuda": "12.8",
+  "transformers": "5.12.1",
+  "triton": "3.6.0",
+  "space": {
+    "repository": "BlinkDL/RWKV-Gradio-3",
+    "commit": "cc57df4",
+    "app_sha256": "8506931e8525ecbfe23c9d8c0314dc9c1320637710fb81913f8093943563e5cb",
+    "native_compat_sha256": "1d7053ad7b3a3ad91ff4914ca6ce361438c6dbc32861202376c2db82a7813bdf"
+  },
+  "official_train_temp_commit": "e6f74b63a06e08606d130043599d218209628bad"
+}

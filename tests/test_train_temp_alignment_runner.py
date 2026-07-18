@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
+import sys
 
 import torch
 from safetensors.torch import load_file, save_file
 
 from scripts.run_train_temp_official_recipe import (
+    build_official_runtime_env,
     build_prepare_command,
     build_run_command,
     load_recipe,
 )
 
 from bench.bench_train_temp_alignment import (
+    _load_official_config,
     _learning_rate_at_step,
+    build_parser,
     compare_artifacts,
     compare_convergence_artifacts,
     compare_convergence_cohorts,
@@ -214,6 +219,57 @@ def test_step_compare_rejects_optimizer_group_mismatch(tmp_path: Path) -> None:
     assert report["status"] == "fail"
     assert report["optimizer_groups_match"] is False
     assert "optimizer groups mismatch" in report["failures"]
+
+
+def test_compare_rejects_gradient_checkpointing_mismatch(tmp_path: Path) -> None:
+    official_snapshot = tmp_path / "official.safetensors"
+    hf_snapshot = tmp_path / "hf.safetensors"
+    save_file({"logits": torch.ones(2)}, official_snapshot)
+    save_file({"logits": torch.ones(2)}, hf_snapshot)
+    official_json = tmp_path / "official.json"
+    hf_json = tmp_path / "hf.json"
+    _artifact(official_json, official_snapshot, loss=1.0)
+    _artifact(hf_json, hf_snapshot, loss=1.0)
+    official = json.loads(official_json.read_text(encoding="utf-8"))
+    candidate = json.loads(hf_json.read_text(encoding="utf-8"))
+    official["gradient_checkpointing"] = True
+    candidate["gradient_checkpointing"] = False
+    write_json_atomic(official_json, official)
+    write_json_atomic(hf_json, candidate)
+
+    report = compare_artifacts(official_json, hf_json)
+
+    assert report["status"] == "fail"
+    assert "gradient_checkpointing" in report["provenance_mismatches"]
+
+
+def test_capture_parser_exposes_memory_bounded_b16_contract() -> None:
+    args = build_parser().parse_args(
+        [
+            "capture-hf",
+            "--batch",
+            "batch.safetensors",
+            "--output-json",
+            "capture.json",
+            "--snapshot",
+            "capture.safetensors",
+            "--phase",
+            "step",
+            "--model",
+            "model",
+            "--checkpoint-sha256",
+            "checkpoint",
+            "--native",
+            "--train-temp-cuda",
+            "--gradient-checkpointing",
+            "--omit-logits",
+        ]
+    )
+
+    assert args.native is True
+    assert args.train_temp_cuda is True
+    assert args.gradient_checkpointing is True
+    assert args.omit_logits is True
 
 
 def test_step_compare_keeps_bf16_delta_as_telemetry(tmp_path: Path) -> None:
@@ -469,12 +525,14 @@ def test_official_shell_recipe_contract_matches_pinned_prepare_and_run() -> None
     model = recipe["model"]
     assert model["n_layer"] == 12
     assert model["n_embd"] == model["dim_att"] == 768
-    assert model["effective_dim_ffn"] == 2688
+    assert model["reported_dim_ffn"] == 2688
+    assert model["effective_dim_ffn"] == 3072
     assert model["ctx_len"] == 512
     assert recipe["prepare"]["micro_bsz"] == 1
     assert recipe["prepare"]["adam_eps"] == 1e-8
     assert recipe["run"]["micro_bsz"] == 16
     assert recipe["run"]["adam_eps"] == 1e-18
+    assert recipe["run"]["grad_clip"] == 1.0
 
     checkout = Path("/d/references/RWKV-LM")
     data_prefix = Path("/d/datasets/minipile/minipile")
@@ -487,3 +545,27 @@ def test_official_shell_recipe_contract_matches_pinned_prepare_and_run() -> None
     assert run[run.index("--kernel") + 1] == "@rwkv3"
     assert run[run.index("--max_steps") + 1] == "3"
     assert run[run.index("--my_exit_tokens") + 1] == "1498226207"
+    alignment = _load_official_config(
+        root / "configs" / "train_temp_official_x070_12x768_b16.json"
+    )
+    assert alignment.dim_ffn == 3072
+    assert alignment.betas == (0.9, 0.99)
+    assert alignment.grad_cp == 1
+
+
+def test_official_recipe_runtime_uses_active_python_and_local_extension_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("TORCH_EXTENSIONS_DIR", raising=False)
+    monkeypatch.delenv("MAX_JOBS", raising=False)
+    extension_dir = tmp_path / "torch-extensions"
+    env, metadata = build_official_runtime_env(extension_dir)
+
+    assert env["PATH"].split(os.pathsep)[0] == str(Path(sys.executable).resolve().parent)
+    assert env["TORCH_EXTENSIONS_DIR"] == str(extension_dir.resolve())
+    assert metadata["torch_extensions_dir"] == str(extension_dir.resolve())
+    assert metadata["max_jobs"] == env["MAX_JOBS"]
+    assert metadata["include_paths"] == [
+        path for path in metadata["include_paths"] if Path(path).is_dir()
+    ]

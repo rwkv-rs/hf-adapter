@@ -3,15 +3,42 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
+import pytest
 
+import rwkv7_hf.ada_sparse_ffn as sparse_ffn_module
 from rwkv7_hf.ada_sparse_ffn import (
     ada_ffn_up,
     ada_ffn_up_should_use,
     ada_linear,
     ada_linear_should_use,
+    ada_sparse_ffn_pack_weight,
     ada_sparse_ffn_down_add,
     ada_sparse_ffn_should_use,
+    clear_ada_sparse_ffn_weight_cache,
 )
+
+
+@pytest.mark.parametrize("capability", [(7, 0), (8, 9), (12, 0)])
+def test_cuda_extension_capability_gate_includes_measured_cards(monkeypatch, capability) -> None:
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def current_device() -> int:
+            return 0
+
+        @staticmethod
+        def get_device_capability(_index=0):
+            return capability
+
+    class FakeTorch:
+        cuda = FakeCuda()
+        device = staticmethod(torch.device)
+
+    monkeypatch.setattr(sparse_ffn_module, "torch", FakeTorch())
+    assert sparse_ffn_module._is_sparse_ffn_device("cuda")
 
 
 def test_shape_policy_is_narrow() -> None:
@@ -77,3 +104,13 @@ def test_ada_linear_cpu_fallback_matches_torch() -> None:
     expected = F.linear(x, weight)
     actual = ada_linear(x, weight, force_fallback=True)
     torch.testing.assert_close(actual, expected)
+
+
+def test_shared_pack_reuses_read_only_layout_across_batch_tags(monkeypatch) -> None:
+    weight = torch.randn(256, 1024)
+    clear_ada_sparse_ffn_weight_cache()
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_SHARE_PACK", "1")
+    first = ada_sparse_ffn_pack_weight(weight, cache_tag=1)
+    second = ada_sparse_ffn_pack_weight(weight, cache_tag=8)
+    assert first.data_ptr() == second.data_ptr()
+    clear_ada_sparse_ffn_weight_cache()

@@ -33,7 +33,7 @@ def load_runtime_module():
     return module
 
 
-def write_minimal_model(root: Path) -> Path:
+def write_minimal_model(root: Path, *, attention_hidden_size: int | None = None) -> Path:
     model = root / "tiny-rwkv7-hf"
     model.mkdir(parents=True)
     (model / "config.json").write_text(
@@ -47,6 +47,11 @@ def write_minimal_model(root: Path) -> Path:
                 "head_dim": 16,
                 "vocab_size": 1000,
                 "max_position_embeddings": 4096,
+                **(
+                    {"attention_hidden_size": attention_hidden_size}
+                    if attention_hidden_size is not None
+                    else {}
+                ),
             }
         )
         + "\n",
@@ -313,6 +318,7 @@ def test_coreml_stateful_dry_run_contract(tmp_path: Path) -> None:
     assert states["rwkv_recurrent_state"]["shape"] == [2, 4, 16, 16]
     assert states["rwkv_recurrent_state_residual"]["encoding"] == "fp16_residual"
     assert states["rwkv_attn_x_prev"]["shape"] == [2, 64]
+    assert states["rwkv_v_first"]["shape"] == [1, 64]
     assert contract["recurrent_state_encoding"] == "fp16_high_plus_fp16_residual"
 
     runtime_results = tmp_path / "stateful-runtime.jsonl"
@@ -340,6 +346,21 @@ def test_coreml_stateful_dry_run_contract(tmp_path: Path) -> None:
     assert rows[0]["status"] == "skip"
     assert rows[0]["reason"].startswith("stateful CoreML package does not exist")
     assert rows[0]["coreml_package"].endswith("tiny-rwkv7-hf-stateful-int4.mlpackage")
+
+
+def test_coreml_state_layout_separates_attention_and_residual_widths(tmp_path: Path) -> None:
+    mod = load_module()
+    model = write_minimal_model(tmp_path, attention_hidden_size=96)
+    config = mod.read_config(model)
+    config["num_heads"] = 6
+    shape = mod.model_shape_summary(config)
+    states = {item["name"]: item for item in mod.state_layout(config)}
+
+    assert shape["hidden_size"] == 64
+    assert shape["attention_hidden_size"] == 96
+    assert states["rwkv_attn_x_prev"]["shape"] == [2, 64]
+    assert states["rwkv_ffn_x_prev"]["shape"] == [2, 64]
+    assert states["rwkv_v_first"]["shape"] == [1, 96]
 
 
 def test_coreml_stateful_rejects_oversized_static_prefill(tmp_path: Path) -> None:

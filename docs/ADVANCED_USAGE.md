@@ -116,8 +116,8 @@ python tests/test_peft_lora.py \
 ```
 
 Success requires a finite loss, `nonzero_grad_count` greater than zero, and exit
-code 0. On CUDA installations where FLA backward is unavailable, use the native
-Trainer smoke:
+code 0. The canonical model is native. If the card/dtype-specific fused training
+path is unavailable, use the portable native Trainer smoke:
 
 ```bash
 python tests/test_native_trainer_smoke.py \

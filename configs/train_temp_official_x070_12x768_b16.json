@@ -4,11 +4,11 @@
   "scripts": {
     "prepare": {
       "path": "RWKV-v7/train_temp/demo-training-prepare.sh",
-      "sha256": "cbea234682792b1a56f76d9d35433ed0f76fcdb52942aed2c8d958b82b3db561"
+      "sha256": "ee4b7ee41645feb9acd9eb347e45b5c75e7ec7b10bfbc9d9da8e480da4f630d2"
     },
     "run": {
       "path": "RWKV-v7/train_temp/demo-training-run.sh",
-      "sha256": "e0f765d5f33da0184433cd744dabbab364f89d9c8b8d88e7c80adead69cc9cd2"
+      "sha256": "850bc983c27555af6769fab3767d7b29e57c7057e84e02987b5b1b7a3d0c976e"
     }
   },
   "model": {
@@ -16,7 +16,8 @@
     "n_layer": 12,
     "n_embd": 768,
     "dim_att": 768,
-    "effective_dim_ffn": 2688,
+    "reported_dim_ffn": 2688,
+    "effective_dim_ffn": 3072,
     "head_size": 64,
     "vocab_size": 65536,
     "ctx_len": 512
@@ -59,6 +60,7 @@
     "beta2": 0.99,
     "adam_eps": 1e-18,
     "weight_decay": 0.001,
+    "grad_clip": 1.0,
     "grad_cp": 1,
     "head_chunk": 0,
     "kernel": "@rwkv3",

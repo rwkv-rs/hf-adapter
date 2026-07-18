@@ -108,8 +108,8 @@ python tests/test_peft_lora.py \
   --attn-mode fused_recurrent
 ```
 
-成功要求 loss 有限、`nonzero_grad_count` 大于 0，且退出码为 0。FLA backward
-不可用时，直接验证 native Trainer 路径：
+成功要求 loss 有限、`nonzero_grad_count` 大于 0，且退出码为 0。默认模型就是
+Native；精确卡或 dtype 不支持融合训练时，直接验证便携 Native Trainer 路径：
 
 ```bash
 python tests/test_native_trainer_smoke.py \

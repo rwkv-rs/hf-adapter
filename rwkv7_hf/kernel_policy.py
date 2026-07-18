@@ -751,7 +751,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 selects stacked R/K/V only; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 selects stacked R/K/V only; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

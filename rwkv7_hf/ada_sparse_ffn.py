@@ -1,18 +1,19 @@
 # coding=utf-8
-"""Optional sm_89 fp16 sparse FFN contraction for small-row decode.
+"""Optional sm_89/sm_120 fp16 sparse FFN contraction for small-row decode.
 
 RWKV-7 applies ``ReLU(key(x)) ** 2`` before the FFN value projection.  At
 decode batch sizes the activation is naturally sparse, so reading only the
-positive rows of a packed ``[ffn, hidden]`` value matrix is faster than a
-dense GEMM on sm_89.  The CUDA kernel is derived from Albatross' Apache-2.0
-``cmix_sparse_spmv_relu_rows_kernel`` and adds the residual while initializing
-the output, avoiding a separate residual-add launch.
+positive rows of a packed ``[ffn, hidden]`` value matrix can be faster than a
+dense GEMM on measured GPU generations. The CUDA kernel is derived from
+Albatross' Apache-2.0 ``cmix_sparse_spmv_relu_rows_kernel`` and adds the
+residual while initializing the output, avoiding a separate residual-add
+launch.
 
-The extension is deliberately narrow: fp16, exact sm_89, at most 19 rows, and
-the normal RWKV ``ffn == 4 * hidden`` shape.  Unsupported shapes, training,
-and build failures retain the ordinary PyTorch implementation.  Value weights
-are transposed once and cached; callers can prewarm the cache before CUDA graph
-capture with :func:`ada_sparse_ffn_pack_weight`.
+The extension is deliberately narrow: fp16, exact sm_89 or sm_120, at most 19
+rows, and the normal RWKV ``ffn == 4 * hidden`` shape. Unsupported shapes,
+training, and build failures retain the ordinary PyTorch implementation. Value
+weights are transposed once and cached; callers can prewarm the cache before
+CUDA graph capture with :func:`ada_sparse_ffn_pack_weight`.
 """
 from __future__ import annotations
 
@@ -478,7 +479,11 @@ def _is_sparse_ffn_device(device: Any = None) -> bool:
         if resolved.type != "cuda":
             return False
         index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
-        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) in {(7, 0), (8, 9)}
+        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) in {
+            (7, 0),
+            (8, 9),
+            (12, 0),
+        }
     except Exception:
         return False
 
@@ -591,6 +596,13 @@ def _weight_cache_key(weight: Any, cache_tag: Any = None) -> tuple[Any, ...]:
 def ada_sparse_ffn_pack_weight(weight: Any, *, cache_tag: Any = None) -> Any:
     """Return a cached contiguous ``[ffn, hidden]`` inference layout."""
 
+    if os.environ.get("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_SHARE_PACK", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        cache_tag = None
     key = _weight_cache_key(weight, cache_tag)
     cached = _PACKED_WEIGHTS.get(key)
     if cached is not None and cached[0]() is weight:
@@ -662,9 +674,9 @@ def ada_sparse_ffn_down_add(
             out.copy_(result)
             return out
         return result
-    # Batch-shape graph runners keep distinct packed storage. CUDA graph nodes
-    # containing the sparse atomic kernel must not share its packed operand
-    # allocation across independently replayable graphs.
+    # Batch-shape graph runners keep distinct packed storage by default. The
+    # opt-in shared-pack route is limited to immutable inference weights and
+    # must be revalidated when graph capture or the sparse kernel changes.
     packed = ada_sparse_ffn_pack_weight(weight, cache_tag=rows)
     if out is None:
         output = extension.sparse_down_add(preact2, packed, residual2)

@@ -57,11 +57,17 @@ def validate_recipe(recipe: dict[str, Any]) -> None:
     dataset = recipe["dataset"]
     prepare = recipe["prepare"]
     run = recipe["run"]
-    expected_ffn = int((int(model["n_embd"]) * 3.5) // 32 * 32)
-    if int(model["effective_dim_ffn"]) != expected_ffn:
+    expected_reported_ffn = int((int(model["n_embd"]) * 3.5) // 32 * 32)
+    if int(model["reported_dim_ffn"]) != expected_reported_ffn:
         raise ValueError(
-            "effective_dim_ffn must match the pinned train.py 3.5x/32 default; "
-            f"expected {expected_ffn}"
+            "reported_dim_ffn must match the pinned train.py 3.5x/32 default; "
+            f"expected {expected_reported_ffn}"
+        )
+    expected_effective_ffn = 4 * int(model["n_embd"])
+    if int(model["effective_dim_ffn"]) != expected_effective_ffn:
+        raise ValueError(
+            "effective_dim_ffn must match the pinned fast RWKV_CMix_x070 4x shape; "
+            f"expected {expected_effective_ffn}"
         )
     if int(dataset["bin_bytes"]) != 2 * int(dataset["token_count"]):
         raise ValueError("Minipile bin_bytes must contain uint16 tokens")
@@ -76,6 +82,8 @@ def validate_recipe(recipe: dict[str, Any]) -> None:
         raise ValueError("prepare.sh contract must remain CPU B1 with adam_eps=1e-8")
     if (int(run["micro_bsz"]), float(run["adam_eps"])) != (16, 1e-18):
         raise ValueError("run.sh contract must remain GPU B16 with adam_eps=1e-18")
+    if float(run["grad_clip"]) != 1.0:
+        raise ValueError("run.sh contract must preserve train.py's implicit grad_clip=1.0")
 
 
 def verify_checkout(checkout: Path, recipe: dict[str, Any]) -> dict[str, Any]:
@@ -242,7 +250,72 @@ def _ensure_isolated_output(output_dir: Path, *, prepare: bool) -> None:
         )
 
 
-def _run_and_capture(command: list[str], cwd: Path, log_path: Path) -> int:
+def _prepend_search_paths(env: dict[str, str], name: str, paths: list[Path]) -> None:
+    values = [str(path) for path in paths if path.is_dir()]
+    existing = env.get(name)
+    if existing:
+        values.append(existing)
+    if values:
+        env[name] = os.pathsep.join(values)
+
+
+def build_official_runtime_env(
+    extension_dir: str | Path,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Build a reproducible extension environment for conda and pip CUDA layouts."""
+
+    env = os.environ.copy()
+    python_bin = Path(sys.executable).resolve().parent
+    _prepend_search_paths(env, "PATH", [python_bin])
+    extension_dir = Path(extension_dir).resolve()
+    env.setdefault("TORCH_EXTENSIONS_DIR", str(extension_dir))
+    env.setdefault("MAX_JOBS", "2")
+
+    include_paths: list[Path] = []
+    cuda_home: Path | None = None
+    try:
+        import torch
+        from torch.utils.cpp_extension import CUDA_HOME
+
+        if CUDA_HOME:
+            cuda_home = Path(CUDA_HOME).resolve()
+        else:
+            environment_root = python_bin.parent
+            if (environment_root / "bin" / "nvcc").is_file():
+                cuda_home = environment_root
+        if cuda_home is not None:
+            include_paths.extend(
+                [
+                    cuda_home / "include",
+                    cuda_home / "targets" / "x86_64-linux" / "include",
+                ]
+            )
+            env.setdefault("CUDA_HOME", str(cuda_home))
+        nvidia_packages = Path(torch.__file__).resolve().parent.parent / "nvidia"
+        if nvidia_packages.is_dir():
+            include_paths.extend(sorted(nvidia_packages.glob("*/include")))
+    except (ImportError, OSError):
+        pass
+
+    unique_includes: list[Path] = []
+    for path in include_paths:
+        if path.is_dir() and path not in unique_includes:
+            unique_includes.append(path)
+    _prepend_search_paths(env, "CPATH", unique_includes)
+    _prepend_search_paths(env, "CPLUS_INCLUDE_PATH", unique_includes)
+    metadata = {
+        "python_bin": str(python_bin),
+        "cuda_home": str(cuda_home) if cuda_home is not None else None,
+        "torch_extensions_dir": env["TORCH_EXTENSIONS_DIR"],
+        "max_jobs": env["MAX_JOBS"],
+        "include_paths": [str(path) for path in unique_includes],
+    }
+    return env, metadata
+
+
+def _run_and_capture(
+    command: list[str], cwd: Path, log_path: Path, *, env: dict[str, str]
+) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8", newline="") as log:
         process = subprocess.Popen(
@@ -252,7 +325,7 @@ def _run_and_capture(command: list[str], cwd: Path, log_path: Path) -> int:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            env=os.environ.copy(),
+            env=env,
         )
         assert process.stdout is not None
         for line in process.stdout:
@@ -316,9 +389,15 @@ def main() -> int:
         )
     )
     log_path = Path(args.log).resolve() if args.log else artifact_path.with_suffix(".log")
+    runtime_env, runtime_metadata = build_official_runtime_env(
+        log_path.parent / "torch_extensions"
+    )
     started = time.time()
     exit_code = _run_and_capture(
-        command, checkout / "RWKV-v7" / "train_temp", log_path
+        command,
+        checkout / "RWKV-v7" / "train_temp",
+        log_path,
+        env=runtime_env,
     )
     result.update(
         {
@@ -326,6 +405,7 @@ def main() -> int:
             "command": command,
             "bounded_max_steps": None if prepare else args.max_steps,
             "log": str(log_path),
+            "build_environment": runtime_metadata,
             "exit_code": exit_code,
             "runtime_s": time.time() - started,
         }

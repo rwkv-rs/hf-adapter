@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 from pathlib import Path
@@ -20,9 +19,9 @@ from typing import Dict, Tuple
 import torch
 
 try:
-    from scripts.adapter_manifest import ADAPTER_FILES
+    from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
-    from adapter_manifest import ADAPTER_FILES
+    from adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
 
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
@@ -59,23 +58,29 @@ def infer_num_layers(weights: Dict[str, torch.Tensor]) -> int:
     return len(layers)
 
 
-def infer_head_dim(weights: Dict[str, torch.Tensor], hidden_size: int) -> int:
-    """Infer attention head dimension instead of hard-coding 64 for every model."""
+def infer_attention_shape(weights: Dict[str, torch.Tensor]) -> tuple[int, int, int]:
+    """Infer H, N, and attention width A directly from ``att.r_k``."""
     rk_shape = tensor_shape(weights, "blocks.0.att.r_k")
-    if len(rk_shape) >= 2:
-        num_heads, head_dim = int(rk_shape[-2]), int(rk_shape[-1])
-        if num_heads * head_dim != hidden_size:
-            raise ValueError(
-                "blocks.0.att.r_k shape does not match hidden size: "
-                f"{rk_shape} -> {num_heads}*{head_dim} != {hidden_size}"
-            )
-        return head_dim
-    if hidden_size % 64 != 0:
-        raise ValueError(f"Cannot infer head_dim from r_k={rk_shape}; hidden_size={hidden_size} is not divisible by 64")
-    return 64
+    if len(rk_shape) < 2:
+        raise ValueError(f"Cannot infer attention shape from blocks.0.att.r_k={rk_shape}")
+    num_heads, head_dim = (int(value) for value in rk_shape[-2:])
+    if num_heads <= 0 or head_dim <= 0:
+        raise ValueError(f"Invalid attention shape from blocks.0.att.r_k={rk_shape}")
+    return num_heads, head_dim, num_heads * head_dim
 
 
-def infer_value_dim(weights: Dict[str, torch.Tensor], num_layers: int, hidden_size: int, num_heads: int) -> list[int]:
+def infer_head_dim(weights: Dict[str, torch.Tensor], hidden_size: int | None = None) -> int:
+    """Compatibility helper returning N without requiring attention width A=D."""
+    del hidden_size
+    return infer_attention_shape(weights)[1]
+
+
+def infer_value_dim(
+    weights: Dict[str, torch.Tensor],
+    num_layers: int,
+    attention_hidden_size: int,
+    num_heads: int,
+) -> list[int]:
     """Infer per-layer value dimensions from official value projection weights."""
     dims: list[int] = []
     for layer_idx in range(num_layers):
@@ -88,23 +93,74 @@ def infer_value_dim(weights: Dict[str, torch.Tensor], num_layers: int, hidden_si
         dims.append(value_dim)
     if any(v <= 0 for v in dims):
         raise ValueError(f"Invalid value_dim list: {dims}")
-    if dims[0] != hidden_size:
-        raise ValueError(f"Layer-0 value_dim should equal hidden_size for RWKV-7: {dims[0]} != {hidden_size}")
+    if any(value_dim != attention_hidden_size for value_dim in dims):
+        raise ValueError(
+            "Native RWKV-7 conversion requires every value projection output "
+            f"to equal attention_hidden_size={attention_hidden_size}; got {dims}"
+        )
     return dims
 
 
-def validate_layer_shapes(weights: Dict[str, torch.Tensor], num_layers: int, hidden_size: int, head_dim: int) -> None:
+def _expect_shape(
+    weights: Dict[str, torch.Tensor],
+    name: str,
+    expected: tuple[int, ...],
+) -> None:
+    actual = tensor_shape(weights, name)
+    if actual != expected:
+        raise ValueError(f"{name} has shape {actual}; expected {expected}")
+
+
+def _expect_recurrent_head_shape(
+    weights: Dict[str, torch.Tensor],
+    name: str,
+    num_heads: int,
+    head_dim: int,
+) -> None:
+    """Validate an official r_k tensor while accepting leading singleton axes."""
+    actual = tensor_shape(weights, name)
+    expected = (num_heads, head_dim)
+    if len(actual) < 2 or actual[-2:] != expected:
+        raise ValueError(f"{name} has shape {actual}; expected trailing dimensions {expected}")
+    if any(dim != 1 for dim in actual[:-2]):
+        raise ValueError(f"{name} has shape {actual}; leading dimensions must be singleton")
+
+
+def validate_layer_shapes(
+    weights: Dict[str, torch.Tensor],
+    num_layers: int,
+    hidden_size: int,
+    num_heads: int,
+    head_dim: int,
+    attention_hidden_size: int,
+) -> None:
     """Catch size/shape mismatches before constructing the HF model."""
-    num_heads = hidden_size // head_dim
     for layer_idx in range(num_layers):
         ffn_key = tensor_shape(weights, f"blocks.{layer_idx}.ffn.key.weight")
         if len(ffn_key) != 2 or int(ffn_key[1]) != hidden_size:
             raise ValueError(f"blocks.{layer_idx}.ffn.key.weight has inconsistent shape {ffn_key}")
-        rk_shape = tensor_shape(weights, f"blocks.{layer_idx}.att.r_k")
-        if tuple(rk_shape[-2:]) != (num_heads, head_dim):
-            raise ValueError(
-                f"blocks.{layer_idx}.att.r_k has inconsistent shape {rk_shape}; "
-                f"expected trailing {(num_heads, head_dim)}"
+        _expect_recurrent_head_shape(
+            weights,
+            f"blocks.{layer_idx}.att.r_k",
+            num_heads,
+            head_dim,
+        )
+        for projection in ("receptance", "key", "value"):
+            _expect_shape(
+                weights,
+                f"blocks.{layer_idx}.att.{projection}.weight",
+                (attention_hidden_size, hidden_size),
+            )
+        _expect_shape(
+            weights,
+            f"blocks.{layer_idx}.att.output.weight",
+            (hidden_size, attention_hidden_size),
+        )
+        for affine in ("weight", "bias"):
+            _expect_shape(
+                weights,
+                f"blocks.{layer_idx}.att.ln_x.{affine}",
+                (attention_hidden_size,),
             )
 
 
@@ -117,12 +173,21 @@ def infer_config(
     hidden_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[1]
     intermediate_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[0]
     num_layers = infer_num_layers(weights)
-    head_dim = infer_head_dim(weights, hidden_size)
-    if hidden_size % head_dim != 0:
-        raise ValueError(f"hidden_size={hidden_size} must be divisible by head_dim={head_dim}")
-    num_heads = hidden_size // head_dim
-    value_dim = infer_value_dim(weights, num_layers, hidden_size, num_heads)
-    validate_layer_shapes(weights, num_layers, hidden_size, head_dim)
+    num_heads, head_dim, attention_hidden_size = infer_attention_shape(weights)
+    value_dim = infer_value_dim(
+        weights,
+        num_layers,
+        attention_hidden_size,
+        num_heads,
+    )
+    validate_layer_shapes(
+        weights,
+        num_layers,
+        hidden_size,
+        num_heads,
+        head_dim,
+        attention_hidden_size,
+    )
     try:
         v_low_rank_dim = tensor_shape(weights, "blocks.1.att.v1")[1]
     except KeyError:
@@ -131,6 +196,7 @@ def infer_config(
         attn_mode=attn_mode,
         vocab_size=tensor_shape(weights, "emb.weight")[0],
         hidden_size=hidden_size,
+        attention_hidden_size=attention_hidden_size,
         hidden_ratio=intermediate_size / hidden_size,
         intermediate_size=intermediate_size,
         num_hidden_layers=num_layers,
@@ -140,6 +206,7 @@ def infer_config(
         a_low_rank_dim=tensor_shape(weights, "blocks.0.att.a1")[1],
         v_low_rank_dim=v_low_rank_dim,
         head_dim=head_dim,
+        num_heads=num_heads,
         # 0 is unused by the official trie vocab; use it as a HF generation sentinel/pad id.
         pad_token_id=0,
         eos_token_id=0,
@@ -202,6 +269,8 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
 
 def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
     root = Path(__file__).resolve().parents[1]
+    for name in LEGACY_REMOTE_CODE_FILES:
+        (output / name).unlink(missing_ok=True)
     for name in ADAPTER_FILES:
         shutil.copyfile(root / "rwkv7_hf" / name, output / name)
     if vocab_file is not None:

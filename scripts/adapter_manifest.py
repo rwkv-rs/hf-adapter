@@ -12,7 +12,6 @@ from __future__ import annotations
 ADAPTER_FILES = [
     "ada_lora.py",
     "ada_sparse_ffn.py",
-    "configuration_rwkv7.py",
     "dplr_prefill.py",
     "dplr_prefill_triton.py",
     "fused_attention_projection.py",
@@ -40,7 +39,6 @@ ADAPTER_FILES = [
     "mlx_session.py",
     "mlx_state.py",
     "mlx_wkv.py",
-    "modeling_rwkv7.py",
     "native.py",
     "native_jit.py",
     "native_graph_runtime.py",
@@ -70,5 +68,13 @@ ADAPTER_FILES = [
     "tokenization_rwkv7.py",
 ]
 
+# These files were shipped by the historical FLA-backed remote-code adapter.
+# Native checkpoints remove them so stale files cannot suggest or restore the
+# retired default route after an in-place code sync.
+LEGACY_REMOTE_CODE_FILES = [
+    "configuration_rwkv7.py",
+    "modeling_rwkv7.py",
+]
 
-__all__ = ["ADAPTER_FILES"]
+
+__all__ = ["ADAPTER_FILES", "LEGACY_REMOTE_CODE_FILES"]

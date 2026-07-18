@@ -15,6 +15,7 @@ and history.
 | How do I use conversion, native/no-FLA, cache, batching, and chunked prefill? | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) |
 | How do I use PEFT, Trainer, resume, SFT, DPO, or GRPO? | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) |
 | How do I align CUDA training math and effect with official RWKV-LM train_temp? | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) |
+| How do I run the official RWKV-Gradio-3 UI with Native HF? | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) |
 | How do I run W8/W4 instead of only reading quantization status? | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) |
 | How do I use the promoted RTX 5090 g1h BN/TN W4 route? | [`QUANTIZATION_USAGE.md#5-rtx-5090-g1h-bntn-tensor-core-w4`](QUANTIZATION_USAGE.md#5-rtx-5090-g1h-bntn-tensor-core-w4) |
 | How do I run Apple MPS, MLX, sessions, quant, or CoreML? | [`APPLE_USAGE.md`](APPLE_USAGE.md) |
@@ -69,7 +70,7 @@ match later outcomes.
 |---|---|---|
 | V100 | [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md) | [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md), [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md) |
 | RTX 4090 | [`../bench/4090_validation_summary.md`](../bench/4090_validation_summary.md) | [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md), [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
-| RTX 50 / Blackwell | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md), [`../bench/5090_train_temp_alignment_20260717/README.md`](../bench/5090_train_temp_alignment_20260717/README.md) |
+| RTX 50 / Blackwell | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md), [`../bench/5090_train_temp_alignment_20260717/README.md`](../bench/5090_train_temp_alignment_20260717/README.md), [`../bench/5090_native_hf_gradio_train_temp_20260718/README.md`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md) |
 | A100 | [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md) | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |
 | A800 | [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md) | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |
 | Apple Silicon | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |

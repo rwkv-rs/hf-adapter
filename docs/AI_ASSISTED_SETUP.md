@@ -25,6 +25,7 @@
 |---|---|---|---|
 | `first-run` | 安装、下载 0.4B、转换并生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、`[PASS] Model directory`、生成退出 0 且有新文本 |
 | `inference` | 转换、HF API、保存重载、离线/native | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选章节的退出码 0、`PASS` 或有限 loss/logits |
+| `gradio-native-hf` | 在官方 RWKV-Gradio-3 网页运行 Native HF | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) | B1/B8 生成、切换后复用、速度标签、截图和进程显存全部可观察 |
 | `cache` | 循环状态、动态 batch、chunked prefill | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选 cache 测试所有 mode/shape 打印 `PASS` |
 | `speculative` | 投机解码 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | target greedy 完全一致、draft/target 调用计数有效、`PASS` |
 | `training` | PEFT LoRA、Trainer、保存合并、恢复 | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | 有限 loss、非零梯度/参数变化、所选精确 `PASS` |
@@ -107,8 +108,9 @@ python examples/generate.py --model models/rwkv7-g1d-0.4b-hf \
   --prompt "User: Say hello in one sentence. Assistant:" --max-new-tokens 8
 ```
 
-Linux NVIDIA 可以在首次 native 通过后另行尝试 `.[cuda]`/FLA。FLA 安装失败
-不应阻塞 native 首次生成。
+Linux NVIDIA 可以在首次 native 通过后安装 `.[cuda]` 启用原生融合 kernel。
+普通 RWKV 任务不得因为 FLA 未安装而失败；`.[fla-reference]` 只用于明确的参考
+benchmark。
 
 ## 统一汇报格式
 

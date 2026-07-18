@@ -15,16 +15,17 @@ def test_fused_rkv_wavg_projection_matches_fallback() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if device == "cuda" else torch.float32
     torch.manual_seed(11)
-    batch, hidden, rank = 2, 32, 8
-    inputs = [torch.randn(batch, hidden, device=device, dtype=dtype) * 0.1 for _ in range(6)]
-    dense = [torch.randn(hidden, hidden, device=device, dtype=dtype) * 0.01 for _ in range(3)]
-    down = [torch.randn(rank, hidden, device=device, dtype=dtype) * 0.01 for _ in range(4)]
-    up = [torch.randn(hidden, rank, device=device, dtype=dtype) * 0.01 for _ in range(4)]
-    bias = [torch.randn(hidden, device=device, dtype=dtype) * 0.01 for _ in range(4)]
+    batch, residual_hidden, attention_hidden, rank = 2, 32, 48, 8
+    inputs = [torch.randn(batch, residual_hidden, device=device, dtype=dtype) * 0.1 for _ in range(6)]
+    dense = [torch.randn(attention_hidden, residual_hidden, device=device, dtype=dtype) * 0.01 for _ in range(3)]
+    down = [torch.randn(rank, residual_hidden, device=device, dtype=dtype) * 0.01 for _ in range(4)]
+    up = [torch.randn(attention_hidden, rank, device=device, dtype=dtype) * 0.01 for _ in range(4)]
+    bias = [torch.randn(attention_hidden, device=device, dtype=dtype) * 0.01 for _ in range(4)]
     ref = fused_rkv_wavg_projection(*inputs, *dense, *down, *up, *bias, force_fallback=True)
     got = fused_rkv_wavg_projection(*inputs, *dense, *down, *up, *bias, block_m=32, block_r=16, block_k=32)
     for ref_tensor, got_tensor in zip(ref, got, strict=True):
         assert ref_tensor.shape == got_tensor.shape
+        assert ref_tensor.shape == (batch, attention_hidden)
         assert torch.allclose(ref_tensor.float(), got_tensor.float(), atol=2e-4, rtol=2e-4)
 
 

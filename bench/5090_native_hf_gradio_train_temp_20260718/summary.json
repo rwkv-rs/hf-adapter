@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "status": "partial",
+  "axis": "rtx5090_native_hf_gradio_and_official_train_temp_shell",
+  "gradio": {
+    "model": "rwkv7-g1h-7.2b",
+    "dtype": "fp16",
+    "prompt_and_sampling_identical": true,
+    "official_v3a": {
+      "batch_1_tok_s": 138.8,
+      "batch_8_tok_s": 841.7,
+      "batch_1_process_memory_mib": 14632,
+      "batch_8_process_memory_mib": 14888
+    },
+    "native_hf_sparse_non_shared": {
+      "batch_1_tok_s": 95.2,
+      "batch_8_tok_s": 651.7,
+      "batch_1_official_ratio": 0.685879,
+      "batch_8_official_ratio": 0.774266,
+      "batch_1_process_memory_mib": 21798,
+      "batch_8_process_memory_mib": 26626
+    },
+    "native_hf_sparse_shared_replay": {
+      "batch_1_tok_s": 92.6,
+      "batch_8_tok_s": 646.8,
+      "batch_1_official_ratio": 0.667147,
+      "batch_8_official_ratio": 0.768445,
+      "process_memory_after_both_graphs_mib": 22530
+    },
+    "initial_native_hf": {
+      "batch_1_tok_s": 44.5,
+      "batch_8_tok_s": 276.9
+    },
+    "browser_generation_smoke": "pass",
+    "same_prompt_output_match": "pass",
+    "native_sparse_direct_batch_greedy_match": "6/8",
+    "production_speed_parity": "fail"
+  },
+  "official_shell": {
+    "prepare_command_unchanged": "sh ./demo-training-prepare.sh",
+    "run_command_unchanged": "sh ./demo-training-run.sh",
+    "bounded_run_mechanism": "PATH python wrapper appended --max_steps 1 without editing either shell script",
+    "prepare_exit_code": 0,
+    "run_exit_code": 0,
+    "official_batch_size": 16,
+    "official_sequence_length": 512,
+    "official_dtype": "bf16",
+    "official_zero_stage": 2,
+    "official_loss": 11.20,
+    "official_runtime_s": 1.32,
+    "native_status": "pass",
+    "native_loss": 11.249235153198242,
+    "native_runtime_s": 0.757778267005051,
+    "native_finite_gradient_tensors": "399/399",
+    "native_model_updated": true,
+    "native_peak_memory_mib": 4355.947265625
+  },
+  "boundary": "The official shell and Native training recipe pass. Native HF serves the real Gradio UI correctly, but its measured 7.2B decode remains slower and heavier than official v3a; sparse FFN stays opt-in."
+}

@@ -104,11 +104,17 @@ def model_shape_summary(config: dict[str, Any]) -> dict[str, Any]:
     num_layers = int(config.get("num_hidden_layers", config.get("n_layer", 0)) or 0)
     num_heads = int(config.get("num_heads", config.get("n_head", 0)) or 0)
     head_dim = int(config.get("head_dim", hidden_size // num_heads if num_heads else 0) or 0)
+    attention_hidden_size = int(
+        config.get("attention_hidden_size", num_heads * head_dim) or 0
+    )
+    if num_heads > 0 and head_dim > 0 and attention_hidden_size != num_heads * head_dim:
+        raise ValueError("attention_hidden_size must equal num_heads * head_dim")
     vocab_size = int(config.get("vocab_size", 0) or 0)
     return {
         "architectures": config.get("architectures"),
         "model_type": config.get("model_type"),
         "hidden_size": hidden_size,
+        "attention_hidden_size": attention_hidden_size,
         "num_hidden_layers": num_layers,
         "num_heads": num_heads,
         "head_dim": head_dim,
@@ -140,7 +146,8 @@ def state_layout(config: dict[str, Any]) -> list[dict[str, Any]]:
     heads = int(shape["num_heads"] or 0)
     head_dim = int(shape["head_dim"] or 0)
     hidden = int(shape["hidden_size"] or 0)
-    if min(layers, heads, head_dim, hidden) <= 0:
+    attention_hidden = int(shape["attention_hidden_size"] or 0)
+    if min(layers, heads, head_dim, hidden, attention_hidden) <= 0:
         raise ValueError(f"incomplete RWKV-7 shape for CoreML state: {shape}")
     return [
         {
@@ -157,7 +164,7 @@ def state_layout(config: dict[str, Any]) -> list[dict[str, Any]]:
         },
         {"name": "rwkv_attn_x_prev", "shape": [layers, hidden], "dtype": "float16"},
         {"name": "rwkv_ffn_x_prev", "shape": [layers, hidden], "dtype": "float16"},
-        {"name": "rwkv_v_first", "shape": [1, hidden], "dtype": "float16"},
+        {"name": "rwkv_v_first", "shape": [1, attention_hidden], "dtype": "float16"},
     ]
 
 
@@ -357,6 +364,9 @@ def _make_stateful_wrapper(torch: Any, model: Any, *, seq_length: int) -> Any:
     heads = int(base.layers[0].attn.num_heads)
     head_dim = int(base.layers[0].attn.head_dim)
     hidden = int(base.layers[0].attn.hidden_size)
+    attention_hidden = int(
+        getattr(base.layers[0].attn, "attention_hidden_size", heads * head_dim)
+    )
 
     class StatefulRWKV7(torch.nn.Module):
         def __init__(self, wrapped: Any):
@@ -373,7 +383,10 @@ def _make_stateful_wrapper(torch: Any, model: Any, *, seq_length: int) -> Any:
             )
             self.register_buffer("rwkv_attn_x_prev", torch.zeros((layers, hidden), dtype=torch.float16))
             self.register_buffer("rwkv_ffn_x_prev", torch.zeros((layers, hidden), dtype=torch.float16))
-            self.register_buffer("rwkv_v_first", torch.zeros((1, hidden), dtype=torch.float16))
+            self.register_buffer(
+                "rwkv_v_first",
+                torch.zeros((1, attention_hidden), dtype=torch.float16),
+            )
 
         def forward(self, input_ids: Any, token_mask: Any) -> Any:
             # State is expanded to the native batch-one list layout.  WKV state
@@ -411,21 +424,22 @@ def _make_stateful_wrapper(torch: Any, model: Any, *, seq_length: int) -> Any:
                 )
                 active = token_mask[:, token_index] != 0
                 state_mask = active.reshape(1, 1, 1, 1)
-                hidden_mask = active.reshape(1, 1)
+                residual_mask = active.reshape(1, 1)
+                attention_mask = active.reshape(1, 1)
                 state = [
                     torch.where(state_mask, new_value, old_value)
                     for old_value, new_value in zip(old_state, new_state)
                 ]
                 xpa = [
-                    torch.where(hidden_mask, new_value, old_value)
+                    torch.where(residual_mask, new_value, old_value)
                     for old_value, new_value in zip(old_xpa, new_xpa)
                 ]
                 xpf = [
-                    torch.where(hidden_mask, new_value, old_value)
+                    torch.where(residual_mask, new_value, old_value)
                     for old_value, new_value in zip(old_xpf, new_xpf)
                 ]
-                v_first = torch.where(hidden_mask, new_v_first, old_v_first)
-                logits = torch.where(hidden_mask, new_logits, logits)
+                v_first = torch.where(attention_mask, new_v_first, old_v_first)
+                logits = torch.where(residual_mask, new_logits, logits)
 
                 # Decode crosses a Core ML state boundary after every token.
                 # Apply the same boundary encoding between tokens inside the

@@ -25,19 +25,22 @@ entry scripts: `RWKV-v7/train_temp/demo-training-prepare.sh` and
 `RWKV-v7/train_temp/demo-training-run.sh`. The scripts define two different
 phases and must not be conflated. `prepare.sh` creates the initialization on
 CPU with `micro_bsz=1`, `adam_eps=1e-8`, and zero weight decay. `run.sh` is the
-single-GPU training recipe: `x070`, L12/D768, effective FFN2688, head64,
+single-GPU training recipe: `x070`, L12/D768, effective FFN3072, head64,
 vocab65536, `ctx_len=512`, Minipile binidx, `magic_prime=2926181`,
 `micro_bsz=16`, BF16, `lr_init=6e-4`, `lr_final=6e-5`, betas 0.9/0.99,
-`adam_eps=1e-18`, `weight_decay=0.001`, warmup 10, `grad_cp=1`, kernel
-`@rwkv3`, and `deepspeed_stage_2` on one GPU. The machine-readable contract is
+`adam_eps=1e-18`, `weight_decay=0.001`, warmup 10, `grad_cp=1`, implicit
+`grad_clip=1.0`, kernel `@rwkv3`, and `deepspeed_stage_2` on one GPU. The
+machine-readable contract is
 [`../configs/train_temp_official_x070_12x768_b16.json`](../configs/train_temp_official_x070_12x768_b16.json).
 
 Promotion requires the native path to use the same initialized checkpoint,
 serialized sample order, optimizer grouping, FusedAdam update, schedule and
 bounded training steps. Exact backward/step comparison and a predeclared
-multi-seed cohort are mandatory. The earlier B1/T512, FFN3072 custom cohort
-remains valid operator-alignment evidence but does not substitute for the
-official B16/FFN2688 shell recipe.
+multi-seed cohort are mandatory. `train.py` reports its unused generic 3.5x
+default as `dim_ffn=2688`, while the pinned fast `RWKV_CMix_x070`
+implementation and generated checkpoint use 4x FFN3072. The earlier B1/T512
+FFN3072 cohort therefore matches the official kernel shape, but it does not
+substitute for the official B16 shell recipe.
 
 The first RTX 5070 inference migration checkpoint passes on 0.4B/fp16:
 Native Graph B1 reaches `223.47 tok/s` versus the retained wrapper-hosted

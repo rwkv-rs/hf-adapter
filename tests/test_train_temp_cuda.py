@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ import torch
 
 from bench.bench_train_temp_alignment import build_parser
 from rwkv7_hf import train_temp_cuda
+from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
 
 def test_vendored_train_temp_sources_pin_provenance_and_license() -> None:
@@ -36,6 +38,48 @@ def test_train_temp_backend_reports_unavailable_without_cuda(monkeypatch) -> Non
     assert train_temp_cuda.train_temp_cuda_available() is False
     with pytest.raises(RuntimeError, match="requires Linux with an available CUDA GPU"):
         train_temp_cuda.load_train_temp_cuda_extension()
+
+
+def test_cuda_include_paths_support_pip_split_toolkit(tmp_path, monkeypatch) -> None:
+    cuda_home = tmp_path / "cuda"
+    (cuda_home / "include").mkdir(parents=True)
+    target_include = cuda_home / "targets" / "x86_64-linux" / "include"
+    target_include.mkdir(parents=True)
+    site_packages = tmp_path / "site-packages"
+    fake_torch = site_packages / "torch" / "__init__.py"
+    fake_torch.parent.mkdir(parents=True)
+    fake_torch.write_text("", encoding="utf-8")
+    cusparse = site_packages / "nvidia" / "cusparse" / "include"
+    cublas = site_packages / "nvidia" / "cublas" / "include"
+    cusparse.mkdir(parents=True)
+    cublas.mkdir(parents=True)
+    monkeypatch.setattr(train_temp_cuda.torch, "__file__", str(fake_torch))
+
+    assert train_temp_cuda._cuda_include_paths(cuda_home) == [
+        str(cuda_home / "include"),
+        str(cublas),
+        str(cusparse),
+    ]
+    assert train_temp_cuda._cuda_include_paths(
+        cuda_home, include_target=True
+    ) == [
+        str(cuda_home / "include"),
+        str(target_include),
+        str(cublas),
+        str(cusparse),
+    ]
+
+
+def test_resolve_cuda_home_refreshes_cpp_extension_cache(tmp_path, monkeypatch) -> None:
+    cuda_home = tmp_path / "cuda"
+    nvcc = cuda_home / "bin" / "nvcc"
+    nvcc.parent.mkdir(parents=True)
+    nvcc.write_text("", encoding="utf-8")
+    cpp_extension = SimpleNamespace(CUDA_HOME=None)
+    monkeypatch.setenv("CUDA_HOME", str(cuda_home))
+
+    assert train_temp_cuda._resolve_cuda_home(cpp_extension) == cuda_home.resolve()
+    assert cpp_extension.CUDA_HOME == str(cuda_home.resolve())
 
 
 def test_train_temp_causal_cross_entropy_shifts_dense_labels(monkeypatch) -> None:
@@ -79,8 +123,8 @@ def test_train_temp_causal_cross_entropy_rejects_unsupported_batches(
 
 
 def test_train_temp_backend_enable_disable_restores_model(monkeypatch) -> None:
-    import fla.layers.rwkv7 as layer_module
-    import fla.models.rwkv7.modeling_rwkv7 as model_module
+    layer_module = pytest.importorskip("fla.layers.rwkv7")
+    model_module = pytest.importorskip("fla.models.rwkv7.modeling_rwkv7")
 
     class FakeAttention(torch.nn.Module):
         def forward(self, value):
@@ -117,8 +161,8 @@ def test_train_temp_backend_enable_disable_restores_model(monkeypatch) -> None:
 def test_train_temp_backend_rejects_unbalanced_model_before_patching(
     monkeypatch,
 ) -> None:
-    import fla.layers.rwkv7 as layer_module
-    import fla.models.rwkv7.modeling_rwkv7 as model_module
+    layer_module = pytest.importorskip("fla.layers.rwkv7")
+    model_module = pytest.importorskip("fla.models.rwkv7.modeling_rwkv7")
 
     class FakeAttention(torch.nn.Module):
         def forward(self, value):
@@ -144,8 +188,76 @@ def test_train_temp_backend_rejects_unbalanced_model_before_patching(
     assert model.config.use_cache is True
 
 
+def test_train_temp_backend_enables_native_model_without_fla_patching(monkeypatch) -> None:
+    config = NativeRWKV7Config(
+        vocab_size=17,
+        hidden_size=64,
+        num_hidden_layers=2,
+        head_dim=64,
+        intermediate_size=128,
+        decay_low_rank_dim=8,
+        gate_low_rank_dim=8,
+        a_low_rank_dim=8,
+        v_low_rank_dim=8,
+        use_cache=True,
+    )
+    model = NativeRWKV7ForCausalLM(config)
+    monkeypatch.setattr(train_temp_cuda, "load_train_temp_cuda_extension", lambda: None)
+    original_import = builtins.__import__
+
+    def import_without_fla(name, *args, **kwargs):
+        if name == "fla" or name.startswith("fla."):
+            raise AssertionError("Native train_temp enablement must not import FLA")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_fla)
+
+    metadata = train_temp_cuda.enable_train_temp_cuda_backend(model)
+    assert metadata["backend"] == "native_train_temp_cuda"
+    assert metadata["attention_modules"] == metadata["ffn_modules"] == 2
+    assert model.config.use_cache is False
+    assert model._rwkv7_train_temp_cuda_enabled is True
+    assert all(layer.attn._rwkv7_train_temp_cuda_enabled for layer in model.model.layers)
+    assert all(layer.ffn._rwkv7_train_temp_cuda_enabled for layer in model.model.layers)
+
+    train_temp_cuda.disable_train_temp_cuda_backend(model)
+    assert model.config.use_cache is True
+    assert model._rwkv7_train_temp_cuda_enabled is False
+    assert all(not hasattr(layer.attn, "_rwkv7_train_temp_cuda_enabled") for layer in model.model.layers)
+    assert all(not hasattr(layer.ffn, "_rwkv7_train_temp_cuda_enabled") for layer in model.model.layers)
+
+
+def test_native_causal_lm_dispatches_injected_train_temp_forward() -> None:
+    model = NativeRWKV7ForCausalLM(
+        NativeRWKV7Config(
+            vocab_size=17,
+            hidden_size=64,
+            num_hidden_layers=1,
+            head_dim=64,
+            intermediate_size=128,
+            decay_low_rank_dim=8,
+            gate_low_rank_dim=8,
+            a_low_rank_dim=8,
+            v_low_rank_dim=8,
+            use_cache=False,
+        )
+    )
+    sentinel = object()
+    captured = {}
+
+    def injected(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    model._rwkv7_train_temp_forward = injected
+    input_ids = torch.tensor([[1, 2, 3]])
+    assert model(input_ids=input_ids, use_cache=False) is sentinel
+    assert captured["input_ids"] is input_ids
+    assert captured["use_cache"] is False
+
+
 @pytest.mark.parametrize("command", ["capture-hf", "converge-hf"])
-def test_train_temp_cli_rejects_native_combination(command: str, tmp_path: Path) -> None:
+def test_train_temp_cli_accepts_native_combination(command: str, tmp_path: Path) -> None:
     parser = build_parser()
     common = [
         command,
@@ -168,6 +280,8 @@ def test_train_temp_cli_rejects_native_combination(command: str, tmp_path: Path)
             str(tmp_path / "batch.safetensors"),
             "--snapshot",
             str(tmp_path / "snapshot.safetensors"),
+            "--phase",
+            "backward",
         ]
     else:
         common += [
@@ -176,5 +290,6 @@ def test_train_temp_cli_rejects_native_combination(command: str, tmp_path: Path)
             "--validation-batch",
             str(tmp_path / "validation.safetensors"),
         ]
-    with pytest.raises(SystemExit):
-        parser.parse_args(common)
+    args = parser.parse_args(common)
+    assert args.native is True
+    assert args.train_temp_cuda is True
