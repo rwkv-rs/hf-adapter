@@ -1468,6 +1468,67 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         return warmed
 
     @torch.inference_mode()
+    def rwkv7_prefill_chunks(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor | None = None,
+        chunk_size: int = 2048,
+        past_key_values: NativeRWKV7Cache | tuple | list | None = None,
+        logits_to_keep: int = 1,
+        return_dict: bool | None = True,
+        **kwargs,
+    ):
+        """Advance a long prompt in bounded chunks while carrying RWKV state.
+
+        The helper mirrors the public serving API of the compatibility model
+        without importing FLA.  Every chunk goes through the canonical Native
+        ``forward`` path, so optimized first-chunk prefill remains available
+        while CPU, AMD, adapters, masks, and continuation chunks retain the
+        ordinary eager fallback.
+        """
+
+        if self.training:
+            raise RuntimeError("rwkv7_prefill_chunks is inference-only; call model.eval() first")
+        if input_ids.dim() != 2:
+            raise ValueError("rwkv7_prefill_chunks expects input_ids shaped [batch, seq]")
+        total = int(input_ids.shape[1])
+        if total <= 0:
+            raise ValueError("rwkv7_prefill_chunks requires at least one token")
+        chunk_size = int(chunk_size)
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        if attention_mask is not None and tuple(attention_mask.shape[:2]) != tuple(input_ids.shape[:2]):
+            raise ValueError("attention_mask must have the same [batch, seq] shape as input_ids")
+
+        kwargs.pop("use_cache", None)
+        kwargs.pop("past_key_values", None)
+        kwargs.pop("return_dict", None)
+        kwargs.pop("logits_to_keep", None)
+        past = past_key_values
+        initial_seen = _cache_seen(past)
+        out = None
+        for start in range(0, total, chunk_size):
+            end = min(total, start + chunk_size)
+            chunk_mask = attention_mask[:, start:end] if attention_mask is not None else None
+            out = self(
+                input_ids[:, start:end],
+                attention_mask=chunk_mask,
+                past_key_values=past,
+                use_cache=True,
+                logits_to_keep=logits_to_keep if end == total else 1,
+                return_dict=True,
+                **kwargs,
+            )
+            past = out.past_key_values
+        if out is None:  # guarded by the non-empty input check above
+            raise RuntimeError("unreachable: chunked prefill produced no output")
+        if hasattr(out.past_key_values, "seen_tokens"):
+            out.past_key_values.seen_tokens = initial_seen + total
+        if not return_dict:
+            return out.logits, out.past_key_values
+        return out
+
+    @torch.inference_mode()
     def rwkv7_forward_token(
         self,
         input_ids: torch.LongTensor,
