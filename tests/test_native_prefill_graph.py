@@ -22,6 +22,28 @@ def test_native_prefill_graph_is_explicit_and_signature_tracks_flags(monkeypatch
     assert ("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "1") in after
 
 
+def test_native_prefill_graph_signature_tracks_shift_mix_precision(monkeypatch) -> None:
+    from rwkv7_hf import modeling_rwkv7
+
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16", raising=False)
+    before = modeling_rwkv7._native_prefill_graph_signature()
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16", "1")
+    after = modeling_rwkv7._native_prefill_graph_signature()
+
+    assert before != after
+    assert ("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16", "1") in after
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SHIFT_MIX_STRICT_FP16", "1")
+    generic = modeling_rwkv7._native_prefill_graph_signature()
+    assert generic != after
+    assert ("RWKV7_NATIVE_PREFILL_SHIFT_MIX_STRICT_FP16", "1") in generic
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16", "1")
+    split = modeling_rwkv7._native_prefill_graph_signature()
+    assert split != generic
+    assert ("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16", "1") in split
+
+
 def test_native_prefill_graph_runner_cache_is_shape_keyed_lru(monkeypatch) -> None:
     created = []
 

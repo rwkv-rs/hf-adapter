@@ -1222,6 +1222,60 @@ def _native_prefill_shift_mix_layers(
     return {value for value in selected if value < int(num_layers)}
 
 
+def _native_prefill_attn_shift_mix_block_size(strict_fp16_rounding: bool) -> int:
+    """Choose a validated elementwise tile for sequence attention shift-mix."""
+
+    default = 2048 if strict_fp16_rounding else 256
+    value = env_int(
+        "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE",
+        default,
+        lower=64,
+        upper=2048,
+    )
+    if value not in (64, 128, 256, 512, 1024, 2048):
+        raise ValueError(
+            "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE must be a power "
+            "of two between 64 and 2048"
+        )
+    return value
+
+
+def _native_prefill_shift_mix_num_warps(role: str) -> int:
+    """Return a validated launch width for attention or FFN sequence mix."""
+
+    role = role.strip().upper()
+    if role not in ("ATTN", "FFN"):
+        raise ValueError("shift-mix role must be ATTN or FFN")
+    value = env_int(
+        f"RWKV7_NATIVE_PREFILL_{role}_SHIFT_MIX_NUM_WARPS",
+        4,
+        lower=1,
+        upper=8,
+    )
+    if value not in (1, 2, 4, 8):
+        raise ValueError(
+            f"RWKV7_NATIVE_PREFILL_{role}_SHIFT_MIX_NUM_WARPS must be 1, 2, 4, or 8"
+        )
+    return value
+
+
+def _native_prefill_ffn_shift_mix_block_size() -> int:
+    """Return a validated elementwise tile for FFN sequence shift-mix."""
+
+    value = env_int(
+        "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE",
+        256,
+        lower=64,
+        upper=2048,
+    )
+    if value not in (64, 128, 256, 512, 1024, 2048):
+        raise ValueError(
+            "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE must be a power "
+            "of two between 64 and 2048"
+        )
+    return value
+
+
 def _native_prefill_fused_state_prep_enabled(
     batch_size: int | None = None,
     prompt_tokens: int | None = None,
@@ -1369,7 +1423,12 @@ def _native_prefill_state_prep_w_dtype() -> str:
     return aliases[raw]
 
 
-def _native_prefill_fused_output_enabled() -> bool:
+def _native_prefill_fused_output_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for native prefill output-prep fusion.
 
     This reuses the profitable decode fused-output-prep kernel, but keeps the
@@ -1381,6 +1440,15 @@ def _native_prefill_fused_output_enabled() -> bool:
     if not env_flag(
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
         bool(getattr(policy, "fused_prefill_output", False)),
+    ):
+        return False
+    if not _native_prefill_model_shape_selected(
+        "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_MODEL_SHAPES",
+        "prefill_fused_output_model_shapes",
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
     ):
         return False
     if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
@@ -3058,12 +3126,55 @@ def prefill(
     use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled(
         B, T, residual_hidden, len(packs)
     )
+    strict_shift_mix_fp16 = bool(
+        dtype == torch.float16
+        and env_flag("RWKV7_NATIVE_PREFILL_SHIFT_MIX_STRICT_FP16", False)
+    )
+    strict_attn_shift_mix_fp16 = bool(
+        dtype == torch.float16
+        and env_flag(
+            "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16",
+            strict_shift_mix_fp16,
+        )
+        and _native_prefill_model_shape_selected(
+            "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16_MODEL_SHAPES",
+            "prefill_attn_shift_mix_strict_fp16_model_shapes",
+            B,
+            T,
+            residual_hidden,
+            len(packs),
+        )
+    )
+    strict_ffn_shift_mix_fp16 = bool(
+        dtype == torch.float16
+        and env_flag(
+            "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16",
+            strict_shift_mix_fp16,
+        )
+        and _native_prefill_model_shape_selected(
+            "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16_MODEL_SHAPES",
+            "prefill_ffn_shift_mix_strict_fp16_model_shapes",
+            B,
+            T,
+            residual_hidden,
+            len(packs),
+        )
+    )
+    attn_shift_mix_block_size = _native_prefill_attn_shift_mix_block_size(
+        strict_attn_shift_mix_fp16
+    )
+    attn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps("ATTN")
+    ffn_shift_mix_block_size = _native_prefill_ffn_shift_mix_block_size()
+    ffn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps("FFN")
     prefill_shift_mix_layers = (
         _native_prefill_shift_mix_layers(B, T, len(packs))
         if use_prefill_shift_mix
         else set()
     )
     use_prefill_state_prep = _native_prefill_fused_state_prep_enabled(
+        B, T, residual_hidden, len(packs)
+    )
+    use_prefill_output = _native_prefill_fused_output_enabled(
         B, T, residual_hidden, len(packs)
     )
     prefill_state_prep_layers = (
@@ -3176,7 +3287,10 @@ def prefill(
                 x_v,
                 x_a,
                 x_g,
+                block_size=attn_shift_mix_block_size,
+                num_warps=attn_shift_mix_num_warps,
                 workspace=sequence_attn_mix_workspace,
+                strict_fp16_rounding=strict_attn_shift_mix_fp16,
             )
         else:
             prev_h = torch.cat([xpa[layer_idx].view(B, 1, residual_hidden), h[:, :-1, :]], dim=1)
@@ -3501,7 +3615,7 @@ def prefill(
                 block_m=_native_prefill_fused_output_project_block_m(),
             ).view(B, T, residual_hidden)
             out_projected = True
-        elif _native_prefill_fused_output_enabled():
+        elif use_prefill_output:
             out = fused_attn_output_prepare(
                 out.reshape(B * T, attention_hidden),
                 r.reshape(B * T, H, N),
@@ -3595,7 +3709,10 @@ def prefill(
                     h2,
                     xpf[layer_idx],
                     fx_k,
+                    block_size=ffn_shift_mix_block_size,
+                    num_warps=ffn_shift_mix_num_warps,
                     workspace=sequence_ffn_mix_workspace,
+                    strict_fp16_rounding=strict_ffn_shift_mix_fp16,
                 )
             else:
                 prev_h2 = torch.cat(

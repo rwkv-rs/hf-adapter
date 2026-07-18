@@ -16,7 +16,12 @@ def test_attention_sequence_shift_mix_cpu_matches_reference_and_updates_state():
     initial = torch.randn(2, 8, dtype=torch.float32)
     mixes = [torch.randn(1, 1, 8, dtype=torch.float32) for _ in range(6)]
 
-    *outputs, next_state = fused_attn_sequence_shift_mix(x, initial, *mixes)
+    *outputs, next_state = fused_attn_sequence_shift_mix(
+        x,
+        initial,
+        *mixes,
+        strict_fp16_rounding=True,
+    )
     previous = _shifted(x, initial)
     for output, mix in zip(outputs, mixes):
         expected = x + (previous - x) * mix
@@ -30,7 +35,12 @@ def test_ffn_sequence_shift_mix_cpu_matches_reference_and_updates_state():
     initial = torch.randn(3, 6, dtype=torch.float32)
     mix = torch.randn(6, dtype=torch.float32)
 
-    output, next_state = fused_ffn_sequence_shift_mix(x, initial, mix)
+    output, next_state = fused_ffn_sequence_shift_mix(
+        x,
+        initial,
+        mix,
+        strict_fp16_rounding=True,
+    )
     expected = x + (_shifted(x, initial) - x) * mix.view(1, 1, -1)
     torch.testing.assert_close(output, expected)
     torch.testing.assert_close(next_state, x[:, -1])
@@ -65,6 +75,17 @@ def test_sequence_mix_and_relu_square_cuda_kernels_match_reference():
         torch.testing.assert_close(output, x + (previous - x) * mix, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(next_state, x[:, -1], rtol=0, atol=0)
 
+    *strict_outputs, strict_state = fused_attn_sequence_shift_mix(
+        x,
+        initial,
+        *mixes,
+        workspace=attn_workspace,
+        strict_fp16_rounding=True,
+    )
+    for output, mix in zip(strict_outputs, mixes):
+        torch.testing.assert_close(output, x + (previous - x) * mix, rtol=0, atol=0)
+    torch.testing.assert_close(strict_state, x[:, -1], rtol=0, atol=0)
+
     ffn_workspace = torch.empty_like(x)
     ffn_output, ffn_state = fused_ffn_sequence_shift_mix(
         x,
@@ -75,6 +96,21 @@ def test_sequence_mix_and_relu_square_cuda_kernels_match_reference():
     assert ffn_output.data_ptr() == ffn_workspace.data_ptr()
     torch.testing.assert_close(ffn_output, x + (previous - x) * mixes[0], rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(ffn_state, x[:, -1], rtol=0, atol=0)
+
+    strict_ffn_output, strict_ffn_state = fused_ffn_sequence_shift_mix(
+        x,
+        initial,
+        mixes[0],
+        workspace=ffn_workspace,
+        strict_fp16_rounding=True,
+    )
+    torch.testing.assert_close(
+        strict_ffn_output,
+        x + (previous - x) * mixes[0],
+        rtol=0,
+        atol=0,
+    )
+    torch.testing.assert_close(strict_ffn_state, x[:, -1], rtol=0, atol=0)
 
     relu_input = torch.randn(17, 129, device=device, dtype=torch.float16)
     torch.testing.assert_close(

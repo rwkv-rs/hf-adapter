@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 import types
 
+import pytest
+
 try:
     import torch
 except Exception:  # pragma: no cover - local lightweight environments
@@ -265,6 +267,8 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
     policy = types.SimpleNamespace(
         fused_prefill_shift_mix=True,
         prefill_shift_mix_model_shapes=((2048, 24, 8, 128),),
+        fused_prefill_output=True,
+        prefill_fused_output_model_shapes=((2048, 24, 8, 128),),
         fused_prefill_state_prep=True,
         prefill_state_prep_model_shapes=((2048, 24, 8, 512),),
         prefill_state_prep_layer_counts=((2048, 24, 8, 512, 12),),
@@ -274,15 +278,21 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
     monkeypatch.setattr(native_jit, "fused_attn_shift_mix_available", lambda: True)
     monkeypatch.setattr(native_jit, "fused_prefill_state_prep", object())
     monkeypatch.setattr(native_jit, "fused_prefill_state_prep_available", lambda: True)
+    monkeypatch.setattr(native_jit, "fused_attn_output_prepare", object())
+    monkeypatch.setattr(native_jit, "fused_attn_output_prepare_available", lambda: True)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", raising=False)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", raising=False)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SHIFT_MIX_MODEL_SHAPES", raising=False)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_STATE_PREP_MODEL_SHAPES", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_MODEL_SHAPES", raising=False)
 
     assert native_jit._native_prefill_fused_shift_mix_enabled(8, 128, 2048, 24)
     assert not native_jit._native_prefill_fused_shift_mix_enabled(1, 128, 2048, 24)
     assert native_jit._native_prefill_fused_state_prep_enabled(8, 512, 2048, 24)
     assert not native_jit._native_prefill_fused_state_prep_enabled(8, 128, 2048, 24)
+    assert native_jit._native_prefill_fused_output_enabled(8, 128, 2048, 24)
+    assert not native_jit._native_prefill_fused_output_enabled(8, 512, 2048, 24)
     assert native_jit._native_prefill_state_prep_layers(8, 512, 2048, 24) == set(
         range(12)
     )
@@ -309,6 +319,28 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
     assert native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
     monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", "0")
     assert not native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", raising=False)
+    assert native_jit._native_prefill_attn_shift_mix_block_size(False) == 256
+    assert native_jit._native_prefill_attn_shift_mix_block_size(True) == 2048
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", "1024")
+    assert native_jit._native_prefill_attn_shift_mix_block_size(True) == 1024
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", "768")
+    with pytest.raises(ValueError, match="power of two"):
+        native_jit._native_prefill_attn_shift_mix_block_size(True)
+
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_NUM_WARPS", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_NUM_WARPS", raising=False)
+    assert native_jit._native_prefill_shift_mix_num_warps("attn") == 4
+    assert native_jit._native_prefill_ffn_shift_mix_block_size() == 256
+    assert native_jit._native_prefill_shift_mix_num_warps("ffn") == 4
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_NUM_WARPS", "8")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE", "2048")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_NUM_WARPS", "2")
+    assert native_jit._native_prefill_shift_mix_num_warps("attn") == 8
+    assert native_jit._native_prefill_ffn_shift_mix_block_size() == 2048
+    assert native_jit._native_prefill_shift_mix_num_warps("ffn") == 2
 
 
 def test_self_chunk_safe_gate_is_explicitly_tunable(monkeypatch) -> None:
