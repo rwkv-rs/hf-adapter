@@ -37,6 +37,7 @@ def test_v100_sm70_mm4_production_gate_passes_only_complete_row() -> None:
 
 def test_v100_sm70_mm4_production_gate_is_fail_closed() -> None:
     checks = {
+        "sm70_extension_build_error": ("missing nv/target", "sm70_extension"),
         "decode_speed_ratio_vs_fp16": (0.9999, "decode"),
         "footprint_ratio_vs_fp16": (1.0, "footprint"),
         "final_logits_cos_vs_fp16": (0.9979, "logits"),

@@ -1,0 +1,8 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  21%|██        | 163/795 [00:00<00:00, 1589.36it/s]Loading weights:  41%|████      | 322/795 [00:00<00:00, 1526.70it/s]Loading weights:  60%|█████▉    | 475/795 [00:00<00:00, 1432.31it/s]Loading weights:  78%|███████▊  | 619/795 [00:00<00:00, 1399.47it/s]Loading weights:  96%|█████████▌| 760/795 [00:00<00:00, 1360.17it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 1424.25it/s]
+chunked_prefill chunk_size 1 max_abs_diff 0.09375 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
+chunked_prefill chunk_size 2 max_abs_diff 0.0625 decode_max_abs_diff 0.046875 seq_full 161 seq_chunked 161
+chunked_prefill chunk_size 4 max_abs_diff 0.0625 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
+chunked_prefill chunk_size 8 max_abs_diff 0.046875 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
+chunked_prefill chunk_size 16 max_abs_diff 0.046875 decode_max_abs_diff 0.03125 seq_full 161 seq_chunked 161
+PASS

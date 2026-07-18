@@ -255,6 +255,31 @@ priority ordering below; retain it as provenance:
 - Canonical evidence:
   `bench/v100_sm70_mm4_bntn_20260716/README.md`.
 
+## V100 Native-default Regression Snapshot (2026-07-18)
+
+- PR57 Native-default validation is retained under
+  `bench/v100_pr57_regression_20260718/`. Dense 1.5B Native cached decode is at
+  current-wrapper parity at B1/B8; B8 prefill is also at parity, but B1 short
+  prefill is not. Do not report this migration artifact as final Albatross or
+  cross-card closure.
+- Public Native chunk continuation now uses vectorized prefill with existing
+  recurrent state. Correctness passes, but 0.4B prompt512 chunk sizes 64/128/
+  256 reach only `0.1241x-0.6637x` whole-prompt throughput. Small-chunk launch
+  and scheduling overhead remains open.
+- Minimal CUDA 12.4 installations may place `cuda_fp16.h` under `CUDA_HOME`
+  while installing CCCL's `nv/target` under the Conda/Python prefix. The sm70
+  extension must discover and pass that include root. Never accept a V100 W4
+  speed result when `sm70_extension_build_error` is non-empty; the dequantized
+  fallback can be roughly 20x slower per projection.
+- After CCCL discovery was repaired, all 21 Native-default W4 production cells
+  pass again. Decode/FP16 ranges are `1.0459x-1.3426x` (1.5B memory),
+  `1.0125x-1.0318x` (2.9B speed), and `1.0775x-2.2574x` (7.2B memory), with
+  footprint and correctness gates intact. W8 is measured parity, not a speed
+  win: `0.9996x-1.0000x` decode, with `0.6932x` footprint for the memory policy.
+- Two-V100 ZeRO2 and ZeRO3 save/resume smokes pass with Native-default 0.1B.
+  Preserve this gate when changing Native training, cache serialization,
+  optimizer grouping, or remote-code loading.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not

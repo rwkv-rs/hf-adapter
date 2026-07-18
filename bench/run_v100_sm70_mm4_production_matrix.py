@@ -67,6 +67,8 @@ def row_matches_configuration(
 
 def acceptance_failures(row: dict[str, object]) -> list[str]:
     failures = []
+    if row.get("sm70_extension_build_error"):
+        failures.append("sm70_extension")
     if float(row.get("decode_speed_ratio_vs_fp16") or 0.0) < 1.0:
         failures.append("decode")
     if float(row.get("footprint_ratio_vs_fp16") or 1.0) >= 1.0:

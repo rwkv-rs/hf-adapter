@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -228,6 +229,23 @@ def last_native_model_decode_backend(model):
     if callable(getter):
         return getter()
     return getattr(model, "_rwkv7_native_model_last_decode_backend", None)
+
+
+def sm70_extension_build_error(model) -> str | None:
+    """Read the build error from the MM4 module's own remote-code package."""
+
+    for module in model.modules():
+        if type(module).__name__ != "MM4Linear":
+            continue
+        package, _, _ = type(module).__module__.rpartition(".")
+        module_name = f"{package}.sm70_quant" if package else "sm70_quant"
+        try:
+            sm70_quant = importlib.import_module(module_name)
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
+        error = getattr(sm70_quant, "build_error", lambda: None)()
+        return None if error is None else str(error)
+    return None
 
 
 def quantize_model(
@@ -702,12 +720,13 @@ def main() -> int:
             and torch.cuda.is_available()
             and torch.cuda.get_device_capability(args.device) == (7, 0)
         )
+        sm70_build_error = sm70_extension_build_error(model) if sm70_active else None
         row = {
             "axis": "native_quant_e2e_decode",
             "backend": "hf_adapter",
             "code_source": args.code_source,
             "effective_hf_dir": args.effective_hf_dir,
-            "status": "pass",
+            "status": "fail" if sm70_build_error is not None else "pass",
             "quantization": quantization,
             "native_mm4_group_size": args.mm4_group_size if quantization == "mm4" else None,
             "native_mm4_group_policy": (
@@ -757,6 +776,7 @@ def main() -> int:
                 and "RWKV7_SM70_W4_GROUP_TN" in os.environ
                 else None
             ),
+            "sm70_extension_build_error": sm70_build_error,
             "dtype": args.dtype,
             "device": device_name(args.device),
             **model_metadata(args, model),
@@ -821,7 +841,7 @@ def main() -> int:
 
     if code_overlay is not None:
         code_overlay.cleanup()
-    return 0
+    return 0 if all(row.get("status") == "pass" for row in rows) else 1
 
 
 if __name__ == "__main__":
