@@ -30,6 +30,7 @@ try:  # noqa: E402
         load_official,
         metrics_pass as inference_metrics_pass,
         metrics_pass_official_envelope,
+        sha256_file,
         tensor_metrics,
     )
 except ImportError:  # direct ``python scripts/...`` execution
@@ -38,6 +39,7 @@ except ImportError:  # direct ``python scripts/...`` execution
         load_official,
         metrics_pass as inference_metrics_pass,
         metrics_pass_official_envelope,
+        sha256_file,
         tensor_metrics,
     )
 
@@ -460,6 +462,8 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
         "prompt_tokens": native["prompt_tokens"],
         "precision": native["precision"],
         "official_commit": official["source_revision"],
+        "native_capture_sha256": sha256_file(args.native_capture),
+        "official_capture_sha256": sha256_file(args.official_capture),
         "thresholds": THRESHOLDS,
         "metrics": metrics,
         "first_token_exact": bool(torch.equal(native["first_token"], official["first_token"])),
@@ -467,6 +471,7 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
             torch.equal(native["first_decode_token"], official["first_decode_token"])
         ),
         "native": {
+            "source_revision": native["source_revision"],
             "timing": native["timing"],
             "peak_vram_mb": native["peak_vram_mb"],
             "execution": native.get("execution", "eager"),
@@ -483,8 +488,11 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
             "runtime_env": native.get("runtime_env", {}),
         },
         "official": {
+            "source_revision": official["source_revision"],
             "timing": official["timing"],
             "peak_vram_mb": official["peak_vram_mb"],
+            "runtime": official.get("runtime", {}),
+            "source_verification": official.get("source_verification", {}),
         },
         "native_over_official_tokps": native_tokps / official_tokps,
     }
