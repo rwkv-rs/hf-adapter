@@ -66,7 +66,10 @@ def summarize(rows: list[dict[str, Any]], reference: dict[str, Any]) -> dict[str
         native_median = statistics.median(speeds)
         official = float(reference["batch_sizes"][str(batch_size)]["decode_tokps"])
         ratio = native_median / official
-        shape_pass = bool(batch_consistent and extensions_active and ratio >= 1.0)
+        repeat_consistent = len(set(hashes)) == 1
+        shape_pass = bool(
+            batch_consistent and repeat_consistent and extensions_active and ratio >= 1.0
+        )
         passed &= shape_pass
         shape_rows.append(
             {
@@ -77,6 +80,7 @@ def summarize(rows: list[dict[str, Any]], reference: dict[str, Any]) -> dict[str
                 "matched_shape_ratio": ratio,
                 "greedy_trace_sha256": hashes,
                 "batch_traces_equal": batch_consistent,
+                "repeat_traces_equal": repeat_consistent,
                 "requested_extensions_active": extensions_active,
                 "status": "pass" if shape_pass else "fail",
             }
