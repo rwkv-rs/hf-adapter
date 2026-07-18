@@ -85,6 +85,16 @@ def metric_pass(metrics: dict[str, Any], kind: str) -> bool:
     return bool(passed)
 
 
+def native_runtime_environment() -> dict[str, str]:
+    """Capture explicit Native runtime controls needed to replay a row."""
+
+    return {
+        name: os.environ[name]
+        for name in sorted(os.environ)
+        if name.startswith("RWKV7_NATIVE_")
+    }
+
+
 def prompt_ids(args: argparse.Namespace) -> torch.Tensor:
     from transformers import AutoTokenizer
 
@@ -270,6 +280,7 @@ def capture_native(args: argparse.Namespace) -> dict[str, Any]:
         "first_decode_logits": first_decode.logits[:, -1].detach().cpu(),
         "first_decode_token": first_decode.logits[:, -1].argmax(dim=-1).cpu(),
         "first_decode_backend": model.rwkv7_native_model_last_decode_backend(),
+        "runtime_env": native_runtime_environment(),
         "prefill": prefill_state,
         "layer_outputs": layers,
         "peak_vram_mb": torch.cuda.max_memory_allocated() / 1024 / 1024,
@@ -469,6 +480,7 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
             "fp16_accum_ffn_key_effective": native[
                 "fp16_accum_ffn_key_effective"
             ],
+            "runtime_env": native.get("runtime_env", {}),
         },
         "official": {
             "timing": official["timing"],

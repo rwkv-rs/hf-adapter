@@ -13,6 +13,7 @@ from scripts.compare_official_native_inference import (
 from scripts.compare_official_self_repeats import compare_repeats
 from scripts.compare_official_native_prefill import (
     metric_pass as prefill_metric_pass,
+    native_runtime_environment,
     parser as prefill_parser,
 )
 
@@ -162,6 +163,19 @@ def test_prefill_shift_states_reuse_the_bounded_decode_tail_gate() -> None:
     assert prefill_metric_pass(metrics, "xpf") is True
     assert metrics["fixed_abs_pass"] is False
     assert metrics["fp16_tail_pass"] is True
+
+
+def test_prefill_capture_records_only_explicit_native_runtime_controls(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GRAPH", "1")
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", "fp16")
+    monkeypatch.setenv("RWKV7_UNRELATED", "ignored")
+    monkeypatch.setenv("TORCH_EXTENSIONS_DIR", "/tmp/extensions")
+
+    runtime = native_runtime_environment()
+    assert runtime["RWKV7_NATIVE_GRAPH_STATE_DTYPE"] == "fp16"
+    assert runtime["RWKV7_NATIVE_PREFILL_GRAPH"] == "1"
+    assert "RWKV7_UNRELATED" not in runtime
+    assert "TORCH_EXTENSIONS_DIR" not in runtime
 
 
 def make_capture(engine: str, revision: str) -> dict:
