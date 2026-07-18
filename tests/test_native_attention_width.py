@@ -44,6 +44,13 @@ def test_legacy_config_defaults_attention_width_to_heads_times_head_dim() -> Non
     assert NativeRWKV7Config.from_dict(config.to_dict()).attention_hidden_size == 8
 
 
+def test_tiny_legacy_config_infers_a_valid_single_head() -> None:
+    config = NativeRWKV7Config(hidden_size=8, num_hidden_layers=1, vocab_size=16)
+    assert config.attention_hidden_size == 8
+    assert config.num_heads == 1
+    assert config.head_dim == 8
+
+
 def test_attention_width_must_match_recurrent_heads() -> None:
     with pytest.raises(ValueError, match=r"num_heads \* head_dim"):
         NativeRWKV7Config(
