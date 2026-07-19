@@ -310,7 +310,10 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         + ("HF Trainer", "TRL SFT/DPO/GRPO", "PEFT save/load/merge"),
         required_benchmarks=COMMON_PERF_BENCHMARKS
         + ("training smoke telemetry", "Albatross A/B rows when available"),
-        quant_rule="W8/W4 memory rows valid; speed unsolved until native quant beats fp16 on V100",
+        quant_rule=(
+            "W4 balanced and W8 speed profiles are measured at fp16 parity; "
+            "full-memory W4 prefill and W8 graph peak remain open"
+        ),
         promotion_rule="do not change V100 defaults without preserving HF training and decode rows",
     ),
     "turing": GPUAdaptationRule(
@@ -557,8 +560,8 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_sparse_ffn_inplace=True,
             ada_sparse_ffn_up=False,
             output_project_block_m=16,
-            quant_policy="memory_first_decode_hot_optional",
-            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
+            quant_policy="balanced_speed_default_full_memory_optional",
+            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; balanced W4 is the measured speed-and-memory profile, while full projection/output-project and full-memory quant remain opt-in",
         )
     if family in {"turing", "ampere"}:
         is_3090 = family == "ampere" and "3090" in profile.name.lower()

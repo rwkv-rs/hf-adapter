@@ -11,9 +11,34 @@ boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
 |---|---|---|
 | bitsandbytes 8-bit / 4-bit | Standard HF compatibility and memory reduction | Functional across tested CUDA cards; not generally faster than native fp16 |
 | Native MM8/MM4 `speed` policy | Preserve dense block speed and quantize selected expensive projections | Promoted on measured V100/4090/5090 lanes |
+| Native MM4 `balanced` policy | Quantize the head plus a bounded FFN prefix for a speed/memory compromise | V100 1.5B B1/B8 all-phase profile promoted; other cards/models require card-local evidence |
 | Native MM8/MM4 `memory` policy | Quantize many eligible Linear modules for larger footprint reduction | Functional and memory-saving; universal fp16-or-faster speed is open |
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
+
+## V100 W4 balanced all-phase profile
+
+The fresh 1.5B V100 production profile quantizes `lm_head` plus layer-0 FFN
+key/value with group-128 rowwise W4. It closes prompt128/decode16 at B1/B8:
+
+| Batch | Prefill / fp16 | Decode / fp16 | Footprint / fp16 | Peak / fp16 | Final cosine |
+|---:|---:|---:|---:|---:|---:|
+| 1 | `1.0108x` | `1.0345x` | `0.9183x` | `0.9579x` | `0.99985588` |
+| 8 | `0.9986x` | `1.0037x` | `0.9183x` | `0.9514x` | `0.99981284` |
+
+B8 prefill is within the repository's 1% parity gate. Both rows preserve the
+complete greedy sequence and repeat determinism. CPU-first W4 packing can emit
+the sm70 target row layout directly, avoiding a dense GPU load without losing
+the measured kernel route. This is the recommended V100 1.5B speed-and-memory
+profile; copyable configuration and commands are in
+[`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md), with raw evidence in
+[`../bench/v100_pr58_final_20260719/`](../bench/v100_pr58_final_20260719/README.md).
+
+The optional full-memory W4 profile has a larger footprint win (`0.5395x`) and
+faster decode, but prompt128 prefill remains `0.8992x/0.9533x` fp16 at B1/B8.
+Full-memory W8 reaches fp16 speed with `0.6932x` model footprint, but its paired
+graph peak is `1.2397x/1.2754x`. Neither negative boundary is relabeled as a
+universal memory-and-speed close.
 
 ## V100 packed MM4 decode profiles
 
@@ -95,9 +120,11 @@ PYTHONPATH=. python bench/bench_native_quant_e2e_decode.py \
   --results bench/results-memory-mm4.jsonl
 ```
 
-Use `mm8` instead of `mm4` for W8. The flag intentionally rejects `speed`
-policy, non-native formats, multi-quant runs, CPU targets, and in-process paired
-baselines. It reduces peak **GPU** loading pressure; the machine still needs
+Use `mm8` instead of `mm4` for W8. The flag accepts `memory` and `balanced`,
+and intentionally rejects `speed`, non-native formats, multi-quant runs, CPU
+targets, and in-process paired baselines. On V100, CPU-side W4 packing can emit
+the sm70 rowwise target layout directly. It reduces peak **GPU** loading
+pressure; the machine still needs
 enough host RAM for the dense checkpoint and temporary packing work.
 
 Without a cached fp16 baseline, the row may report packed model footprint and

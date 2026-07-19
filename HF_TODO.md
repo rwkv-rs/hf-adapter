@@ -4,13 +4,15 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-19**.
 
 ## Current milestone — COMPLETE
 
 The active V100/full-FLA/documentation milestone is complete:
 
 - V100 0.1B/0.4B/1.5B dense Albatross P1 and native W8/W4 speed lane;
+- fresh V100 1.5B Native/Albatross B1/B2/B4/B8 prompt128/512 regression,
+  dynamic B8→B2 graph-cache and W4 balanced all-phase lane;
 - V100 RWKV-7 1.5B versus full-FLA Qwen3.5-2B target-only B1/B8 raw and
   active-parameter work gates;
 - RTX 4090 small-model and 7.2B bsz8 promoted matrices;
@@ -45,10 +47,21 @@ remaining fp16-or-faster across representative batch/prompt/decode shapes.
       same-next 8/8. The group-128 per-launch BN/TN audit passes 280/280 rows;
       group-32 experimental coverage passes another 48/48. Evidence:
       [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md).
+- [x] Close the exact V100 1.5B W4 `balanced` profile at B1/B8,
+      prompt128/decode16: prefill is `1.0108x/0.9986x`, decode is
+      `1.0345x/1.0037x`, model footprint is `0.9183x`, and peak VRAM is
+      `0.9579x/0.9514x` fp16. Cosine, same-greedy and determinism gates pass.
+      Fresh CPU-first packing retains the sm70 target layout. Evidence:
+      [`bench/v100_pr58_final_20260719/`](bench/v100_pr58_final_20260719/README.md).
 - [ ] Add all-phase fused quant prefill for the remaining cards/shapes;
       decode-only wins are insufficient.
 - [ ] Validate the same large-payload contract on V100, 4090 and at least one
       Ampere professional card; RTX 5090 exact-lane evidence is complete.
+      Fresh V100 full-memory W4 B1/B8 prompt128 prefill is
+      `0.8992x/0.9533x` fp16 at `0.5395x` footprint, so it is not
+      speed-complete. Full-memory W8 reaches `1.0061x/1.0010x` prefill and
+      `0.6932x` model footprint, but CUDA-graph peak remains
+      `1.2397x/1.2754x`; it is not a peak-memory profile.
 - [ ] Preserve cosine, same-next, footprint and paired timing gates.
 - [x] Add 0.4B/1.5B/2.9B/7.2B/13.3B boundary rows. The four g1h profiles are
       promoted; g1d 0.4B full-FFN is explicitly rejected and remains on its

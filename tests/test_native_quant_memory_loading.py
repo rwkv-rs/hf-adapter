@@ -29,6 +29,7 @@ def test_quantize_before_device_accepts_explicit_memory_quant_only_mode() -> Non
     decode_bench.validate_quantize_before_device(
         _args(single_quantization="mm8")
     )
+    decode_bench.validate_quantize_before_device(_args(policy="balanced"))
 
 
 @pytest.mark.parametrize(
@@ -37,7 +38,7 @@ def test_quantize_before_device_accepts_explicit_memory_quant_only_mode() -> Non
         ({"device": "cpu"}, "CUDA target device"),
         ({"single_quantization": None}, "single-quantization"),
         ({"single_quantization": "torchao_w4"}, "single-quantization"),
-        ({"policy": "speed"}, "policy memory"),
+        ({"policy": "speed"}, "policy memory or balanced"),
         ({"paired_baseline": True}, "in-process fp16 baseline"),
         ({"allow_missing_baseline": False}, "allow-missing-baseline"),
     ),

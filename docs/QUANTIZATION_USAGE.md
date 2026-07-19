@@ -101,7 +101,54 @@ MM4 则设置 `use_native_mm8=False`、`use_native_mm4=True`，并配置
 
 - `speed` 保留多数 dense block，只量化选定昂贵投影；省内存较少，但只有这类
   路线可以按精确显卡证据晋升为速度路线。
+- `balanced` 默认量化 `lm_head` 和前一层 FFN key/value；可用
+  `RWKV7_NATIVE_MM_BALANCED_FFN_LAYERS` 调整 FFN 层数。它是 V100 1.5B
+  已验证的速度与显存折中路线。
 - `memory` 替换更多 Linear，通常更省内存，但并不保证普遍快于 fp16。
+
+### V100 1.5B W4 balanced 生产配置
+
+V100 1.5B、prompt128/decode16、B1/B8 的推荐 all-phase 配置如下。它不会替代
+下面针对 cached decode 的 full-memory 配置。
+
+```python
+import os
+os.environ["RWKV7_NATIVE_MODEL"] = "1"
+os.environ["RWKV7_NATIVE_MM_BALANCED_FFN_LAYERS"] = "1"
+os.environ["RWKV7_SM70_W4_FUSED_EPILOGUE"] = "1"
+
+from transformers import AutoConfig, AutoModelForCausalLM
+
+path = "/path/to/rwkv7-g1g-1.5b-hf"
+config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+config.use_native_mm8 = False
+config.use_native_mm4 = True
+config.native_mm4_policy = "balanced"
+config.native_mm4_group_size = 128
+config.native_mm4_group_policy = "lm_head"
+model = AutoModelForCausalLM.from_pretrained(
+    path, trust_remote_code=True, config=config, device_map="cuda"
+).eval()
+```
+
+该配置替换三个模块，B1/B8 prefill 为 `1.0108x/0.9986x` fp16、decode 为
+`1.0345x/1.0037x`、模型 footprint 为 `0.9183x`、peak VRAM 为
+`0.9579x/0.9514x`；greedy、determinism 和 cosine 验收通过。CPU-first
+离线打包在 V100 上会设置 `RWKV7_SM70_TARGET_PACK=1`，不需要先把 dense 模型
+放进 GPU，也不会退化成 CPU 通用布局。
+
+```bash
+RWKV7_NATIVE_MM_BALANCED_FFN_LAYERS=1 \
+RWKV7_SM70_W4_FUSED_EPILOGUE=1 \
+python bench/bench_native_quant_e2e_decode.py \
+  --hf-dir /path/to/rwkv7-g1g-1.5b-hf --code-source repo \
+  --single-quantization mm4 --policy balanced \
+  --mm4-group-size 128 --mm4-group-policy lm_head --paired-baseline \
+  --batch-size 8 --prompt-tokens 128 --decode-tokens 16 \
+  --warmup 3 --timing-repeats 7 --results /tmp/v100-w4-balanced-b8.jsonl
+```
+
+证据：[`../bench/v100_pr58_final_20260719/`](../bench/v100_pr58_final_20260719/README.md)。
 
 ### V100 上的 MM4 decode 配置
 

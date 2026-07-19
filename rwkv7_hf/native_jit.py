@@ -3307,6 +3307,75 @@ def prefill(
     )
     stacked_rkv_used = False
     wavg_lora_used = False
+    quant_workspaces = getattr(model, "_rwkv7_native_prefill_quant_workspaces", None)
+    if quant_workspaces is None:
+        quant_workspaces = {}
+        model._rwkv7_native_prefill_quant_workspaces = quant_workspaces
+    quant_dense_prefetch_used = False
+    quant_prefetch_phase = os.environ.get(
+        "RWKV7_SM70_QUANT_PREFETCH_PHASE", "scan"
+    ).strip().lower()
+    if quant_prefetch_phase not in {"early", "scan"}:
+        quant_prefetch_phase = "scan"
+
+    def schedule_quant_prefetch(key_module, value_module):
+        """Dequantize one FFN pair into bounded reusable dense operands."""
+
+        if not x.is_cuda or torch.is_grad_enabled():
+            return None
+
+        def operand_spec(module):
+            prepare = getattr(module, "rwkv7_prefill_dequant_weight", None)
+            shape = getattr(module, "rwkv7_prefill_dequant_shape", None)
+            if not callable(prepare) or not callable(shape):
+                return None
+            dense_shape = shape(B * T)
+            if dense_shape is None:
+                return None
+            return prepare, tuple(int(value) for value in dense_shape)
+
+        key_spec = operand_spec(key_module)
+        value_spec = operand_spec(value_module)
+        if key_spec is None and value_spec is None:
+            return None
+        prefill_stream = getattr(model, "_rwkv7_native_prefill_quant_stream", None)
+        if prefill_stream is None:
+            prefill_stream = torch.cuda.Stream(device=x.device)
+            model._rwkv7_native_prefill_quant_stream = prefill_stream
+        current_stream = torch.cuda.current_stream(x.device)
+        prefill_stream.wait_stream(current_stream)
+        workspace_prefix = (str(x.device), str(x.dtype))
+        workspaces = []
+        for role, spec in (("ffn_key", key_spec), ("ffn_value", value_spec)):
+            if spec is None:
+                workspaces.append(None)
+                continue
+            _, dense_shape = spec
+            workspace_key = (*workspace_prefix, role, *dense_shape)
+            workspace = quant_workspaces.get(workspace_key)
+            if workspace is None:
+                workspace = torch.empty(
+                    dense_shape,
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+                quant_workspaces[workspace_key] = workspace
+            workspaces.append(workspace)
+        with torch.cuda.stream(prefill_stream):
+            dense_key = (
+                key_spec[0](B * T, workspaces[0])
+                if key_spec is not None
+                else key_module
+            )
+            dense_value = (
+                value_spec[0](B * T, workspaces[1])
+                if value_spec is not None
+                else value_module
+            )
+        if dense_key is None or dense_value is None:
+            current_stream.wait_stream(prefill_stream)
+            return None
+        return dense_key, dense_value, prefill_stream
 
     for p in packs:
         (i, H, N, eps, has_pre,
@@ -3341,6 +3410,14 @@ def prefill(
         use_layer_ffn_shift_mix = bool(
             use_layer_shift_mix
             and env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+        )
+        prefetched_ffn = (
+            schedule_quant_prefetch(fK, fV)
+            if quant_prefetch_phase == "early"
+            else None
+        )
+        quant_dense_prefetch_used = bool(
+            quant_dense_prefetch_used or prefetched_ffn is not None
         )
         residual = F.layer_norm(x, [residual_hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [residual_hidden], an_w, an_b, 1e-5)
@@ -3526,6 +3603,11 @@ def prefill(
         if use_clampw_scan and use_layer_state_prep and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
         state_scan_done = False
+        if quant_prefetch_phase == "scan":
+            prefetched_ffn = schedule_quant_prefetch(fK, fV)
+            quant_dense_prefetch_used = bool(
+                quant_dense_prefetch_used or prefetched_ffn is not None
+            )
         if use_fused_state_scan:
             scan_block_m = _native_prefill_scan_block_m(N, B, T, H * N)
             scan_num_warps = _native_prefill_scan_num_warps(N, scan_block_m)
@@ -3764,8 +3846,16 @@ def prefill(
 
         residual = x
         h2 = F.layer_norm(x, [residual_hidden], fn_w, fn_b, 1e-5)
+        ffn_key_operand = fK
+        ffn_value_operand = fV
+        if prefetched_ffn is not None:
+            dense_fK, dense_fV, prefill_stream = prefetched_ffn
+            torch.cuda.current_stream(h2.device).wait_stream(prefill_stream)
+            ffn_key_operand = dense_fK
+            ffn_value_operand = dense_fV
         use_layer_sequence_ffn = bool(
-            use_prefill_sequence_ffn and _graph_linears_are_dense(fK, fV)
+            use_prefill_sequence_ffn
+            and _graph_linears_are_dense(ffn_key_operand, ffn_value_operand)
         )
         if use_layer_sequence_ffn:
             sequence_ffn_used = True
@@ -3774,14 +3864,18 @@ def prefill(
             if sequence_ffn_workspace is None:
                 sequence_ffn_workspace = (
                     torch.empty((B * T, residual_hidden), device=h2.device, dtype=h2.dtype),
-                    torch.empty((B * T, int(fK.shape[0])), device=h2.device, dtype=h2.dtype),
+                    torch.empty(
+                        (B * T, int(ffn_key_operand.shape[0])),
+                        device=h2.device,
+                        dtype=h2.dtype,
+                    ),
                 )
             ffn_out, next_xpf = fused_sequence_ffn(
                 h2,
                 xpf[layer_idx],
                 fx_k,
-                fK,
-                fV,
+                ffn_key_operand,
+                ffn_value_operand,
                 block_m=sequence_ffn_blocks[0],
                 block_n=sequence_ffn_blocks[1],
                 key_block_k=sequence_ffn_blocks[2],
@@ -3794,7 +3888,7 @@ def prefill(
             x = residual + ffn_out
         else:
             ffn_up_prequantized = False
-            if use_layer_ffn_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
+            if use_layer_ffn_shift_mix and _bnb8_ffn_mix_quant_enabled(ffn_key_operand):
                 (
                     qfk,
                     sfk,
@@ -3813,7 +3907,13 @@ def prefill(
                 )
                 bnb8_ffn_quant_workspace = qfk
                 bnb8_ffn_scale_workspace = sfk
-                fk = _bnb8_prequant_linear(qfk, sfk, fK, dtype=h2.dtype, output_shape=(B, T))
+                fk = _bnb8_prequant_linear(
+                    qfk,
+                    sfk,
+                    ffn_key_operand,
+                    dtype=h2.dtype,
+                    output_shape=(B, T),
+                )
                 ffn_up_prequantized = True
             elif use_layer_ffn_shift_mix and fused_ffn_sequence_shift_mix is not None:
                 if sequence_ffn_mix_workspace is None:
@@ -3837,15 +3937,16 @@ def prefill(
                 next_xpf = h2[:, -1, :].contiguous()
             fused_up_relu2 = False
             if not ffn_up_prequantized:
-                fused = getattr(fK, "rwkv7_forward_relu2", None)
+                fused = getattr(ffn_key_operand, "rwkv7_forward_relu2", None)
                 fused_up_relu2 = bool(
-                    getattr(fK, "fused_relu2", False) and callable(fused)
+                    getattr(ffn_key_operand, "fused_relu2", False) and callable(fused)
                 )
                 if fused_up_relu2:
                     fk = fused(fk)
                 else:
                     fp16_accum_ffn_key_layer = bool(
-                        use_fp16_accum_ffn_key and _graph_linear_is_dense(fK)
+                        use_fp16_accum_ffn_key
+                        and _graph_linear_is_dense(ffn_key_operand)
                         and (
                             fp16_accum_ffn_key_layers is None
                             or layer_idx in fp16_accum_ffn_key_layers
@@ -3856,18 +3957,18 @@ def prefill(
                     )
                     fk = _native_prefill_linear(
                         fk,
-                        fK,
+                        ffn_key_operand,
                         allow_fp16_accumulation=fp16_accum_ffn_key_layer,
                     )
             fused_bnb8_ffn = (
                 None
                 if fused_up_relu2
-                else _bnb8_direct_relu_square_linear(fk, fV)
+                else _bnb8_direct_relu_square_linear(fk, ffn_value_operand)
             )
             if fused_bnb8_ffn is not None:
                 x = residual + fused_bnb8_ffn
             elif fused_up_relu2:
-                x = _native_prefill_project_residual(fk, fV, residual)
+                x = _native_prefill_project_residual(fk, ffn_value_operand, residual)
             elif (
                 use_layer_ffn_shift_mix
                 and fused_relu_square is not None
@@ -3875,10 +3976,10 @@ def prefill(
                 and fused_relu_square_available()
             ):
                 fk = fused_relu_square(fk)
-                x = _native_prefill_project_residual(fk, fV, residual)
+                x = _native_prefill_project_residual(fk, ffn_value_operand, residual)
             else:
                 fk = torch.relu(fk) ** 2
-                x = _native_prefill_project_residual(fk, fV, residual)
+                x = _native_prefill_project_residual(fk, ffn_value_operand, residual)
         xpf[layer_idx] = next_xpf
         if layer_outputs is not None:
             layer_outputs.append(x[:, -1, :].detach().clone())
@@ -3914,6 +4015,16 @@ def prefill(
         model,
         "_rwkv7_native_prefill_fp16_recurrent_effective",
         bool(use_fp16_recurrent_requested),
+    )
+    setattr(
+        model,
+        "_rwkv7_native_prefill_quant_dense_effective",
+        bool(quant_dense_prefetch_used),
+    )
+    setattr(
+        model,
+        "_rwkv7_native_prefill_quant_prefetch_phase_effective",
+        quant_prefetch_phase if quant_dense_prefetch_used else None,
     )
     setattr(model, "_rwkv7_native_prefill_layer_outputs", layer_outputs)
     return logits, state, xpa, xpf

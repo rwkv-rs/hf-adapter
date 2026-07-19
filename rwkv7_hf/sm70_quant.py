@@ -24,13 +24,16 @@ _CPP = r"""
 #include <torch/extension.h>
 torch::Tensor rwkv7_sm70_w8_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t);
 torch::Tensor rwkv7_sm70_w8_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t);
+torch::Tensor rwkv7_sm70_w8_dequant_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t);
 torch::Tensor rwkv7_sm70_w4_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
 torch::Tensor rwkv7_sm70_w4_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
 torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
 torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
 torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
 torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
-PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){m.def("w8",&rwkv7_sm70_w8_cuda);m.def("w8_out",&rwkv7_sm70_w8_out_cuda);m.def("w4",&rwkv7_sm70_w4_cuda);m.def("w4_out",&rwkv7_sm70_w4_out_cuda);m.def("w4_relu2",&rwkv7_sm70_w4_relu2_cuda);m.def("w4_add",&rwkv7_sm70_w4_add_cuda);m.def("w4_group",&rwkv7_sm70_w4_group_cuda);m.def("w4_group_out",&rwkv7_sm70_w4_group_out_cuda);}
+torch::Tensor rwkv7_sm70_w4_dequant_cuda(torch::Tensor,torch::Tensor,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w4_dequant_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t);
+PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){m.def("w8",&rwkv7_sm70_w8_cuda);m.def("w8_out",&rwkv7_sm70_w8_out_cuda);m.def("w8_dequant_out",&rwkv7_sm70_w8_dequant_out_cuda);m.def("w4",&rwkv7_sm70_w4_cuda);m.def("w4_out",&rwkv7_sm70_w4_out_cuda);m.def("w4_relu2",&rwkv7_sm70_w4_relu2_cuda);m.def("w4_add",&rwkv7_sm70_w4_add_cuda);m.def("w4_group",&rwkv7_sm70_w4_group_cuda);m.def("w4_group_out",&rwkv7_sm70_w4_group_out_cuda);m.def("w4_dequant",&rwkv7_sm70_w4_dequant_cuda);m.def("w4_dequant_out",&rwkv7_sm70_w4_dequant_out_cuda);}
 """
 _CUDA = r"""
 #include <torch/extension.h>
@@ -62,6 +65,9 @@ __global__ void w8_dp4a(int M,int K,int N,const signed char* x,const half* xs,co
   for(int m=0;m<8;m++)if(m<M)acc[m]=__dp4a(((const int*)(x+(int64_t)m*K))[k4],w,acc[m]);}
  #pragma unroll
  for(int m=0;m<8;m++)if(m<M){int v=acc[m];for(int d=16;d;d>>=1)v+=__shfl_down_sync(0xffffffff,v,d);if(lane==0)y[(int64_t)m*N+n]=__float2half_rn(float(v)*__half2float(xs[m])*__half2float(ws[n]));}
+}
+__global__ void w8_dequant_kernel(int N,int K,const signed char* q,const half* s,half* w){
+ int K2=K>>1,total=N*K2;const char2* q2=(const char2*)q;half2* w2=(half2*)w;for(int idx=blockIdx.x*blockDim.x+threadIdx.x;idx<total;idx+=blockDim.x*gridDim.x){int n=idx/K2;char2 v=q2[idx];float scale=__half2float(s[n]);w2[idx]=__halves2half2(__float2half_rn(float(v.x)*scale),__float2half_rn(float(v.y)*scale));}
 }
 __device__ inline int pack4(int a,int b,int c,int d){return (a&255)|((b&255)<<8)|((c&255)<<16)|((d&255)<<24);}
 template<int BN,int TN,int MODE>
@@ -134,6 +140,10 @@ __global__ void w4g_dp4a_bn_tn(int M,int K,int N,int KH,int G,const signed char*
   for(int m=0;m<8;m++)if(mb+m<M){float v=half_warp_sum(acc[t][m]);if(lane==0)y[(int64_t)(mb+m)*N+n]=__float2half_rn(v*__half2float(xs[mb+m]));}
  }}
 }
+template<int GS>
+__global__ void w4_dequant_kernel(int N,int KH,int G,const unsigned char* q,const half* s,half* w){
+ int total=N*KH;for(int idx=blockIdx.x*blockDim.x+threadIdx.x;idx<total;idx+=blockDim.x*gridDim.x){int n=idx/KH,k2=idx-n*KH;unsigned char b=q[idx];float scale;if constexpr(GS==0)scale=__half2float(s[n]);else scale=__half2float(s[(int64_t)n*G+(k2*2)/GS]);((half2*)w)[idx]=__halves2half2(__float2half_rn(float(int(b&15)-8)*scale),__float2half_rn(float(int(b>>4)-8)*scale));}
+}
 void check(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int N){TORCH_CHECK(x.is_cuda()&&q.is_cuda()&&s.is_cuda()&&y.is_cuda(),"CUDA required");TORCH_CHECK(x.scalar_type()==at::kHalf&&s.scalar_type()==at::kHalf&&y.scalar_type()==at::kHalf,"fp16 activation/scales/output required");TORCH_CHECK(x.dim()==2&&x.is_contiguous()&&q.is_contiguous()&&s.is_contiguous()&&y.is_contiguous(),"contiguous rank-2 activation required");TORCH_CHECK(x.size(1)%8==0&&x.size(0)>0,"K multiple of 8 and non-empty M required");TORCH_CHECK(y.size(0)==x.size(0)&&y.size(1)==N,"output shape mismatch");}
 torch::Tensor run8(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int th){int M=x.size(0),K=x.size(1),N=q.size(0);check(x,q,s,y,N);TORCH_CHECK(M<=8,"sm70 W8 decode kernel requires M<=8");TORCH_CHECK(q.scalar_type()==at::kChar&&q.size(1)==K,"int8 weight shape mismatch");auto st=at::cuda::getCurrentCUDAStream();if(M==1){w8_a16_single<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(K,N,(half*)x.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{auto qa=torch::empty({M,K},q.options());auto as=torch::empty({M},s.options());quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());w8_dp4a<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(M,K,N,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
 template<int MODE>
@@ -149,15 +159,20 @@ torch::Tensor run4g(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tenso
 #undef LAUNCH4G_SET
 #undef LAUNCH4G
  TORCH_CHECK(launched,"unsupported sm70 groupwise W4 BN/TN pair");C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
+torch::Tensor dequant4_out(torch::Tensor q,torch::Tensor s,torch::Tensor w,int gs,int block_cap){TORCH_CHECK(q.is_cuda()&&s.is_cuda()&&w.is_cuda()&&q.scalar_type()==at::kByte&&s.scalar_type()==at::kHalf&&w.scalar_type()==at::kHalf&&q.dim()==2&&q.is_contiguous()&&s.is_contiguous()&&w.is_contiguous(),"sm70 W4 dequant requires contiguous CUDA uint8 weights and fp16 scales/output");int N=q.size(0),KH=q.size(1),K=KH*2,G=gs?K/gs:1;TORCH_CHECK(w.dim()==2&&w.size(0)==N&&w.size(1)==K,"sm70 W4 dequant output shape mismatch");if(gs==0){TORCH_CHECK(s.dim()==1&&s.size(0)==N,"rowwise scale shape mismatch");}else{TORCH_CHECK((gs==128||gs==256)&&K%gs==0&&s.dim()==2&&s.size(0)==N&&s.size(1)==G,"groupwise scale shape mismatch");}auto st=at::cuda::getCurrentCUDAStream();int total=N*KH,th=256,bl=std::min(std::max(1,block_cap),(total+th-1)/th);if(gs==0)w4_dequant_kernel<0><<<bl,th,0,st>>>(N,KH,G,(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),(half*)w.data_ptr<at::Half>());else if(gs==128)w4_dequant_kernel<128><<<bl,th,0,st>>>(N,KH,G,(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),(half*)w.data_ptr<at::Half>());else w4_dequant_kernel<256><<<bl,th,0,st>>>(N,KH,G,(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),(half*)w.data_ptr<at::Half>());C10_CUDA_KERNEL_LAUNCH_CHECK();return w;}
+torch::Tensor dequant4(torch::Tensor q,torch::Tensor s,int gs,int block_cap){auto w=torch::empty({q.size(0),q.size(1)*2},s.options());return dequant4_out(q,s,w,gs,block_cap);}
 }
 torch::Tensor rwkv7_sm70_w8_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t th){auto y=torch::empty({x.size(0),q.size(0)},x.options());return run8(x,q,s,y,th);}
 torch::Tensor rwkv7_sm70_w8_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t th){return run8(x,q,s,y,th);}
+torch::Tensor rwkv7_sm70_w8_dequant_out_cuda(torch::Tensor q,torch::Tensor s,torch::Tensor w,int64_t block_cap){TORCH_CHECK(q.is_cuda()&&s.is_cuda()&&w.is_cuda()&&q.scalar_type()==at::kChar&&s.scalar_type()==at::kHalf&&w.scalar_type()==at::kHalf&&q.dim()==2&&q.is_contiguous()&&s.is_contiguous()&&w.is_contiguous(),"sm70 W8 dequant requires contiguous CUDA int8 weights and fp16 scales/output");int N=q.size(0),K=q.size(1);TORCH_CHECK(K%2==0&&s.dim()==1&&s.size(0)==N&&w.dim()==2&&w.size(0)==N&&w.size(1)==K,"sm70 W8 dequant shape mismatch");auto st=at::cuda::getCurrentCUDAStream();int total=N*(K/2),th=256,bl=std::min(std::max(1,(int)block_cap),(total+th-1)/th);w8_dequant_kernel<<<bl,th,0,st>>>(N,K,(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)w.data_ptr<at::Half>());C10_CUDA_KERNEL_LAUNCH_CHECK();return w;}
 torch::Tensor rwkv7_sm70_w4_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t bn,int64_t tn){auto y=torch::empty({x.size(0),N},x.options());return run4<0>(x,q,s,torch::Tensor(),y,N,bn,tn);}
 torch::Tensor rwkv7_sm70_w4_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t N,int64_t bn,int64_t tn){return run4<0>(x,q,s,torch::Tensor(),y,N,bn,tn);}
 torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t bn,int64_t tn){auto y=torch::empty({x.size(0),N},x.options());return run4<1>(x,q,s,torch::Tensor(),y,N,bn,tn);}
 torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor residual,int64_t N,int64_t bn,int64_t tn){auto y=torch::empty_like(residual);return run4<2>(x,q,s,residual,y,N,bn,tn);}
 torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t gs,int64_t bn,int64_t tn){auto y=torch::empty({x.size(0),N},x.options());return run4g(x,q,s,y,N,gs,bn,tn);}
 torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t N,int64_t gs,int64_t bn,int64_t tn){return run4g(x,q,s,y,N,gs,bn,tn);}
+torch::Tensor rwkv7_sm70_w4_dequant_cuda(torch::Tensor q,torch::Tensor s,int64_t gs,int64_t block_cap){return dequant4(q,s,gs,block_cap);}
+torch::Tensor rwkv7_sm70_w4_dequant_out_cuda(torch::Tensor q,torch::Tensor s,torch::Tensor w,int64_t gs,int64_t block_cap){return dequant4_out(q,s,w,gs,block_cap);}
 """
 
 _EXT = None
@@ -382,7 +397,7 @@ def _load():
             from torch.utils.cpp_extension import load_inline
 
             _EXT = load_inline(
-                name="rwkv7_sm70_quant_v20",
+                name="rwkv7_sm70_quant_v25",
                 cpp_sources=_CPP,
                 cuda_sources=_CUDA,
                 functions=None,
@@ -443,6 +458,74 @@ def quantize_w4_groupwise(weight, group_size=128):
     return packed, scales.to(weight.dtype).contiguous(), in_features
 
 
+def _w4_prefill_dense_min_rows() -> int:
+    """Threshold for transient fused-dequant + cuBLAS prefill.
+
+    The persistent model stays packed. Only the active projection is expanded
+    into a caching-allocator workspace, consumed by tensor-core GEMM, and then
+    released. This avoids the decode kernel's eight-row weight-reuse ceiling.
+    """
+
+    try:
+        return max(0, int(os.environ.get("RWKV7_SM70_W4_PREFILL_DENSE_MIN_ROWS", "16")))
+    except ValueError:
+        return 16
+
+
+def _w4_use_transient_dense(x2) -> bool:
+    threshold = _w4_prefill_dense_min_rows()
+    return bool(
+        threshold > 0
+        and int(x2.shape[0]) >= threshold
+        and x2.is_cuda
+        and x2.dtype == torch.float16
+        and is_sm70(x2.device)
+    )
+
+
+def _w4_transient_dense_linear(x, q, scales, out_features, group_size=0):
+    extension = _load()
+    if extension is None:
+        return None
+    weight = extension.w4_dequant(
+        q, scales, int(group_size), _w4_dequant_block_cap()
+    )
+    return F.linear(x, weight)
+
+
+def _w4_dequant_block_cap() -> int:
+    try:
+        # Eight blocks per sm70 multiprocessor saturated both FFN orientations in
+        # the exact-sm70 sweep; larger grids only added scheduling overhead.
+        return max(1, int(os.environ.get("RWKV7_SM70_W4_DEQUANT_BLOCKS", "640")))
+    except ValueError:
+        return 640
+
+
+def w4_prefill_dequant_weight(q, scales, rows, group_size=0, out=None):
+    """Return a transient fp16 weight when the exact-sm70 prefill gate is on."""
+
+    threshold = _w4_prefill_dense_min_rows()
+    if (
+        threshold <= 0
+        or int(rows) < threshold
+        or not q.is_cuda
+        or scales.dtype != torch.float16
+        or not is_sm70(q.device)
+    ):
+        return None
+    extension = _load()
+    if extension is None:
+        return None
+    if out is not None:
+        return extension.w4_dequant_out(
+            q, scales, out, int(group_size), _w4_dequant_block_cap()
+        )
+    return extension.w4_dequant(
+        q, scales, int(group_size), _w4_dequant_block_cap()
+    )
+
+
 def w8_linear(x, q, s, out=None):
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
@@ -467,9 +550,53 @@ def w8_linear(x, q, s, out=None):
     return y.reshape(q.shape[0]) if scalar else y.reshape(*x.shape[:-1], q.shape[0])
 
 
+def w8_prefill_dequant_weight(q, scales, rows, out=None):
+    """Expand one symmetric W8 operand for a tensor-core prefill GEMM.
+
+    The packed weight remains the persistent model representation.  Native
+    prefill owns a bounded reusable fp16 workspace and overlaps this single
+    conversion kernel with the attention half of the same RWKV layer.
+    """
+
+    try:
+        threshold = max(
+            0,
+            int(os.environ.get("RWKV7_SM70_W8_PREFILL_DENSE_MIN_ROWS", "16")),
+        )
+    except ValueError:
+        threshold = 16
+    if (
+        threshold <= 0
+        or int(rows) < threshold
+        or not q.is_cuda
+        or q.dtype != torch.int8
+        or scales.dtype != torch.float16
+        or not is_sm70(q.device)
+    ):
+        return None
+    extension = _load()
+    if extension is None:
+        return None
+    expected = (int(q.shape[0]), int(q.shape[1]))
+    if out is None:
+        out = torch.empty(expected, device=q.device, dtype=scales.dtype)
+    elif tuple(out.shape) != expected:
+        raise ValueError(
+            f"sm70 W8 prefill workspace must have shape {expected}, got {tuple(out.shape)}"
+        )
+    return extension.w8_dequant_out(q, scales, out, _w4_dequant_block_cap())
+
+
 def w4_linear(x, q, s, out_features, in_features, out=None):
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
+    if int(q.shape[1]) * 2 == int(in_features) and _w4_use_transient_dense(x2):
+        result = _w4_transient_dense_linear(x, q, s, out_features, 0)
+        if result is not None:
+            if out is not None:
+                out.copy_(result)
+                return out
+            return result
     e = _load() if x2.is_cuda and is_sm70(x2.device) else None
     if e is None:
         lo = (q & 15).to(x.dtype) - 8
@@ -520,6 +647,15 @@ def w4_groupwise_linear(
         )
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
+    if _w4_use_transient_dense(x2):
+        result = _w4_transient_dense_linear(
+            x, q, scales, out_features, group_size
+        )
+        if result is not None:
+            if out is not None:
+                out.copy_(result)
+                return out
+            return result
     e = _load() if x2.is_cuda and is_sm70(x2.device) else None
     if e is None:
         lo = (q & 15).to(x.dtype) - 8

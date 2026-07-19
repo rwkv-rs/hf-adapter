@@ -283,11 +283,65 @@ priority ordering below; retain it as provenance:
   Preserve this gate when changing Native training, cache serialization,
   optimizer grouping, or remote-code loading.
 
+## V100 Native Prefill/Quant Follow-up (2026-07-19)
+
+- Fixed-shape Native CUDA-graph prefill closes the 1.5B prompt128 wrapper gap:
+  B1 is `6,111.57 tok/s` versus wrapper `5,831.4` (`1.048x`) and B8 is
+  `18,287.22` versus `17,495.5` (`1.045x`). Prompt and continuation cosine and
+  top-1 gates pass. Prompt512 reaches `10,874.77/20,762.07 tok/s` at B1/B8.
+- Prompt512 chunk64/128/256 throughput ratios improve to
+  `0.4190/0.6332/0.8747x` at B1 and `0.7584/0.9042/0.9665x` at B8. B1 small
+  chunks remain an open launch/scheduling gap; do not mark chunked prefill
+  universally complete.
+- V100 W4 `speed` is now an all-phase production profile for 1.5B prompt128:
+  prefill is `1.0180x/1.0024x`, decode `1.0293x/1.0012x`, and model footprint
+  `0.9348x` fp16 at B1/B8. Accuracy, greedy equality, and repeat determinism
+  pass.
+- Full-memory quant remains a separate memory profile. Fused side-stream
+  dequant plus dense tensor-core prompt GEMMs raises W4 B1 prefill to a best
+  clean `0.9166x` at `0.5395x` footprint, and W8 B1 from `0.3872x` to
+  `0.8514x` at `0.6932x` footprint. Decode and correctness pass, but neither
+  memory profile may claim fp16-or-better prefill yet.
+- A heavier tiled W4 WMMA experiment was correct but much slower than fused
+  dequant plus cuBLAS and was removed. Do not restore it without a new packed
+  tile schedule and exact-card end-to-end evidence.
+- Canonical evidence:
+  `bench/v100_native_prefill_graph_quant_20260719/README.md`.
+
+## V100 Fresh PR58 Closure Snapshot (2026-07-19)
+
+- Treat `bench/v100_pr58_final_20260719/README.md` as the newest V100
+  1.5B Native/Albatross, chunk/cache and all-phase quant artifact. The older
+  snapshots above remain provenance and wider-size evidence.
+- Fresh same-session Native/Albatross B1/B2/B4/B8 cached decode spans
+  `0.9105x-1.0616x` end to end. Prompt128/512 prefill spans
+  `0.9205x-1.1110x`. Prompt/continuation top-1 and cosine gates pass. The
+  residual dense work is B2 decode and B1 prefill, not a wrapper-wide failure.
+- Repository-Native dynamic batching B8→B2 runs 64 decode steps with 16
+  reorders and 6 drops at a `1.0` graph-cache hit rate. Chunk64/128/256/512
+  prompt512 ratios are `0.4192/0.6279/0.8705/1.0017x` at B1 and
+  `0.7715/0.9095/0.9677/0.9937x` at B8. Preserve continuation correctness;
+  do not advertise small B1 chunks as throughput wins.
+- `balanced` is the recommended V100 1.5B all-phase W4 policy. By default it
+  packs `lm_head` plus layer-0 FFN key/value. B1/B8 prefill is
+  `1.0108x/0.9986x`, decode is `1.0345x/1.0037x`, model footprint is
+  `0.9183x`, and peak is `0.9579x/0.9514x` fp16. Greedy equality,
+  determinism and cosine pass. CPU-first packing must retain the sm70 target
+  row layout (`RWKV7_SM70_TARGET_PACK=1`).
+- W8 `speed` is an fp16-speed/model-footprint lane, not a peak-VRAM lane.
+  Full-memory W4 is a footprint/decode lane whose B1/B8 prefill remains
+  `0.8992x/0.9533x`; do not silently promote it over `balanced`. Full-memory
+  W8 has `0.6932x` footprint but `1.2397x/1.2754x` graph peak.
+- Any V100 policy change must rerun the fresh dense, dynamic cache, chunk
+  continuation, paired quant correctness/speed/memory and historical
+  `check_v100_production_close.py` gates. Shared GPU processes may be paused
+  with a trap and resumed, never killed.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
-Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
-wrapper micro-optimization. Keep the default HF behavior unchanged unless a
-benchmark explicitly opts in.
+This remains a separate opt-in DPLR/WY compiled-prefill track, not the current
+V100 production default and not wrapper micro-optimization. Keep the default
+HF behavior unchanged unless a benchmark explicitly opts in.
 
 Goal:
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 
 import torch
+import rwkv7_hf.native_model as native_model_module
 
 from rwkv7_hf.native_graph_runtime import (
     NativeGraphRunner,
@@ -89,6 +90,58 @@ def test_native_graph_cache_management_surface() -> None:
     stats = model.rwkv7_native_graph_cache_stats()
     assert stats["size"] == 0
     assert stats["limit"] >= 1
+
+
+def test_native_prefill_graph_dispatch_preserves_continuation_cache(monkeypatch) -> None:
+    model = build_tiny_model()
+    source = build_cache(batch_size=1)
+    source.seen_tokens = 3
+    calls = []
+
+    class FakePrefillRunner:
+        def replay(self, input_ids, *, cache, initial_seen):
+            calls.append((tuple(input_ids.shape), int(initial_seen), cache is source))
+            cache.seen_tokens = int(initial_seen) + int(input_ids.shape[1])
+            return torch.zeros(1, 1, model.config.vocab_size), cache
+
+    monkeypatch.setattr(native_model_module, "_native_prefill_graph_enabled", lambda *args: True)
+    monkeypatch.setattr(model, "_native_prefill_graph_runner", lambda *args: FakePrefillRunner())
+
+    logits, cache = model._native_prefill(
+        torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
+        logits_to_keep=1,
+        seen_tokens=7,
+        cache=source,
+    )
+
+    assert tuple(logits.shape) == (1, 1, model.config.vocab_size)
+    assert cache is source
+    assert cache.seen_tokens == 7
+    assert calls == [((1, 4), 3, True)]
+    assert model._rwkv7_native_model_last_prefill_backend == "native_prefill_graph"
+
+
+def test_native_prefill_graph_cache_management_surface() -> None:
+    model = build_tiny_model()
+
+    class FakeRunner:
+        batch_size = 1
+        prompt_tokens = 128
+        detached = False
+
+        def detach_bound_cache(self):
+            self.detached = True
+
+    runner = FakeRunner()
+    model._rwkv7_native_prefill_graph_runner_cache = {("shape",): runner}
+    assert model.rwkv7_native_prefill_graph_cache_shapes() == [(1, 128)]
+    assert model.rwkv7_clear_native_prefill_graph_cache() == 1
+    assert runner.detached is True
+    assert model.rwkv7_native_prefill_graph_cache_shapes() == []
+    stats = model.rwkv7_native_prefill_graph_cache_stats()
+    assert stats["size"] == 0
+    assert stats["limit"] >= 1
+    assert stats["shapes"] == []
 
 
 def test_native_graph_state_dtype_is_explicit_and_fail_closed(monkeypatch) -> None:
