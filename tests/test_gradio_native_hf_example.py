@@ -78,6 +78,8 @@ def test_native_hf_gradio_decode_uses_fast_token_api() -> None:
     )
 
     assert logits.shape == (2, 5)
+    assert not logits.is_inference()
+    logits.sub_(1.0)
     assert bridge.model.fast_calls == 1
     assert bridge.model.forward_calls == 0
     assert state.cache == "decode-cache"
