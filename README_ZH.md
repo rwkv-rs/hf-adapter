@@ -104,12 +104,37 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 > 转换后的模型使用仓库代码，因此需要 `trust_remote_code=True`。只加载你信任的
 > 本地目录或 Hugging Face 仓库。
 
-RTX 5090 的同精度 Native 证据使用官方 RWKV-Gradio-3 的 FP16 权重、状态和输入输出
-作为对照。g1h 7.2B 缓存解码在 B1/B8 达到官方 `1.0010x/1.0104x`，并通过
-logits、状态和 greedy 门禁；g1h 2.9B/13.3B 在 B1/B8、提示长度
-128/512/2048 的 12 个 prefill 单元全部通过。仓库只会对这些精确卡、模型和形状
-自动选择已验证策略，证据见
-[`bench/5090_native_official_fp16_production_20260718/README.md`](bench/5090_native_official_fp16_production_20260718/README.md)。
+## RTX 5090 已验证结果
+
+- **Native 对 Albatross/v3a：**官方 g1h 7.2B FP16 缓存解码在 B1/B8 达到
+  `146.42/899.51 tok/s`，v3a 对照为 `146.28/890.21`，即
+  `1.0010x/1.0104x`；logits、循环状态、top-1 和 greedy token 全部通过。
+- **Prefill：**官方 g1h 2.9B/13.3B 在 B1/B8、prompt128/512/2048 的
+  12 个单元全部通过，Native 速度为 v3a 的 `1.0029x–1.5690x`，并通过
+  tensor、state 和 token 对齐。
+- **完整 FLA Qwen3.5：**B1/B8 共 8 组模型对、144/144 性能单元通过。
+  dense prefill/decode 最低为 `1.0226x/2.8130x`；RWKV-7 7.2B 对
+  Qwen3.5-9B 的 B1/B8 最低 prefill 为 `1.1739x/1.0309x`，decode 为
+  `2.8934x/2.8130x`。
+- **Tensor Core W4：**官方 g1h 1.5B/2.9B/7.2B/13.3B 的 B1/B8 共
+  8 个 all-phase 单元全部通过；footprint 为 `0.5298x–0.6250x`，最低
+  prefill/decode 为 `1.0010x/1.1854x`，cosine 高于 `0.9995`，next token
+  8/8 一致，group-128 物理网格 280/280 通过。
+- **训练：**Native B16/T512 BF16 train_temp 通过 399/399 梯度和参数更新对齐、
+  3 个配对 real-MiniPile seed、连续 5,000 steps 和 2,500+2,500 断点恢复；
+  配对中位速度为官方 `1.00049x`，5,000-step 速度为官方 `1.00255x`。
+- **官方网页：**RWKV-Gradio-3 已接入 Native HF fast-token 后端。保存的浏览器
+  A/B 输出文本完全一致，B1/B8 页面速度为 Native `138.5/831.8 tok/s`、
+  官方 `137.7/837.7 tok/s`。
+- **MATH500：**完整 `500 x 64` 运行达到 pass@64 `0.38`，对仓库 Albatross
+  reference 的 summary/decode 速度为 `4.336x/4.871x`。
+
+证据：
+[`Native/v3a`](bench/5090_native_official_fp16_production_20260718/README.md)、
+[`Qwen3.5`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)、
+[`W4`](bench/5090_bntn_all_models_20260716/README.md)、
+[`训练`](bench/5090_native_train_temp_real_minipile_20260718/README.md)和
+[`浏览器 A/B`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md)。
 
 ## 使用标准 Transformers API
 
