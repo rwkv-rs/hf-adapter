@@ -39,6 +39,7 @@ def test_training_checkpoint_restores_model_optimizer_rng_and_progress(
         runtime_s_accumulated=3.5,
     )
     saved_rng = capture_rng_state()
+    assert saved_rng["numpy"]["keys"].dtype == torch.int64
     saved_rng_digest = state_sha256(saved_rng)
 
     with torch.no_grad():

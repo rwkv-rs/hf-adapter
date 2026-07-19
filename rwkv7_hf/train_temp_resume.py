@@ -67,7 +67,12 @@ def capture_rng_state() -> dict[str, Any]:
         "python": random.getstate(),
         "numpy": {
             "bit_generator": str(numpy_state[0]),
-            "keys": torch.from_numpy(numpy_state[1].copy()),
+            # NumPy exposes MT19937 keys as uint32.  Torch 2.5 can construct a
+            # uint32 tensor but cannot serialize its TypedStorage, which makes
+            # checkpoint creation fail on supported Torch 2.5 environments.
+            # Store the same unsigned values losslessly as int64 and cast back
+            # to uint32 in ``restore_rng_state``.
+            "keys": torch.from_numpy(numpy_state[1].astype(np.int64, copy=True)),
             "position": int(numpy_state[2]),
             "has_gauss": int(numpy_state[3]),
             "cached_gaussian": float(numpy_state[4]),

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from rwkv7_hf.sm70_quant import (
     SM70_W4_BN_TN_CHOICES,
+    _cccl_include_paths,
     build_error,
     is_sm70,
     quantize_w4_groupwise,
@@ -19,6 +20,14 @@ from rwkv7_hf.sm70_quant import (
     w4_linear,
     w8_linear,
 )
+
+
+def test_cccl_include_path_discovery(monkeypatch, tmp_path) -> None:
+    cccl = tmp_path / "cccl"
+    (cccl / "nv").mkdir(parents=True)
+    (cccl / "nv" / "target").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CUDA_CCCL_INCLUDE_PATH", str(cccl))
+    assert str(cccl.resolve()) in _cccl_include_paths()
 
 
 def test_row_quantized_layout_and_cpu_fallback() -> None:

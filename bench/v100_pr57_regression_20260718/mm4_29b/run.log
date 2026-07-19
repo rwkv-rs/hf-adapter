@@ -1,0 +1,8 @@
+PASS 2.9b_b1_p128_d128: decode=1.0317x footprint=0.9573x cos=0.99970597 greedy=True policy=speed failed=none
+PASS 2.9b_b2_p128_d128: decode=1.0192x footprint=0.9573x cos=0.99969113 greedy=True policy=speed failed=none
+PASS 2.9b_b4_p128_d128: decode=1.0173x footprint=0.9573x cos=0.99968827 greedy=True policy=speed failed=none
+PASS 2.9b_b8_p128_d128: decode=1.0125x footprint=0.9573x cos=0.99965668 greedy=True policy=speed failed=none
+PASS 2.9b_b1_p512_d128: decode=1.0318x footprint=0.9573x cos=0.99974179 greedy=True policy=speed failed=none
+PASS 2.9b_b1_p2048_d128: decode=1.0306x footprint=0.9573x cos=0.9997499 greedy=True policy=speed failed=none
+PASS 2.9b_b1_p128_d512: decode=1.0316x footprint=0.9573x cos=0.99974203 greedy=True policy=speed failed=none
+{"completed": 7, "decode_speed_pass": 7, "expected": 7, "failures": 0, "footprint_pass": 7, "fused_epilogue": false, "greedy_pass": 7, "logits_pass": 7, "memory_policy_cells": 0, "repeat_determinism_pass": 7, "requested_policy": "speed", "speed_policy_cells": 7}

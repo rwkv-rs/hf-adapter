@@ -1,0 +1,19 @@
+captured_utc=2026-07-18T14:45:05Z
+host=wzu-SYS-4029GP-TRT
+source_branch=wangyue/v100-pr57-regression
+source_parent=0f2bd30
+native_chunk_commit=64b301a
+0, Tesla V100-PCIE-32GB, GPU-18fbf081-3c6d-d65b-11b8-288a4ce1ab28, 580.159.03, 32768 MiB
+1, Tesla V100-PCIE-32GB, GPU-f65db2e8-87bb-c88d-363f-23c79f793548, 580.159.03, 32768 MiB
+python=3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]
+torch=2.5.1+cu124
+torch_cuda=12.4
+transformers=5.12.1
+triton=3.3.0
+cccl=/home/data/wangyue/envs/rwkv7/include/nv/target
+CUDA_HOME=/home/wzu/cuda-12.4-local
+TORCH_CUDA_ARCH_LIST=7.0
+be480edb31d78b019eddbe11f2ec8b2d7214abe8cf28fe11d4b6b4f55e604374  rwkv7_hf/sm70_quant.py
+f8c682d267fbe5ac980b2453681ed40a414903ad34b9d1769149344dfb08d7c3  rwkv7_hf/native_model.py
+10b4b85f3e2295fa83967ad0b8c567db2297a3edc827de59d6e5555ca4783de0  bench/bench_chunked_prefill.py
+d40d3cc573916fbacd86e710dcceef265341b1bb1f7f374f30beb6c06741b44f  bench/bench_native_model_decode.py

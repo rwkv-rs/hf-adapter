@@ -136,7 +136,11 @@ def main() -> int:
 
     full_seq_length = full_out.past_key_values.get_seq_length()
     next_token = full_out.logits[:, -1:].argmax(dim=-1)
-    full_next = model(next_token, past_key_values=full_out.past_key_values, use_cache=True, logits_to_keep=1)
+    # ``timed`` returns inference tensors.  Keep all cache-continuation calls in
+    # inference mode as well, otherwise PyTorch may try to save those tensors
+    # for backward and reject them before the benchmark starts.
+    with torch.inference_mode():
+        full_next = model(next_token, past_key_values=full_out.past_key_values, use_cache=True, logits_to_keep=1)
     for chunk_size in args.chunk_sizes:
         def chunked_prefill():
             return model.rwkv7_prefill_chunks(ids, chunk_size=chunk_size, logits_to_keep=1)
@@ -147,7 +151,8 @@ def main() -> int:
         diff = float((full_out.logits.float() - out.logits.float()).abs().max().detach().cpu())
         chunk_seq_length = out.past_key_values.get_seq_length()
         seq_match = full_seq_length == chunk_seq_length
-        chunk_next = model(next_token, past_key_values=out.past_key_values, use_cache=True, logits_to_keep=1)
+        with torch.inference_mode():
+            chunk_next = model(next_token, past_key_values=out.past_key_values, use_cache=True, logits_to_keep=1)
         decode_diff = float((full_next.logits.float() - chunk_next.logits.float()).abs().max().detach().cpu())
         row = {
             "axis": "chunked_prefill",

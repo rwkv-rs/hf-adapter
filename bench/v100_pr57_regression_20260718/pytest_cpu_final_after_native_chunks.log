@@ -1,0 +1,20 @@
+........................ss.............................................. [ 15%]
+...................s............s...............................sss..... [ 30%]
+.....sss................................................................ [ 45%]
+.............................sss..............ssss...................... [ 60%]
+........................................................................ [ 75%]
+.......................s.....sss........................................ [ 91%]
+..........................................                               [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+../../data/wangyue/projects/flash-linear-attention/fla/utils/_device.py:100
+  /home/data/wangyue/projects/flash-linear-attention/fla/utils/_device.py:100: UserWarning: Triton is not supported on current platform, roll back to CPU.
+    _cpu_device_warning()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+453 passed, 21 skipped, 7 deselected, 3 warnings in 30.86s

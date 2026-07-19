@@ -163,6 +163,48 @@ torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor x,torch::Tensor q,torch
 _EXT = None
 _ERR = None
 _LOCK = threading.Lock()
+
+
+def _cccl_include_paths() -> list[str]:
+    """Find the CUDA C++ core-library headers needed by CUDA 12.4+.
+
+    Some minimal CUDA installations keep ``cuda_fp16.h`` under ``CUDA_HOME``
+    but install ``nv/target`` through the Python/Conda CCCL package.  NVCC then
+    fails while lazily building the sm_70 extension and inference silently
+    falls back to the much slower dequantized implementation.  Pass every
+    detected CCCL root explicitly so the production kernel does not depend on
+    a shell-specific ``CPATH``.
+    """
+
+    candidates: list[Path] = []
+    explicit = os.environ.get("CUDA_CCCL_INCLUDE_PATH", "")
+    candidates.extend(Path(item).expanduser() for item in explicit.split(os.pathsep) if item)
+    cuda_home = os.environ.get("CUDA_HOME")
+    if cuda_home:
+        candidates.append(Path(cuda_home) / "include")
+    candidates.extend(
+        [
+            Path(sys.prefix) / "include",
+            Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages" / "nvidia" / "cuda_cccl" / "include",
+            Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages" / "nvidia" / "cuda_runtime" / "include",
+        ]
+    )
+    found: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = str(candidate.resolve())
+        except OSError:
+            resolved = str(candidate)
+        if resolved in seen or not (candidate / "nv" / "target").is_file():
+            continue
+        seen.add(resolved)
+        found.append(resolved)
+    return found
+
+
 SM70_W4_BN_TN_CHOICES = (
     (1, 1),
     (2, 1),
@@ -340,7 +382,7 @@ def _load():
             from torch.utils.cpp_extension import load_inline
 
             _EXT = load_inline(
-                name="rwkv7_sm70_quant_v19",
+                name="rwkv7_sm70_quant_v20",
                 cpp_sources=_CPP,
                 cuda_sources=_CUDA,
                 functions=None,
@@ -350,6 +392,7 @@ def _load():
                     "--use_fast_math",
                     "--extra-device-vectorization",
                 ],
+                extra_include_paths=_cccl_include_paths(),
                 extra_ldflags=ld,
                 with_cuda=True,
                 verbose=False,
