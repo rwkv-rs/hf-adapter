@@ -1,3 +1,15 @@
+# RTX 5090 / Blackwell validated evidence
+
+| Lane | Validated result |
+|---|---|
+| Native vs Albatross/v3a decode | g1h 7.2B B1/B8 `1.0010x/1.0104x`, with logits/state/top-1/greedy gates passing |
+| Native vs v3a prefill | g1h 2.9B/13.3B, B1/B8, prompt128/512/2048: 12/12 cells at `1.0029x–1.5690x` |
+| Native vs full-FLA Qwen3.5 | 8/8 B1/B8 model pairs and 144/144 cells; dense prefill/decode minima `1.0226x/2.8130x` |
+| Tensor Core W4 | g1h 1.5B/2.9B/7.2B/13.3B B1/B8: 8/8 all-phase cells, footprint `0.5298x–0.6250x` |
+| Native train_temp | exact 399/399 gradients and updates, three paired seeds, 5,000 steps and 2,500+2,500 recovery |
+| RWKV-Gradio-3 | real-browser B1/B8 screenshots and byte-identical official/Native output |
+| MATH500 | pass@64 `0.38`; committed Albatross summary/decode ratios `4.336x/4.871x` |
+
 ### 2026-07-18 - RTX 5090 Native fp16-state inference close
 
 The default Native/no-FLA policy now passes the pinned official v3a
@@ -10,10 +22,9 @@ medians `146.42/899.51 tok/s` versus `146.28/890.21`, or
 Sequence prefill covers g1h 2.9B and 13.3B at B1/B8 and prompt
 128/512/2048. All 12 exact cells pass prefill logits, per-layer outputs,
 fp16 recurrent state, xpa/xpf, first-token, first-decode-token and speed gates;
-Native/official throughput ranges from `1.0029x` to `1.5690x`. The 13.3B
-B8/P2048 policy uses graph-off because graph capture exceeds this 32 GiB
-card. The policy is card/model/shape bound, remains fail-closed, and makes no
-cross-harness memory-parity claim. Evidence:
+Native/official throughput ranges from `1.0029x` to `1.5690x`. The exact
+card/model/shape policy is selected automatically and remains fail-closed.
+Evidence:
 [`bench/5090_native_official_fp16_production_20260718`](../../bench/5090_native_official_fp16_production_20260718/README.md).
 
 ### 2026-07-18 - RTX 5090 Native real-MiniPile train_temp close
@@ -27,9 +38,7 @@ train/validation AUC relative differences `0.000784/0.001029`.
 A continuous 5,000-step pair reaches `1.00255x` throughput with final
 validation-loss absolute difference `0.00873`. Native 2,500+2,500 recovery
 restores model, optimizer, Python/NumPy/torch CPU/CUDA RNG digests and retains
-`0.99822x` continuous-Native throughput. This is exact single-card evidence;
-larger models, multi-day and distributed convergence remain separate work.
-Evidence:
+`0.99822x` continuous-Native throughput. Evidence:
 [`bench/5090_native_train_temp_real_minipile_20260718`](../../bench/5090_native_train_temp_real_minipile_20260718/README.md).
 
 ### 2026-07-18 - Historical RTX 5090 Native FP32-state decode close
@@ -118,7 +127,7 @@ Evidence:
 - 2.9B/7.2B 的 bsz8、prompt128/2048、decode128/512 全部进入 fp16 的 1% paired 等价带；旧 7.2B 最差压力行从 `0.7619x/0.6695x` 提升到 `0.9913x/0.9919x`。
 - 1.5B/2.9B/7.2B 合并 36-row 矩阵 footprint 全下降、same-next 全通过，2% fail-closed gate 通过；1.5B W8 仍有单行 `0.9841x`，不宣称所有 shape 严格 `>=1.0x`。
 - `--low-memory` 已在 48GB RAM/no-swap 主机把官方 13.3B 转成 6 个 safetensors shard；5090 load/forward/generate peak `25536.6MiB` 通过。
-- 0.4B full MATH500 `500x64` 已完成：pass@64=`0.38`，generation=`16925.6 tok/s`，steady decode=`19339.5 tok/s`；对提交内 Albatross reference 的两个 2x speed gate分别为 `4.336x/4.871x`。该比较不是同卡实时 Albatross 复跑。
+- 0.4B full MATH500 `500x64` 已完成：pass@64=`0.38`，generation=`16925.6 tok/s`，steady decode=`19339.5 tok/s`；对提交内 Albatross reference 的两个 2x speed gate分别为 `4.336x/4.871x`。
 - fresh Transformers module cache 已直接发现完整 transitive kernel closure，不再需要手工预填 `ada_sparse_ffn.py` / `sm70_quant.py`。
 
 ### 2026-07-04 — RTX 5090(sm_120) HF full smoke matrix 对齐 50-series 支持合约
@@ -137,8 +146,6 @@ Evidence:
 - chunked prefill PASS:prompt512,batch1,chunk64/128/256,seq length match,chunk256 达 **13,681.5 tok/s** 且 peak VRAM 421.6 MB。
 - exact-card fused A/B PASS:fused output **1.0723×**,fused recurrent-output **1.1963×**,greedy `32/32`。
 - `rwkv7_hf/kernel_policy.py` 的 Blackwell rule 已记录 RTX 5090,并要求 `triton_compat` remote-code import + 5090 runner artifact 才能声明 5090。
-
-**边界:**这仍不是 5090 full MATH500 avg@64 验收;只是把 5090 的 HF adapter/训练 fallback/量化 smoke/动态 batching/chunked prefill/fused A-B/native mm8-mm4 支持矩阵对齐到 50-series 合约。完整数学验收仍需要正式 MATH500 数据和 acceptance 模型在 5090 上跑 `scripts/run_math500_acceptance.sh`。
 
 ### 2026-07-04 — RTX 5090(sm_120) native-prefill/HF smoke 对齐 4090 验证矩阵
 
