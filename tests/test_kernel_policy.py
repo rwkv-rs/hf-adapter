@@ -133,6 +133,30 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_ada.ada_linear_rows == "2 4"
     assert other_ada.norm_mix_num_warps == 4
 
+    rtx4080 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4080", (8, 9)))
+    expected_4080_prefill_shapes = tuple(
+        (hidden, 24, batch, tokens)
+        for hidden in (1024, 2048)
+        for batch in (1, 2, 4, 8)
+        for tokens in (128, 512, 2048)
+    )
+    assert rtx4080.fast_prefill
+    assert rtx4080.fused_prefill_scan
+    assert rtx4080.prefill_scan_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.prefill_graph
+    assert rtx4080.prefill_graph_cache_size == 4
+    assert rtx4080.prefill_graph_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.fused_prefill_shift_mix
+    assert rtx4080.prefill_shift_mix_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.fused_prefill_state_prep
+    assert rtx4080.prefill_state_prep_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.fused_prefill_output
+    assert rtx4080.prefill_fused_output_model_shapes == expected_4080_prefill_shapes
+    assert not rtx4080.ada_linear
+    assert rtx4080.ada_wagv_lora
+    assert not rtx4080.ada_sparse_ffn
+    assert rtx4080.rkv_policy == "manual"
+
     rtx3090 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 3090", (8, 6)))
     assert rtx3090.fast_prefill
     assert rtx3090.fused_prefill_scan

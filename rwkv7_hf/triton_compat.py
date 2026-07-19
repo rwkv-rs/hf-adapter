@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from typing import Any
 
 
@@ -28,7 +28,23 @@ def patch_legacy_attrs_descriptor() -> bool:
         import triton.compiler.compiler as compiler  # type: ignore
     except Exception:
         return False
-    if hasattr(compiler, "AttrsDescriptor"):
+    existing = getattr(compiler, "AttrsDescriptor", None)
+    if existing is not None:
+        if not is_dataclass(existing):
+            # Triton 3.2 exports a functional native descriptor, but some
+            # PyTorch/DeepSpeed import paths still call dataclasses.fields on
+            # it. Add metadata in place so the native constructor and methods
+            # remain authoritative.
+            annotations = dict(getattr(existing, "__annotations__", {}))
+            annotations.update(
+                {
+                    "arg_properties": dict[str, list[int]],
+                    "property_values": dict[str, int],
+                    "constant_properties": set[str],
+                }
+            )
+            existing.__annotations__ = annotations
+            dataclass(init=False, repr=False, eq=False)(existing)
         return False
 
     @dataclass(init=False)

@@ -9,6 +9,7 @@ historical rows remain in platform documents and `bench/` artifacts.
 |---|---|---|---|---|
 | RTX 3090 | g1h 7.2B vs full-FLA Qwen3.5-9B bsz8 prefill/decode minimum `1.058907x/1.788418x`; decode active-work minimum `1.437946x` | W8 total/decode minimum `1.098658x/1.084305x`; W4 `1.014527x/1.025666x`; footprint and peak lower in 18/18 | finite logits, 24/24 Qwen FLA bindings and fail-closed route checks; task quality not measured | Production-close for measured bsz8 lane |
 | RTX 5070 Laptop | 1.5B RWKV vs full-FLA Qwen3.5 2B bsz8 prefill/decode minimum `1.082707x/1.795119x` | fp16/W8/W4 all pass; footprint and peak VRAM lower in 18/18 | Qwen full-FLA bindings; Qwen and RWKV greedy/cosine probes pass | Production-close for measured bsz8 lane |
+| RTX 4080 | 1.5B RWKV vs full-FLA Qwen3.5-2B bsz8 prefill/decode minimum `1.024180x/1.435296x`; decode active-work minimum `1.768344x` | output-head A8W8/W4 complete-cell minima `1.005056x/1.026122x`; full-model BNB8/4 footprint `0.604572x/0.406858x` | full-Qwen-FLA bindings 6/6; output-head cosine and greedy gates pass; model quality not measured | Production-close for measured Native HF and bsz8 lanes |
 | V100 | Albatross P1 plus 1.5B vs full-FLA Qwen3.5-2B B1/B8 raw prefill/decode minima `2.815921x/5.270432x`; active-work minima `2.285574x/4.277804x` | W8/W4 decode `1.006x–1.128x` fp16; paired prefill `0.996x–1.007x` | Greedy/cache gates; Qwen and RWKV 32-token native-route probes pass | Production-close for measured lanes |
 | RTX 4090 | g1h 7.2B vs full-FLA Qwen3.5-9B bsz8 prefill/decode minimum `1.023951x/2.210065x`; decode active-work minimum `1.776961x` | W8 total/decode minimum `1.360072x/1.356914x`; W4 `1.013273x/1.022724x`; selected quant footprint and peak lower in 12/12 | finite logits, 24/24 Qwen optimized bindings, BNB8/MM4 cosine+greedy probes; task quality not measured | Production-close for measured bsz8 lane |
 | RTX 4090 small models | 0.4B/0.8B, 1.5B/2B, 2.9B/4B bsz8 dense prefill minima `1.370369x/1.041959x/1.305103x`; decode minima `12.101818x/5.636846x/4.214362x` | W8 total minima `1.011441x/1.131672x/1.176050x`; W4 `1.029994x/1.027211x/1.014959x`; footprint and peak lower in 36/36 selected quant cells | finite logits, full-Qwen-FLA dense contract, active-work and fail-closed route gates; task quality not measured | Production-close for measured bsz8 lanes |
@@ -21,6 +22,9 @@ historical rows remain in platform documents and `bench/` artifacts.
 
 V100 optimized-Qwen evidence:
 [`v100_active_b1b8_20260715`](../bench/v100_active_b1b8_20260715/README.md).
+
+RTX 4080 Native HF and optimized-Qwen evidence:
+[`4080_ada_validation_20260719`](../bench/4080_ada_validation_20260719/README.md).
 
 RTX 5090 evidence:
 [`5090_g1h_qwen35_b1_b8_20260715`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)

@@ -1,0 +1,194 @@
+=== trainer_bf16 ===
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  52%|█████▏    | 413/795 [00:00<00:00, 4119.22it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 3488.42it/s]
+
+  0%|          | 0/6 [00:00<?, ?it/s]
+ 17%|█▋        | 1/6 [00:01<00:08,  1.78s/it]
+
+
+ 17%|█▋        | 1/6 [00:01<00:08,  1.78s/it]
+ 33%|███▎      | 2/6 [00:03<00:06,  1.56s/it]
+
+
+ 33%|███▎      | 2/6 [00:03<00:06,  1.56s/it]
+ 50%|█████     | 3/6 [00:04<00:04,  1.48s/it]
+
+
+ 50%|█████     | 3/6 [00:04<00:04,  1.48s/it]
+ 67%|██████▋   | 4/6 [00:05<00:02,  1.44s/it]
+
+
+ 67%|██████▋   | 4/6 [00:05<00:02,  1.44s/it]
+ 83%|████████▎ | 5/6 [00:07<00:01,  1.42s/it]
+
+
+ 83%|████████▎ | 5/6 [00:07<00:01,  1.42s/it]
+100%|██████████| 6/6 [00:08<00:00,  1.41s/it]
+
+
+100%|██████████| 6/6 [00:08<00:00,  1.41s/it]
+
+
+100%|██████████| 6/6 [00:08<00:00,  1.41s/it]
+100%|██████████| 6/6 [00:08<00:00,  1.46s/it]
+{'loss': '2.407', 'grad_norm': '41.73', 'learning_rate': '0.0001', 'epoch': '0.04167'}
+{'loss': '2.109', 'grad_norm': '21.24', 'learning_rate': '8.333e-05', 'epoch': '0.08333'}
+{'loss': '1.726', 'grad_norm': '16.91', 'learning_rate': '6.667e-05', 'epoch': '0.125'}
+{'loss': '1.701', 'grad_norm': '11.85', 'learning_rate': '5e-05', 'epoch': '0.1667'}
+{'loss': '1.703', 'grad_norm': '11.74', 'learning_rate': '3.333e-05', 'epoch': '0.2083'}
+{'loss': '1.187', 'grad_norm': '9.376', 'learning_rate': '1.667e-05', 'epoch': '0.25'}
+{'train_runtime': '8.738', 'train_samples_per_second': '1.373', 'train_steps_per_second': '0.687', 'train_loss': '1.805', 'epoch': '0.25'}
+[native-trainer] loss history: [2.4067, 2.1086, 1.7261, 1.7006, 1.7028, 1.1872]
+[native-trainer] trainable params updated: 144/144
+NATIVE TRAINER PASS
+=== resume_bf16 ===
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  69%|██████▉   | 551/795 [00:00<00:00, 5499.19it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 5741.42it/s]
+
+  0%|          | 0/2 [00:00<?, ?it/s]
+ 50%|█████     | 1/2 [00:02<00:02,  2.01s/it]
+
+
+ 50%|█████     | 1/2 [00:02<00:02,  2.01s/it]
+100%|██████████| 2/2 [00:03<00:00,  1.81s/it]
+
+
+100%|██████████| 2/2 [00:03<00:00,  1.81s/it]
+
+
+100%|██████████| 2/2 [00:03<00:00,  1.81s/it]
+100%|██████████| 2/2 [00:03<00:00,  1.85s/it]
+{'loss': '2.847', 'grad_norm': '21.68', 'learning_rate': '0.0001', 'epoch': '0.0625'}
+{'loss': '2.55', 'grad_norm': '20.22', 'learning_rate': '5e-05', 'epoch': '0.125'}
+{'train_runtime': '3.692', 'train_samples_per_second': '1.083', 'train_steps_per_second': '0.542', 'train_loss': '2.698', 'epoch': '0.125'}
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  66%|██████▌   | 524/795 [00:00<00:00, 5234.14it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 4680.07it/s]
+
+  0%|          | 0/3 [00:00<?, ?it/s]
+100%|██████████| 3/3 [00:01<00:00,  1.72it/s]
+
+
+100%|██████████| 3/3 [00:01<00:00,  1.72it/s]
+
+
+100%|██████████| 3/3 [00:01<00:00,  1.72it/s]
+100%|██████████| 3/3 [00:01<00:00,  1.70it/s]
+{'loss': '2.234', 'grad_norm': '21.03', 'learning_rate': '0.0001', 'epoch': '0.1875'}
+{'train_runtime': '1.766', 'train_samples_per_second': '3.397', 'train_steps_per_second': '1.698', 'train_loss': '0.7447', 'epoch': '0.1875'}
+[native-trainer-resume] checkpoint=checkpoint-2, first_loss=2.6984, resume_loss=0.7447, first_delta=0.000150, resume_delta=0.062515, global_step=3
+NATIVE TRAINER RESUME PASS
+=== sft_bf16 ===
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  87%|████████▋ | 690/795 [00:00<00:00, 6776.33it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 6618.33it/s]
+
+Adding EOS to train dataset:   0%|          | 0/12 [00:00<?, ? examples/s]
+Adding EOS to train dataset: 100%|██████████| 12/12 [00:00<00:00, 10343.54 examples/s]
+Parameter 'fn_kwargs'={'processing_class': RWKV7Tokenizer(name_or_path='$PRIVATE_ROOT/models/rwkv7-g1d-0.4b-hf', vocab_size=65536, model_max_length=1000000000000000019884624838656, padding_side='right', truncation_side='right', special_tokens={'eos_token': '<|endoftext|>', 'pad_token': '<|padding|>'}, added_tokens_decoder={
+	65536: AddedToken("<|endoftext|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+	65537: AddedToken("<|padding|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+}), 'dataset_text_field': 'text', 'assistant_only_loss': False, 'chat_template': None} of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only shown once. Subsequent hashing failures won't be shown.
+
+Tokenizing train dataset:   0%|          | 0/12 [00:00<?, ? examples/s]
+Tokenizing train dataset: 100%|██████████| 12/12 [00:00<00:00, 5040.22 examples/s]
+
+Building labels for train dataset:   0%|          | 0/12 [00:00<?, ? examples/s]
+Building labels for train dataset: 100%|██████████| 12/12 [00:00<00:00, 8408.23 examples/s]
+
+Truncating train dataset:   0%|          | 0/12 [00:00<?, ? examples/s]
+Truncating train dataset: 100%|██████████| 12/12 [00:00<00:00, 8263.28 examples/s]
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+
+  0%|          | 0/2 [00:00<?, ?it/s]
+ 50%|█████     | 1/2 [00:00<00:00,  1.14it/s]
+
+
+ 50%|█████     | 1/2 [00:00<00:00,  1.14it/s]
+100%|██████████| 2/2 [00:01<00:00,  1.51it/s]
+
+
+100%|██████████| 2/2 [00:01<00:00,  1.51it/s]
+
+
+100%|██████████| 2/2 [00:01<00:00,  1.51it/s]
+100%|██████████| 2/2 [00:01<00:00,  1.44it/s]
+{'loss': '2.206', 'grad_norm': '9.192', 'learning_rate': '0.0001', 'entropy': '2.598', 'mean_token_accuracy': '0.5455', 'num_tokens': '12', 'epoch': '0.08333'}
+{'loss': '4.332', 'grad_norm': '26.05', 'learning_rate': '5e-05', 'entropy': '4.169', 'mean_token_accuracy': '0.2222', 'num_tokens': '22', 'epoch': '0.1667'}
+{'train_runtime': '1.391', 'train_samples_per_second': '1.438', 'train_steps_per_second': '1.438', 'train_loss': '3.269', 'epoch': '0.1667'}
+[native-sft] loss history: [2.2056, 4.3319]
+[native-sft] train_loss=3.2687, max_trainable_delta=0.000150
+NATIVE SFT PASS
+=== dpo_bf16 ===
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  64%|██████▍   | 511/795 [00:00<00:00, 5108.86it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 3394.59it/s]
+
+Adding EOS to train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]
+Adding EOS to train dataset: 100%|██████████| 8/8 [00:00<00:00, 5631.83 examples/s]
+Parameter 'fn_kwargs'={'processing_class': RWKV7Tokenizer(name_or_path='$PRIVATE_ROOT/models/rwkv7-g1d-0.4b-hf', vocab_size=65536, model_max_length=1000000000000000019884624838656, padding_side='right', truncation_side='right', special_tokens={'eos_token': '<|endoftext|>', 'pad_token': '<|padding|>'}, added_tokens_decoder={
+	65536: AddedToken("<|endoftext|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+	65537: AddedToken("<|padding|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+})} of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only shown once. Subsequent hashing failures won't be shown.
+
+Tokenizing train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]
+Tokenizing train dataset: 100%|██████████| 8/8 [00:00<00:00, 2825.16 examples/s]
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+
+  0%|          | 0/2 [00:00<?, ?it/s]
+ 50%|█████     | 1/2 [00:00<00:00,  1.07it/s]
+
+
+ 50%|█████     | 1/2 [00:00<00:00,  1.07it/s]
+100%|██████████| 2/2 [00:01<00:00,  1.34it/s]
+
+
+100%|██████████| 2/2 [00:01<00:00,  1.34it/s]
+
+
+100%|██████████| 2/2 [00:01<00:00,  1.34it/s]
+100%|██████████| 2/2 [00:01<00:00,  1.29it/s]
+{'loss': '0.6931', 'grad_norm': '5.815', 'learning_rate': '0.0001', 'entropy': '1.553', 'num_tokens': '32', 'logits/chosen': '-15.67', 'logits/rejected': '-16.15', 'mean_token_accuracy': '0.25', 'rewards/chosen': '0', 'rewards/rejected': '0', 'rewards/accuracies': '0', 'rewards/margins': '0', 'logps/chosen': '-20.56', 'logps/rejected': '-21.48', 'epoch': '0.25'}
+{'loss': '0.6181', 'grad_norm': '5.269', 'learning_rate': '5e-05', 'entropy': '1.548', 'num_tokens': '64', 'logits/chosen': '-15.6', 'logits/rejected': '-16.12', 'mean_token_accuracy': '0.25', 'rewards/chosen': '0.08524', 'rewards/rejected': '-0.07175', 'rewards/accuracies': '1', 'rewards/margins': '0.157', 'logps/chosen': '-19.71', 'logps/rejected': '-22.2', 'epoch': '0.5'}
+{'train_runtime': '1.556', 'train_samples_per_second': '2.571', 'train_steps_per_second': '1.286', 'train_loss': '0.6556', 'epoch': '0.5'}
+[native-dpo] loss history: [0.6931, 0.6181]
+[native-dpo] train_loss=0.6556, max_trainable_delta=0.000150
+NATIVE DPO PASS
+=== grpo_bf16 ===
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  57%|█████▋    | 451/795 [00:00<00:00, 4506.47it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 3433.95it/s]
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+
+  0%|          | 0/2 [00:00<?, ?it/s]
+ 50%|█████     | 1/2 [00:01<00:01,  1.03s/it]
+
+
+ 50%|█████     | 1/2 [00:01<00:01,  1.03s/it]
+100%|██████████| 2/2 [00:01<00:00,  1.11it/s]
+
+
+100%|██████████| 2/2 [00:01<00:00,  1.11it/s]
+
+
+100%|██████████| 2/2 [00:01<00:00,  1.11it/s]
+100%|██████████| 2/2 [00:01<00:00,  1.08it/s]
+{'loss': '0', 'grad_norm': '3.82', 'learning_rate': '0.0001', 'num_tokens': '24', 'completions/mean_length': '8', 'completions/min_length': '8', 'completions/max_length': '8', 'completions/clipped_ratio': '1', 'completions/mean_terminated_length': '0', 'completions/min_terminated_length': '0', 'completions/max_terminated_length': '0', 'rewards/reward_func/mean': '0.5', 'rewards/reward_func/std': '0.7071', 'reward': '0.5', 'reward_std': '0.7071', 'frac_reward_zero_std': '0', 'entropy': '2.195', 'clip_ratio/low_mean': '0', 'clip_ratio/low_min': '0', 'clip_ratio/high_mean': '0', 'clip_ratio/high_max': '0', 'clip_ratio/region_mean': '0', 'step_time': '1', 'epoch': '0.08333'}
+{'loss': '0', 'grad_norm': '3.354', 'learning_rate': '5e-05', 'num_tokens': '52', 'completions/mean_length': '8', 'completions/min_length': '8', 'completions/max_length': '8', 'completions/clipped_ratio': '1', 'completions/mean_terminated_length': '0', 'completions/min_terminated_length': '0', 'completions/max_terminated_length': '0', 'rewards/reward_func/mean': '0.5', 'rewards/reward_func/std': '0.7071', 'reward': '0.5', 'reward_std': '0.7071', 'frac_reward_zero_std': '0', 'entropy': '3.132', 'clip_ratio/low_mean': '0', 'clip_ratio/low_min': '0', 'clip_ratio/high_mean': '0', 'clip_ratio/high_max': '0', 'clip_ratio/region_mean': '0', 'step_time': '0.8017', 'epoch': '0.1667'}
+{'train_runtime': '1.845', 'train_samples_per_second': '2.168', 'train_steps_per_second': '1.084', 'train_loss': '0', 'epoch': '0.1667'}
+[native-grpo] loss history: [0.0, 0.0]
+[native-grpo] train_loss=0.0000, max_trainable_delta=0.000150
+NATIVE GRPO PASS

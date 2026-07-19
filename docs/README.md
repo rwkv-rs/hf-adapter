@@ -19,6 +19,7 @@ and history.
 | How do I run the official RWKV-Gradio-3 UI with Native HF? | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) |
 | How do I run W8/W4 instead of only reading quantization status? | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) |
 | How do I use the promoted RTX 5090 g1h BN/TN W4 route? | [`QUANTIZATION_USAGE.md#5-rtx-5090-g1h-bntn-tensor-core-w4`](QUANTIZATION_USAGE.md#5-rtx-5090-g1h-bntn-tensor-core-w4) |
+| How do I reproduce the RTX 4080 B8 dense/quant acceptance? | [`QUANTIZATION_USAGE.md#6-rtx-4080-b8-配对验收`](QUANTIZATION_USAGE.md#6-rtx-4080-b8-配对验收) |
 | How do I run Apple MPS, MLX, sessions, quant, or CoreML? | [`APPLE_USAGE.md`](APPLE_USAGE.md) |
 | What is done now? | [`../HF_STATUS.md`](../HF_STATUS.md) |
 | How should completion be reported? | [`../HF_STATUS.md#completion-reporting-rule`](../HF_STATUS.md#completion-reporting-rule) |
@@ -71,6 +72,7 @@ match later outcomes.
 |---|---|---|
 | Windows / CPU | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | Download-free Native HF interface/update/save-reload smoke; not a quality or speed claim |
 | V100 | [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md) | [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md), [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md) |
+| RTX 4080 | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) | [`../bench/4080_ada_validation_20260719/README.md`](../bench/4080_ada_validation_20260719/README.md) |
 | RTX 4090 | [`../bench/4090_validation_summary.md`](../bench/4090_validation_summary.md) | [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md), [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
 | RTX 50 / Blackwell | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md), [`../bench/5090_native_official_fp16_production_20260718/README.md`](../bench/5090_native_official_fp16_production_20260718/README.md), [`../bench/5090_native_train_temp_real_minipile_20260718/README.md`](../bench/5090_native_train_temp_real_minipile_20260718/README.md), [`../bench/5090_native_hf_gradio_train_temp_20260718/README.md`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md) |
 | A100 | [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md) | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |

@@ -62,6 +62,20 @@ def test_native_prefill_graph_policy_is_exact_shape_allowlisted(monkeypatch) -> 
     assert native_model._native_prefill_graph_enabled(8, 2048, 4096, 61)
 
 
+def test_native_prefill_graph_cache_size_uses_policy_and_env_override(monkeypatch) -> None:
+    policy = SimpleNamespace(prefill_graph_cache_size=4)
+    monkeypatch.setattr(native_model, "current_kernel_policy", lambda **_kwargs: policy)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", raising=False)
+
+    assert native_model._native_prefill_graph_cache_size() == 4
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", "7")
+    assert native_model._native_prefill_graph_cache_size() == 7
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", "invalid")
+    assert native_model._native_prefill_graph_cache_size() == 4
+
+
 def test_native_prefill_graph_runner_cache_is_shape_keyed_lru(monkeypatch) -> None:
     created = []
 

@@ -192,7 +192,11 @@ def test_clampw_scan_exact_shape_policy_and_env_override(monkeypatch) -> None:
             prefill_clampw_scan_model_shapes=((2048, 24, 8, 512),),
         ),
     )
-    monkeypatch.setattr(native_jit, "_native_prefill_fused_scan_enabled", lambda: True)
+    monkeypatch.setattr(
+        native_jit,
+        "_native_prefill_fused_scan_enabled",
+        lambda *_shape: True,
+    )
     monkeypatch.setattr(native_jit, "fused_recurrent_scan_clampw", object())
     monkeypatch.setattr(native_jit, "fused_recurrent_scan_clampw_available", lambda: True)
 
@@ -202,6 +206,36 @@ def test_clampw_scan_exact_shape_policy_and_env_override(monkeypatch) -> None:
     assert native_jit._native_prefill_fused_clampw_scan_enabled(8, 128, 2560, 32)
     monkeypatch.setenv(env_name, "0")
     assert not native_jit._native_prefill_fused_clampw_scan_enabled(8, 512, 2048, 24)
+
+
+def test_fused_scan_exact_shape_policy_and_explicit_override(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            fused_prefill_scan=True,
+            prefill_scan_model_shapes=((2048, 24, 8, 512),),
+        ),
+    )
+    monkeypatch.setattr(native_jit, "fused_recurrent_scan", object())
+    monkeypatch.setattr(native_jit, "fused_recurrent_scan_available", lambda: True)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_SCAN", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SCAN_MODEL_SHAPES", raising=False)
+
+    assert native_jit._native_prefill_fused_scan_enabled(8, 512, 2048, 24)
+    assert not native_jit._native_prefill_fused_scan_enabled(8, 128, 2048, 24)
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "1")
+    assert native_jit._native_prefill_fused_scan_enabled(8, 128, 2048, 24)
+
+    monkeypatch.setenv(
+        "RWKV7_NATIVE_PREFILL_SCAN_MODEL_SHAPES",
+        "2048x24x8x128",
+    )
+    assert native_jit._native_prefill_fused_scan_enabled(8, 128, 2048, 24)
+    assert not native_jit._native_prefill_fused_scan_enabled(8, 512, 2048, 24)
 
 
 def test_native_prefill_scan_passes_model_layers_to_clampw_gate(monkeypatch) -> None:
@@ -411,6 +445,11 @@ def test_sequence_ffn_exact_model_shape_does_not_alias_equal_rows(monkeypatch) -
 def test_fp16_accum_ffn_key_is_exact_shape_and_explicitly_disableable(monkeypatch) -> None:
     from rwkv7_hf import native_jit
 
+    monkeypatch.setattr(
+        native_jit.torch.backends.cuda,
+        "matmul",
+        types.SimpleNamespace(allow_fp16_accumulation=False),
+    )
     monkeypatch.setattr(
         native_jit,
         "_kernel_policy",

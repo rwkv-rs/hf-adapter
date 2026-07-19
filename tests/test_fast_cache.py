@@ -69,7 +69,9 @@ def main() -> int:
 
     fast_cache_name = type(fast.past_key_values).__name__
     print("fast_cache_type", fast_cache_name)
-    assert fast_cache_name == "RWKV7StateCache", fast_cache_name
+    assert fast_cache_name in {"RWKV7StateCache", "NativeRWKV7Cache"}, fast_cache_name
+    assert hasattr(fast.past_key_values, "get_seq_length")
+    assert hasattr(fast.past_key_values, "clone")
     max_diff = float((ref.logits.float() - fast.logits.float()).abs().max().detach().cpu())
     print("prefill_max_abs_diff", max_diff)
     assert max_diff <= args.max_diff, max_diff

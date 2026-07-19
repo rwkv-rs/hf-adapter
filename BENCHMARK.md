@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-19**.
 
 ## Benchmark contract
 
@@ -31,6 +31,7 @@ Status vocabulary:
 | RTX 4090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA routes, BNB8/MM4 same-quant probes; task quality is separate | dense prefill/decode min `1.0240x/2.2101x`; decode active work min `1.7770x`; W8/W4 total-latency and quant-local memory gates pass | **PASS 18/18** |
 | RTX 4090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/full-FLA/route contracts; quality is a separate axis | dense prefill min `1.3704x/1.0420x/1.3051x`, decode min `12.1018x/5.6368x/4.2144x`; W8/W4 total latency and physical-memory gates pass | **PASS 54/54** |
 | RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
+| RTX 4080 | Native HF 0.4B/1.5B plus 1.5B vs full-FLA Qwen3.5-2B, bsz8 | native/cache/training smokes; Qwen optimized bindings; paired quant cosine and greedy gates | dense prefill/decode minima `1.0242x/1.4353x`; A8W8/W4 total minima `1.0051x/1.0261x`; BNB8/4 footprints `0.6046x/0.4069x` | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
@@ -351,6 +352,43 @@ an exact-card performance and memory close, not a model-quality claim.
 Final full-FLA evidence: [`bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](bench/5070_qwen35_full_fla_bsz8_20260714/README.md).
 Historical FLA-core-only evidence: [`bench/5070_qwen35_fla_native_prefill_20260714/README.md`](bench/5070_qwen35_fla_native_prefill_20260714/README.md).
 Historical baseline: [`bench/5070_qwen35_fla_matrix_20260713/README.md`](bench/5070_qwen35_fla_matrix_20260713/README.md).
+
+## RTX 4080 Native HF production validation
+
+The exact-card policy validates repository-native HF execution on one RTX 4080
+for the measured 0.4B/1.5B prefill shapes, cached decode, recurrent-cache APIs,
+PEFT/Trainer/TRL compatibility and speculative generation. Native prefill
+graph/scan and its companion fusions are enabled only for the 24 measured
+`hidden=1024/2048`, `layers=24`, batch `1/2/4/8`, prompt
+`128/512/2048` shapes; other shapes retain the compatible fallback.
+
+The final bsz8 matrix compares RWKV-7 1.5B with official Qwen3.5-2B at prompt
+128/512/2048 and decode 128/512. All six Qwen rows fail closed unless every
+Gated DeltaNet layer uses FLA chunk prefill and fused-recurrent decode, every
+causal convolution binds its optimized prefill/update operator, and fused
+gated normalization is active.
+
+| Route | Prefill minimum | Decode minimum | Complete-cell minimum | Footprint | Correctness |
+|---|---:|---:|---:|---:|---:|
+| Dense RWKV / Qwen | `1.024180x` | `1.435296x` | — | `0.811662x` | Qwen full FLA 6/6 |
+| A8W8 output head / fp16 | `0.9988x` | `1.0076x` | `1.005056x` | `0.9561x` | cosine `>=0.999951`, greedy 6/6 |
+| TorchAO-W4 output head / fp16 | `0.9996x` | `1.0458x` | `1.026122x` | `0.9355x` | cosine `>=0.999520`, greedy 6/6 |
+
+Dense decode active-parameter work ratio is `1.768344x–1.814687x`. This is a
+speed and active-work comparison, not a task-quality claim. The quantized speed
+rows replace one output-head module; they do not establish full-model W8/W4
+speed. Their acceptance follows the promoted 3090/4090 contract: cached decode
+and exact-cell `prefill + decode` latency must both be no slower than fp16,
+while phase prefill remains disclosed telemetry. Full-model BNB8/BNB4 are
+separate memory routes with footprint ratios `0.604572x/0.406858x` and no speed
+claim.
+
+The bounded BF16 training evidence covers finite Trainer updates, checkpoint
+resume, SFT/DPO/GRPO and PEFT save/load/merge. It is interface/update smoke, not
+long-run convergence or multi-GPU proof.
+
+Evidence and reproduction:
+[`bench/4080_ada_validation_20260719/README.md`](bench/4080_ada_validation_20260719/README.md).
 
 ## RTX 4090 promoted rows
 
