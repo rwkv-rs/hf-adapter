@@ -1,0 +1,16 @@
+{
+  "device": "NVIDIA GeForce RTX 5090",
+  "dtype": "fp16",
+  "checkpoint": "rwkv7-g1h-7.2b-20260710-ctx10240.pth",
+  "precision_mode": "fp16_state_fp16_io",
+  "official_engine": "RWKV-Gradio-3 rwkv7_fast_v3a.py",
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "official_iterations": 20,
+  "native_repetitions": 3,
+  "native_decode_steps": 512,
+  "batch_sizes": {
+    "1": {"decode_tokps": 146.277184},
+    "8": {"decode_tokps": 890.210359}
+  },
+  "source_artifact": "../5090_native_decode_fused_20260718/official_fp16_state.log"
+}

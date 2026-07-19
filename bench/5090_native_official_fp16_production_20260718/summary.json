@@ -1,0 +1,53 @@
+{
+  "axis": "official_native_sequence_prefill_production_matrix",
+  "status": "pass",
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "precision": "fp16_state_fp16_io",
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "coverage": {
+    "models": 2,
+    "cells": 12,
+    "passing_cells": 12,
+    "batch_sizes": [
+      1,
+      8
+    ],
+    "prompt_tokens": [
+      128,
+      512,
+      2048
+    ]
+  },
+  "default_policy_replay": {
+    "model": "rwkv7-g1h-13.3b-20260710-ctx10240",
+    "native_source_revision": "dcc53fc20a1ec3e302e281d6cb6e294ae2549d72",
+    "runtime_env": {},
+    "status": "pass",
+    "cells": 6,
+    "quality_pass_cells": 6,
+    "performance_pass_cells": 6,
+    "speedup_min": 1.0026987504951064,
+    "speedup_max": 1.0733581755519863,
+    "summary": "g1h-13.3b/default_policy/summary.json"
+  },
+  "models": [
+    {
+      "model": "rwkv7-g1h-2.9b-20260710-ctx10240",
+      "status": "pass",
+      "cells": 6,
+      "passing_cells": 6,
+      "speedup_min": 1.0147522488594793,
+      "speedup_max": 1.568961508826469,
+      "summary": "g1h-2.9b/summary.json"
+    },
+    {
+      "model": "rwkv7-g1h-13.3b-20260710-ctx10240",
+      "status": "pass",
+      "cells": 6,
+      "passing_cells": 6,
+      "speedup_min": 1.0028518676664462,
+      "speedup_max": 1.0734725310778936,
+      "summary": "g1h-13.3b/summary.json"
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+4b41e1ec5f104d720adf1264755c70bb2388bf60ac403defef99143a9a626d8a  /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/out/L12-D768-x070/rwkv-init.pth
+a68bdeacaaa8c1e781888f4ac4b70a7ab7fcb3f8fb877b5742b13f28ce7db4be  /home/ubuntu/bench/train-temp-shell-5090-20260718/rwkv-init-12x768-native-hf/model.safetensors
+dda91be3999267fc64539cfa7c38779bbcff1322c4f665f608b60d7657972d65  /home/ubuntu/bench/train-temp-shell-5090-20260718/minipile-b16-t512.safetensors

@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_environment",
+  "generated_at_utc": "2026-07-18T05:02:41.021087+00:00",
+  "adapter_commit": "eabbfdf",
+  "official_commit": "e6f74b63a06e08606d130043599d218209628bad",
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "12.0",
+    "driver": "595.58.03",
+    "memory_total_mb": 32607.0
+  },
+  "runtime": {
+    "python": "3.10.12",
+    "platform": "Linux-5.15.0-140-generic-x86_64-with-glibc2.35",
+    "torch": "2.11.0+cu128",
+    "torch_cuda": "12.8",
+    "cudnn": 91900,
+    "transformers": "5.12.1",
+    "deepspeed": "0.19.2",
+    "triton": "3.6.0",
+    "safetensors": "0.8.0",
+    "cuda_home": "/usr/local/cuda-12.8",
+    "nvcc": "Build cuda_12.8.r12.8/compiler.35583870_0"
+  },
+  "shape": {
+    "layers": 12,
+    "hidden_size": 768,
+    "ffn_hidden_size": 3072,
+    "vocab_size": 65536,
+    "batch_size": 16,
+    "seq_len": 512,
+    "precision": "bf16",
+    "gradient_checkpointing": true
+  },
+  "recipe": {
+    "optimizer": "FusedAdam",
+    "learning_rate": 0.0006,
+    "learning_rate_final": 6e-05,
+    "schedule_total_steps": 182888,
+    "warmup_steps": 10,
+    "weight_decay": 0.001,
+    "betas": [
+      0.9,
+      0.99
+    ],
+    "eps": 1e-18,
+    "grad_clip": 1.0,
+    "eval_interval": 50
+  },
+  "files": {
+    "official_checkpoint": {
+      "path": "/home/ubuntu/bench/train_temp_alignment_20260717/rwkv-init-12x768-bf16.pth",
+      "sha256": "5fcb1f16231626f0fde51c30c2d51994ef1ec80e6f737735afe83093c253b943",
+      "bytes": 382296907
+    },
+    "official_config": {
+      "path": "/home/ubuntu/rwkv7-hf-native-width/configs/train_temp_official_x070_12x768_b16.json",
+      "sha256": "248f8ddb7dbf17b2fca71cb905e473907c99a54433f853e5f8b3b789bcf16dbf",
+      "bytes": 1937
+    },
+    "official_prepare": {
+      "path": "/home/ubuntu/RWKV-LM-train-temp/RWKV-v7/train_temp/demo-training-prepare.sh",
+      "sha256": "ee4b7ee41645feb9acd9eb347e45b5c75e7ec7b10bfbc9d9da8e480da4f630d2",
+      "bytes": 2009
+    },
+    "official_run": {
+      "path": "/home/ubuntu/RWKV-LM-train-temp/RWKV-v7/train_temp/demo-training-run.sh",
+      "sha256": "850bc983c27555af6769fab3767d7b29e57c7057e84e02987b5b1b7a3d0c976e",
+      "bytes": 3479
+    },
+    "runner": {
+      "path": "/home/ubuntu/rwkv7-hf-native-width/bench/bench_train_temp_alignment.py",
+      "sha256": "b83963154c0bf4760ee585707af95094f6d2acae180c60e4101a8d517f45c753",
+      "bytes": 87832
+    },
+    "resume_helper": {
+      "path": "/home/ubuntu/rwkv7-hf-native-width/rwkv7_hf/train_temp_resume.py",
+      "sha256": "4c7ddf4eb9e74b71293e5fb06229575efca771117a60497dcc441c0c295eace3",
+      "bytes": 8523
+    },
+    "train_temp_cuda": {
+      "path": "/home/ubuntu/rwkv7-hf-native-width/rwkv7_hf/train_temp_cuda.py",
+      "sha256": "29327eb9bdbce5cbe65f6c5a6d6ef311218026bcfadfa9f60dfae8d73b2112bf",
+      "bytes": 30011
+    },
+    "native_config": {
+      "path": "/home/ubuntu/bench/native_train_temp_b16_alignment_20260718/rwkv-init-12x768-native-exact/config.json",
+      "sha256": "bf0df5151e018dab12fc72da7b87332defe273596ff65436ac22eafd8ed0ddf8",
+      "bytes": 1246
+    }
+  }
+}

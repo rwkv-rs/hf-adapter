@@ -1,3 +1,70 @@
+### 2026-07-18 - RTX 5090 Native fp16-state inference close
+
+The default Native/no-FLA policy now passes the pinned official v3a
+same-precision lane. Official g1h 7.2B cached decode reaches B1/B8 Native
+medians `146.42/899.51 tok/s` versus `146.28/890.21`, or
+`1.0010x/1.0104x`. The 16-step tensor oracle passes logits cosine
+`0.99999967/0.99999979`, exact top-1 `17/17` and `136/136`, exact greedy
+`16/16` and `128/128`, plus recurrent-state and xpa/xpf gates.
+
+Sequence prefill covers g1h 2.9B and 13.3B at B1/B8 and prompt
+128/512/2048. All 12 exact cells pass prefill logits, per-layer outputs,
+fp16 recurrent state, xpa/xpf, first-token, first-decode-token and speed gates;
+Native/official throughput ranges from `1.0029x` to `1.5690x`. The 13.3B
+B8/P2048 policy uses graph-off because graph capture exceeds this 32 GiB
+card. The policy is card/model/shape bound, remains fail-closed, and makes no
+cross-harness memory-parity claim. Evidence:
+[`bench/5090_native_official_fp16_production_20260718`](../../bench/5090_native_official_fp16_production_20260718/README.md).
+
+### 2026-07-18 - RTX 5090 Native real-MiniPile train_temp close
+
+At the official B16/T512 BF16 12x768 shell shape, the Native path matches the
+pinned official step exactly: backward loss, 399/399 gradients, 399/399
+FusedAdam parameter deltas and post-step loss all match. Paired real-MiniPile
+seeds 131/232/333 pass with median Native/official throughput `1.00049x` and
+train/validation AUC relative differences `0.000784/0.001029`.
+
+A continuous 5,000-step pair reaches `1.00255x` throughput with final
+validation-loss absolute difference `0.00873`. Native 2,500+2,500 recovery
+restores model, optimizer, Python/NumPy/torch CPU/CUDA RNG digests and retains
+`0.99822x` continuous-Native throughput. This is exact single-card evidence;
+larger models, multi-day and distributed convergence remain separate work.
+Evidence:
+[`bench/5090_native_train_temp_real_minipile_20260718`](../../bench/5090_native_train_temp_real_minipile_20260718/README.md).
+
+### 2026-07-18 - Historical RTX 5090 Native FP32-state decode close
+
+The opt-in Native/no-FLA path now has an exact-card cached-decode close for the
+official g1h 7.2B checkpoint with FP16 weights and FP32 recurrent state. Three
+fresh 512-token process repeats produce B1/B8 medians `145.06/845.57 tok/s`
+against precision-matched official v3a `144.47/841.77`, or
+`1.0041x/1.0045x`. Both CUDA extensions are active in every row. All six runs
+share one complete greedy-trace hash; the 64-step alignment gate has minimum
+logits cosine `0.9999934435` and exact top-1 at B1/B8.
+
+This is not a global Blackwell default. The official fp16-state reference is
+still faster at `146.28/890.21 tok/s`, especially at B8. The accepted FP32
+scratch sparse-FFN and SM120 W/A/G paths remain default-off and are limited to
+the exact benchmark command. Evidence:
+[`bench/5090_native_decode_fused_20260718`](../../bench/5090_native_decode_fused_20260718/README.md).
+
+### 2026-07-18 — Historical RTX 5090 Native train_temp B16 alignment and resume
+
+The Native/no-FLA `train_temp_cuda` route now matches the official shell
+training shape at BF16, B16, T512 and gradient checkpointing. Backward loss and
+399/399 gradients are exact; FusedAdam grouping/order, 399/399 parameter deltas
+and post-step loss are also exact. Official and Native both complete seeds
+131/232/333 for 1,000 steps with `3/3` finite deep-success runs. Median
+train/validation AUC relative differences are `0.001798%/0.002455%`.
+
+A Native 500+500 resume restores model, optimizer and RNG state hashes and
+passes against a continuous run. A separate 1,000-step stability row records 20
+steady memory samples: allocated range `0.375 MiB`, reserved growth `0 MiB`.
+Native median training throughput was `0.9499x` official in this older
+synthetic cohort. The later paired real-MiniPile artifact above closes the
+same exact shape at or above official throughput. Historical evidence:
+[`bench/5090_native_train_temp_b16_20260718`](../../bench/5090_native_train_temp_b16_20260718/README.md).
+
 ### 2026-07-17 — RTX 5090 official train_temp training alignment
 
 The opt-in HF `train_temp_cuda` backend now uses the pinned official CUDA

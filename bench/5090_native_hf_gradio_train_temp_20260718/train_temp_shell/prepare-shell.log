@@ -1,0 +1,635 @@
+/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/lightning_fabric/__init__.py:29: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  __import__("pkg_resources").declare_namespace(__name__)
+INFO:pytorch_lightning.utilities.rank_zero:########## work in progress ##########
+INFO:pytorch_lightning.utilities.rank_zero:
+############################################################################
+#
+# RWKV-7 BF16 on 1x1 CPU, bsz 1x1x1=1, deepspeed_stage_2 with grad_cp
+#
+# Data = data/minipile (binidx), ProjDir = out/L12-D768-x070
+#
+# Epoch = 0 to 71 (will continue afterwards), save every 1 epoch
+#
+# Each "epoch" = 40320 steps, 40320 samples, 20643840 tokens
+#
+# Model = 12 n_layer, 768 n_embd, 512 ctx_len
+#
+# Adam = lr 1e-05 to 1e-05, warmup 10 steps, beta (0.9, 0.99), eps 1e-08
+#
+# Found torch 2.11.0+cu128, recommend latest torch
+# Found deepspeed 0.19.2, recommend latest deepspeed
+# Found pytorch_lightning 1.9.5, recommend 1.9.5
+#
+############################################################################
+
+INFO:pytorch_lightning.utilities.rank_zero:{'load_model': '', 'wandb': '', 'proj_dir': 'out/L12-D768-x070', 'random_seed': -1, 'data_file': 'data/minipile', 'data_type': 'binidx', 'vocab_size': 65536, 'ctx_len': 512, 'epoch_steps': 40320, 'epoch_count': 72, 'epoch_begin': 0, 'epoch_save': 1, 'micro_bsz': 1, 'n_layer': 12, 'n_embd': 768, 'dim_att': 768, 'dim_ffn': 2688, 'lr_init': 1e-05, 'lr_final': 1e-05, 'warmup_steps': 10, 'beta1': 0.9, 'beta2': 0.99, 'adam_eps': 1e-08, 'grad_cp': 1, 'weight_decay': 0.0, 'grad_clip': 1.0, 'train_stage': 1, 'ds_bucket_mb': 200, 'head_size': 64, 'head_chunk': 0, 'load_partial': 0, 'magic_prime': 2926181, 'my_testing': 'x070', 'kernel': '', 'my_exit_tokens': 1498226207, 'logger': False, 'enable_checkpointing': False, 'default_root_dir': None, 'gradient_clip_val': 1.0, 'gradient_clip_algorithm': None, 'num_nodes': 1, 'num_processes': None, 'devices': '1', 'gpus': None, 'auto_select_gpus': None, 'tpu_cores': None, 'ipus': None, 'enable_progress_bar': True, 'overfit_batches': 0.0, 'track_grad_norm': -1, 'check_val_every_n_epoch': 100000000000000000000, 'fast_dev_run': False, 'accumulate_grad_batches': None, 'max_epochs': -1, 'min_epochs': None, 'max_steps': -1, 'min_steps': None, 'max_time': None, 'limit_train_batches': None, 'limit_val_batches': None, 'limit_test_batches': None, 'limit_predict_batches': None, 'val_check_interval': None, 'log_every_n_steps': 100000000000000000000, 'accelerator': 'cpu', 'strategy': 'deepspeed_stage_2', 'sync_batchnorm': False, 'precision': 'bf16', 'enable_model_summary': True, 'num_sanity_val_steps': 0, 'resume_from_checkpoint': None, 'profiler': None, 'benchmark': None, 'reload_dataloaders_every_n_epochs': 0, 'auto_lr_find': False, 'replace_sampler_ddp': False, 'detect_anomaly': False, 'auto_scale_batch_size': False, 'plugins': None, 'amp_backend': None, 'amp_level': None, 'move_metrics_to_cpu': False, 'multiple_trainloader_mode': 'max_size_cycle', 'inference_mode': True, 'my_timestamp': '2026-07-18-09-14-22', 'betas': (0.9, 0.99), 'real_bsz': 1, 'run_name': '65536 ctx512 L12 D768'}
+
+INFO:pytorch_lightning.utilities.rank_zero:Current vocab size = 65536 (make sure it's correct)
+INFO:pytorch_lightning.utilities.rank_zero:Data has 1498226207 tokens.
+INFO:pytorch_lightning.utilities.rank_zero:########## train stage 1 ##########
+RWKV_MY_TESTING x070
+RWKV_KERNEL
+[1/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_clampw.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_clampw -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage -D_N_=64 -D_CHUNK_LEN_=16 --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_clampw.cu -o rwkv7_clampw.cuda.o
+ptxas info    : 0 bytes gmem
+ptxas info    : Compiling entry function '_Z15backward_kernelILi64EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_S1_S1_S1_S1_S1_S1_' for 'sm_120'
+ptxas info    : Function properties for _Z15backward_kernelILi64EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_S1_S1_S1_S1_S1_S1_
+    240 bytes stack frame, 476 bytes spill stores, 240 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 240 bytes cumulative stack size, 2304 bytes smem
+ptxas info    : Compile time = 227.059 ms
+ptxas info    : Compiling entry function '_Z14forward_kernelILi64EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_' for 'sm_120'
+ptxas info    : Function properties for _Z14forward_kernelILi64EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 150 registers, used 1 barriers, 1280 bytes smem
+ptxas info    : Compile time = 52.346 ms
+[2/3] c++ -MMD -MF rwkv7_clampw.o.d -DTORCH_EXTENSION_NAME=rwkv7_clampw -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_clampw.cpp -o rwkv7_clampw.o
+[3/3] c++ rwkv7_clampw.cuda.o rwkv7_clampw.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_clampw.so
+[1/3] c++ -MMD -MF rwkv7_cmix_bf16_v5.o.d -DTORCH_EXTENSION_NAME=rwkv7_cmix_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_cmix_bf16_v5.cpp -o rwkv7_cmix_bf16_v5.o
+[2/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_cmix_bf16_v5.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_cmix_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_cmix_bf16_v5.cu -o rwkv7_cmix_bf16_v5.cuda.o
+ptxas info    : 28 bytes gmem
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi32EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi32EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 34 registers, used 0 barriers
+ptxas info    : Compile time = 26.980 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi128EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi128EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 34 registers, used 0 barriers
+ptxas info    : Compile time = 25.720 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi64EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi64EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 34 registers, used 0 barriers
+ptxas info    : Compile time = 25.325 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi16EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi16EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 34 registers, used 0 barriers
+ptxas info    : Compile time = 24.864 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1448relu_sq_backward_from_output_inplace_vec2_kernelEPN3c108BFloat16EPKS1_l' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1448relu_sq_backward_from_output_inplace_vec2_kernelEPN3c108BFloat16EPKS1_l
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 2.039 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1427relu_sq_inplace_vec2_kernelEPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1427relu_sq_inplace_vec2_kernelEPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers
+ptxas info    : Compile time = 1.690 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1430cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1430cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 1.669 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1428cmix_mix_forward_vec2_kernelEPKN3c108BFloat16ES3_PS1_lll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__45695aa4_21_rwkv7_cmix_bf16_v5_cu_01a85e1428cmix_mix_forward_vec2_kernelEPKN3c108BFloat16ES3_PS1_lll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers
+ptxas info    : Compile time = 12.705 ms
+[3/3] c++ rwkv7_cmix_bf16_v5.o rwkv7_cmix_bf16_v5.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_cmix_bf16_v5.so
+[1/3] c++ -MMD -MF rwkv7_tmix_mix6_bf16_v5.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_mix6_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_mix6_bf16_v5.cpp -o rwkv7_tmix_mix6_bf16_v5.o
+[2/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_tmix_mix6_bf16_v5.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_mix6_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_mix6_bf16_v5.cu -o rwkv7_tmix_mix6_bf16_v5.cuda.o
+ptxas info    : 28 bytes gmem
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__ee6bdfdb_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba30cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__ee6bdfdb_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba30cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 3.022 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__ee6bdfdb_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba34tmix_mix6_backward_fused_kernel_v5EPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_PS1_PfS5_S5_S5_S5_S5_lll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__ee6bdfdb_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba34tmix_mix6_backward_fused_kernel_v5EPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_PS1_PfS5_S5_S5_S5_S5_lll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 0 barriers
+ptxas info    : Compile time = 22.447 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__ee6bdfdb_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba24tmix_mix6_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PS1_S4_S4_S4_S4_S4_lll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__ee6bdfdb_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba24tmix_mix6_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PS1_S4_S4_S4_S4_S4_lll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 0 barriers
+ptxas info    : Compile time = 14.468 ms
+[3/3] c++ rwkv7_tmix_mix6_bf16_v5.o rwkv7_tmix_mix6_bf16_v5.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_tmix_mix6_bf16_v5.so
+[1/3] c++ -MMD -MF rwkv7_tmix_kk_pre_bf16_v5.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_kk_pre_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_kk_pre_bf16_v5.cpp -o rwkv7_tmix_kk_pre_bf16_v5.o
+[2/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_tmix_kk_pre_bf16_v5.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_kk_pre_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_kk_pre_bf16_v5.cu -o rwkv7_tmix_kk_pre_bf16_v5.cuda.o
+ptxas info    : 28 bytes gmem
+ptxas info    : Compiling entry function '_ZN61_GLOBAL__N__8c98b833_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7225cast_float_to_bf16_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN61_GLOBAL__N__8c98b833_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7225cast_float_to_bf16_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 10 registers, used 0 barriers
+ptxas info    : Compile time = 2.743 ms
+ptxas info    : Compiling entry function '_ZN61_GLOBAL__N__8c98b833_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7232tmix_kk_pre_backward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PKfPS1_PfS6_S7_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN61_GLOBAL__N__8c98b833_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7232tmix_kk_pre_backward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PKfPS1_PfS6_S7_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 30 registers, used 0 barriers
+ptxas info    : Compile time = 11.577 ms
+ptxas info    : Compiling entry function '_ZN61_GLOBAL__N__8c98b833_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7231tmix_kk_pre_forward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_PS1_S4_S4_Pfll' for 'sm_120'
+ptxas info    : Function properties for _ZN61_GLOBAL__N__8c98b833_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7231tmix_kk_pre_forward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_PS1_S4_S4_Pfll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers
+ptxas info    : Compile time = 9.751 ms
+[3/3] c++ rwkv7_tmix_kk_pre_bf16_v5.o rwkv7_tmix_kk_pre_bf16_v5.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_tmix_kk_pre_bf16_v5.so
+[1/3] c++ -MMD -MF rwkv7_tmix_lnx_rkvres_xg_bf16_v1.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_lnx_rkvres_xg_bf16_v1 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp -o rwkv7_tmix_lnx_rkvres_xg_bf16_v1.o
+[2/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_lnx_rkvres_xg_bf16_v1 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu -o rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cuda.o
+ptxas info    : 28 bytes gmem
+ptxas info    : Compiling entry function '_ZN68_GLOBAL__N__bb73f5d7_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c25cast_float_to_bf16_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN68_GLOBAL__N__bb73f5d7_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c25cast_float_to_bf16_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 10 registers, used 0 barriers
+ptxas info    : Compile time = 2.744 ms
+ptxas info    : Compiling entry function '_ZN68_GLOBAL__N__bb73f5d7_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c37tmix_lnx_rkvres_xg_v1_backward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_PKfS5_PS1_S6_S6_S6_PfS7_S7_S6_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN68_GLOBAL__N__bb73f5d7_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c37tmix_lnx_rkvres_xg_v1_backward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_PKfS5_PS1_S6_S6_S6_PfS7_S7_S6_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 1 barriers, 12288 bytes smem
+ptxas info    : Compile time = 20.489 ms
+ptxas info    : Compiling entry function '_ZN68_GLOBAL__N__bb73f5d7_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c36tmix_lnx_rkvres_xg_v1_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_PS1_PfS5_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN68_GLOBAL__N__bb73f5d7_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c36tmix_lnx_rkvres_xg_v1_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_PS1_PfS5_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 30 registers, used 0 barriers
+ptxas info    : Compile time = 5.936 ms
+[3/3] c++ rwkv7_tmix_lnx_rkvres_xg_bf16_v1.o rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_tmix_lnx_rkvres_xg_bf16_v1.so
+[1/3] c++ -MMD -MF rwkv7_tmix_a_gate_bf16.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_a_gate_bf16 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_a_gate_bf16.cpp -o rwkv7_tmix_a_gate_bf16.o
+[2/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_tmix_a_gate_bf16.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_a_gate_bf16 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_a_gate_bf16.cu -o rwkv7_tmix_a_gate_bf16.cuda.o
+ptxas info    : 28 bytes gmem
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad023a_gate_reduce_a0_kernelEPKfPN3c108BFloat16Ell' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad023a_gate_reduce_a0_kernelEPKfPN3c108BFloat16Ell
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 9.264 ms
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_backward_full_kernelEPKN3c108BFloat16ES3_S3_PS1_Pfll' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_backward_full_kernelEPKN3c108BFloat16ES3_S3_PS1_Pfll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers
+ptxas info    : Compile time = 11.911 ms
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_forward_pow2c_kernelEPKN3c108BFloat16ES3_PS1_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_forward_pow2c_kernelEPKN3c108BFloat16ES3_PS1_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 2.263 ms
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad021a_gate_forward_kernelEPKN3c108BFloat16ES3_PS1_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__833fe158_25_rwkv7_tmix_a_gate_bf16_cu_34105ad021a_gate_forward_kernelEPKN3c108BFloat16ES3_PS1_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.996 ms
+[3/3] c++ rwkv7_tmix_a_gate_bf16.o rwkv7_tmix_a_gate_bf16.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_tmix_a_gate_bf16.so
+[1/3] c++ -MMD -MF rwkv7_tmix_vres_gate_bf16_v3.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_vres_gate_bf16_v3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_vres_gate_bf16_v3.cpp -o rwkv7_tmix_vres_gate_bf16_v3.o
+[2/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_tmix_vres_gate_bf16_v3.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_tmix_vres_gate_bf16_v3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_tmix_vres_gate_bf16_v3.cu -o rwkv7_tmix_vres_gate_bf16_v3.cuda.o
+ptxas info    : 28 bytes gmem
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb0EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb0EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 8.695 ms
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb1EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb1EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 2.666 ms
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584329vres_gate_v3_reduce_v0_kernelEPKfPN3c108BFloat16Ell' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584329vres_gate_v3_reduce_v0_kernelEPKfPN3c108BFloat16Ell
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 8.040 ms
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584334vres_gate_v3_backward_tiled_kernelEPKN3c108BFloat16ES3_S3_S3_S3_PS1_S4_S4_Pfll' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__bf18d53d_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584334vres_gate_v3_backward_tiled_kernelEPKN3c108BFloat16ES3_S3_S3_S3_PS1_S4_S4_Pfll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 29 registers, used 0 barriers
+ptxas info    : Compile time = 18.129 ms
+[3/3] c++ rwkv7_tmix_vres_gate_bf16_v3.o rwkv7_tmix_vres_gate_bf16_v3.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_tmix_vres_gate_bf16_v3.so
+[1/3] c++ -MMD -MF rwkv7_l2wrap_ce_bf16_v2.o.d -DTORCH_EXTENSION_NAME=rwkv7_l2wrap_ce_bf16_v2 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_l2wrap_ce_bf16_v2.cpp -o rwkv7_l2wrap_ce_bf16_v2.o
+[2/3] /usr/local/cuda/bin/nvcc -MD -MF rwkv7_l2wrap_ce_bf16_v2.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_l2wrap_ce_bf16_v2 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=compute_120 -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/bench/train-temp-shell-5090-20260718/official-shell-workdir/cuda/rwkv7_l2wrap_ce_bf16_v2.cu -o rwkv7_l2wrap_ce_bf16_v2.cuda.o
+ptxas info    : 28 bytes gmem
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIfLi512EEEvPKfPKT_PKlS2_S2_PKiPS3_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIfLi512EEEvPKfPKT_PKlS2_S2_PKiPS3_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 25 registers, used 0 barriers
+ptxas info    : Compile time = 10.202 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIN3c108BFloat16ELi512EEEvPKfPKT_PKlS4_S4_PKiPS5_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIN3c108BFloat16ELi512EEEvPKfPKT_PKlS4_S4_PKiPS5_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 25 registers, used 0 barriers
+ptxas info    : Compile time = 9.660 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIfLi512EEEvPKT_PKlPfS6_PiS6_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIfLi512EEEvPKT_PKlPfS6_PiS6_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 1 barriers, 196 bytes smem
+ptxas info    : Compile time = 39.852 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIN3c108BFloat16ELi512EEEvPKT_PKlPfS8_PiS8_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIN3c108BFloat16ELi512EEEvPKT_PKlPfS8_PiS8_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 38 registers, used 1 barriers, 196 bytes smem
+ptxas info    : Compile time = 40.962 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273118reduce_loss_kernelEPKfPfl' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__341f8a5d_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273118reduce_loss_kernelEPKfPfl
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 39 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 10.496 ms
+[3/3] c++ rwkv7_l2wrap_ce_bf16_v2.o rwkv7_l2wrap_ce_bf16_v2.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o rwkv7_l2wrap_ce_bf16_v2.so
+
+############################################################################
+#
+# Init model weight (slow for large models)...
+#
+############################################################################
+
+65536 768               emb.weight [scale -0.0001]
+768                     blocks.0.ln1.weight
+768                     blocks.0.ln1.bias
+768                     blocks.0.ln2.weight
+768                     blocks.0.ln2.bias
+768                     blocks.0.ln0.weight
+768                     blocks.0.ln0.bias
+1     1     768         blocks.0.att.x_r
+1     1     768         blocks.0.att.x_w
+1     1     768         blocks.0.att.x_k
+1     1     768         blocks.0.att.x_v
+1     1     768         blocks.0.att.x_a
+1     1     768         blocks.0.att.x_g
+768   64                blocks.0.att.w1
+64    768               blocks.0.att.w2
+1     1     768         blocks.0.att.w0
+768   64                blocks.0.att.a1
+64    768               blocks.0.att.a2
+1     1     768         blocks.0.att.a0
+768   32                blocks.0.att.v1
+32    768               blocks.0.att.v2
+1     1     768         blocks.0.att.v0
+768   128               blocks.0.att.g1
+128   768               blocks.0.att.g2
+1     1     768         blocks.0.att.k_k
+1     1     768         blocks.0.att.k_a
+12    64                blocks.0.att.r_k
+768   768               blocks.0.att.receptance.weight [scale 1.0]
+768   768               blocks.0.att.key.weight [scale 0.1]
+768   768               blocks.0.att.value.weight [scale 1.0]
+768   768               blocks.0.att.output.weight [scale 0]
+768                     blocks.0.att.ln_x.weight
+768                     blocks.0.att.ln_x.bias
+1     1     768         blocks.0.ffn.x_k
+3072  768               blocks.0.ffn.key.weight [scale 1.0]
+768   3072              blocks.0.ffn.value.weight [scale 0]
+768                     blocks.1.ln1.weight
+768                     blocks.1.ln1.bias
+768                     blocks.1.ln2.weight
+768                     blocks.1.ln2.bias
+1     1     768         blocks.1.att.x_r
+1     1     768         blocks.1.att.x_w
+1     1     768         blocks.1.att.x_k
+1     1     768         blocks.1.att.x_v
+1     1     768         blocks.1.att.x_a
+1     1     768         blocks.1.att.x_g
+768   64                blocks.1.att.w1
+64    768               blocks.1.att.w2
+1     1     768         blocks.1.att.w0
+768   64                blocks.1.att.a1
+64    768               blocks.1.att.a2
+1     1     768         blocks.1.att.a0
+768   32                blocks.1.att.v1
+32    768               blocks.1.att.v2
+1     1     768         blocks.1.att.v0
+768   128               blocks.1.att.g1
+128   768               blocks.1.att.g2
+1     1     768         blocks.1.att.k_k
+1     1     768         blocks.1.att.k_a
+12    64                blocks.1.att.r_k
+768   768               blocks.1.att.receptance.weight [scale 1.0]
+768   768               blocks.1.att.key.weight [scale 0.1]
+768   768               blocks.1.att.value.weight [scale 1.0]
+768   768               blocks.1.att.output.weight [scale 0]
+768                     blocks.1.att.ln_x.weight
+768                     blocks.1.att.ln_x.bias
+1     1     768         blocks.1.ffn.x_k
+3072  768               blocks.1.ffn.key.weight [scale 1.0]
+768   3072              blocks.1.ffn.value.weight [scale 0]
+768                     blocks.2.ln1.weight
+768                     blocks.2.ln1.bias
+768                     blocks.2.ln2.weight
+768                     blocks.2.ln2.bias
+1     1     768         blocks.2.att.x_r
+1     1     768         blocks.2.att.x_w
+1     1     768         blocks.2.att.x_k
+1     1     768         blocks.2.att.x_v
+1     1     768         blocks.2.att.x_a
+1     1     768         blocks.2.att.x_g
+768   64                blocks.2.att.w1
+64    768               blocks.2.att.w2
+1     1     768         blocks.2.att.w0
+768   64                blocks.2.att.a1
+64    768               blocks.2.att.a2
+1     1     768         blocks.2.att.a0
+768   32                blocks.2.att.v1
+32    768               blocks.2.att.v2
+1     1     768         blocks.2.att.v0
+768   128               blocks.2.att.g1
+128   768               blocks.2.att.g2
+1     1     768         blocks.2.att.k_k
+1     1     768         blocks.2.att.k_a
+12    64                blocks.2.att.r_k
+768   768               blocks.2.att.receptance.weight [scale 1.0]
+768   768               blocks.2.att.key.weight [scale 0.1]
+768   768               blocks.2.att.value.weight [scale 1.0]
+768   768               blocks.2.att.output.weight [scale 0]
+768                     blocks.2.att.ln_x.weight
+768                     blocks.2.att.ln_x.bias
+1     1     768         blocks.2.ffn.x_k
+3072  768               blocks.2.ffn.key.weight [scale 1.0]
+768   3072              blocks.2.ffn.value.weight [scale 0]
+768                     blocks.3.ln1.weight
+768                     blocks.3.ln1.bias
+768                     blocks.3.ln2.weight
+768                     blocks.3.ln2.bias
+1     1     768         blocks.3.att.x_r
+1     1     768         blocks.3.att.x_w
+1     1     768         blocks.3.att.x_k
+1     1     768         blocks.3.att.x_v
+1     1     768         blocks.3.att.x_a
+1     1     768         blocks.3.att.x_g
+768   64                blocks.3.att.w1
+64    768               blocks.3.att.w2
+1     1     768         blocks.3.att.w0
+768   64                blocks.3.att.a1
+64    768               blocks.3.att.a2
+1     1     768         blocks.3.att.a0
+768   32                blocks.3.att.v1
+32    768               blocks.3.att.v2
+1     1     768         blocks.3.att.v0
+768   128               blocks.3.att.g1
+128   768               blocks.3.att.g2
+1     1     768         blocks.3.att.k_k
+1     1     768         blocks.3.att.k_a
+12    64                blocks.3.att.r_k
+768   768               blocks.3.att.receptance.weight [scale 1.0]
+768   768               blocks.3.att.key.weight [scale 0.1]
+768   768               blocks.3.att.value.weight [scale 1.0]
+768   768               blocks.3.att.output.weight [scale 0]
+768                     blocks.3.att.ln_x.weight
+768                     blocks.3.att.ln_x.bias
+1     1     768         blocks.3.ffn.x_k
+3072  768               blocks.3.ffn.key.weight [scale 1.0]
+768   3072              blocks.3.ffn.value.weight [scale 0]
+768                     blocks.4.ln1.weight
+768                     blocks.4.ln1.bias
+768                     blocks.4.ln2.weight
+768                     blocks.4.ln2.bias
+1     1     768         blocks.4.att.x_r
+1     1     768         blocks.4.att.x_w
+1     1     768         blocks.4.att.x_k
+1     1     768         blocks.4.att.x_v
+1     1     768         blocks.4.att.x_a
+1     1     768         blocks.4.att.x_g
+768   64                blocks.4.att.w1
+64    768               blocks.4.att.w2
+1     1     768         blocks.4.att.w0
+768   64                blocks.4.att.a1
+64    768               blocks.4.att.a2
+1     1     768         blocks.4.att.a0
+768   32                blocks.4.att.v1
+32    768               blocks.4.att.v2
+1     1     768         blocks.4.att.v0
+768   128               blocks.4.att.g1
+128   768               blocks.4.att.g2
+1     1     768         blocks.4.att.k_k
+1     1     768         blocks.4.att.k_a
+12    64                blocks.4.att.r_k
+768   768               blocks.4.att.receptance.weight [scale 1.0]
+768   768               blocks.4.att.key.weight [scale 0.1]
+768   768               blocks.4.att.value.weight [scale 1.0]
+768   768               blocks.4.att.output.weight [scale 0]
+768                     blocks.4.att.ln_x.weight
+768                     blocks.4.att.ln_x.bias
+1     1     768         blocks.4.ffn.x_k
+3072  768               blocks.4.ffn.key.weight [scale 1.0]
+768   3072              blocks.4.ffn.value.weight [scale 0]
+768                     blocks.5.ln1.weight
+768                     blocks.5.ln1.bias
+768                     blocks.5.ln2.weight
+768                     blocks.5.ln2.bias
+1     1     768         blocks.5.att.x_r
+1     1     768         blocks.5.att.x_w
+1     1     768         blocks.5.att.x_k
+1     1     768         blocks.5.att.x_v
+1     1     768         blocks.5.att.x_a
+1     1     768         blocks.5.att.x_g
+768   64                blocks.5.att.w1
+64    768               blocks.5.att.w2
+1     1     768         blocks.5.att.w0
+768   64                blocks.5.att.a1
+64    768               blocks.5.att.a2
+1     1     768         blocks.5.att.a0
+768   32                blocks.5.att.v1
+32    768               blocks.5.att.v2
+1     1     768         blocks.5.att.v0
+768   128               blocks.5.att.g1
+128   768               blocks.5.att.g2
+1     1     768         blocks.5.att.k_k
+1     1     768         blocks.5.att.k_a
+12    64                blocks.5.att.r_k
+768   768               blocks.5.att.receptance.weight [scale 1.0]
+768   768               blocks.5.att.key.weight [scale 0.1]
+768   768               blocks.5.att.value.weight [scale 1.0]
+768   768               blocks.5.att.output.weight [scale 0]
+768                     blocks.5.att.ln_x.weight
+768                     blocks.5.att.ln_x.bias
+1     1     768         blocks.5.ffn.x_k
+3072  768               blocks.5.ffn.key.weight [scale 1.0]
+768   3072              blocks.5.ffn.value.weight [scale 0]
+768                     blocks.6.ln1.weight
+768                     blocks.6.ln1.bias
+768                     blocks.6.ln2.weight
+768                     blocks.6.ln2.bias
+1     1     768         blocks.6.att.x_r
+1     1     768         blocks.6.att.x_w
+1     1     768         blocks.6.att.x_k
+1     1     768         blocks.6.att.x_v
+1     1     768         blocks.6.att.x_a
+1     1     768         blocks.6.att.x_g
+768   64                blocks.6.att.w1
+64    768               blocks.6.att.w2
+1     1     768         blocks.6.att.w0
+768   64                blocks.6.att.a1
+64    768               blocks.6.att.a2
+1     1     768         blocks.6.att.a0
+768   32                blocks.6.att.v1
+32    768               blocks.6.att.v2
+1     1     768         blocks.6.att.v0
+768   128               blocks.6.att.g1
+128   768               blocks.6.att.g2
+1     1     768         blocks.6.att.k_k
+1     1     768         blocks.6.att.k_a
+12    64                blocks.6.att.r_k
+768   768               blocks.6.att.receptance.weight [scale 1.0]
+768   768               blocks.6.att.key.weight [scale 0.1]
+768   768               blocks.6.att.value.weight [scale 1.0]
+768   768               blocks.6.att.output.weight [scale 0]
+768                     blocks.6.att.ln_x.weight
+768                     blocks.6.att.ln_x.bias
+1     1     768         blocks.6.ffn.x_k
+3072  768               blocks.6.ffn.key.weight [scale 1.0]
+768   3072              blocks.6.ffn.value.weight [scale 0]
+768                     blocks.7.ln1.weight
+768                     blocks.7.ln1.bias
+768                     blocks.7.ln2.weight
+768                     blocks.7.ln2.bias
+1     1     768         blocks.7.att.x_r
+1     1     768         blocks.7.att.x_w
+1     1     768         blocks.7.att.x_k
+1     1     768         blocks.7.att.x_v
+1     1     768         blocks.7.att.x_a
+1     1     768         blocks.7.att.x_g
+768   64                blocks.7.att.w1
+64    768               blocks.7.att.w2
+1     1     768         blocks.7.att.w0
+768   64                blocks.7.att.a1
+64    768               blocks.7.att.a2
+1     1     768         blocks.7.att.a0
+768   32                blocks.7.att.v1
+32    768               blocks.7.att.v2
+1     1     768         blocks.7.att.v0
+768   128               blocks.7.att.g1
+128   768               blocks.7.att.g2
+1     1     768         blocks.7.att.k_k
+1     1     768         blocks.7.att.k_a
+12    64                blocks.7.att.r_k
+768   768               blocks.7.att.receptance.weight [scale 1.0]
+768   768               blocks.7.att.key.weight [scale 0.1]
+768   768               blocks.7.att.value.weight [scale 1.0]
+768   768               blocks.7.att.output.weight [scale 0]
+768                     blocks.7.att.ln_x.weight
+768                     blocks.7.att.ln_x.bias
+1     1     768         blocks.7.ffn.x_k
+3072  768               blocks.7.ffn.key.weight [scale 1.0]
+768   3072              blocks.7.ffn.value.weight [scale 0]
+768                     blocks.8.ln1.weight
+768                     blocks.8.ln1.bias
+768                     blocks.8.ln2.weight
+768                     blocks.8.ln2.bias
+1     1     768         blocks.8.att.x_r
+1     1     768         blocks.8.att.x_w
+1     1     768         blocks.8.att.x_k
+1     1     768         blocks.8.att.x_v
+1     1     768         blocks.8.att.x_a
+1     1     768         blocks.8.att.x_g
+768   64                blocks.8.att.w1
+64    768               blocks.8.att.w2
+1     1     768         blocks.8.att.w0
+768   64                blocks.8.att.a1
+64    768               blocks.8.att.a2
+1     1     768         blocks.8.att.a0
+768   32                blocks.8.att.v1
+32    768               blocks.8.att.v2
+1     1     768         blocks.8.att.v0
+768   128               blocks.8.att.g1
+128   768               blocks.8.att.g2
+1     1     768         blocks.8.att.k_k
+1     1     768         blocks.8.att.k_a
+12    64                blocks.8.att.r_k
+768   768               blocks.8.att.receptance.weight [scale 1.0]
+768   768               blocks.8.att.key.weight [scale 0.1]
+768   768               blocks.8.att.value.weight [scale 1.0]
+768   768               blocks.8.att.output.weight [scale 0]
+768                     blocks.8.att.ln_x.weight
+768                     blocks.8.att.ln_x.bias
+1     1     768         blocks.8.ffn.x_k
+3072  768               blocks.8.ffn.key.weight [scale 1.0]
+768   3072              blocks.8.ffn.value.weight [scale 0]
+768                     blocks.9.ln1.weight
+768                     blocks.9.ln1.bias
+768                     blocks.9.ln2.weight
+768                     blocks.9.ln2.bias
+1     1     768         blocks.9.att.x_r
+1     1     768         blocks.9.att.x_w
+1     1     768         blocks.9.att.x_k
+1     1     768         blocks.9.att.x_v
+1     1     768         blocks.9.att.x_a
+1     1     768         blocks.9.att.x_g
+768   64                blocks.9.att.w1
+64    768               blocks.9.att.w2
+1     1     768         blocks.9.att.w0
+768   64                blocks.9.att.a1
+64    768               blocks.9.att.a2
+1     1     768         blocks.9.att.a0
+768   32                blocks.9.att.v1
+32    768               blocks.9.att.v2
+1     1     768         blocks.9.att.v0
+768   128               blocks.9.att.g1
+128   768               blocks.9.att.g2
+1     1     768         blocks.9.att.k_k
+1     1     768         blocks.9.att.k_a
+12    64                blocks.9.att.r_k
+768   768               blocks.9.att.receptance.weight [scale 1.0]
+768   768               blocks.9.att.key.weight [scale 0.1]
+768   768               blocks.9.att.value.weight [scale 1.0]
+768   768               blocks.9.att.output.weight [scale 0]
+768                     blocks.9.att.ln_x.weight
+768                     blocks.9.att.ln_x.bias
+1     1     768         blocks.9.ffn.x_k
+3072  768               blocks.9.ffn.key.weight [scale 1.0]
+768   3072              blocks.9.ffn.value.weight [scale 0]
+768                     blocks.10.ln1.weight
+768                     blocks.10.ln1.bias
+768                     blocks.10.ln2.weight
+768                     blocks.10.ln2.bias
+1     1     768         blocks.10.att.x_r
+1     1     768         blocks.10.att.x_w
+1     1     768         blocks.10.att.x_k
+1     1     768         blocks.10.att.x_v
+1     1     768         blocks.10.att.x_a
+1     1     768         blocks.10.att.x_g
+768   64                blocks.10.att.w1
+64    768               blocks.10.att.w2
+1     1     768         blocks.10.att.w0
+768   64                blocks.10.att.a1
+64    768               blocks.10.att.a2
+1     1     768         blocks.10.att.a0
+768   32                blocks.10.att.v1
+32    768               blocks.10.att.v2
+1     1     768         blocks.10.att.v0
+768   128               blocks.10.att.g1
+128   768               blocks.10.att.g2
+1     1     768         blocks.10.att.k_k
+1     1     768         blocks.10.att.k_a
+12    64                blocks.10.att.r_k
+768   768               blocks.10.att.receptance.weight [scale 1.0]
+768   768               blocks.10.att.key.weight [scale 0.1]
+768   768               blocks.10.att.value.weight [scale 1.0]
+768   768               blocks.10.att.output.weight [scale 0]
+768                     blocks.10.att.ln_x.weight
+768                     blocks.10.att.ln_x.bias
+1     1     768         blocks.10.ffn.x_k
+3072  768               blocks.10.ffn.key.weight [scale 1.0]
+768   3072              blocks.10.ffn.value.weight [scale 0]
+768                     blocks.11.ln1.weight
+768                     blocks.11.ln1.bias
+768                     blocks.11.ln2.weight
+768                     blocks.11.ln2.bias
+1     1     768         blocks.11.att.x_r
+1     1     768         blocks.11.att.x_w
+1     1     768         blocks.11.att.x_k
+1     1     768         blocks.11.att.x_v
+1     1     768         blocks.11.att.x_a
+1     1     768         blocks.11.att.x_g
+768   64                blocks.11.att.w1
+64    768               blocks.11.att.w2
+1     1     768         blocks.11.att.w0
+768   64                blocks.11.att.a1
+64    768               blocks.11.att.a2
+1     1     768         blocks.11.att.a0
+768   32                blocks.11.att.v1
+32    768               blocks.11.att.v2
+1     1     768         blocks.11.att.v0
+768   128               blocks.11.att.g1
+128   768               blocks.11.att.g2
+1     1     768         blocks.11.att.k_k
+1     1     768         blocks.11.att.k_a
+12    64                blocks.11.att.r_k
+768   768               blocks.11.att.receptance.weight [scale 1.0]
+768   768               blocks.11.att.key.weight [scale 0.1]
+768   768               blocks.11.att.value.weight [scale 1.0]
+768   768               blocks.11.att.output.weight [scale 0]
+768                     blocks.11.att.ln_x.weight
+768                     blocks.11.att.ln_x.bias
+1     1     768         blocks.11.ffn.x_k
+3072  768               blocks.11.ffn.key.weight [scale 1.0]
+768   3072              blocks.11.ffn.value.weight [scale 0]
+768                     ln_out.weight
+768                     ln_out.bias
+65536 768               head.weight [scale 4.618802153517006]
+model params 191084544
+Save to out/L12-D768-x070/rwkv-init.pth...
+Done. Now go for stage 2.

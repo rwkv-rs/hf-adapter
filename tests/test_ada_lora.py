@@ -4,7 +4,12 @@ from __future__ import annotations
 import torch
 import pytest
 
-from rwkv7_hf.ada_lora import ada_wagv_lora, ada_wagv_lora_available, ada_wagv_lora_should_use
+from rwkv7_hf.ada_lora import (
+    ada_wag_lora,
+    ada_wagv_lora,
+    ada_wagv_lora_available,
+    ada_wagv_lora_should_use,
+)
 
 
 def test_shape_policy() -> None:
@@ -55,10 +60,31 @@ def test_cpu_fallback_can_fuse_a_sigmoid_and_skip_v() -> None:
     torch.testing.assert_close(fused[3], v)
 
 
+def test_wag_only_cpu_fallback_matches_independent_linears() -> None:
+    torch.manual_seed(9)
+    rows, hidden = 8, 32
+    ranks = (8, 6, 4)
+    xw, xa, xg = (torch.randn(rows, hidden) for _ in range(3))
+    w1, a1, g1 = (torch.randn(rank, hidden) for rank in ranks)
+    w2, a2, g2 = (torch.randn(hidden, rank) for rank in ranks)
+    w0, a0 = (torch.randn(hidden) for _ in range(2))
+    actual = ada_wag_lora(
+        xw, xa, xg, w1, a1, g1, w2, a2, g2, w0, a0,
+        force_fallback=True,
+    )
+    expected = (
+        torch.nn.functional.linear(torch.tanh(torch.nn.functional.linear(xw, w1)), w2, w0),
+        torch.nn.functional.linear(torch.nn.functional.linear(xa, a1), a2, a0),
+        torch.nn.functional.linear(torch.sigmoid(torch.nn.functional.linear(xg, g1)), g2),
+    )
+    for observed, reference in zip(actual, expected):
+        torch.testing.assert_close(observed, reference)
+
+
 @pytest.mark.parametrize("dtype,max_abs", [(torch.float16, 0.02), (torch.bfloat16, 0.03)])
 def test_ada_cuda_matches_fallback_for_fp16_and_bf16(dtype, max_abs) -> None:
     if not torch.cuda.is_available() or not ada_wagv_lora_available("cuda"):
-        pytest.skip("Ada sm_89 CUDA kernel is unavailable")
+        pytest.skip("sm_89/sm_120 small-row CUDA kernel is unavailable")
     torch.manual_seed(11)
     rows, hidden = 1, 1024
     ranks = (64, 64, 128, 64)

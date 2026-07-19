@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Benchmark experimental NativeRWKV7ForCausalLM cached decode.
+"""Benchmark NativeRWKV7ForCausalLM cached decode.
 
-This is intentionally separate from the production wrapper fast-token benches.
-It tracks the FLA-free native PyTorch fallback path and its optional
-``RWKV7_NATIVE_MODEL_JIT`` cached-decode acceleration so native/upstream/AMD work
-has a reproducible speed row without claiming this path replaces the wrapper.
+This is intentionally separate from the legacy wrapper fast-token benches. It
+tracks the FLA-free eager, JIT, and CUDA-graph paths through the public native
+model API, including fixed-batch graph reuse and greedy-token evidence.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -26,17 +26,102 @@ DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "User: Summarize recurrent neural networks and cache reuse.\n\nAssistant:" * 16
 
 
+def greedy_trace_sha256(greedy_tokens: list[list[int]]) -> str:
+    payload = json.dumps(greedy_tokens, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def env_enabled(name: str) -> bool:
+    return os.environ.get(name, "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def requested_extension_status(device: str) -> dict[str, dict[str, Any]]:
+    """Build and report every CUDA extension requested by benchmark flags."""
+
+    status: dict[str, dict[str, Any]] = {}
+    sparse_requested = env_enabled("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN") or env_enabled(
+        "RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX"
+    )
+    if sparse_requested:
+        from rwkv7_hf.ada_sparse_ffn import (
+            ada_sparse_ffn_available,
+            ada_sparse_ffn_build_error,
+        )
+
+        active = ada_sparse_ffn_available(device, build=True)
+        status["ada_sparse_ffn"] = {
+            "requested": True,
+            "active": bool(active),
+            "error": ada_sparse_ffn_build_error(),
+        }
+
+    blackwell_norm_requested = env_enabled(
+        "RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX"
+    )
+    if blackwell_norm_requested:
+        from rwkv7_hf.blackwell_norm_mix import (
+            blackwell_norm_mix_available,
+            blackwell_norm_mix_build_error,
+        )
+
+        active = blackwell_norm_mix_available(build=True)
+        status["blackwell_norm_mix"] = {
+            "requested": True,
+            "active": bool(active),
+            "error": blackwell_norm_mix_build_error(),
+        }
+
+    lora_requested = any(
+        env_enabled(name)
+        for name in (
+            "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA",
+            "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA",
+        )
+    )
+    if lora_requested:
+        from rwkv7_hf.ada_lora import (
+            ada_wagv_lora_available,
+            ada_wagv_lora_build_error,
+        )
+
+        active = ada_wagv_lora_available(device, build=True)
+        status["ada_lora"] = {
+            "requested": True,
+            "active": bool(active),
+            "error": ada_wagv_lora_build_error(),
+        }
+
+    fp16_state_requested = (
+        os.environ.get("RWKV7_NATIVE_GRAPH_STATE_DTYPE", "fp32").strip().lower()
+        in {"fp16", "float16", "half"}
+        or env_enabled("RWKV7_NATIVE_GRAPH_FP16_RECURRENT")
+    )
+    if fp16_state_requested:
+        from rwkv7_hf.native_wkv_fp16 import (
+            native_fp16_recurrent_available,
+            native_fp16_recurrent_build_error,
+        )
+
+        active = native_fp16_recurrent_available(build=True)
+        status["native_wkv_fp16"] = {
+            "requested": True,
+            "active": bool(active),
+            "error": native_fp16_recurrent_build_error(),
+        }
+    return status
+
+
 @contextmanager
-def native_model_jit(enabled: bool):
-    old = os.environ.get("RWKV7_NATIVE_MODEL_JIT")
-    os.environ["RWKV7_NATIVE_MODEL_JIT"] = "1" if enabled else "0"
+def native_model_backend(backend: str):
+    old = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = backend
     try:
         yield
     finally:
         if old is None:
-            os.environ.pop("RWKV7_NATIVE_MODEL_JIT", None)
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
         else:
-            os.environ["RWKV7_NATIVE_MODEL_JIT"] = old
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old
 
 
 def cuda_sync(device: str) -> None:
@@ -54,8 +139,24 @@ def peak_mb(device: str) -> float | None:
     return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
 
 
-def encode(tok, prompt_tokens: int, device: str) -> torch.Tensor:
+def summarize_iteration_times(times_ms: list[float], batch_size: int) -> dict[str, float]:
+    if not times_ms:
+        raise ValueError("at least one iteration time is required")
+    values = torch.tensor(times_ms, dtype=torch.float64)
+    p10 = float(torch.quantile(values, 0.10))
+    p50 = float(torch.quantile(values, 0.50))
+    p90 = float(torch.quantile(values, 0.90))
+    return {
+        "p10_ms": round(p10, 6),
+        "p50_ms": round(p50, 6),
+        "p90_ms": round(p90, 6),
+        "decode_tokps": round(batch_size * 1000.0 / p50, 2),
+    }
+
+
+def encode(tok, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
     ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
+    ids = ids.repeat(batch_size, 1)
     return ids.to(device) if device.startswith("cuda") else ids
 
 
@@ -68,45 +169,116 @@ def load_model(args, dtype: torch.dtype):
     return model
 
 
-def run_backend(args, model, ids: torch.Tensor, *, jit_enabled: bool) -> dict[str, Any]:
+def run_backend(args, model, ids: torch.Tensor, *, backend: str) -> dict[str, Any]:
     if args.device.startswith("cuda"):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-    with native_model_jit(jit_enabled), torch.inference_mode():
-        out = model(ids, use_cache=True)
+    if hasattr(model, "rwkv7_clear_native_graph_cache"):
+        model.rwkv7_clear_native_graph_cache()
+    batch_size = int(ids.shape[0])
+    greedy_trace = torch.empty(
+        args.decode_steps,
+        batch_size,
+        dtype=torch.long,
+        device=ids.device,
+    )
+
+    def decode_one(token: torch.Tensor, state):
+        if args.fast_token_api:
+            logits, state = model.rwkv7_forward_token(
+                token,
+                past_key_values=state,
+                return_dict=False,
+                copy_logits=False,
+            )
+            return logits, state
+        result = model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
+        return result.logits, result.past_key_values
+
+    with native_model_backend(backend), torch.inference_mode():
+        out = model(ids, use_cache=True, logits_to_keep=1)
         state = out.past_key_values
         token = out.logits[:, -1:].argmax(dim=-1)
-        first = model(token, past_key_values=state, use_cache=True)
+        first_logits, state = decode_one(token, state)
         first_backend = model.rwkv7_native_model_last_decode_backend()
-        first_next = first.logits[:, -1:].argmax(dim=-1)
-        state = first.past_key_values
+        first_next = first_logits[:, -1:].argmax(dim=-1)
         token = first_next
         for _ in range(args.warmup):
-            out = model(token, past_key_values=state, use_cache=True)
-            state = out.past_key_values
-            token = out.logits[:, -1:].argmax(dim=-1)
-        cuda_sync(args.device)
-        t0 = time.perf_counter()
-        for _ in range(args.decode_steps):
-            out = model(token, past_key_values=state, use_cache=True)
-            state = out.past_key_values
-            token = out.logits[:, -1:].argmax(dim=-1)
-        cuda_sync(args.device)
-        dt = time.perf_counter() - t0
-    return {
+            logits, state = decode_one(token, state)
+            token = logits[:, -1:].argmax(dim=-1)
+        if args.timing_scope == "graph_replay":
+            if backend != "native_graph" or not hasattr(state, "_native_graph_bound_runner"):
+                raise ValueError("graph_replay timing requires an active native_graph cache")
+            runner = state._native_graph_bound_runner()
+            if runner is None or runner.graph is None:
+                raise RuntimeError("native graph runner is not bound after warmup")
+            times_ms: list[float] = []
+            for _ in range(args.decode_steps):
+                start = torch.cuda.Event(enable_timing=True)
+                end = torch.cuda.Event(enable_timing=True)
+                start.record()
+                runner.graph.replay()
+                end.record()
+                end.synchronize()
+                times_ms.append(float(start.elapsed_time(end)))
+            timing = summarize_iteration_times(times_ms, batch_size)
+            dt = timing["p50_ms"] * args.decode_steps / 1000.0
+            greedy_tokens = []
+        else:
+            cuda_sync(args.device)
+            t0 = time.perf_counter()
+            for step in range(args.decode_steps):
+                logits, state = decode_one(token, state)
+                token = logits[:, -1:].argmax(dim=-1)
+                greedy_trace[step].copy_(token.reshape(batch_size))
+            cuda_sync(args.device)
+            dt = time.perf_counter() - t0
+            trace_values = greedy_trace.detach().cpu().tolist()
+            greedy_tokens = [
+                [int(trace_values[step][row]) for step in range(args.decode_steps)]
+                for row in range(batch_size)
+            ]
+    graph_stats = (
+        model.rwkv7_native_graph_cache_stats()
+        if hasattr(model, "rwkv7_native_graph_cache_stats")
+        else None
+    )
+    graph_overrides = {
+        key: value
+        for key, value in sorted(os.environ.items())
+        if key.startswith(("RWKV7_NATIVE_GRAPH_", "RWKV7_FUSED_"))
+    }
+    row = {
         "axis": "native_model_decode",
         "backend": "hf_native_model",
-        "decode_backend": "native_jit" if jit_enabled else "eager",
+        "decode_backend": backend,
         "effective_decode_backend": first_backend,
+        "decode_api": "rwkv7_forward_token" if args.fast_token_api else "forward",
+        "timing_scope": args.timing_scope,
         "dtype": args.dtype,
+        "precision_mode": (
+            f"{args.dtype}_io_"
+            f"{os.environ.get('RWKV7_NATIVE_GRAPH_STATE_DTYPE', 'fp32').strip().lower()}_state"
+        ),
         "device": device_name(args.device),
+        "batch_size": batch_size,
         "prompt_tokens": int(ids.shape[1]),
         "decode_steps": args.decode_steps,
-        "decode_tokps": round(args.decode_steps / dt, 2),
+        "decode_tokps": round(batch_size * args.decode_steps / dt, 2),
+        "decode_per_sequence_tokps": round(args.decode_steps / dt, 2),
         "decode_ms_per_tok": round(1000 * dt / max(args.decode_steps, 1), 4),
-        "first_next_token": int(first_next.reshape(-1)[0].detach().cpu()),
+        "first_next_tokens": [int(value) for value in first_next.reshape(-1).detach().cpu().tolist()],
+        "greedy_tokens": greedy_tokens,
+        "greedy_trace_sha256": greedy_trace_sha256(greedy_tokens),
+        "native_graph_cache": graph_stats,
+        "native_graph_overrides": graph_overrides,
+        "requested_extensions": args.requested_extensions,
         "peak_vram_mb": peak_mb(args.device),
     }
+    if args.timing_scope == "graph_replay":
+        row.update(timing)
+        row["official_comparable_scope"] = True
+    return row
 
 
 def main() -> int:
@@ -117,18 +289,67 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", type=int, default=32)
     ap.add_argument("--decode-steps", type=int, default=32)
     ap.add_argument("--warmup", type=int, default=2)
-    ap.add_argument("--backends", nargs="+", default=["eager", "native_jit"], choices=["eager", "native_jit"])
+    ap.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Repeat every batch/backend row without reloading the checkpoint.",
+    )
+    ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--batch-sizes", nargs="+", type=int, default=None)
+    ap.add_argument(
+        "--fast-token-api",
+        action="store_true",
+        help="Use NativeRWKV7ForCausalLM.rwkv7_forward_token with borrowed graph logits.",
+    )
+    ap.add_argument(
+        "--require-active-extensions",
+        action="store_true",
+        help="Fail instead of benchmarking a fallback when a requested CUDA extension cannot build.",
+    )
+    ap.add_argument(
+        "--timing-scope",
+        choices=("end_to_end", "graph_replay"),
+        default="end_to_end",
+        help="Time the public decode loop or the official-compatible fixed-input CUDA Graph replay only.",
+    )
+    ap.add_argument(
+        "--backends",
+        nargs="+",
+        default=["eager", "native_jit"],
+        choices=["eager", "native_jit", "native_graph"],
+    )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
+    if args.repetitions <= 0:
+        raise ValueError("repetitions must be positive")
+
+    args.requested_extensions = requested_extension_status(args.device)
+    inactive = {
+        name: item
+        for name, item in args.requested_extensions.items()
+        if item["requested"] and not item["active"]
+    }
+    if args.require_active_extensions and inactive:
+        raise RuntimeError(
+            "requested CUDA extensions are inactive; refusing fallback benchmark: "
+            + json.dumps(inactive, ensure_ascii=False)
+        )
 
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = load_model(args, DTYPES[args.dtype])
-    ids = encode(tok, args.prompt_tokens, args.device)
     rows = []
-    for backend in args.backends:
-        row = run_backend(args, model, ids, jit_enabled=backend == "native_jit")
-        rows.append(row)
-        print(json.dumps(row, indent=2), flush=True)
+    batch_sizes = args.batch_sizes or [args.batch_size]
+    for repetition in range(1, args.repetitions + 1):
+        for batch_size in batch_sizes:
+            if batch_size <= 0:
+                raise ValueError("batch sizes must be positive")
+            ids = encode(tok, args.prompt_tokens, batch_size, args.device)
+            for backend in args.backends:
+                row = run_backend(args, model, ids, backend=backend)
+                row["repetition"] = repetition
+                rows.append(row)
+                print(json.dumps(row, indent=2), flush=True)
 
     if args.results:
         out = Path(args.results)

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import os
 import sys
 
 import torch
@@ -16,7 +14,6 @@ DTYPES = {
     "bf16": torch.bfloat16,
     "fp32": torch.float32,
 }
-TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", required=True, help="Prompt text")
     parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
     parser.add_argument("--dtype", choices=["auto", *DTYPES], default="auto")
-    parser.add_argument("--backend", choices=["auto", "fla", "native"], default="auto")
+    parser.add_argument("--backend", choices=["auto", "native"], default="auto")
     parser.add_argument("--max-new-tokens", type=int, default=64)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -57,18 +54,17 @@ def resolve_dtype(requested: str, device: torch.device) -> torch.dtype:
 
 def select_native_backend(
     requested: str,
-    *,
-    device_type: str,
-    fla_available: bool,
-    native_env_enabled: bool,
 ) -> bool:
-    if requested == "native":
-        return True
-    if requested == "fla":
-        if not fla_available:
-            raise RuntimeError("--backend fla requires flash-linear-attention")
-        return False
-    return native_env_enabled or device_type != "cuda" or not fla_available
+    """Return the canonical user-facing backend selection.
+
+    Converted checkpoints now point directly at the native Auto classes. FLA
+    remains available only in dedicated reference benchmarks, where the model
+    metadata and effective operator bindings can be checked explicitly.
+    """
+
+    if requested not in {"auto", "native"}:
+        raise ValueError(f"unsupported user-facing backend: {requested}")
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,24 +78,12 @@ def main(argv: list[str] | None = None) -> int:
 
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
-    fla_available = importlib.util.find_spec("fla") is not None
-    native_env = os.environ.get("RWKV7_NATIVE_MODEL", "0").strip().lower() in TRUE_VALUES
-    use_native = select_native_backend(
-        args.backend,
-        device_type=device.type,
-        fla_available=fla_available,
-        native_env_enabled=native_env,
-    )
-    if use_native:
-        os.environ["RWKV7_NATIVE_MODEL"] = "1"
-    else:
-        os.environ.pop("RWKV7_NATIVE_MODEL", None)
+    select_native_backend(args.backend)
 
     torch.manual_seed(args.seed)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(args.seed)
-    backend = "native" if use_native else "fla"
-    print(f"Loading {args.model} on {device} as {dtype} with {backend} backend", file=sys.stderr)
+    print(f"Loading {args.model} on {device} as {dtype} with native backend", file=sys.stderr)
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,

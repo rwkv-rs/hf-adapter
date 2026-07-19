@@ -2,21 +2,85 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
+import sys
 
 import torch
 from safetensors.torch import load_file, save_file
 
+from scripts.run_train_temp_official_recipe import (
+    build_official_runtime_env,
+    build_prepare_command,
+    build_run_command,
+    load_recipe,
+)
+
 from bench.bench_train_temp_alignment import (
+    _convergence_exit_code,
+    _forward_convergence_logits,
+    _load_official_config,
     _learning_rate_at_step,
+    _memory_stability_summary,
+    build_parser,
     compare_artifacts,
     compare_convergence_artifacts,
     compare_convergence_cohorts,
     make_deterministic_batch,
     make_deterministic_sequence,
+    make_official_dataset_batch,
+    make_official_dataset_sequence,
     normalize_official_tensors,
     write_json_atomic,
 )
+
+
+def test_hf_convergence_forward_uses_public_tuple_output_contract() -> None:
+    calls: list[dict[str, object]] = []
+    expected = torch.ones(1, 2, 3)
+
+    def model(input_ids, **kwargs):
+        calls.append(kwargs)
+        assert tuple(input_ids.shape) == (1, 2)
+        return (expected,)
+
+    actual = _forward_convergence_logits(
+        model, torch.ones(1, 2, dtype=torch.long), backend="hf_native_train_temp_cuda"
+    )
+
+    assert actual is expected
+    assert calls == [{"return_dict": False}]
+
+
+def test_controlled_partial_convergence_is_a_successful_resumable_exit() -> None:
+    assert _convergence_exit_code({"status": "pass", "failure": None}) == 0
+    assert _convergence_exit_code({"status": "partial", "failure": None}) == 0
+    assert _convergence_exit_code({"status": "fail", "failure": "nan"}) == 1
+
+
+def test_memory_stability_summary_uses_steady_validation_points() -> None:
+    summary = _memory_stability_summary(
+        [
+            {"step": 0, "memory_allocated_mb": 10.0, "memory_reserved_mb": 20.0},
+            {"step": 50, "memory_allocated_mb": 30.0, "memory_reserved_mb": 40.0},
+            {"step": 100, "memory_allocated_mb": 31.5, "memory_reserved_mb": 40.0},
+            {"step": 150, "memory_allocated_mb": 31.0, "memory_reserved_mb": 42.0},
+        ]
+    )
+
+    assert summary == {
+        "sample_count": 3,
+        "first_step": 50,
+        "last_step": 150,
+        "allocated_first_mb": 30.0,
+        "allocated_last_mb": 31.0,
+        "allocated_growth_mb": 1.0,
+        "allocated_range_mb": 1.5,
+        "reserved_first_mb": 40.0,
+        "reserved_last_mb": 42.0,
+        "reserved_growth_mb": 2.0,
+        "reserved_range_mb": 2.0,
+    }
 
 
 def _convergence_artifact(
@@ -25,6 +89,8 @@ def _convergence_artifact(
     seed: int,
     validation_losses: list[float],
     backend: str,
+    grad_norm: float = 2.0,
+    runtime_s: float = 10.0,
 ) -> None:
     steps = len(validation_losses) - 1
     write_json_atomic(
@@ -52,19 +118,21 @@ def _convergence_artifact(
             "eval_interval": 1,
             "optimizer_groups": [{"group_name": "lr_1x", "param_names": ["weight"]}],
             "train_curve": [
-                {"step": step, "loss": 4.0 / step, "grad_norm": 2.0}
+                {"step": step, "loss": 4.0 / step, "grad_norm": grad_norm}
                 for step in range(1, steps + 1)
             ],
             "validation_curve": [
                 {"step": step, "loss": loss}
                 for step, loss in enumerate(validation_losses)
             ],
-            "runtime_s": 10.0,
+            "runtime_s": runtime_s,
         },
     )
 
 
-def _artifact(path: Path, snapshot: Path, *, loss: float, phase: str = "backward") -> None:
+def _artifact(
+    path: Path, snapshot: Path, *, loss: float, phase: str = "backward"
+) -> None:
     write_json_atomic(
         path,
         {
@@ -84,8 +152,12 @@ def _artifact(path: Path, snapshot: Path, *, loss: float, phase: str = "backward
 def test_make_deterministic_batch_is_shifted_and_repeatable(tmp_path: Path) -> None:
     first = tmp_path / "first.safetensors"
     second = tmp_path / "second.safetensors"
-    first_meta = make_deterministic_batch(first, vocab_size=32, batch_size=2, seq_len=16, seed=42)
-    second_meta = make_deterministic_batch(second, vocab_size=32, batch_size=2, seq_len=16, seed=42)
+    first_meta = make_deterministic_batch(
+        first, vocab_size=32, batch_size=2, seq_len=16, seed=42
+    )
+    second_meta = make_deterministic_batch(
+        second, vocab_size=32, batch_size=2, seq_len=16, seed=42
+    )
 
     a = load_file(first)
     b = load_file(second)
@@ -93,7 +165,10 @@ def test_make_deterministic_batch_is_shifted_and_repeatable(tmp_path: Path) -> N
     assert tuple(a["targets"].shape) == (2, 16)
     assert torch.equal(a["input_ids"][:, 1:], a["targets"][:, :-1])
     assert torch.equal(a["input_ids"], b["input_ids"])
-    assert a["input_ids"].untyped_storage().data_ptr() != a["targets"].untyped_storage().data_ptr()
+    assert (
+        a["input_ids"].untyped_storage().data_ptr()
+        != a["targets"].untyped_storage().data_ptr()
+    )
     assert first_meta["content_sha256"] == second_meta["content_sha256"]
 
 
@@ -113,6 +188,62 @@ def test_make_deterministic_sequence_is_shifted_and_repeatable(tmp_path: Path) -
     assert torch.equal(a["input_ids"][..., 1:], a["targets"][..., :-1])
     assert torch.equal(a["input_ids"], b["input_ids"])
     assert first_meta["content_sha256"] == second_meta["content_sha256"]
+
+
+def test_make_official_dataset_sequence_matches_cubic_sample_order(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "minipile"
+    source = torch.arange(100, dtype=torch.int32).numpy().astype("uint16")
+    source.tofile(prefix.with_suffix(".bin"))
+    prefix.with_suffix(".idx").write_bytes(b"index")
+    output = tmp_path / "sequence.safetensors"
+
+    metadata = make_official_dataset_sequence(
+        output,
+        data_prefix=prefix,
+        batch_size=2,
+        seq_len=4,
+        steps=2,
+        epoch=0,
+        magic_prime=23,
+        samples_per_epoch=8,
+    )
+
+    tensors = load_file(output)
+    factor = int(23 * ((math.sqrt(5.0) - 1.0) / 2.0))
+    positions = [((factor * ii**3) % 23) * 4 for ii in range(1, 5)]
+    expected = torch.stack(
+        [torch.arange(position, position + 5) for position in positions]
+    ).reshape(2, 2, 5)
+    assert torch.equal(tensors["input_ids"], expected[..., :-1])
+    assert torch.equal(tensors["targets"], expected[..., 1:])
+    assert metadata["first_position"] == positions[0]
+    assert metadata["last_position"] == positions[-1]
+
+
+def test_make_official_dataset_batch_removes_the_step_axis(tmp_path: Path) -> None:
+    prefix = tmp_path / "minipile"
+    source = torch.arange(100, dtype=torch.int32).numpy().astype("uint16")
+    source.tofile(prefix.with_suffix(".bin"))
+    prefix.with_suffix(".idx").write_bytes(b"index")
+    output = tmp_path / "validation.safetensors"
+
+    metadata = make_official_dataset_batch(
+        output,
+        data_prefix=prefix,
+        batch_size=2,
+        seq_len=4,
+        epoch=1,
+        magic_prime=23,
+        samples_per_epoch=8,
+    )
+
+    tensors = load_file(output)
+    assert tuple(tensors["input_ids"].shape) == (2, 4)
+    assert tuple(tensors["targets"].shape) == (2, 4)
+    assert metadata["axis"] == "train_temp_official_dataset_batch"
+    assert metadata["steps"] == 1
 
 
 def test_increment_sequence_is_learnable_and_vocab_bounded(tmp_path: Path) -> None:
@@ -210,6 +341,92 @@ def test_step_compare_rejects_optimizer_group_mismatch(tmp_path: Path) -> None:
     assert "optimizer groups mismatch" in report["failures"]
 
 
+def test_compare_rejects_gradient_checkpointing_mismatch(tmp_path: Path) -> None:
+    official_snapshot = tmp_path / "official.safetensors"
+    hf_snapshot = tmp_path / "hf.safetensors"
+    save_file({"logits": torch.ones(2)}, official_snapshot)
+    save_file({"logits": torch.ones(2)}, hf_snapshot)
+    official_json = tmp_path / "official.json"
+    hf_json = tmp_path / "hf.json"
+    _artifact(official_json, official_snapshot, loss=1.0)
+    _artifact(hf_json, hf_snapshot, loss=1.0)
+    official = json.loads(official_json.read_text(encoding="utf-8"))
+    candidate = json.loads(hf_json.read_text(encoding="utf-8"))
+    official["gradient_checkpointing"] = True
+    candidate["gradient_checkpointing"] = False
+    write_json_atomic(official_json, official)
+    write_json_atomic(hf_json, candidate)
+
+    report = compare_artifacts(official_json, hf_json)
+
+    assert report["status"] == "fail"
+    assert "gradient_checkpointing" in report["provenance_mismatches"]
+
+
+def test_capture_parser_exposes_memory_bounded_b16_contract() -> None:
+    args = build_parser().parse_args(
+        [
+            "capture-hf",
+            "--batch",
+            "batch.safetensors",
+            "--output-json",
+            "capture.json",
+            "--snapshot",
+            "capture.safetensors",
+            "--phase",
+            "step",
+            "--model",
+            "model",
+            "--checkpoint-sha256",
+            "checkpoint",
+            "--native",
+            "--train-temp-cuda",
+            "--gradient-checkpointing",
+            "--omit-logits",
+        ]
+    )
+
+    assert args.native is True
+    assert args.train_temp_cuda is True
+    assert args.gradient_checkpointing is True
+    assert args.omit_logits is True
+
+
+def test_convergence_parser_exposes_fail_closed_resume_contract() -> None:
+    args = build_parser().parse_args(
+        [
+            "converge-hf",
+            "--sequence",
+            "sequence.safetensors",
+            "--validation-batch",
+            "validation.safetensors",
+            "--output-json",
+            "curve.json",
+            "--seed",
+            "131",
+            "--model",
+            "model",
+            "--checkpoint-sha256",
+            "checkpoint",
+            "--resume-from",
+            "resume.pt",
+            "--checkpoint-out",
+            "latest.pt",
+            "--checkpoint-every",
+            "50",
+            "--stop-after-step",
+            "500",
+            "--gradient-checkpointing",
+        ]
+    )
+
+    assert args.resume_from == "resume.pt"
+    assert args.checkpoint_out == "latest.pt"
+    assert args.checkpoint_every == 50
+    assert args.stop_after_step == 500
+    assert args.gradient_checkpointing is True
+
+
 def test_step_compare_keeps_bf16_delta_as_telemetry(tmp_path: Path) -> None:
     official_snapshot = tmp_path / "official.safetensors"
     hf_snapshot = tmp_path / "hf.safetensors"
@@ -250,7 +467,9 @@ def test_step_compare_keeps_bf16_delta_as_telemetry(tmp_path: Path) -> None:
     assert report["tensor_failures"] == []
 
 
-def test_compare_convergence_artifacts_gates_curves_and_provenance(tmp_path: Path) -> None:
+def test_compare_convergence_artifacts_gates_curves_and_provenance(
+    tmp_path: Path,
+) -> None:
     common = {
         "schema_version": 1,
         "axis": "train_temp_alignment_convergence",
@@ -287,6 +506,7 @@ def test_compare_convergence_artifacts_gates_curves_and_provenance(tmp_path: Pat
             {"step": 0, "loss": 4.5},
             {"step": 2, "loss": 3.5},
         ],
+        "runtime_s": 10.0,
     }
     official = {**common, "backend": "official_train_temp"}
     candidate = {**common, "backend": "hf_native"}
@@ -346,7 +566,226 @@ def test_compare_convergence_cohorts_accepts_matching_success_distribution(
     assert report["candidate_deep_success_count"] == 3
 
 
-def test_compare_convergence_cohorts_rejects_lower_success_count(tmp_path: Path) -> None:
+def test_compare_convergence_accepts_smaller_candidate_gradient_spike(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.json"
+    candidate = tmp_path / "candidate.json"
+    _convergence_artifact(
+        reference,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="official_train_temp",
+        grad_norm=8.0,
+    )
+    _convergence_artifact(
+        candidate,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="hf_train_temp_cuda",
+        grad_norm=2.0,
+    )
+
+    report = compare_convergence_artifacts(reference, candidate)
+
+    assert report["status"] == "pass"
+    assert report["candidate_over_reference_max_grad_norm_ratio"] == 0.25
+    assert report["bidirectional_max_grad_norm_ratio"] == 4.0
+
+
+def test_compare_convergence_rejects_larger_candidate_gradient_spike(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.json"
+    candidate = tmp_path / "candidate.json"
+    _convergence_artifact(
+        reference,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="official_train_temp",
+        grad_norm=2.0,
+    )
+    _convergence_artifact(
+        candidate,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="hf_train_temp_cuda",
+        grad_norm=5.0,
+    )
+
+    report = compare_convergence_artifacts(reference, candidate)
+
+    assert report["status"] == "fail"
+    assert report["candidate_over_reference_max_grad_norm_ratio"] == 2.5
+    assert "candidate p99.9 gradient norm increase exceeded target" in report[
+        "failures"
+    ]
+
+
+def test_compare_convergence_keeps_single_clipped_outlier_as_max_telemetry(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.json"
+    candidate = tmp_path / "candidate.json"
+    for path, backend in (
+        (reference, "official_train_temp"),
+        (candidate, "hf_train_temp_cuda"),
+    ):
+        _convergence_artifact(
+            path,
+            seed=11,
+            validation_losses=[11.0, 4.0, 0.08],
+            backend=backend,
+        )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["steps_requested"] = 1000
+        payload["steps_completed"] = 1000
+        payload["train_curve"] = [
+            {"step": step, "loss": 4.0, "grad_norm": 1.0}
+            for step in range(1, 1001)
+        ]
+        payload["validation_curve"] = [
+            {"step": 0, "loss": 11.0},
+            {"step": 1000, "loss": 0.08},
+        ]
+        write_json_atomic(path, payload)
+    candidate_payload = json.loads(candidate.read_text(encoding="utf-8"))
+    candidate_payload["train_curve"][-1]["grad_norm"] = 1000.0
+    write_json_atomic(candidate, candidate_payload)
+
+    report = compare_convergence_artifacts(reference, candidate)
+
+    assert report["status"] == "pass"
+    assert report["candidate_over_reference_max_grad_norm_ratio"] == 1000.0
+    assert report["candidate_over_reference_grad_norm_p999_ratio"] == 1.0
+
+
+def test_compare_convergence_rejects_below_parity_training_throughput(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.json"
+    candidate = tmp_path / "candidate.json"
+    _convergence_artifact(
+        reference,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="official_train_temp",
+        runtime_s=10.0,
+    )
+    _convergence_artifact(
+        candidate,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="hf_train_temp_cuda",
+        runtime_s=10.2,
+    )
+
+    report = compare_convergence_artifacts(reference, candidate)
+
+    assert report["status"] == "fail"
+    assert report["candidate_over_reference_throughput_ratio"] < 0.99
+    assert "candidate training throughput ratio is below target" in report["failures"]
+
+
+def test_compare_convergence_uses_accumulated_runtime_for_resumed_run(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.json"
+    candidate = tmp_path / "candidate.json"
+    _convergence_artifact(
+        reference,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="hf_train_temp_cuda",
+        runtime_s=10.0,
+    )
+    _convergence_artifact(
+        candidate,
+        seed=11,
+        validation_losses=[11.0, 4.0, 0.08],
+        backend="hf_train_temp_cuda",
+        runtime_s=5.0,
+    )
+    candidate_payload = json.loads(candidate.read_text(encoding="utf-8"))
+    candidate_payload["runtime_s_accumulated"] = 10.05
+    write_json_atomic(candidate, candidate_payload)
+
+    report = compare_convergence_artifacts(reference, candidate)
+
+    assert report["status"] == "pass"
+    assert report["candidate_runtime_s"] == 10.05
+    assert report["candidate_over_reference_throughput_ratio"] > 0.99
+
+
+def test_compare_convergence_cohort_uses_directional_gradient_spike_gate(
+    tmp_path: Path,
+) -> None:
+    references: list[Path] = []
+    candidates: list[Path] = []
+    for seed in (11, 22, 33):
+        reference = tmp_path / f"reference-{seed}.json"
+        candidate = tmp_path / f"candidate-{seed}.json"
+        _convergence_artifact(
+            reference,
+            seed=seed,
+            validation_losses=[11.0, 4.0, 0.08],
+            backend="official_train_temp",
+            grad_norm=8.0,
+        )
+        _convergence_artifact(
+            candidate,
+            seed=seed,
+            validation_losses=[11.0, 4.0, 0.08],
+            backend="hf_train_temp_cuda",
+            grad_norm=2.0,
+        )
+        references.append(reference)
+        candidates.append(candidate)
+
+    report = compare_convergence_cohorts(references, candidates)
+
+    assert report["status"] == "pass"
+    assert report["candidate_over_reference_median_grad_norm_ratio"] == 0.25
+    assert report["bidirectional_median_grad_norm_ratio"] == 4.0
+
+
+def test_compare_convergence_cohort_gates_median_training_throughput(
+    tmp_path: Path,
+) -> None:
+    references: list[Path] = []
+    candidates: list[Path] = []
+    for seed in (11, 22, 33):
+        reference = tmp_path / f"reference-{seed}.json"
+        candidate = tmp_path / f"candidate-{seed}.json"
+        _convergence_artifact(
+            reference,
+            seed=seed,
+            validation_losses=[11.0, 4.0, 0.08],
+            backend="official_train_temp",
+            runtime_s=10.0,
+        )
+        _convergence_artifact(
+            candidate,
+            seed=seed,
+            validation_losses=[11.0, 4.0, 0.08],
+            backend="hf_train_temp_cuda",
+            runtime_s=10.2,
+        )
+        references.append(reference)
+        candidates.append(candidate)
+
+    report = compare_convergence_cohorts(references, candidates)
+
+    assert report["status"] == "fail"
+    assert report["candidate_over_reference_throughput_ratio"] < 0.99
+    assert "candidate median training throughput ratio is below target" in report[
+        "failures"
+    ]
+
+
+def test_compare_convergence_cohorts_rejects_lower_success_count(
+    tmp_path: Path,
+) -> None:
     references: list[Path] = []
     candidates: list[Path] = []
     for seed in (11, 22, 33):
@@ -371,14 +810,21 @@ def test_compare_convergence_cohorts_rejects_lower_success_count(tmp_path: Path)
 
     assert report["status"] == "fail"
     assert report["candidate_success_count"] == 0
-    assert "candidate convergence success count is below reference" in report["failures"]
+    assert (
+        "candidate convergence success count is below reference" in report["failures"]
+    )
 
 
-def test_compare_artifacts_rejects_provenance_and_tensor_failures(tmp_path: Path) -> None:
+def test_compare_artifacts_rejects_provenance_and_tensor_failures(
+    tmp_path: Path,
+) -> None:
     official_snapshot = tmp_path / "official.safetensors"
     hf_snapshot = tmp_path / "hf.safetensors"
     save_file({"grad::x": torch.tensor([1.0, 0.0])}, official_snapshot)
-    save_file({"grad::x": torch.tensor([-1.0, 0.0]), "grad::extra": torch.ones(1)}, hf_snapshot)
+    save_file(
+        {"grad::x": torch.tensor([-1.0, 0.0]), "grad::extra": torch.ones(1)},
+        hf_snapshot,
+    )
     official_json = tmp_path / "official.json"
     hf_json = tmp_path / "hf.json"
     _artifact(official_json, official_snapshot, loss=1.0)
@@ -400,7 +846,10 @@ def test_compare_artifacts_rejects_provenance_and_tensor_failures(tmp_path: Path
 def test_write_json_atomic_leaves_valid_json(tmp_path: Path) -> None:
     output = tmp_path / "nested" / "result.json"
     write_json_atomic(output, {"status": "pass", "value": 3})
-    assert json.loads(output.read_text(encoding="utf-8")) == {"status": "pass", "value": 3}
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "status": "pass",
+        "value": 3,
+    }
     assert not output.with_suffix(output.suffix + ".tmp").exists()
 
 
@@ -437,7 +886,9 @@ def test_normalize_official_tensors_applies_converter_transpose() -> None:
         normalized["grad::model.layers.0.attn.w_lora.lora.0.weight"],
         tensors["blocks.0.att.w1"].t(),
     )
-    assert tuple(normalized["grad::model.layers.0.attn.w_lora.lora.2.bias"].shape) == (3,)
+    assert tuple(normalized["grad::model.layers.0.attn.w_lora.lora.2.bias"].shape) == (
+        3,
+    )
     assert tuple(normalized["grad::model.layers.0.attn.x_r"].shape) == (1, 1, 3)
 
 
@@ -455,3 +906,57 @@ def test_checked_in_official_config_is_production_shaped() -> None:
     assert config["dim_ffn"] == 4 * config["n_embd"]
     assert config["ctx_len"] >= 512
     assert config["vocab_size"] == 65536
+
+
+def test_official_shell_recipe_contract_matches_pinned_prepare_and_run() -> None:
+    root = Path(__file__).resolve().parents[1]
+    recipe = load_recipe(root / "configs" / "train_temp_official_x070_12x768_b16.json")
+    model = recipe["model"]
+    assert model["n_layer"] == 12
+    assert model["n_embd"] == model["dim_att"] == 768
+    assert model["reported_dim_ffn"] == 2688
+    assert model["effective_dim_ffn"] == 3072
+    assert model["ctx_len"] == 512
+    assert recipe["prepare"]["micro_bsz"] == 1
+    assert recipe["prepare"]["adam_eps"] == 1e-8
+    assert recipe["run"]["micro_bsz"] == 16
+    assert recipe["run"]["adam_eps"] == 1e-18
+    assert recipe["run"]["grad_clip"] == 1.0
+
+    checkout = Path("/d/references/RWKV-LM")
+    data_prefix = Path("/d/datasets/minipile/minipile")
+    output = Path("/d/bench/train-temp-official/out")
+    prepare = build_prepare_command(checkout, data_prefix, output, recipe)
+    run = build_run_command(checkout, data_prefix, output, recipe, max_steps=3)
+    assert prepare[prepare.index("--micro_bsz") + 1] == "1"
+    assert prepare[prepare.index("--accelerator") + 1] == "cpu"
+    assert run[run.index("--micro_bsz") + 1] == "16"
+    assert run[run.index("--kernel") + 1] == "@rwkv3"
+    assert run[run.index("--max_steps") + 1] == "3"
+    assert run[run.index("--my_exit_tokens") + 1] == "1498226207"
+    alignment = _load_official_config(
+        root / "configs" / "train_temp_official_x070_12x768_b16.json"
+    )
+    assert alignment.dim_ffn == 3072
+    assert alignment.betas == (0.9, 0.99)
+    assert alignment.grad_cp == 1
+
+
+def test_official_recipe_runtime_uses_active_python_and_local_extension_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("TORCH_EXTENSIONS_DIR", raising=False)
+    monkeypatch.delenv("MAX_JOBS", raising=False)
+    extension_dir = tmp_path / "torch-extensions"
+    env, metadata = build_official_runtime_env(extension_dir)
+
+    assert env["PATH"].split(os.pathsep)[0] == str(
+        Path(sys.executable).resolve().parent
+    )
+    assert env["TORCH_EXTENSIONS_DIR"] == str(extension_dir.resolve())
+    assert metadata["torch_extensions_dir"] == str(extension_dir.resolve())
+    assert metadata["max_jobs"] == env["MAX_JOBS"]
+    assert metadata["include_paths"] == [
+        path for path in metadata["include_paths"] if Path(path).is_dir()
+    ]

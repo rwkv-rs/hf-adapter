@@ -6,7 +6,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from scripts.adapter_manifest import ADAPTER_FILES
+from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
 from scripts.sync_hf_adapter_code import sync_one
 
 
@@ -71,13 +71,16 @@ def _assert_remote_code_direct_import_closure() -> None:
     """
 
     root = Path(__file__).resolve().parents[1] / "rwkv7_hf"
-    for entrypoint_name in ("modeling_rwkv7.py", "native_model.py"):
+    for entrypoint_name in ("native_model.py",):
         direct = _relative_import_files(root / entrypoint_name)
         pending = list(direct)
         transitive: set[str] = set()
         while pending:
             name = pending.pop()
-            if name in transitive or not (root / name).exists():
+            # Type-only imports can point back to the remote-code entrypoint.
+            # The entrypoint is already present, so it is not a dependency that
+            # Transformers needs to discover or copy again.
+            if name == entrypoint_name or name in transitive or not (root / name).exists():
                 continue
             transitive.add(name)
             pending.extend(_relative_import_files(root / name) - transitive)
@@ -88,7 +91,7 @@ def _assert_remote_code_direct_import_closure() -> None:
         )
 
 
-def main() -> int:
+def test_adapter_manifest_closure_and_sync() -> None:
     # Converted model dirs must include every runtime remote-code module the
     # shipped files transitively import, and the converter and sync lists must
     # stay aligned. (Does not force optional non-runtime files like sglang_quant.)
@@ -112,18 +115,32 @@ def main() -> int:
             + "\n",
             encoding="utf-8",
         )
+        for name in LEGACY_REMOTE_CODE_FILES:
+            (model_dir / name).write_text("stale FLA remote code\n", encoding="utf-8")
 
         result = sync_one(model_dir)
         assert result["model_dir"] == str(model_dir)
         assert result["dry_run"] is False
         for name in ADAPTER_FILES:
             assert (model_dir / name).exists(), name
+        assert sorted(Path(path).name for path in result["removed"]) == sorted(
+            LEGACY_REMOTE_CODE_FILES
+        )
+        for name in LEGACY_REMOTE_CODE_FILES:
+            assert not (model_dir / name).exists(), name
         cfg = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
-        assert cfg["architectures"] == ["RWKV7ForCausalLM"]
-        assert cfg["model_type"] == "rwkv7_hf_adapter"
-        assert cfg["auto_map"]["AutoModelForCausalLM"] == "modeling_rwkv7.RWKV7ForCausalLM"
+        assert cfg["architectures"] == ["NativeRWKV7ForCausalLM"]
+        assert cfg["model_type"] == "rwkv7_native"
+        assert cfg["auto_map"] == {
+            "AutoConfig": "native_model.NativeRWKV7Config",
+            "AutoModel": "native_model.NativeRWKV7Model",
+            "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
+        }
         assert weight.read_bytes() == b"do-not-touch"
 
+
+def main() -> int:
+    test_adapter_manifest_closure_and_sync()
     print("PASS")
     return 0
 

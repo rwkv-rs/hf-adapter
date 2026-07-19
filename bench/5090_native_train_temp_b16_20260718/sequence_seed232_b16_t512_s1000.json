@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_sequence",
+  "vocab_size": 65536,
+  "batch_size": 16,
+  "seq_len": 512,
+  "steps": 1000,
+  "seed": 232,
+  "pattern": "increment",
+  "active_vocab_size": 256,
+  "content_sha256": "14333a6042df4d24eea02ea033c484f6f9a0e9a2b9996b00e95ba5a2ccdf0ee4",
+  "path": "/home/ubuntu/bench/native_train_temp_b16_alignment_20260718/sequence_seed232_b16_t512_s1000.safetensors"
+}

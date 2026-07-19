@@ -1,0 +1,296 @@
+{
+  "axis": "official_native_sequence_prefill_alignment",
+  "status": "pass",
+  "quality_pass": true,
+  "performance_gate_pass": true,
+  "batch_size": 1,
+  "prompt_tokens": 128,
+  "precision": "fp16_state_fp16_io",
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "native_capture_sha256": "0686335f6ef4e69fa06b519279e7841c2664061b7dd04e0d4355f6e86e9b8051",
+  "official_capture_sha256": "765526b775b4721fb12bcd20ac36012e6c45281689f2b3095729853af7ddcb53",
+  "thresholds": {
+    "logits": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "first_decode_logits": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125,
+      "fp16_max_ulps_at_max": 4.0,
+      "fp16_max_abs_tail": 0.1875,
+      "fp16_max_fraction_over_abs": 5e-05
+    },
+    "state": {
+      "min_cosine": 0.9999,
+      "max_abs": 4.0,
+      "max_mean_abs": 0.001,
+      "outlier_abs": 1.0,
+      "max_outlier_fraction": 1e-05
+    },
+    "xpa": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "xpf": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "layer_outputs": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.25
+    }
+  },
+  "metrics": {
+    "logits": {
+      "shape": [
+        1,
+        65536
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.09375,
+      "max_abs_native_value": -38.875,
+      "max_abs_official_value": -38.78125,
+      "max_abs_ulps_at_max": 3.0,
+      "count_over_abs_threshold": 0,
+      "fraction_over_abs_threshold": 0.0,
+      "mean_abs": 0.029865644872188568,
+      "cosine": 0.9999998439985629,
+      "standard_threshold_pass": true,
+      "official_self_envelope_pass": false,
+      "threshold_pass": true
+    },
+    "first_decode_logits": {
+      "shape": [
+        1,
+        65536
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.09375,
+      "max_abs_native_value": -39.53125,
+      "max_abs_official_value": -39.625,
+      "max_abs_ulps_at_max": 3.0,
+      "count_over_abs_threshold": 0,
+      "fraction_over_abs_threshold": 0.0,
+      "mean_abs": 0.0318796131759882,
+      "cosine": 0.9999998271826527,
+      "fixed_abs_pass": true,
+      "fp16_tail_pass": true,
+      "standard_threshold_pass": true,
+      "official_self_envelope_pass": false,
+      "threshold_pass": true
+    },
+    "layer_outputs": {
+      "shape": [
+        32,
+        1,
+        2560
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.15625,
+      "max_abs_native_value": 32.09375,
+      "max_abs_official_value": 32.25,
+      "max_abs_ulps_at_max": 5.0,
+      "count_over_abs_threshold": 1,
+      "fraction_over_abs_threshold": 1.220703125e-05,
+      "mean_abs": 0.0006561229449289386,
+      "cosine": 0.9999961954070039,
+      "standard_threshold_pass": true,
+      "official_self_envelope_pass": false,
+      "threshold_pass": true
+    },
+    "state": {
+      "shape": [
+        32,
+        1,
+        40,
+        64,
+        64
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.25,
+      "max_abs_native_value": 64.8125,
+      "max_abs_official_value": 64.5625,
+      "max_abs_ulps_at_max": 4.0,
+      "count_over_abs_threshold": 2,
+      "fraction_over_abs_threshold": 3.814697265625e-07,
+      "mean_abs": 0.0001964492785305083,
+      "cosine": 0.9999986352909707,
+      "outlier_abs": 1.0,
+      "outlier_count": 0,
+      "outlier_fraction": 0.0,
+      "threshold_pass": true
+    },
+    "xpa": {
+      "shape": [
+        32,
+        1,
+        2560
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.0234375,
+      "max_abs_native_value": -12.015625,
+      "max_abs_official_value": -12.0390625,
+      "max_abs_ulps_at_max": 3.0,
+      "count_over_abs_threshold": 0,
+      "fraction_over_abs_threshold": 0.0,
+      "mean_abs": 0.0014400405452761333,
+      "cosine": 0.9999948279545102,
+      "fixed_abs_pass": true,
+      "fp16_tail_pass": true,
+      "threshold_pass": true
+    },
+    "xpf": {
+      "shape": [
+        32,
+        1,
+        2560
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.1875,
+      "max_abs_native_value": -68.5625,
+      "max_abs_official_value": -68.375,
+      "max_abs_ulps_at_max": 3.0,
+      "count_over_abs_threshold": 2,
+      "fraction_over_abs_threshold": 2.44140625e-05,
+      "mean_abs": 0.0020162692497251557,
+      "cosine": 0.9999954423389463,
+      "fixed_abs_pass": false,
+      "fp16_tail_pass": true,
+      "threshold_pass": true
+    }
+  },
+  "first_token_exact": true,
+  "first_decode_token_exact": true,
+  "native": {
+    "source_revision": "749eb39d0fe7089eece332ad8614433cd1baa642",
+    "timing": {
+      "times_ms": [
+        9.500032424926758,
+        9.494303703308105,
+        9.493023872375488,
+        9.494144439697266,
+        9.495903968811035,
+        9.488927841186523,
+        9.4933443069458,
+        9.486080169677734,
+        9.504416465759277,
+        9.50540828704834,
+        9.508543968200684,
+        9.500224113464355,
+        9.510496139526367,
+        9.52086353302002,
+        9.50928020477295,
+        9.509247779846191,
+        9.510751724243164,
+        9.498687744140625,
+        9.50489616394043,
+        9.517279624938965,
+        9.529472351074219
+      ],
+      "median_ms": 9.504416465759277,
+      "aggregate_tokps": 13467.423324844225
+    },
+    "peak_vram_mb": 7640.51220703125,
+    "execution": "eager",
+    "backend": "native_prefill_graph",
+    "first_decode_backend": "native_graph",
+    "prefill_state_dtype": "torch.float16",
+    "first_decode_state_dtype": "torch.float16",
+    "stacked_rkv_effective": false,
+    "wavg_lora_effective": false,
+    "sequence_ffn_effective": false,
+    "fp16_accum_ffn_key_effective": false,
+    "runtime_env": {
+      "RWKV7_NATIVE_GRAPH_ADA_LINEAR": "1",
+      "RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES": "hidden,ffn_up,ffn_down",
+      "RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS": "1",
+      "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN": "1",
+      "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS": "4",
+      "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM": "0",
+      "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS": "19",
+      "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY": "1",
+      "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_UP": "1",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA": "1",
+      "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA": "1",
+      "RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX": "1",
+      "RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX": "1",
+      "RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS_B1": "31",
+      "RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS_B8": "30,31",
+      "RWKV7_NATIVE_GRAPH_FP16_RECURRENT": "1",
+      "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX": "1",
+      "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS": "8",
+      "RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0": "1",
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": "manual",
+      "RWKV7_NATIVE_GRAPH_STATE_DTYPE": "fp16",
+      "RWKV7_NATIVE_MODEL_BACKEND": "native_graph",
+      "RWKV7_NATIVE_PREFILL_FP16_RECURRENT": "1",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "1"
+    }
+  },
+  "official": {
+    "source_revision": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+    "timing": {
+      "times_ms": [
+        15.009247779846191,
+        14.840319633483887,
+        14.912063598632812,
+        14.939264297485352,
+        14.909215927124023,
+        14.99721622467041,
+        14.857760429382324,
+        14.845279693603516,
+        14.91420841217041,
+        14.894144058227539,
+        15.009344100952148,
+        14.884063720703125,
+        14.880928039550781,
+        14.911487579345703,
+        14.97488021850586,
+        15.019712448120117,
+        14.879679679870605,
+        14.913503646850586,
+        14.904735565185547,
+        14.92790412902832,
+        19.7043514251709
+      ],
+      "median_ms": 14.912063598632812,
+      "aggregate_tokps": 8583.654378441322
+    },
+    "peak_vram_mb": 5973.8916015625,
+    "runtime": {
+      "wkv": "fp16",
+      "emb": "gpu",
+      "batched_rkv": "off",
+      "cmix_sparse": "no-fc",
+      "lowrank_weight": "both",
+      "orig_linear_groups": "att_c2c,ffn_key,head"
+    },
+    "source_verification": {
+      "method": "sha256_manifest",
+      "commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+      "files": {
+        "cuda/rwkv7_fast_ops_fp16.cpp": "4e4f414625519644208ea06a704b5658ed916695377fc592e643639c35f05ff1",
+        "cuda/rwkv7_fast_ops_fp16.cu": "62ff8a90b0e4a4747b068024fa6415a08606f4d904c6a0b9ff3600d0ffa6e523",
+        "cuda/rwkv7_v3a_ops.cpp": "6522eb7635416a35c2c26bcc6ad66e8c2fb02f050a33384873965ecd6048f3ba",
+        "cuda/rwkv7_v3a_ops.cu": "ffc39f677ce3ce73bc63aaeb385567bb0b2d55b837c1b3e19aea944d85bccc88",
+        "cuda/rwkv7_wkv_fp16_v2.cpp": "488578f6a0586130f52f153d96251a1e8a7885561027c95a876ccb264ce78d1e",
+        "cuda/rwkv7_wkv_fp16_v2.cu": "6ddfbee2406365d29019780444975a80947f044eb9133afb3844ddbb236fec97",
+        "rwkv7_fast_v3a.py": "2e1de2dbc7c5c542697f30c470c939f715ed3817fd27380ca0f6d75a8a5a2faf"
+      }
+    }
+  },
+  "native_over_official_tokps": 1.568961508826469
+}

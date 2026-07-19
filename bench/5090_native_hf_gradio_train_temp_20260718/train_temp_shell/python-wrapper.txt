@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /home/ubuntu/venv-rwkv5090/bin/python "$@" --max_steps "${RWKV_MAX_STEPS:-1}"

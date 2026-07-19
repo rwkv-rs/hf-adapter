@@ -29,7 +29,7 @@
 
 - 第一次只用 **0.4B**。不要用 7.2B 或 13.3B 验证环境。
 - Windows、macOS、CPU 用户先安装基础版并使用 `native` 后端。
-- Linux + NVIDIA 用户可以安装 CUDA/FLA 优化版；安装失败时先退回基础版。
+- Linux + NVIDIA 用户可以安装原生 CUDA 优化版；安装失败时先退回基础版。
 - 全程使用仓库里的 `.venv`，不要把依赖安装到系统 Python。
 - fp16 权重大约占用每参数 2 字节，运行时还需要额外 RAM/VRAM。
 - 本文使用公开文件，不需要填写 Hugging Face token。
@@ -82,14 +82,14 @@ python examples/check_environment.py
 
 最后一条命令必须显示 `RESULT: READY`。如果出现 `FAIL`，先修复第一项再继续。
 
-只有 Linux + NVIDIA 用户需要尝试优化 CUDA/FLA 安装：
+只有 Linux + NVIDIA 用户需要安装原生 CUDA 优化依赖：
 
 ```bash
 python -m pip install -e ".[cuda]"
 ```
 
-FLA 安装失败不会阻止使用：重新运行 `python -m pip install -e .`，后续生成
-命令增加 `--backend native`。
+普通 RWKV 推理不需要安装 FLA。只有复现专用 FLA 参考 benchmark 时才安装
+`.[fla-reference]`；基础安装和 `--backend native` 可直接使用。
 
 训练、量化、Apple MLX 是首次生成之后的可选项，不要一次全部安装：
 
@@ -223,8 +223,7 @@ python examples/check_environment.py --model models/rwkv7-g1d-0.4b-hf
 
 ## 4. 生成第一段文本
 
-默认会自动选择 CUDA、MPS 或 CPU；CUDA 已安装 FLA 时自动使用 FLA，
-否则自动使用 native 后端：
+默认会自动选择 CUDA、MPS 或 CPU，并始终加载 native 后端：
 
 Windows PowerShell：
 
@@ -247,9 +246,9 @@ python examples/generate.py \
 常用配置：
 
 ```bash
-# NVIDIA CUDA + FLA。
+# NVIDIA CUDA + 原生融合 kernel。
 python examples/generate.py --model /path/to/model-hf \
-  --prompt "你好" --device cuda --backend fla --dtype fp16
+  --prompt "你好" --device cuda --backend native --dtype fp16
 
 # CPU。建议只先试小模型。
 python examples/generate.py --model /path/to/model-hf \
@@ -273,18 +272,12 @@ python examples/generate.py --help
 ## 5. Python API
 
 ```python
-import importlib.util
-import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model_path = "models/rwkv7-g1d-0.4b-hf"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float16 if device.type == "cuda" else torch.float32
-
-# CPU、MPS 或没有安装 FLA 的 CUDA 环境使用 native 后端。
-if device.type != "cuda" or importlib.util.find_spec("fla") is None:
-    os.environ["RWKV7_NATIVE_MODEL"] = "1"
 
 tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
@@ -324,8 +317,9 @@ print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 
 ## 常见问题
 
-- **提示缺少 `fla`**：增加 `--backend native`，或者在支持的 Linux CUDA
-  环境安装 `.[cuda]`。
+- **旧模型提示缺少 `fla`**：先运行
+  `python scripts/sync_hf_adapter_code.py /path/to/model-hf` 更新 Auto metadata，
+  再使用 `--backend native`。
 - **CUDA 不可用**：运行
   `python -c "import torch; print(torch.cuda.is_available())"` 检查 PyTorch。
 - **显存不足**：先换小模型。量化可以省显存，但不同显卡的速度和支持情况
@@ -333,7 +327,7 @@ print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 - **第一次运行很慢**：CUDA/Triton 内核可能需要首次编译和预热。
 - **输出不像聊天模型**：适配器不会改变模型训练性质。基础模型并不会因为接入 HF
   自动变成指令模型，请选择合适的 checkpoint 和提示格式。
-- **Windows CUDA/FLA 安装困难**：先使用基础安装和 native 后端；优化后端主要在
+- **Windows CUDA 安装困难**：先使用基础安装和 native 后端；优化后端主要在
   Linux 上验证，也可以考虑 WSL2。
 - **不知道把错误发给别人时该发什么**：运行
   `python examples/check_environment.py`，提供该命令输出、失败命令和第一段完整

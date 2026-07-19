@@ -3,9 +3,9 @@
 Canonical summary for Trainer, PEFT, TRL and DeepSpeed validation.
 
 For copyable PEFT, adapter round-trip, Trainer/resume, SFT/DPO/GRPO, and matrix
-commands, read [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) or
-[`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md). Multi-GPU ZeRO remains
-in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
+commands, read [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md). Official
+full-parameter kernel alignment is in [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md),
+and multi-GPU ZeRO remains in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 
 ## Interface status
 
@@ -13,7 +13,7 @@ in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 |---|---|---|
 | Labels and causal LM loss | **PASS** | finite loss and parameter-update smoke |
 | HF Trainer | **PASS** | tiny and real-model smoke; checkpoint resume evidence |
-| Official `train_temp` alignment | **PASS for exact RTX 5090 lane** | BF16 12x768 T512 backward/step exact; 3-seed x 1,000-step cohort passes |
+| Official `train_temp` alignment | **PASS for exact RTX 5090 B1 and Native B16 lanes** | BF16 12x768 T512 backward/step exact; Native B16 also passes paired real-MiniPile 3-seed x 1,000-step, continuous 5,000-step, 2,500+2,500 resume and steady-memory gates |
 | PEFT LoRA | **PASS** | forward/loss/backward, save/load and merge |
 | TRL SFTTrainer | **PASS** | CUDA and Apple/MPS smoke |
 | TRL DPOTrainer | **PASS** | CUDA and Apple/MPS smoke |
@@ -32,12 +32,15 @@ in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
   large-model inference/quant smoke.
 - **RTX A6000 48GB:** Trainer/SFT/DPO/resume through tested 7.2B lanes; dual-card
   ZeRO-2/3 base and resume through 2.9B.
-- **RTX 5090:** opt-in official-kernel `train_temp_cuda` lane on a 191M
-  production-shaped 12x768 model. T512 backward matches 400/400 tensors exactly;
-  FusedAdam step matches 800 tensors/deltas and post-step loss exactly. Three
-  seeds x 1,000 steps match official success counts (`2/3`) and pass the cohort
-  loss/gradient gates. See [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) and
-  [`../bench/5090_train_temp_alignment_20260717/`](../bench/5090_train_temp_alignment_20260717/README.md).
+- **RTX 5090:** opt-in official-kernel `train_temp_cuda` lanes on the 12x768
+  FFN3072 model. The original B1/T512 lane remains exact. The Native/no-FLA
+  B16/T512 lane matches 399 gradients and 399 FusedAdam parameter deltas
+  exactly. On real MiniPile tokens it passes three paired 1,000-step seeds at
+  `1.00049x` official median throughput, a continuous 5,000-step run at
+  `1.00255x`, and a 2,500+2,500 resume that restores model/optimizer and all
+  recorded RNG digests. See
+  [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) and
+  [`../bench/5090_native_train_temp_real_minipile_20260718/`](../bench/5090_native_train_temp_real_minipile_20260718/README.md).
 - **Apple M5:** tiny and real-model PEFT/Trainer/TRL smoke through tested 1.5B
   workflows. This is compatibility evidence, not high-throughput training.
 
@@ -50,10 +53,12 @@ Detailed matrices:
 
 ## Remaining production work
 
-- Extend exact `train_temp` alignment to larger checkpoints, real datasets,
-  additional cards and longer runs; the current accepted lane is one RTX 5090.
+- Extend exact `train_temp` alignment beyond the current real-MiniPile evidence
+  to larger checkpoints, multi-day runs and additional cards; current accepted
+  B1/B16 lanes are on one RTX 5090.
 - Larger ZeRO-3 checkpoint-resume matrix.
-- Optimizer/scheduler/RNG continuity checks after distributed resume.
+- Optimizer/scheduler/RNG continuity checks after distributed resume; the
+  single-GPU Native 2,500+2,500 path is already covered.
 - H100 and AMD/ROCm training validation.
 - Clear separation between compatibility smoke and production convergence
   evidence in every future report.

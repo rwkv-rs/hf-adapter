@@ -43,7 +43,7 @@ if _HAS_TRITON:
         a_down_ptr,
         w_mid_ptr,
         a_mid_ptr,
-        hidden: tl.constexpr,
+        input_dim: tl.constexpr,
         rank: tl.constexpr,
         BLOCK_R: tl.constexpr,
         BLOCK_K: tl.constexpr,
@@ -56,13 +56,13 @@ if _HAS_TRITON:
 
         acc_w = tl.zeros((BLOCK_R,), tl.float32)
         acc_a = tl.zeros((BLOCK_R,), tl.float32)
-        for start in range(0, hidden, BLOCK_K):
+        for start in range(0, input_dim, BLOCK_K):
             kidx = start + offs_k
-            mask_k = kidx < hidden
-            xw = tl.load(xw_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xa = tl.load(xa_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            w_offsets = offs_r[:, None] * hidden + kidx[None, :]
-            a_offsets = offs_r[:, None] * hidden + kidx[None, :]
+            mask_k = kidx < input_dim
+            xw = tl.load(xw_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xa = tl.load(xa_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            w_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+            a_offsets = offs_r[:, None] * input_dim + kidx[None, :]
             wd = tl.load(w_down_ptr + w_offsets, mask=mask_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
             ad = tl.load(a_down_ptr + a_offsets, mask=mask_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
             acc_w += tl.sum(wd * xw[None, :], axis=1)
@@ -84,7 +84,7 @@ if _HAS_TRITON:
         a_bias_ptr,
         w_out_ptr,
         a_out_ptr,
-        hidden: tl.constexpr,
+        output_dim: tl.constexpr,
         rank: tl.constexpr,
         HAS_W_BIAS: tl.constexpr,
         HAS_A_BIAS: tl.constexpr,
@@ -95,7 +95,7 @@ if _HAS_TRITON:
         block_id = tl.program_id(1)
         offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_r = tl.arange(0, BLOCK_R)
-        mask_m = offs_m < hidden
+        mask_m = offs_m < output_dim
 
         acc_w = tl.zeros((BLOCK_M,), tl.float32)
         acc_a = tl.zeros((BLOCK_M,), tl.float32)
@@ -117,7 +117,7 @@ if _HAS_TRITON:
         if HAS_A_BIAS:
             ab = tl.load(a_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_a += ab
-        out_base = batch_id * hidden + offs_m
+        out_base = batch_id * output_dim + offs_m
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
 
@@ -132,7 +132,7 @@ if _HAS_TRITON:
         w_mid_ptr,
         a_mid_ptr,
         g_mid_ptr,
-        hidden: tl.constexpr,
+        input_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -151,15 +151,15 @@ if _HAS_TRITON:
         acc_w = tl.zeros((BLOCK_R,), tl.float32)
         acc_a = tl.zeros((BLOCK_R,), tl.float32)
         acc_g = tl.zeros((BLOCK_R,), tl.float32)
-        for start in range(0, hidden, BLOCK_K):
+        for start in range(0, input_dim, BLOCK_K):
             kidx = start + offs_k
-            mask_k = kidx < hidden
-            xw = tl.load(xw_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xa = tl.load(xa_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xg = tl.load(xg_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            w_offsets = offs_r[:, None] * hidden + kidx[None, :]
-            a_offsets = offs_r[:, None] * hidden + kidx[None, :]
-            g_offsets = offs_r[:, None] * hidden + kidx[None, :]
+            mask_k = kidx < input_dim
+            xw = tl.load(xw_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xa = tl.load(xa_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xg = tl.load(xg_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            w_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+            a_offsets = offs_r[:, None] * input_dim + kidx[None, :]
+            g_offsets = offs_r[:, None] * input_dim + kidx[None, :]
             wd = tl.load(w_down_ptr + w_offsets, mask=mask_w_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
             ad = tl.load(a_down_ptr + a_offsets, mask=mask_a_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
             gd = tl.load(g_down_ptr + g_offsets, mask=mask_g_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
@@ -188,7 +188,7 @@ if _HAS_TRITON:
         w_out_ptr,
         a_out_ptr,
         g_out_ptr,
-        hidden: tl.constexpr,
+        output_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -203,7 +203,7 @@ if _HAS_TRITON:
         block_id = tl.program_id(1)
         offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_r = tl.arange(0, BLOCK_R)
-        mask_m = offs_m < hidden
+        mask_m = offs_m < output_dim
 
         acc_w = tl.zeros((BLOCK_M,), tl.float32)
         acc_a = tl.zeros((BLOCK_M,), tl.float32)
@@ -235,7 +235,7 @@ if _HAS_TRITON:
         if HAS_G_BIAS:
             gb = tl.load(g_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_g += gb
-        out_base = batch_id * hidden + offs_m
+        out_base = batch_id * output_dim + offs_m
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
         tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
@@ -254,7 +254,7 @@ if _HAS_TRITON:
         a_mid_ptr,
         g_mid_ptr,
         v_mid_ptr,
-        hidden: tl.constexpr,
+        input_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -276,14 +276,14 @@ if _HAS_TRITON:
         acc_a = tl.zeros((BLOCK_R,), tl.float32)
         acc_g = tl.zeros((BLOCK_R,), tl.float32)
         acc_v = tl.zeros((BLOCK_R,), tl.float32)
-        for start in range(0, hidden, BLOCK_K):
+        for start in range(0, input_dim, BLOCK_K):
             kidx = start + offs_k
-            mask_k = kidx < hidden
-            xw = tl.load(xw_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xa = tl.load(xa_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xg = tl.load(xg_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xv = tl.load(xv_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            offsets = offs_r[:, None] * hidden + kidx[None, :]
+            mask_k = kidx < input_dim
+            xw = tl.load(xw_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xa = tl.load(xa_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xg = tl.load(xg_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xv = tl.load(xv_ptr + batch_id * input_dim + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            offsets = offs_r[:, None] * input_dim + kidx[None, :]
             wd = tl.load(w_down_ptr + offsets, mask=mask_w_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
             ad = tl.load(a_down_ptr + offsets, mask=mask_a_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
             gd = tl.load(g_down_ptr + offsets, mask=mask_g_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
@@ -319,7 +319,7 @@ if _HAS_TRITON:
         a_out_ptr,
         g_out_ptr,
         v_gate_ptr,
-        hidden: tl.constexpr,
+        output_dim: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -336,7 +336,7 @@ if _HAS_TRITON:
         block_id = tl.program_id(1)
         offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_r = tl.arange(0, BLOCK_R)
-        mask_m = offs_m < hidden
+        mask_m = offs_m < output_dim
 
         acc_w = tl.zeros((BLOCK_M,), tl.float32)
         acc_a = tl.zeros((BLOCK_M,), tl.float32)
@@ -377,7 +377,7 @@ if _HAS_TRITON:
         if HAS_V_BIAS:
             vb = tl.load(v_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_v += vb
-        out_base = batch_id * hidden + offs_m
+        out_base = batch_id * output_dim + offs_m
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
         tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
@@ -431,25 +431,26 @@ def fused_wa_lora(
     if torch is None or F is None:
         raise RuntimeError("fused_wa_lora requires torch")
     xw2, had_seq = _flatten_lora_input(xw, name="xw")
-    hidden = int(xw2.shape[1])
-    xa2, _ = _flatten_lora_input(xa, hidden, name="xa")
+    input_dim = int(xw2.shape[1])
+    xa2, _ = _flatten_lora_input(xa, input_dim, name="xa")
     if tuple(xw2.shape) != tuple(xa2.shape):
         raise ValueError("xw and xa must have identical flattened shapes")
     if w_down_weight.dim() != 2 or a_down_weight.dim() != 2:
         raise ValueError("down weights must be [rank, hidden]")
     rank = int(w_down_weight.shape[0])
-    if int(w_down_weight.shape[1]) != hidden or int(a_down_weight.shape[0]) != rank or int(a_down_weight.shape[1]) != hidden:
-        raise ValueError("w/a down weights must share [rank, hidden] shape")
+    if int(w_down_weight.shape[1]) != input_dim or int(a_down_weight.shape[0]) != rank or int(a_down_weight.shape[1]) != input_dim:
+        raise ValueError("w/a down weights must share [rank, input_dim] shape")
     if w_up_weight.dim() != 2 or a_up_weight.dim() != 2:
         raise ValueError("up weights must be [hidden, rank]")
-    if int(w_up_weight.shape[0]) != hidden or int(w_up_weight.shape[1]) != rank:
-        raise ValueError(f"w_up_weight must be [{hidden}, {rank}], got {tuple(w_up_weight.shape)}")
-    if int(a_up_weight.shape[0]) != hidden or int(a_up_weight.shape[1]) != rank:
-        raise ValueError(f"a_up_weight must be [{hidden}, {rank}], got {tuple(a_up_weight.shape)}")
-    if w_up_bias is not None and (w_up_bias.dim() != 1 or int(w_up_bias.shape[0]) != hidden):
-        raise ValueError(f"w_up_bias must be [{hidden}], got {tuple(w_up_bias.shape)}")
-    if a_up_bias is not None and (a_up_bias.dim() != 1 or int(a_up_bias.shape[0]) != hidden):
-        raise ValueError(f"a_up_bias must be [{hidden}], got {tuple(a_up_bias.shape)}")
+    output_dim = int(w_up_weight.shape[0])
+    if int(w_up_weight.shape[1]) != rank:
+        raise ValueError(f"w_up_weight must be [output_dim, {rank}], got {tuple(w_up_weight.shape)}")
+    if int(a_up_weight.shape[0]) != output_dim or int(a_up_weight.shape[1]) != rank:
+        raise ValueError(f"a_up_weight must be [{output_dim}, {rank}], got {tuple(a_up_weight.shape)}")
+    if w_up_bias is not None and (w_up_bias.dim() != 1 or int(w_up_bias.shape[0]) != output_dim):
+        raise ValueError(f"w_up_bias must be [{output_dim}], got {tuple(w_up_bias.shape)}")
+    if a_up_bias is not None and (a_up_bias.dim() != 1 or int(a_up_bias.shape[0]) != output_dim):
+        raise ValueError(f"a_up_bias must be [{output_dim}], got {tuple(a_up_bias.shape)}")
 
     use_triton = (
         not force_fallback
@@ -485,7 +486,7 @@ def fused_wa_lora(
         ab_c = a_up_bias.contiguous() if a_up_bias is not None else au_c
         w_mid = torch.empty((batch, rank), device=xw2.device, dtype=xw2.dtype)
         a_mid = torch.empty_like(w_mid)
-        w_out = torch.empty((batch, hidden), device=xw2.device, dtype=xw2.dtype)
+        w_out = torch.empty((batch, output_dim), device=xw2.device, dtype=xw2.dtype)
         a_out = torch.empty_like(w_out)
         _wa_lora_down_kernel[(batch, triton.cdiv(rank, int(block_r)))](
             xw_c,
@@ -494,13 +495,13 @@ def fused_wa_lora(
             ad_c,
             w_mid,
             a_mid,
-            hidden,
+            input_dim,
             rank,
             BLOCK_R=int(block_r),
             BLOCK_K=int(block_k),
             num_warps=4,
         )
-        _wa_lora_up_kernel[(batch, triton.cdiv(hidden, int(block_m)))](
+        _wa_lora_up_kernel[(batch, triton.cdiv(output_dim, int(block_m)))](
             w_mid,
             a_mid,
             wu_c,
@@ -509,7 +510,7 @@ def fused_wa_lora(
             ab_c,
             w_out,
             a_out,
-            hidden,
+            output_dim,
             rank,
             HAS_W_BIAS=w_up_bias is not None,
             HAS_A_BIAS=a_up_bias is not None,
@@ -538,19 +539,20 @@ def _validate_lora_weights(
     down_weight: Any,
     up_weight: Any,
     up_bias: Any | None,
-    hidden: int,
+    input_dim: int,
+    output_dim: int,
     *,
     name: str,
 ) -> int:
     if down_weight.dim() != 2:
-        raise ValueError(f"{name}_down_weight must be [rank, hidden], got {tuple(down_weight.shape)}")
+        raise ValueError(f"{name}_down_weight must be [rank, input_dim], got {tuple(down_weight.shape)}")
     rank = int(down_weight.shape[0])
-    if int(down_weight.shape[1]) != hidden:
-        raise ValueError(f"{name}_down_weight hidden mismatch: got {int(down_weight.shape[1])}, expected {hidden}")
-    if up_weight.dim() != 2 or int(up_weight.shape[0]) != hidden or int(up_weight.shape[1]) != rank:
-        raise ValueError(f"{name}_up_weight must be [{hidden}, {rank}], got {tuple(up_weight.shape)}")
-    if up_bias is not None and (up_bias.dim() != 1 or int(up_bias.shape[0]) != hidden):
-        raise ValueError(f"{name}_up_bias must be [{hidden}], got {tuple(up_bias.shape)}")
+    if int(down_weight.shape[1]) != input_dim:
+        raise ValueError(f"{name}_down_weight input mismatch: got {int(down_weight.shape[1])}, expected {input_dim}")
+    if up_weight.dim() != 2 or int(up_weight.shape[0]) != output_dim or int(up_weight.shape[1]) != rank:
+        raise ValueError(f"{name}_up_weight must be [{output_dim}, {rank}], got {tuple(up_weight.shape)}")
+    if up_bias is not None and (up_bias.dim() != 1 or int(up_bias.shape[0]) != output_dim):
+        raise ValueError(f"{name}_up_bias must be [{output_dim}], got {tuple(up_bias.shape)}")
     return rank
 
 
@@ -586,17 +588,20 @@ def fused_wag_lora(
     if torch is None or F is None:
         raise RuntimeError("fused_wag_lora requires torch")
     xw2, had_seq = _flatten_lora_input(xw, name="xw")
-    hidden = int(xw2.shape[1])
-    xa2, xa_had_seq = _flatten_lora_input(xa, hidden, name="xa")
-    xg2, xg_had_seq = _flatten_lora_input(xg, hidden, name="xg")
+    input_dim = int(xw2.shape[1])
+    xa2, xa_had_seq = _flatten_lora_input(xa, input_dim, name="xa")
+    xg2, xg_had_seq = _flatten_lora_input(xg, input_dim, name="xg")
     if tuple(xw2.shape) != tuple(xa2.shape) or tuple(xw2.shape) != tuple(xg2.shape):
         raise ValueError("xw, xa and xg must have identical flattened shapes")
     if xa_had_seq != had_seq or xg_had_seq != had_seq:
         raise ValueError("xw, xa and xg must use the same rank/layout")
 
-    w_rank = _validate_lora_weights(w_down_weight, w_up_weight, w_up_bias, hidden, name="w")
-    a_rank = _validate_lora_weights(a_down_weight, a_up_weight, a_up_bias, hidden, name="a")
-    g_rank = _validate_lora_weights(g_down_weight, g_up_weight, g_up_bias, hidden, name="g")
+    if w_up_weight.dim() != 2:
+        raise ValueError(f"w_up_weight must be a matrix, got {tuple(w_up_weight.shape)}")
+    output_dim = int(w_up_weight.shape[0])
+    w_rank = _validate_lora_weights(w_down_weight, w_up_weight, w_up_bias, input_dim, output_dim, name="w")
+    a_rank = _validate_lora_weights(a_down_weight, a_up_weight, a_up_bias, input_dim, output_dim, name="a")
+    g_rank = _validate_lora_weights(g_down_weight, g_up_weight, g_up_bias, input_dim, output_dim, name="g")
     max_rank = max(w_rank, a_rank, g_rank)
 
     use_triton = (
@@ -646,7 +651,7 @@ def fused_wag_lora(
         w_mid = torch.empty((batch, w_rank), device=xw2.device, dtype=xw2.dtype)
         a_mid = torch.empty((batch, a_rank), device=xw2.device, dtype=xw2.dtype)
         g_mid = torch.empty((batch, g_rank), device=xw2.device, dtype=xw2.dtype)
-        w_out = torch.empty((batch, hidden), device=xw2.device, dtype=xw2.dtype)
+        w_out = torch.empty((batch, output_dim), device=xw2.device, dtype=xw2.dtype)
         a_out = torch.empty_like(w_out)
         g_out = torch.empty_like(w_out)
         _wag_lora_down_kernel[(batch, triton.cdiv(max_rank, int(block_r)))](
@@ -659,7 +664,7 @@ def fused_wag_lora(
             w_mid,
             a_mid,
             g_mid,
-            hidden,
+            input_dim,
             w_rank,
             a_rank,
             g_rank,
@@ -668,7 +673,7 @@ def fused_wag_lora(
             BLOCK_K=int(block_k),
             num_warps=4,
         )
-        _wag_lora_up_kernel[(batch, triton.cdiv(hidden, int(block_m)))](
+        _wag_lora_up_kernel[(batch, triton.cdiv(output_dim, int(block_m)))](
             w_mid,
             a_mid,
             g_mid,
@@ -681,7 +686,7 @@ def fused_wag_lora(
             w_out,
             a_out,
             g_out,
-            hidden,
+            output_dim,
             w_rank,
             a_rank,
             g_rank,
@@ -740,19 +745,22 @@ def fused_wavg_lora(
     if torch is None or F is None:
         raise RuntimeError("fused_wavg_lora requires torch")
     xw2, had_seq = _flatten_lora_input(xw, name="xw")
-    hidden = int(xw2.shape[1])
-    xa2, xa_had_seq = _flatten_lora_input(xa, hidden, name="xa")
-    xg2, xg_had_seq = _flatten_lora_input(xg, hidden, name="xg")
-    xv2, xv_had_seq = _flatten_lora_input(xv, hidden, name="xv")
+    input_dim = int(xw2.shape[1])
+    xa2, xa_had_seq = _flatten_lora_input(xa, input_dim, name="xa")
+    xg2, xg_had_seq = _flatten_lora_input(xg, input_dim, name="xg")
+    xv2, xv_had_seq = _flatten_lora_input(xv, input_dim, name="xv")
     if tuple(xw2.shape) != tuple(xa2.shape) or tuple(xw2.shape) != tuple(xg2.shape) or tuple(xw2.shape) != tuple(xv2.shape):
         raise ValueError("xw, xa, xg and xv must have identical flattened shapes")
     if xa_had_seq != had_seq or xg_had_seq != had_seq or xv_had_seq != had_seq:
         raise ValueError("xw, xa, xg and xv must use the same rank/layout")
 
-    w_rank = _validate_lora_weights(w_down_weight, w_up_weight, w_up_bias, hidden, name="w")
-    a_rank = _validate_lora_weights(a_down_weight, a_up_weight, a_up_bias, hidden, name="a")
-    g_rank = _validate_lora_weights(g_down_weight, g_up_weight, g_up_bias, hidden, name="g")
-    v_rank = _validate_lora_weights(v_down_weight, v_up_weight, v_up_bias, hidden, name="v")
+    if w_up_weight.dim() != 2:
+        raise ValueError(f"w_up_weight must be a matrix, got {tuple(w_up_weight.shape)}")
+    output_dim = int(w_up_weight.shape[0])
+    w_rank = _validate_lora_weights(w_down_weight, w_up_weight, w_up_bias, input_dim, output_dim, name="w")
+    a_rank = _validate_lora_weights(a_down_weight, a_up_weight, a_up_bias, input_dim, output_dim, name="a")
+    g_rank = _validate_lora_weights(g_down_weight, g_up_weight, g_up_bias, input_dim, output_dim, name="g")
+    v_rank = _validate_lora_weights(v_down_weight, v_up_weight, v_up_bias, input_dim, output_dim, name="v")
     max_rank = max(w_rank, a_rank, g_rank, v_rank)
 
     use_triton = (
@@ -815,7 +823,7 @@ def fused_wavg_lora(
         a_mid = torch.empty((batch, a_rank), device=xw2.device, dtype=xw2.dtype)
         g_mid = torch.empty((batch, g_rank), device=xw2.device, dtype=xw2.dtype)
         v_mid = torch.empty((batch, v_rank), device=xw2.device, dtype=xw2.dtype)
-        w_out = torch.empty((batch, hidden), device=xw2.device, dtype=xw2.dtype)
+        w_out = torch.empty((batch, output_dim), device=xw2.device, dtype=xw2.dtype)
         a_out = torch.empty_like(w_out)
         g_out = torch.empty_like(w_out)
         v_gate = torch.empty_like(w_out)
@@ -832,7 +840,7 @@ def fused_wavg_lora(
             a_mid,
             g_mid,
             v_mid,
-            hidden,
+            input_dim,
             w_rank,
             a_rank,
             g_rank,
@@ -842,7 +850,7 @@ def fused_wavg_lora(
             BLOCK_K=int(block_k),
             num_warps=int(num_warps),
         )
-        _wavg_lora_up_kernel[(batch, triton.cdiv(hidden, int(block_m)))](
+        _wavg_lora_up_kernel[(batch, triton.cdiv(output_dim, int(block_m)))](
             w_mid,
             a_mid,
             g_mid,
@@ -859,7 +867,7 @@ def fused_wavg_lora(
             a_out,
             g_out,
             v_gate,
-            hidden,
+            output_dim,
             w_rank,
             a_rank,
             g_rank,

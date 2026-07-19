@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 import types
 
+import pytest
+
 try:
     import torch
 except Exception:  # pragma: no cover - local lightweight environments
@@ -259,6 +261,109 @@ def test_self_chunk_exact_model_shape_can_lower_the_generic_token_floor(monkeypa
     assert not native_jit._native_prefill_self_chunk_enabled(512, 64, 8, 2560, 24)
 
 
+def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    policy = types.SimpleNamespace(
+        fused_prefill_shift_mix=True,
+        prefill_shift_mix_model_shapes=((2048, 24, 8, 128),),
+        fused_prefill_output=True,
+        prefill_fused_output_model_shapes=((2048, 24, 8, 128),),
+        fused_prefill_state_prep=True,
+        prefill_state_prep_model_shapes=((2048, 24, 8, 512),),
+        prefill_state_prep_layer_counts=((2048, 24, 8, 512, 12),),
+        prefill_attn_shift_mix_strict_fp16_model_shapes=((4096, 61, 1, 128),),
+        prefill_ffn_shift_mix_strict_fp16_model_shapes=((4096, 61, 1, 128),),
+        prefill_attn_shift_mix_launch_profiles=((4096, 61, 1, 128, 2048, 8),),
+        prefill_ffn_shift_mix_launch_profiles=((4096, 61, 1, 128, 2048, 8),),
+    )
+    monkeypatch.setattr(native_jit, "_kernel_policy", lambda: policy)
+    monkeypatch.setattr(native_jit, "fused_attn_shift_mix", object())
+    monkeypatch.setattr(native_jit, "fused_attn_shift_mix_available", lambda: True)
+    monkeypatch.setattr(native_jit, "fused_prefill_state_prep", object())
+    monkeypatch.setattr(native_jit, "fused_prefill_state_prep_available", lambda: True)
+    monkeypatch.setattr(native_jit, "fused_attn_output_prepare", object())
+    monkeypatch.setattr(native_jit, "fused_attn_output_prepare_available", lambda: True)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SHIFT_MIX_MODEL_SHAPES", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_STATE_PREP_MODEL_SHAPES", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_MODEL_SHAPES", raising=False)
+
+    assert native_jit._native_prefill_fused_shift_mix_enabled(8, 128, 2048, 24)
+    assert not native_jit._native_prefill_fused_shift_mix_enabled(1, 128, 2048, 24)
+    assert native_jit._native_prefill_fused_state_prep_enabled(8, 512, 2048, 24)
+    assert not native_jit._native_prefill_fused_state_prep_enabled(8, 128, 2048, 24)
+    assert native_jit._native_prefill_fused_output_enabled(8, 128, 2048, 24)
+    assert not native_jit._native_prefill_fused_output_enabled(8, 512, 2048, 24)
+    assert native_jit._native_prefill_state_prep_layers(8, 512, 2048, 24) == set(
+        range(12)
+    )
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_STATE_PREP_LAYERS_B8_T512", "0-3,7")
+    assert native_jit._native_prefill_state_prep_layers(8, 512, 2048, 24) == {
+        0,
+        1,
+        2,
+        3,
+        7,
+    }
+
+    assert native_jit._native_prefill_shift_mix_layers(8, 128, 24) is None
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_SHIFT_MIX_LAYERS_B8_T128", "0-19,23")
+    assert native_jit._native_prefill_shift_mix_layers(8, 128, 24) == {
+        *range(20),
+        23,
+    }
+
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_ATTN_SHIFT_MIX", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", raising=False)
+    assert native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_ATTN_SHIFT_MIX", True)
+    assert native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", "0")
+    assert not native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+
+    assert native_jit._native_prefill_policy_model_shape_selected(
+        "prefill_attn_shift_mix_strict_fp16_model_shapes", 1, 128, 4096, 61
+    )
+    assert not native_jit._native_prefill_policy_model_shape_selected(
+        "prefill_attn_shift_mix_strict_fp16_model_shapes", 8, 128, 4096, 61
+    )
+
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", raising=False)
+    assert native_jit._native_prefill_attn_shift_mix_block_size(False) == 256
+    assert native_jit._native_prefill_attn_shift_mix_block_size(True) == 2048
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", "1024")
+    assert native_jit._native_prefill_attn_shift_mix_block_size(True) == 1024
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", "768")
+    with pytest.raises(ValueError, match="power of two"):
+        native_jit._native_prefill_attn_shift_mix_block_size(True)
+
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_NUM_WARPS", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_NUM_WARPS", raising=False)
+    assert native_jit._native_prefill_shift_mix_num_warps("attn") == 4
+    assert native_jit._native_prefill_ffn_shift_mix_block_size() == 256
+    assert native_jit._native_prefill_shift_mix_num_warps("ffn") == 4
+    assert native_jit._native_prefill_attn_shift_mix_block_size(
+        False, 1, 128, 4096, 61
+    ) == 2048
+    assert native_jit._native_prefill_shift_mix_num_warps(
+        "attn", 1, 128, 4096, 61
+    ) == 8
+    assert native_jit._native_prefill_ffn_shift_mix_block_size(
+        1, 128, 4096, 61
+    ) == 2048
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_NUM_WARPS", "8")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE", "2048")
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_NUM_WARPS", "2")
+    assert native_jit._native_prefill_shift_mix_num_warps("attn") == 8
+    assert native_jit._native_prefill_ffn_shift_mix_block_size() == 2048
+    assert native_jit._native_prefill_shift_mix_num_warps("ffn") == 2
+
+
 def test_self_chunk_safe_gate_is_explicitly_tunable(monkeypatch) -> None:
     from rwkv7_hf import native_jit
 
@@ -301,6 +406,70 @@ def test_sequence_ffn_exact_model_shape_does_not_alias_equal_rows(monkeypatch) -
     assert native_jit._native_prefill_fused_sequence_ffn_enabled(4096, 8, 512, 4096, 32)
     assert not native_jit._native_prefill_fused_sequence_ffn_enabled(4096, 2, 2048, 4096, 32)
     assert not native_jit._native_prefill_fused_sequence_ffn_enabled(4096, 8, 512, 2560, 24)
+
+
+def test_fp16_accum_ffn_key_is_exact_shape_and_explicitly_disableable(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            prefill_fp16_accum_ffn_key_model_shapes=((4096, 32, 8, 128),),
+        ),
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY", raising=False)
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_MODEL_SHAPES",
+        raising=False,
+    )
+    assert native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.float16
+    )
+    assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        1, 1024, 4096, 32, torch.float16
+    )
+    assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.bfloat16
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY", "0")
+    assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.float16
+    )
+
+
+def test_fp16_accum_ffn_key_layers_support_policy_and_shape_override(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            prefill_fp16_accum_ffn_key_layer_counts=((2560, 32, 8, 128, 20),),
+        ),
+    )
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS_B8_T128",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS",
+        raising=False,
+    )
+    assert native_jit._native_prefill_fp16_accum_ffn_key_layers(
+        8, 128, 2560, 32
+    ) == set(range(20))
+    assert native_jit._native_prefill_fp16_accum_ffn_key_layers(
+        1, 128, 2560, 32
+    ) is None
+
+    monkeypatch.setenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS_B8_T128",
+        "0-3,9,40",
+    )
+    assert native_jit._native_prefill_fp16_accum_ffn_key_layers(
+        8, 128, 2560, 32
+    ) == {0, 1, 2, 3, 9}
 
 
 _TorchModule = torch.nn.Module if torch is not None else object

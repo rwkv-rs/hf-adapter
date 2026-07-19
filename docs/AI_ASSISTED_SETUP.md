@@ -4,7 +4,7 @@
 终端的 AI，只需要先定位本页，再按任务路由读取一个用户教程。不要从多个文档中
 拼装提示词，也不要一次执行多个工作流。
 
-本页可以覆盖安装、转换、推理、缓存、投机解码、训练、多卡、量化和 Apple
+本页可以覆盖安装、转换、Windows/CPU、推理、缓存、投机解码、训练、多卡、量化和 Apple
 部署。它不会要求 AI 修改内核、运行全量 benchmark 或自动下载大模型。
 
 ## 使用前的安全规则
@@ -24,11 +24,13 @@
 | 任务 ID | 用户目标 | 只读这份教程 | AI 必须观察的通过证据 |
 |---|---|---|---|
 | `first-run` | 安装、下载 0.4B、转换并生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、`[PASS] Model directory`、生成退出 0 且有新文本 |
+| `windows-cpu` | Windows/CPU 无下载 tiny 推理、训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 退出码 0、四个 `CPU ... PASS`、loss 下降、梯度/参数变化非零、重载 logits 差为 0 |
 | `inference` | 转换、HF API、保存重载、离线/native | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选章节的退出码 0、`PASS` 或有限 loss/logits |
+| `gradio-native-hf` | 在官方 RWKV-Gradio-3 网页运行 Native HF | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) | B1/B8 生成、切换后复用、速度标签、截图和进程显存全部可观察 |
 | `cache` | 循环状态、动态 batch、chunked prefill | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选 cache 测试所有 mode/shape 打印 `PASS` |
 | `speculative` | 投机解码 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | target greedy 完全一致、draft/target 调用计数有效、`PASS` |
 | `training` | PEFT LoRA、Trainer、保存合并、恢复 | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | 有限 loss、非零梯度/参数变化、所选精确 `PASS` |
-| `train-temp-alignment` | 在 CUDA 上复现官方 RWKV-LM train_temp 数学与训练效果 | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) | 单步逐张量报告 `pass`；长期至少 3-seed cohort `pass`；精确 GPU/模型/commit/hash 齐全 |
+| `train-temp-alignment` | 在 CUDA 上复现官方 RWKV-LM train_temp 数学与训练效果 | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) | 同初始化/数据顺序的单步逐张量 `pass`；官方后立即运行 Native 的真实数据 3-seed cohort `pass` 且中位吞吐 `>=1.0x`；至少 5,000-step 连续曲线和中点恢复的模型/优化器/RNG/稳态显存门通过；精确 GPU/模型/commit/hash 齐全 |
 | `trl` | SFT、DPO 或 GRPO | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | 所选流程 `status: pass` 或 `NATIVE ... PASS` |
 | `multi-gpu-inference` | HF `device_map` 层切分 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 至少两张可见 GPU、单卡参考一致、`PASS` |
 | `deepspeed` | ZeRO-2/ZeRO-3 smoke | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 至少两张 CUDA 卡、请求的 stage 全部 `PASS`、结果行落盘 |
@@ -107,8 +109,9 @@ python examples/generate.py --model models/rwkv7-g1d-0.4b-hf \
   --prompt "User: Say hello in one sentence. Assistant:" --max-new-tokens 8
 ```
 
-Linux NVIDIA 可以在首次 native 通过后另行尝试 `.[cuda]`/FLA。FLA 安装失败
-不应阻塞 native 首次生成。
+Linux NVIDIA 可以在首次 native 通过后安装 `.[cuda]` 启用原生融合 kernel。
+普通 RWKV 任务不得因为 FLA 未安装而失败；`.[fla-reference]` 只用于明确的参考
+benchmark。
 
 ## 统一汇报格式
 

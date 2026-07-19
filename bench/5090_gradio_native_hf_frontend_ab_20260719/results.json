@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "axis": "gradio_native_hf_frontend_ab",
+  "status": "pass_with_limits",
+  "space_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "model": "rwkv7-g1h-7.2b-20260710-ctx10240",
+  "state_policy": "fp32io16",
+  "speed_prompt": "User: 请用三点解释为什么循环神经网络适合流式推理，并给出一个简短的 Python 伪代码示例。\n\nAssistant: <think></think>",
+  "sampling": {
+    "max_tokens": 100,
+    "temperature": 0.2,
+    "top_p": 0.0,
+    "presence_penalty": 0.0,
+    "count_penalty": 0.0,
+    "penalty_decay": 0.99
+  },
+  "speed_rows": [
+    {
+      "backend": "official_v3a",
+      "batch_size": 1,
+      "label": "Output 137.7 token/s @ bsz 1 = 100 tokens, 107 chars",
+      "decode_tokps": 137.7,
+      "screenshot": "screenshots/official-v3a-b1.png"
+    },
+    {
+      "backend": "native_hf_fast_token",
+      "batch_size": 1,
+      "label": "Output 138.5 token/s @ bsz 1 = 100 tokens, 107 chars",
+      "decode_tokps": 138.5,
+      "native_to_official": 1.0058,
+      "screenshot_repeat_tokps": 136.1,
+      "screenshot": "screenshots/native-hf-b1.png"
+    },
+    {
+      "backend": "official_v3a",
+      "batch_size": 8,
+      "label": "Output 837.7 token/s @ bsz 8 = 800 tokens, 902 chars",
+      "decode_tokps": 837.7,
+      "screenshot": "screenshots/official-v3a-b8.png"
+    },
+    {
+      "backend": "native_hf_fast_token",
+      "batch_size": 8,
+      "label": "Output 831.8 token/s @ bsz 8 = 800 tokens, 914 chars",
+      "decode_tokps": 831.8,
+      "native_to_official": 0.9930,
+      "screenshot": "screenshots/native-hf-b8.png"
+    }
+  ],
+  "quality_prompt": "User: 用三条编号短句解释RNN为何适合流式推理，每条不超过12个汉字。然后只给下面4行Python伪代码，不要添加其他代码：\nstate = init()\nfor token in stream:\n    state = rnn(token, state)\n    emit(state)\n\nAssistant: <think></think>",
+  "quality_output": "1. 隐藏状态持续更新，适应流式输入。  \n2. 无需重置，保持上下文连续性。  \n3. 逐步处理，低延迟高效推理。",
+  "quality_rows": [
+    {
+      "backend": "official_v3a",
+      "label": "Output 137.5 token/s @ bsz 1 = 54 tokens, 58 chars",
+      "screenshot": "screenshots/official-v3a-quality-b1.png"
+    },
+    {
+      "backend": "native_hf_fast_token",
+      "label": "Output 134.0 token/s @ bsz 1 = 54 tokens, 58 chars",
+      "screenshot": "screenshots/native-hf-quality-b1.png"
+    }
+  ],
+  "quality_exact_text_match": true,
+  "instruction_fully_satisfied": false,
+  "instruction_limit": "Both backends ended before emitting the requested pseudocode.",
+  "offline_startup": {
+    "status": "pass",
+    "hf_hub_offline": true,
+    "app3_model_path_set": false,
+    "resolved_model_path": "/home/ubuntu/models/rwkv7/rwkv7-g1h-7.2b-hf",
+    "log": "raw/offline-native-start.log"
+  },
+  "process_memory_mib_after_b1_b8": {
+    "official_v3a": 14886,
+    "native_hf_fast_token": 15520,
+    "native_to_official": 1.0426
+  }
+}

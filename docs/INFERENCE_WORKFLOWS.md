@@ -3,6 +3,10 @@
 本教程覆盖第一次生成之外的 HF 适配能力：可复现转换、无 FLA 原生后端、
 loss 和 mask、模型保存迁移、循环状态复用、动态批处理以及分块 prefill。
 
+需要带网页的本机演示时，使用独立的
+[`RWKV-Gradio-3 Native HF 教程`](GRADIO_NATIVE_HF.md)；该教程不会改变这里的
+标准 HF API 和 cache 合同。
+
 前置条件：先完成 [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)，并把下文的 `MODEL`
 替换成已经通过目录检查的 HF 模型路径。
 
@@ -37,31 +41,28 @@ python scripts/sync_hf_adapter_code.py MODEL
 两条命令都必须退出 0。生产目录刷新前先备份或纳入版本管理，刷新后重新运行
 生成和 reload 验收。
 
-## 2. 选择 FLA 或便携原生后端
+## 2. 使用默认原生后端
 
-在已验证的 Linux NVIDIA 环境使用优化 FLA：
+在 Linux NVIDIA 环境使用原生融合 CUDA 后端：
 
 ```bash
 python examples/generate.py --model MODEL --prompt "Hello" \
-  --device cuda --dtype fp16 --backend fla --max-new-tokens 8
+  --device cuda --dtype fp16 --backend native --max-new-tokens 8
 ```
 
-在 CPU、MPS 或没有 FLA 的 CUDA 环境使用原生后端：
+在 CPU 或 MPS 环境同样使用原生后端：
 
 ```bash
 python examples/generate.py --model MODEL --prompt "Hello" \
   --device cpu --dtype fp32 --backend native --max-new-tokens 8
 ```
 
-退出码为 0 且打印新文本才算通过。原生后端是兼容和优化承载路线，不能据此
-宣称它在所有显卡和 shape 上都快于 FLA。
+退出码为 0 且打印新文本才算通过。是否启用融合 kernel 由设备策略和可用能力
+决定；没有精确卡证据时，不能据此宣称所有 shape 都有同样加速。
 
-直接使用 HF API 时，要在加载模型前设置：
+直接使用 HF API 不需要设置后端环境变量：
 
 ```python
-import os
-os.environ["RWKV7_NATIVE_MODEL"] = "1"
-
 from transformers import AutoModelForCausalLM
 model = AutoModelForCausalLM.from_pretrained("MODEL", trust_remote_code=True)
 ```

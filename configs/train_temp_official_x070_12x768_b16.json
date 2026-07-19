@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "official_commit": "e6f74b63a06e08606d130043599d218209628bad",
+  "scripts": {
+    "prepare": {
+      "path": "RWKV-v7/train_temp/demo-training-prepare.sh",
+      "sha256": "ee4b7ee41645feb9acd9eb347e45b5c75e7ec7b10bfbc9d9da8e480da4f630d2"
+    },
+    "run": {
+      "path": "RWKV-v7/train_temp/demo-training-run.sh",
+      "sha256": "850bc983c27555af6769fab3767d7b29e57c7057e84e02987b5b1b7a3d0c976e"
+    }
+  },
+  "model": {
+    "model_type": "x070",
+    "n_layer": 12,
+    "n_embd": 768,
+    "dim_att": 768,
+    "reported_dim_ffn": 2688,
+    "effective_dim_ffn": 3072,
+    "head_size": 64,
+    "vocab_size": 65536,
+    "ctx_len": 512
+  },
+  "dataset": {
+    "repository": "BlinkDL/minipile-tokenized",
+    "revision": "5f4db46baf16edad64e8c7b10b6e00beb41239fe",
+    "subdirectory": "rwkv_vocab_v20230424",
+    "token_count": 1498226207,
+    "bin_bytes": 2996452414,
+    "bin_sha256": "9917a52991b9ce5b0b05f92101962ba704cf3c4c20b64431ff8c45ba9d4141a5",
+    "idx_bytes": 20210042,
+    "idx_sha256": "f526abddaa06d376443e69c9a6c0fcbe4302afc0cb1aed08faf3fb97fc5acd10",
+    "magic_prime": 2926181,
+    "data_type": "binidx"
+  },
+  "prepare": {
+    "train_stage": 1,
+    "micro_bsz": 1,
+    "lr_init": 1e-5,
+    "lr_final": 1e-5,
+    "warmup_steps": 10,
+    "beta1": 0.9,
+    "beta2": 0.99,
+    "adam_eps": 1e-8,
+    "weight_decay": 0.0,
+    "grad_cp": 1,
+    "accelerator": "cpu",
+    "devices": 1,
+    "precision": "bf16",
+    "strategy": "deepspeed_stage_2"
+  },
+  "run": {
+    "train_stage": 3,
+    "micro_bsz": 16,
+    "lr_init": 0.0006,
+    "lr_final": 0.00006,
+    "warmup_steps": 10,
+    "beta1": 0.9,
+    "beta2": 0.99,
+    "adam_eps": 1e-18,
+    "weight_decay": 0.001,
+    "grad_clip": 1.0,
+    "grad_cp": 1,
+    "head_chunk": 0,
+    "kernel": "@rwkv3",
+    "epoch_save": 10,
+    "num_nodes": 1,
+    "devices": 1,
+    "accelerator": "gpu",
+    "precision": "bf16",
+    "strategy": "deepspeed_stage_2"
+  }
+}

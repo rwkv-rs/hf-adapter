@@ -26,16 +26,27 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rwkv7_hf.train_temp_alignment import (
+from rwkv7_hf.train_temp_alignment import (  # noqa: E402
     build_train_temp_param_groups,
     compare_tensors,
     train_temp_cross_entropy,
     train_temp_official_parameter_name,
 )
+from rwkv7_hf.train_temp_resume import (  # noqa: E402
+    restore_training_checkpoint,
+    save_training_checkpoint,
+)
 
 
 SCHEMA_VERSION = 1
-PROVENANCE_KEYS = ("phase", "precision", "checkpoint_sha256", "batch_sha256")
+PROVENANCE_KEYS = (
+    "phase",
+    "precision",
+    "checkpoint_sha256",
+    "batch_sha256",
+    "gradient_checkpointing",
+    "snapshot_logits",
+)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -50,7 +61,9 @@ def write_json_atomic(path: str | Path, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     os.replace(temporary, output)
 
 
@@ -59,7 +72,7 @@ def save_safetensors_atomic(tensors: dict[str, torch.Tensor], path: str | Path) 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     cpu_tensors = {
-        name: tensor.detach().to(device="cpu").contiguous().clone()
+        name: tensor.detach().to(device="cpu").contiguous()
         for name, tensor in tensors.items()
     }
     save_file(cpu_tensors, temporary)
@@ -185,6 +198,130 @@ def make_deterministic_sequence(
     }
 
 
+def make_official_dataset_sequence(
+    output: str | Path,
+    *,
+    data_prefix: str | Path,
+    batch_size: int,
+    seq_len: int,
+    steps: int,
+    epoch: int,
+    magic_prime: int,
+    samples_per_epoch: int = 40_320,
+) -> dict[str, Any]:
+    """Materialize the exact official train_temp MiniPile sampling order."""
+
+    if batch_size <= 0 or seq_len <= 0 or steps <= 0:
+        raise ValueError("batch_size, seq_len and steps must be positive")
+    if epoch < 0 or samples_per_epoch <= 0:
+        raise ValueError("epoch must be non-negative and samples_per_epoch positive")
+    prefix = Path(data_prefix)
+    bin_path = prefix.with_suffix(".bin")
+    idx_path = prefix.with_suffix(".idx")
+    if not bin_path.is_file() or not idx_path.is_file():
+        raise FileNotFoundError("official dataset requires matching .bin and .idx files")
+    if bin_path.stat().st_size % np.dtype(np.uint16).itemsize:
+        raise ValueError("official MiniPile .bin size is not uint16-aligned")
+    token_count = bin_path.stat().st_size // np.dtype(np.uint16).itemsize
+    dataset_slots = token_count // int(seq_len)
+    if (
+        magic_prime <= 0
+        or magic_prime >= dataset_slots
+        or magic_prime % 3 != 2
+    ):
+        raise ValueError("magic_prime does not satisfy the official dataset contract")
+
+    source = np.memmap(bin_path, mode="r", dtype=np.uint16)
+    tokens = np.empty(
+        (int(steps), int(batch_size), int(seq_len) + 1), dtype=np.uint16
+    )
+    factor = int(magic_prime * ((math.sqrt(5.0) - 1.0) / 2.0))
+    first_position = None
+    last_position = None
+    for step in range(int(steps)):
+        for batch_index in range(int(batch_size)):
+            index = step * int(batch_size) + batch_index
+            ii = 1 + int(epoch) * int(samples_per_epoch) + index
+            position = ((factor * ii * ii * ii) % int(magic_prime)) * int(
+                seq_len
+            )
+            end = position + int(seq_len) + 1
+            if end > token_count:
+                raise RuntimeError("official dataset sample exceeds the token buffer")
+            tokens[step, batch_index] = source[position:end]
+            first_position = position if first_position is None else first_position
+            last_position = position
+
+    token_tensor = torch.from_numpy(tokens.astype(np.int64, copy=False))
+    output = Path(output)
+    save_safetensors_atomic(
+        {
+            "input_ids": token_tensor[..., :-1],
+            "targets": token_tensor[..., 1:],
+        },
+        output,
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "axis": "train_temp_official_dataset_sequence",
+        "data_prefix": str(prefix.resolve()),
+        "bin_sha256": sha256_file(bin_path),
+        "idx_sha256": sha256_file(idx_path),
+        "token_count": int(token_count),
+        "batch_size": int(batch_size),
+        "seq_len": int(seq_len),
+        "steps": int(steps),
+        "epoch": int(epoch),
+        "samples_per_epoch": int(samples_per_epoch),
+        "magic_prime": int(magic_prime),
+        "first_position": int(first_position),
+        "last_position": int(last_position),
+        "content_sha256": sha256_file(output),
+        "path": str(output),
+    }
+
+
+def make_official_dataset_batch(
+    output: str | Path,
+    *,
+    data_prefix: str | Path,
+    batch_size: int,
+    seq_len: int,
+    epoch: int,
+    magic_prime: int,
+    samples_per_epoch: int = 40_320,
+) -> dict[str, Any]:
+    """Materialize one held-out batch with the official cubic sampler."""
+
+    metadata = make_official_dataset_sequence(
+        output,
+        data_prefix=data_prefix,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        steps=1,
+        epoch=epoch,
+        magic_prime=magic_prime,
+        samples_per_epoch=samples_per_epoch,
+    )
+    output = Path(output)
+    tensors = load_file(output)
+    save_safetensors_atomic(
+        {
+            "input_ids": tensors["input_ids"][0].contiguous(),
+            "targets": tensors["targets"][0].contiguous(),
+        },
+        output,
+    )
+    metadata.update(
+        {
+            "axis": "train_temp_official_dataset_batch",
+            "content_sha256": sha256_file(output),
+            "path": str(output),
+        }
+    )
+    return metadata
+
+
 def normalize_official_tensors(
     tensors: dict[str, torch.Tensor],
     *,
@@ -200,11 +337,9 @@ def normalize_official_tensors(
         if not destination_name:
             continue
         value = tensor.t().contiguous() if transposed else tensor.contiguous()
-        preserves_mix_shape = (
-            ".attn." in destination_name
-            and destination_name.rsplit(".", 1)[-1]
-            in {"x_r", "x_w", "x_k", "x_v", "x_a", "x_g"}
-        )
+        preserves_mix_shape = ".attn." in destination_name and destination_name.rsplit(
+            ".", 1
+        )[-1] in {"x_r", "x_w", "x_k", "x_v", "x_a", "x_g"}
         if (
             not preserves_mix_shape
             and value.ndim > 1
@@ -366,6 +501,8 @@ def _capture_training_phase(
     grad_clip: float,
     optimizer_name: str,
     source_commit: str | None,
+    gradient_checkpointing: bool = False,
+    snapshot_logits: bool = True,
     backend_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if phase not in {"forward", "backward", "step"}:
@@ -382,8 +519,13 @@ def _capture_training_phase(
 
     model.train()
     model.zero_grad(set_to_none=True)
-    parameter_sort_key = lambda name: train_temp_official_parameter_name(name, naming=naming)
-    named_parameters = sorted(model.named_parameters(), key=lambda item: parameter_sort_key(item[0]))
+
+    def parameter_sort_key(name: str) -> str:
+        return train_temp_official_parameter_name(name, naming=naming)
+
+    named_parameters = sorted(
+        model.named_parameters(), key=lambda item: parameter_sort_key(item[0])
+    )
     groups = build_train_temp_param_groups(
         named_parameters,
         weight_decay=float(weight_decay),
@@ -408,7 +550,7 @@ def _capture_training_phase(
             adam_eps=adam_eps,
         )
         before = {
-            name: parameter.detach().to(device="cpu", dtype=torch.float32).clone()
+            name: parameter.detach().to(device="cpu").clone()
             for name, parameter in named_parameters
             if parameter.requires_grad
         }
@@ -420,7 +562,9 @@ def _capture_training_phase(
     outputs = model(input_ids)
     logits = outputs.logits if hasattr(outputs, "logits") else outputs
     loss = loss_fn(logits, targets)
-    snapshot: dict[str, torch.Tensor] = {"logits": logits.detach()}
+    snapshot: dict[str, torch.Tensor] = (
+        {"logits": logits.detach()} if snapshot_logits else {}
+    )
     raw_grad_norm = None
     clipped_grad_norm = None
     post_step_loss = None
@@ -432,29 +576,50 @@ def _capture_training_phase(
             if parameter.requires_grad and parameter.grad is not None
         }
         raw_grad_norm = math.sqrt(
-            sum(float(value.detach().float().pow(2).sum().item()) for value in raw_gradient_tensors.values())
+            sum(
+                float(value.detach().float().pow(2).sum().item())
+                for value in raw_gradient_tensors.values()
+            )
         )
         snapshot.update(normalizer(raw_gradient_tensors, "grad::"))
         if phase == "step":
             clipped_grad_norm = float(
                 torch.nn.utils.clip_grad_norm_(
-                    [parameter for _, parameter in named_parameters if parameter.requires_grad],
+                    [
+                        parameter
+                        for _, parameter in named_parameters
+                        if parameter.requires_grad
+                    ],
                     max_norm=float(grad_clip),
                 ).item()
             )
             assert optimizer is not None
             optimizer.step()
-            deltas = {
-                name: parameter.detach().to(device="cpu", dtype=torch.float32) - before[name]
-                for name, parameter in named_parameters
-                if parameter.requires_grad
-            }
+            deltas: dict[str, torch.Tensor] = {}
+            for name, parameter in named_parameters:
+                if not parameter.requires_grad:
+                    continue
+                previous = before.pop(name)
+                deltas[name] = (
+                    parameter.detach()
+                    .to(device="cpu", dtype=torch.float32)
+                    .sub_(previous.to(dtype=torch.float32))
+                )
             snapshot.update(normalizer(deltas, "delta::"))
+            if not snapshot_logits:
+                del outputs, logits
             with torch.no_grad():
                 post_outputs = model(input_ids)
-                post_logits = post_outputs.logits if hasattr(post_outputs, "logits") else post_outputs
-                post_step_loss = float(loss_fn(post_logits, targets).detach().float().item())
-                snapshot["post_step_logits"] = post_logits.detach()
+                post_logits = (
+                    post_outputs.logits
+                    if hasattr(post_outputs, "logits")
+                    else post_outputs
+                )
+                post_step_loss = float(
+                    loss_fn(post_logits, targets).detach().float().item()
+                )
+                if snapshot_logits:
+                    snapshot["post_step_logits"] = post_logits.detach()
     if device.startswith("cuda"):
         torch.cuda.synchronize()
     runtime_s = time.perf_counter() - started
@@ -471,6 +636,8 @@ def _capture_training_phase(
         "batch_sha256": sha256_file(batch_path),
         "batch_size": int(input_ids.shape[0]),
         "seq_len": int(input_ids.shape[1]),
+        "gradient_checkpointing": bool(gradient_checkpointing),
+        "snapshot_logits": bool(snapshot_logits),
         "loss": float(loss.detach().float().item()),
         "runtime_s": runtime_s,
         "raw_grad_norm": raw_grad_norm,
@@ -518,6 +685,45 @@ def _learning_rate_at_step(
     return lr
 
 
+def _memory_stability_summary(
+    validation_curve: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    rows = [
+        row
+        for row in validation_curve
+        if int(row.get("step", 0)) > 0 and "memory_allocated_mb" in row
+    ]
+    if not rows:
+        return None
+    allocated = [float(row["memory_allocated_mb"]) for row in rows]
+    reserved = [float(row["memory_reserved_mb"]) for row in rows]
+    return {
+        "sample_count": len(rows),
+        "first_step": int(rows[0]["step"]),
+        "last_step": int(rows[-1]["step"]),
+        "allocated_first_mb": allocated[0],
+        "allocated_last_mb": allocated[-1],
+        "allocated_growth_mb": allocated[-1] - allocated[0],
+        "allocated_range_mb": max(allocated) - min(allocated),
+        "reserved_first_mb": reserved[0],
+        "reserved_last_mb": reserved[-1],
+        "reserved_growth_mb": reserved[-1] - reserved[0],
+        "reserved_range_mb": max(reserved) - min(reserved),
+    }
+
+
+def _forward_convergence_logits(
+    model, input_ids: torch.Tensor, *, backend: str
+) -> torch.Tensor:
+    if backend.startswith("hf_"):
+        outputs = model(input_ids, return_dict=False)
+    else:
+        outputs = model(input_ids)
+    if isinstance(outputs, tuple):
+        return outputs[0]
+    return outputs.logits if hasattr(outputs, "logits") else outputs
+
+
 def _run_convergence(
     *,
     model,
@@ -544,26 +750,43 @@ def _run_convergence(
     optimizer_name: str,
     eval_interval: int,
     source_commit: str | None,
+    gradient_checkpointing: bool = False,
     backend_metadata: dict[str, Any] | None = None,
+    resume_from: str | Path | None = None,
+    checkpoint_out: str | Path | None = None,
+    checkpoint_every: int = 0,
+    stop_after_step: int = 0,
 ) -> dict[str, Any]:
     if precision != "bf16":
         raise ValueError("end-to-end train_temp convergence currently requires bf16")
     if eval_interval <= 0:
         raise ValueError("eval_interval must be positive")
+    if checkpoint_every < 0:
+        raise ValueError("checkpoint_every must be non-negative")
+    if checkpoint_every and checkpoint_out is None:
+        raise ValueError("checkpoint_every requires checkpoint_out")
     _seed_everything(seed)
     sequence_path = Path(sequence_path)
     validation_batch_path = Path(validation_batch_path)
     sequence = load_file(sequence_path)
     train_inputs = sequence["input_ids"]
     train_targets = sequence["targets"]
-    if train_inputs.ndim != 3 or tuple(train_inputs.shape) != tuple(train_targets.shape):
-        raise ValueError("convergence sequence must have matching [steps, batch, tokens] tensors")
+    if train_inputs.ndim != 3 or tuple(train_inputs.shape) != tuple(
+        train_targets.shape
+    ):
+        raise ValueError(
+            "convergence sequence must have matching [steps, batch, tokens] tensors"
+        )
     validation = load_file(validation_batch_path)
     validation_inputs = validation["input_ids"].to(device=device, dtype=torch.long)
     validation_targets = validation["targets"].to(device=device, dtype=torch.long)
 
-    parameter_sort_key = lambda name: train_temp_official_parameter_name(name, naming=naming)
-    named_parameters = sorted(model.named_parameters(), key=lambda item: parameter_sort_key(item[0]))
+    def parameter_sort_key(name: str) -> str:
+        return train_temp_official_parameter_name(name, naming=naming)
+
+    named_parameters = sorted(
+        model.named_parameters(), key=lambda item: parameter_sort_key(item[0])
+    )
     groups = build_train_temp_param_groups(
         named_parameters,
         weight_decay=float(weight_decay),
@@ -582,25 +805,97 @@ def _run_convergence(
         adam_eps=adam_eps,
     )
 
+    sequence_sha256 = sha256_file(sequence_path)
+    validation_batch_sha256 = sha256_file(validation_batch_path)
+    total_steps = int(train_inputs.shape[0])
+    provenance = {
+        "backend": backend,
+        "precision": precision,
+        "seed": int(seed),
+        "checkpoint_sha256": str(checkpoint_sha256),
+        "sequence_sha256": sequence_sha256,
+        "validation_batch_sha256": validation_batch_sha256,
+        "steps_requested": total_steps,
+        "batch_size": int(train_inputs.shape[1]),
+        "seq_len": int(train_inputs.shape[2]),
+        "learning_rate": float(learning_rate),
+        "learning_rate_final": float(learning_rate_final),
+        "schedule_total_steps": int(schedule_total_steps),
+        "warmup_steps": int(warmup_steps),
+        "weight_decay": float(weight_decay),
+        "beta1": float(beta1),
+        "beta2": float(beta2),
+        "adam_eps": float(adam_eps),
+        "grad_clip": float(grad_clip),
+        "optimizer": optimizer_name,
+        "eval_interval": int(eval_interval),
+        "gradient_checkpointing": bool(gradient_checkpointing),
+        "source_commit": source_commit,
+    }
+
     def evaluate(step: int) -> dict[str, Any]:
         model.eval()
         with torch.no_grad():
-            outputs = model(validation_inputs)
-            logits = outputs.logits if hasattr(outputs, "logits") else outputs
+            logits = _forward_convergence_logits(
+                model, validation_inputs, backend=backend
+            )
             loss = float(loss_fn(logits, validation_targets).detach().float().item())
+        del logits
+        row = {"step": int(step), "loss": loss, "finite": math.isfinite(loss)}
+        if device.startswith("cuda"):
+            torch.cuda.synchronize()
+            row.update(
+                {
+                    "memory_allocated_mb": torch.cuda.memory_allocated() / (1024**2),
+                    "memory_reserved_mb": torch.cuda.memory_reserved() / (1024**2),
+                }
+            )
         model.train()
-        return {"step": int(step), "loss": loss, "finite": math.isfinite(loss)}
+        return row
+
+    start_step = 0
+    train_curve: list[dict[str, Any]] = []
+    validation_curve: list[dict[str, Any]] = []
+    prior_runtime_s = 0.0
+    resume_report = None
+    if resume_from is not None:
+        progress, resume_report = restore_training_checkpoint(
+            resume_from,
+            model=model,
+            optimizer=optimizer,
+            expected_provenance=provenance,
+        )
+        start_step = int(progress["next_step"])
+        train_curve = list(progress["train_curve"])
+        validation_curve = list(progress["validation_curve"])
+        prior_runtime_s = float(progress["runtime_s_accumulated"])
+        if start_step != len(train_curve):
+            raise RuntimeError(
+                f"checkpoint progress mismatch: next_step={start_step} curve={len(train_curve)}"
+            )
+    if start_step < 0 or start_step > total_steps:
+        raise ValueError(f"resume step {start_step} is outside [0, {total_steps}]")
+    end_step = (
+        total_steps if stop_after_step <= 0 else min(total_steps, int(stop_after_step))
+    )
+    if end_step < start_step:
+        raise ValueError(
+            f"stop_after_step {end_step} precedes restored next_step {start_step}"
+        )
 
     if device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
     started = time.perf_counter()
     model.train()
-    validation_curve = [evaluate(0)]
-    train_curve: list[dict[str, Any]] = []
+    if not validation_curve:
+        validation_curve = [evaluate(0)]
     status = "pass"
     failure = None
-    for step in range(int(train_inputs.shape[0])):
+    checkpoint_runtime_s = 0.0
+    checkpoint_metadata = None
+    first_resumed_lr = None
+    for step in range(start_step, end_step):
         lr = _learning_rate_at_step(
             step,
             learning_rate=learning_rate,
@@ -610,19 +905,24 @@ def _run_convergence(
         )
         for group in optimizer.param_groups:
             group["lr"] = lr * float(group["my_lr_scale"])
+        if first_resumed_lr is None and resume_from is not None:
+            first_resumed_lr = lr
         input_ids = train_inputs[step].to(device=device, dtype=torch.long)
         targets = train_targets[step].to(device=device, dtype=torch.long)
         if optimizer_name == "fused_adam":
             optimizer.zero_grad()
         else:
             optimizer.zero_grad(set_to_none=True)
-        outputs = model(input_ids)
-        logits = outputs.logits if hasattr(outputs, "logits") else outputs
+        logits = _forward_convergence_logits(model, input_ids, backend=backend)
         loss = loss_fn(logits, targets)
         loss.backward()
         grad_norm = float(
             torch.nn.utils.clip_grad_norm_(
-                [parameter for _, parameter in named_parameters if parameter.requires_grad],
+                [
+                    parameter
+                    for _, parameter in named_parameters
+                    if parameter.requires_grad
+                ],
                 max_norm=float(grad_clip),
             ).item()
         )
@@ -642,16 +942,59 @@ def _run_convergence(
             status = "fail"
             failure = f"non-finite training value at step {step + 1}"
             break
-        if (step + 1) % eval_interval == 0 or step + 1 == int(train_inputs.shape[0]):
+        if (step + 1) % eval_interval == 0 or step + 1 == total_steps:
             row = evaluate(step + 1)
             validation_curve.append(row)
             if not row["finite"]:
                 status = "fail"
                 failure = f"non-finite validation loss at step {step + 1}"
                 break
+        if (
+            checkpoint_out is not None
+            and checkpoint_every > 0
+            and (step + 1) % checkpoint_every == 0
+            and step + 1 < end_step
+        ):
+            checkpoint_started = time.perf_counter()
+            runtime_so_far = (
+                prior_runtime_s + time.perf_counter() - started - checkpoint_runtime_s
+            )
+            checkpoint_metadata = save_training_checkpoint(
+                checkpoint_out,
+                model=model,
+                optimizer=optimizer,
+                provenance=provenance,
+                next_step=step + 1,
+                train_curve=train_curve,
+                validation_curve=validation_curve,
+                runtime_s_accumulated=runtime_so_far,
+            )
+            checkpoint_runtime_s += time.perf_counter() - checkpoint_started
     if device.startswith("cuda"):
         torch.cuda.synchronize()
-    runtime_s = time.perf_counter() - started
+    runtime_s = time.perf_counter() - started - checkpoint_runtime_s
+    runtime_s_accumulated = prior_runtime_s + runtime_s
+    if failure is None and len(train_curve) < total_steps:
+        status = "partial"
+    if checkpoint_out is not None:
+        checkpoint_started = time.perf_counter()
+        checkpoint_metadata = save_training_checkpoint(
+            checkpoint_out,
+            model=model,
+            optimizer=optimizer,
+            provenance=provenance,
+            next_step=len(train_curve),
+            train_curve=train_curve,
+            validation_curve=validation_curve,
+            runtime_s_accumulated=runtime_s_accumulated,
+        )
+        checkpoint_runtime_s += time.perf_counter() - checkpoint_started
+    peak_memory_mb = None
+    peak_reserved_memory_mb = None
+    if device.startswith("cuda"):
+        peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
+        peak_reserved_memory_mb = torch.cuda.max_memory_reserved() / (1024**2)
+    memory_stability = _memory_stability_summary(validation_curve)
     result = {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_convergence",
@@ -661,9 +1004,9 @@ def _run_convergence(
         "precision": precision,
         "seed": int(seed),
         "checkpoint_sha256": str(checkpoint_sha256),
-        "sequence_sha256": sha256_file(sequence_path),
-        "validation_batch_sha256": sha256_file(validation_batch_path),
-        "steps_requested": int(train_inputs.shape[0]),
+        "sequence_sha256": sequence_sha256,
+        "validation_batch_sha256": validation_batch_sha256,
+        "steps_requested": total_steps,
         "steps_completed": len(train_curve),
         "batch_size": int(train_inputs.shape[1]),
         "seq_len": int(train_inputs.shape[2]),
@@ -675,10 +1018,22 @@ def _run_convergence(
         "optimizer": optimizer_name,
         "optimizer_version": optimizer_version,
         "eval_interval": int(eval_interval),
+        "gradient_checkpointing": bool(gradient_checkpointing),
         "optimizer_groups": group_metadata,
         "train_curve": train_curve,
         "validation_curve": validation_curve,
         "runtime_s": runtime_s,
+        "runtime_s_accumulated": runtime_s_accumulated,
+        "checkpoint_runtime_s": checkpoint_runtime_s,
+        "checkpoint_every": int(checkpoint_every),
+        "training_checkpoint": checkpoint_metadata,
+        "resumed_from": resume_report,
+        "start_step": start_step,
+        "stop_after_step": end_step,
+        "first_resumed_lr": first_resumed_lr,
+        "peak_memory_mb": peak_memory_mb,
+        "peak_reserved_memory_mb": peak_reserved_memory_mb,
+        "memory_stability": memory_stability,
         "source_commit": source_commit,
         "backend_metadata": backend_metadata or {},
         **_runtime_metadata(device),
@@ -688,9 +1043,21 @@ def _run_convergence(
 
 
 def _load_official_module(checkout: str | Path):
+    from scripts.run_train_temp_official_recipe import build_official_runtime_env
+
     train_temp = Path(checkout).resolve() / "RWKV-v7" / "train_temp"
     if not (train_temp / "src" / "model.py").is_file():
-        raise FileNotFoundError(f"official train_temp model not found under {train_temp}")
+        raise FileNotFoundError(
+            f"official train_temp model not found under {train_temp}"
+        )
+    extension_dir = Path(
+        os.environ.get(
+            "TORCH_EXTENSIONS_DIR",
+            Path.home() / ".cache" / "torch_extensions",
+        )
+    )
+    runtime_env, build_environment = build_official_runtime_env(extension_dir)
+    os.environ.update(runtime_env)
     os.environ.setdefault("RWKV_MY_TESTING", "x070")
     os.environ.setdefault("RWKV_KERNEL", "@rwkv3")
     # Current train_temp reuses module-level helper names between fused stages;
@@ -702,11 +1069,32 @@ def _load_official_module(checkout: str | Path):
     os.environ.setdefault("RWKV_FLOAT_MODE", "bf16")
     os.chdir(train_temp)
     sys.path.insert(0, str(train_temp))
-    return importlib.import_module("src.model")
+    module = importlib.import_module("src.model")
+    module._rwkv7_build_environment = build_environment
+    return module
 
 
 def _load_official_config(path: str | Path) -> SimpleNamespace:
     values = json.loads(Path(path).read_text(encoding="utf-8"))
+    if "model" in values and "run" in values:
+        model = values["model"]
+        run = values["run"]
+        values = {
+            "n_layer": int(model["n_layer"]),
+            "n_embd": int(model["n_embd"]),
+            "dim_att": int(model["dim_att"]),
+            "dim_ffn": int(model["effective_dim_ffn"]),
+            "vocab_size": int(model["vocab_size"]),
+            "head_size": int(model["head_size"]),
+            "ctx_len": int(model["ctx_len"]),
+            "my_testing": str(model["model_type"]),
+            "grad_cp": int(run["grad_cp"]),
+            "accelerator": str(run["accelerator"]),
+            "lr_init": float(run["lr_init"]),
+            "weight_decay": float(run["weight_decay"]),
+            "betas": (float(run["beta1"]), float(run["beta2"])),
+            "adam_eps": float(run["adam_eps"]),
+        }
     if "betas" in values:
         values["betas"] = tuple(values["betas"])
     return SimpleNamespace(**values)
@@ -754,7 +1142,9 @@ def capture_official(args) -> dict[str, Any]:
     model.load_state_dict(state, strict=True)
     model = model.to(device=args.device, dtype=torch.bfloat16)
 
-    def normalize(tensors: dict[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
+    def normalize(
+        tensors: dict[str, torch.Tensor], prefix: str
+    ) -> dict[str, torch.Tensor]:
         return normalize_official_tensors(
             tensors,
             num_layers=int(config.n_layer),
@@ -789,6 +1179,11 @@ def capture_official(args) -> dict[str, Any]:
         grad_clip=args.grad_clip,
         optimizer_name=args.optimizer,
         source_commit=_git_commit(args.official_checkout),
+        gradient_checkpointing=bool(int(getattr(config, "grad_cp", 0))),
+        snapshot_logits=not args.omit_logits,
+        backend_metadata={
+            "build_environment": getattr(official, "_rwkv7_build_environment", {})
+        },
     )
 
 
@@ -803,6 +1198,8 @@ def capture_hf(args) -> dict[str, Any]:
         torch_dtype=torch.bfloat16,
     ).to(args.device)
     model.config.use_cache = False
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
 
     backend = "hf_native" if args.native else "hf_fla"
     loss_fn = train_temp_cross_entropy
@@ -813,11 +1210,13 @@ def capture_hf(args) -> dict[str, Any]:
             train_temp_fused_cross_entropy,
         )
 
-        backend = "hf_train_temp_cuda"
+        backend = "hf_native_train_temp_cuda" if args.native else "hf_train_temp_cuda"
         loss_fn = train_temp_fused_cross_entropy
         backend_metadata = enable_train_temp_cuda_backend(model)
 
-    def normalize(tensors: dict[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
+    def normalize(
+        tensors: dict[str, torch.Tensor], prefix: str
+    ) -> dict[str, torch.Tensor]:
         return {prefix + name: tensor for name, tensor in tensors.items()}
 
     return _capture_training_phase(
@@ -843,6 +1242,8 @@ def capture_hf(args) -> dict[str, Any]:
         grad_clip=args.grad_clip,
         optimizer_name=args.optimizer,
         source_commit=_git_commit(Path(__file__).resolve().parents[1]),
+        gradient_checkpointing=bool(args.gradient_checkpointing),
+        snapshot_logits=not args.omit_logits,
         backend_metadata=backend_metadata,
     )
 
@@ -886,6 +1287,14 @@ def converge_official(args) -> dict[str, Any]:
         optimizer_name=args.optimizer,
         eval_interval=args.eval_interval,
         source_commit=_git_commit(args.official_checkout),
+        gradient_checkpointing=bool(int(getattr(config, "grad_cp", 0))),
+        backend_metadata={
+            "build_environment": getattr(official, "_rwkv7_build_environment", {})
+        },
+        resume_from=args.resume_from,
+        checkpoint_out=args.checkpoint_out,
+        checkpoint_every=args.checkpoint_every,
+        stop_after_step=args.stop_after_step,
     )
 
 
@@ -900,6 +1309,8 @@ def converge_hf(args) -> dict[str, Any]:
         torch_dtype=torch.bfloat16,
     ).to(args.device)
     model.config.use_cache = False
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
 
     backend = "hf_native" if args.native else "hf_fla"
     loss_fn = train_temp_cross_entropy
@@ -910,7 +1321,7 @@ def converge_hf(args) -> dict[str, Any]:
             train_temp_fused_cross_entropy,
         )
 
-        backend = "hf_train_temp_cuda"
+        backend = "hf_native_train_temp_cuda" if args.native else "hf_train_temp_cuda"
         loss_fn = train_temp_fused_cross_entropy
         backend_metadata = enable_train_temp_cuda_backend(model)
 
@@ -939,7 +1350,12 @@ def converge_hf(args) -> dict[str, Any]:
         optimizer_name=args.optimizer,
         eval_interval=args.eval_interval,
         source_commit=_git_commit(Path(__file__).resolve().parents[1]),
+        gradient_checkpointing=bool(args.gradient_checkpointing),
         backend_metadata=backend_metadata,
+        resume_from=args.resume_from,
+        checkpoint_out=args.checkpoint_out,
+        checkpoint_every=args.checkpoint_every,
+        stop_after_step=args.stop_after_step,
     )
 
 
@@ -949,7 +1365,14 @@ def _snapshot_path(artifact_path: Path, artifact: dict[str, Any]) -> Path:
 
 
 def _optimizer_group_contract(artifact: dict[str, Any]) -> list[dict[str, Any]]:
-    keys = ("group_name", "param_names", "param_count", "weight_decay", "my_lr_scale", "lr")
+    keys = (
+        "group_name",
+        "param_names",
+        "param_count",
+        "weight_decay",
+        "my_lr_scale",
+        "lr",
+    )
     return [
         {key: group.get(key) for key in keys}
         for group in artifact.get("optimizer_groups", [])
@@ -961,7 +1384,9 @@ def _effective_eval_interval(artifact: dict[str, Any]) -> int | None:
     if configured is not None:
         return int(configured)
     steps = [int(row["step"]) for row in artifact.get("validation_curve", [])]
-    positive_diffs = [later - earlier for earlier, later in zip(steps, steps[1:]) if later > earlier]
+    positive_diffs = [
+        later - earlier for earlier, later in zip(steps, steps[1:]) if later > earlier
+    ]
     return min(positive_diffs) if positive_diffs else None
 
 
@@ -1004,7 +1429,10 @@ def compare_artifacts(
     tensor_failures: list[dict[str, Any]] = []
     delta_metrics: list[dict[str, Any]] = []
     for name in common:
-        metrics = {"name": name, **compare_tensors(reference_tensors[name], candidate_tensors[name])}
+        metrics = {
+            "name": name,
+            **compare_tensors(reference_tensors[name], candidate_tensors[name]),
+        }
         gated = not (phase == "step" and name.startswith("delta::"))
         passed = bool(
             metrics["comparable"]
@@ -1022,8 +1450,12 @@ def compare_artifacts(
     reference_loss = float(reference["loss"])
     candidate_loss = float(candidate["loss"])
     loss_abs_diff = abs(candidate_loss - reference_loss)
-    loss_relative_diff = loss_abs_diff / max(abs(reference_loss), torch.finfo(torch.float64).eps)
-    finite_loss = bool(torch.isfinite(torch.tensor([reference_loss, candidate_loss])).all().item())
+    loss_relative_diff = loss_abs_diff / max(
+        abs(reference_loss), torch.finfo(torch.float64).eps
+    )
+    finite_loss = bool(
+        torch.isfinite(torch.tensor([reference_loss, candidate_loss])).all().item()
+    )
 
     failures: list[str] = []
     optimizer_groups_match = None
@@ -1031,9 +1463,9 @@ def compare_artifacts(
     if phase == "step":
         if reference.get("optimizer") != candidate.get("optimizer"):
             failures.append("optimizer mismatch")
-        optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
-            candidate
-        )
+        optimizer_groups_match = _optimizer_group_contract(
+            reference
+        ) == _optimizer_group_contract(candidate)
         if not optimizer_groups_match:
             failures.append("optimizer groups mismatch")
         reference_post_loss = reference.get("post_step_loss")
@@ -1064,12 +1496,8 @@ def compare_artifacts(
         )
 
     comparable_metrics = [row for row in tensor_metrics if row["comparable"]]
-    gated_comparable_metrics = [
-        row for row in comparable_metrics if bool(row["gated"])
-    ]
-    comparable_delta_metrics = [
-        row for row in delta_metrics if row["comparable"]
-    ]
+    gated_comparable_metrics = [row for row in comparable_metrics if bool(row["gated"])]
+    comparable_delta_metrics = [row for row in delta_metrics if row["comparable"]]
     report = {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_compare",
@@ -1150,6 +1578,7 @@ def compare_convergence_artifacts(
     max_final_validation_relative_diff: float = 0.03,
     max_validation_threshold_step_diff: int = 10,
     max_grad_norm_ratio: float = 2.0,
+    min_candidate_over_reference_throughput_ratio: float = 0.99,
 ) -> dict[str, Any]:
     reference = json.loads(Path(reference_json).read_text(encoding="utf-8"))
     candidate = json.loads(Path(candidate_json).read_text(encoding="utf-8"))
@@ -1168,6 +1597,7 @@ def compare_convergence_artifacts(
         "grad_clip",
         "optimizer",
         "eval_interval",
+        "gradient_checkpointing",
     )
     provenance_mismatches = [
         key
@@ -1175,9 +1605,9 @@ def compare_convergence_artifacts(
         if _convergence_provenance_value(reference, key)
         != _convergence_provenance_value(candidate, key)
     ]
-    optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
-        candidate
-    )
+    optimizer_groups_match = _optimizer_group_contract(
+        reference
+    ) == _optimizer_group_contract(candidate)
     reference_train = reference.get("train_curve", [])
     candidate_train = candidate.get("train_curve", [])
     reference_validation = reference.get("validation_curve", [])
@@ -1191,6 +1621,13 @@ def compare_convergence_artifacts(
 
     def mean(values: list[float]) -> float:
         return sum(values) / len(values) if values else float("nan")
+
+    def nearest_rank_percentile(values: list[float], percentile: float) -> float:
+        if not values:
+            return float("nan")
+        ordered = sorted(values)
+        rank = max(1, math.ceil(float(percentile) * len(ordered)))
+        return float(ordered[min(rank - 1, len(ordered) - 1)])
 
     reference_train_losses = [float(row["loss"]) for row in reference_train]
     candidate_train_losses = [float(row["loss"]) for row in candidate_train]
@@ -1229,13 +1666,17 @@ def compare_convergence_artifacts(
     final_validation_relative_diff = (
         validation_relative_diffs[-1] if validation_relative_diffs else float("inf")
     )
-    final_validation_abs_diff = validation_abs_diffs[-1] if validation_abs_diffs else float("inf")
+    final_validation_abs_diff = (
+        validation_abs_diffs[-1] if validation_abs_diffs else float("inf")
+    )
     max_observed_validation_relative_diff = (
         max(validation_relative_diffs) if validation_relative_diffs else float("inf")
     )
     validation_scaled_diffs = [
         difference / max(abs(reference_loss), 1.0)
-        for difference, reference_loss in zip(validation_abs_diffs, reference_validation_losses)
+        for difference, reference_loss in zip(
+            validation_abs_diffs, reference_validation_losses
+        )
     ]
     max_observed_validation_scaled_diff = (
         max(validation_scaled_diffs) if validation_scaled_diffs else float("inf")
@@ -1282,11 +1723,48 @@ def compare_convergence_artifacts(
         if comparable_threshold_steps
         else None
     )
-    max_reference_grad_norm = max(reference_grad_norms) if reference_grad_norms else float("nan")
-    max_candidate_grad_norm = max(candidate_grad_norms) if candidate_grad_norms else float("nan")
-    observed_grad_norm_ratio = max(
-        max_candidate_grad_norm / max(max_reference_grad_norm, epsilon),
-        max_reference_grad_norm / max(max_candidate_grad_norm, epsilon),
+    max_reference_grad_norm = (
+        max(reference_grad_norms) if reference_grad_norms else float("nan")
+    )
+    max_candidate_grad_norm = (
+        max(candidate_grad_norms) if candidate_grad_norms else float("nan")
+    )
+    grad_norm_percentile = 0.999
+    reference_grad_norm_p999 = nearest_rank_percentile(
+        reference_grad_norms, grad_norm_percentile
+    )
+    candidate_grad_norm_p999 = nearest_rank_percentile(
+        candidate_grad_norms, grad_norm_percentile
+    )
+    candidate_over_reference_grad_norm_p999_ratio = candidate_grad_norm_p999 / max(
+        reference_grad_norm_p999, epsilon
+    )
+    candidate_over_reference_max_grad_norm_ratio = max_candidate_grad_norm / max(
+        max_reference_grad_norm, epsilon
+    )
+    reference_over_candidate_max_grad_norm_ratio = max_reference_grad_norm / max(
+        max_candidate_grad_norm, epsilon
+    )
+    bidirectional_max_grad_norm_ratio = max(
+        candidate_over_reference_max_grad_norm_ratio,
+        reference_over_candidate_max_grad_norm_ratio,
+    )
+    reference_runtime_s = float(
+        reference.get("runtime_s_accumulated", reference.get("runtime_s", float("nan")))
+    )
+    candidate_runtime_s = float(
+        candidate.get("runtime_s_accumulated", candidate.get("runtime_s", float("nan")))
+    )
+    runtime_comparable = bool(
+        math.isfinite(reference_runtime_s)
+        and math.isfinite(candidate_runtime_s)
+        and reference_runtime_s > 0.0
+        and candidate_runtime_s > 0.0
+    )
+    candidate_over_reference_throughput_ratio = (
+        reference_runtime_s / candidate_runtime_s
+        if runtime_comparable
+        else float("nan")
     )
     finite = all(
         math.isfinite(value)
@@ -1322,16 +1800,26 @@ def compare_convergence_artifacts(
         final_validation_abs_diff > max_final_validation_abs_diff
         and final_validation_relative_diff > max_final_validation_relative_diff
     ):
-        failures.append("final validation loss difference exceeded absolute and relative targets")
+        failures.append(
+            "final validation loss difference exceeded absolute and relative targets"
+        )
     if missing_threshold_crossing:
         failures.append("validation loss threshold crossing missing")
-    elif (
-        max_observed_threshold_step_diff is not None
-        and int(max_observed_threshold_step_diff) > int(max_validation_threshold_step_diff)
-    ):
+    elif max_observed_threshold_step_diff is not None and int(
+        max_observed_threshold_step_diff
+    ) > int(max_validation_threshold_step_diff):
         failures.append("validation loss threshold step difference exceeded target")
-    if observed_grad_norm_ratio > max_grad_norm_ratio:
-        failures.append("gradient norm spike ratio exceeded target")
+    if candidate_over_reference_grad_norm_p999_ratio > max_grad_norm_ratio:
+        failures.append(
+            "candidate p99.9 gradient norm increase exceeded target"
+        )
+    if not runtime_comparable:
+        failures.append("training runtime is missing, non-finite or non-positive")
+    elif (
+        candidate_over_reference_throughput_ratio
+        < min_candidate_over_reference_throughput_ratio
+    ):
+        failures.append("candidate training throughput ratio is below target")
     return {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_convergence_compare",
@@ -1351,7 +1839,25 @@ def compare_convergence_artifacts(
         "grad_norm_auc_relative_diff": grad_norm_auc_relative_diff,
         "max_reference_grad_norm": max_reference_grad_norm,
         "max_candidate_grad_norm": max_candidate_grad_norm,
-        "max_grad_norm_ratio": observed_grad_norm_ratio,
+        "max_grad_norm_ratio": candidate_over_reference_max_grad_norm_ratio,
+        "candidate_over_reference_max_grad_norm_ratio": (
+            candidate_over_reference_max_grad_norm_ratio
+        ),
+        "reference_over_candidate_max_grad_norm_ratio": (
+            reference_over_candidate_max_grad_norm_ratio
+        ),
+        "bidirectional_max_grad_norm_ratio": bidirectional_max_grad_norm_ratio,
+        "gradient_norm_gate_percentile": grad_norm_percentile,
+        "reference_grad_norm_p999": reference_grad_norm_p999,
+        "candidate_grad_norm_p999": candidate_grad_norm_p999,
+        "candidate_over_reference_grad_norm_p999_ratio": (
+            candidate_over_reference_grad_norm_p999_ratio
+        ),
+        "reference_runtime_s": reference_runtime_s,
+        "candidate_runtime_s": candidate_runtime_s,
+        "candidate_over_reference_throughput_ratio": (
+            candidate_over_reference_throughput_ratio
+        ),
         "validation_loss_auc_reference": validation_auc_reference,
         "validation_loss_auc_candidate": validation_auc_candidate,
         "validation_loss_auc_relative_diff": validation_auc_relative_diff,
@@ -1371,9 +1877,17 @@ def compare_convergence_artifacts(
             "max_train_auc_relative_diff": float(max_train_auc_relative_diff),
             "max_validation_auc_relative_diff": float(max_validation_auc_relative_diff),
             "max_final_validation_abs_diff": float(max_final_validation_abs_diff),
-            "max_final_validation_relative_diff": float(max_final_validation_relative_diff),
-            "max_validation_threshold_step_diff": int(max_validation_threshold_step_diff),
+            "max_final_validation_relative_diff": float(
+                max_final_validation_relative_diff
+            ),
+            "max_validation_threshold_step_diff": int(
+                max_validation_threshold_step_diff
+            ),
             "max_grad_norm_ratio": float(max_grad_norm_ratio),
+            "gradient_norm_gate_percentile": grad_norm_percentile,
+            "min_candidate_over_reference_throughput_ratio": float(
+                min_candidate_over_reference_throughput_ratio
+            ),
         },
         "failures": failures,
     }
@@ -1391,6 +1905,7 @@ def compare_convergence_cohorts(
     max_median_min_validation_abs_increase: float = 0.05,
     max_median_min_validation_relative_ratio: float = 1.25,
     max_median_grad_norm_ratio: float = 2.0,
+    min_candidate_over_reference_throughput_ratio: float = 0.99,
 ) -> dict[str, Any]:
     """Compare multi-seed convergence distributions for a non-deterministic backend.
 
@@ -1400,8 +1915,12 @@ def compare_convergence_cohorts(
     medians without pairing chaotic trajectories point by point.
     """
 
-    reference = [json.loads(Path(path).read_text(encoding="utf-8")) for path in reference_jsons]
-    candidate = [json.loads(Path(path).read_text(encoding="utf-8")) for path in candidate_jsons]
+    reference = [
+        json.loads(Path(path).read_text(encoding="utf-8")) for path in reference_jsons
+    ]
+    candidate = [
+        json.loads(Path(path).read_text(encoding="utf-8")) for path in candidate_jsons
+    ]
 
     def by_seed(runs: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
         indexed: dict[int, dict[str, Any]] = {}
@@ -1433,6 +1952,7 @@ def compare_convergence_cohorts(
         "grad_clip",
         "optimizer",
         "eval_interval",
+        "gradient_checkpointing",
     )
     provenance_mismatches = [
         {"seed": seed, "keys": mismatches}
@@ -1465,16 +1985,37 @@ def compare_convergence_cohorts(
             "steps_requested": int(run.get("steps_requested", 0)),
             "steps_completed": int(run.get("steps_completed", 0)),
             "finite": bool(values) and all(math.isfinite(value) for value in values),
-            "train_loss_auc": sum(train_losses) / len(train_losses) if train_losses else float("nan"),
+            "train_loss_auc": sum(train_losses) / len(train_losses)
+            if train_losses
+            else float("nan"),
             "validation_loss_auc": (
                 sum(validation_losses) / len(validation_losses)
                 if validation_losses
                 else float("nan")
             ),
-            "final_validation_loss": validation_losses[-1] if validation_losses else float("inf"),
-            "min_validation_loss": min(validation_losses) if validation_losses else float("inf"),
+            "final_validation_loss": validation_losses[-1]
+            if validation_losses
+            else float("inf"),
+            "min_validation_loss": min(validation_losses)
+            if validation_losses
+            else float("inf"),
             "max_grad_norm": max(grad_norms) if grad_norms else float("inf"),
-            "runtime_s": float(run.get("runtime_s", float("nan"))),
+            "grad_norm_p999": (
+                sorted(grad_norms)[
+                    min(
+                        max(1, math.ceil(0.999 * len(grad_norms))) - 1,
+                        len(grad_norms) - 1,
+                    )
+                ]
+                if grad_norms
+                else float("inf")
+            ),
+            "runtime_s": float(
+                run.get(
+                    "runtime_s_accumulated",
+                    run.get("runtime_s", float("nan")),
+                )
+            ),
         }
 
     reference_rows = [summarize(reference_by_seed[seed]) for seed in reference_seeds]
@@ -1487,6 +2028,7 @@ def compare_convergence_cohorts(
             "final_validation_loss",
             "min_validation_loss",
             "max_grad_norm",
+            "grad_norm_p999",
             "runtime_s",
         )
         return {key: float(median(float(row[key]) for row in rows)) for key in keys}
@@ -1498,15 +2040,37 @@ def compare_convergence_cohorts(
     def relative_diff(key: str) -> float:
         reference_value = reference_medians.get(key, float("nan"))
         candidate_value = candidate_medians.get(key, float("nan"))
-        return abs(candidate_value - reference_value) / max(abs(reference_value), epsilon)
+        return abs(candidate_value - reference_value) / max(
+            abs(reference_value), epsilon
+        )
 
     train_auc_relative_diff = relative_diff("train_loss_auc")
     validation_auc_relative_diff = relative_diff("validation_loss_auc")
-    median_grad_norm_ratio = max(
-        candidate_medians.get("max_grad_norm", float("inf"))
-        / max(reference_medians.get("max_grad_norm", 0.0), epsilon),
-        reference_medians.get("max_grad_norm", float("inf"))
-        / max(candidate_medians.get("max_grad_norm", 0.0), epsilon),
+    candidate_over_reference_median_grad_norm_ratio = candidate_medians.get(
+        "max_grad_norm", float("inf")
+    ) / max(reference_medians.get("max_grad_norm", 0.0), epsilon)
+    reference_over_candidate_median_grad_norm_ratio = reference_medians.get(
+        "max_grad_norm", float("inf")
+    ) / max(candidate_medians.get("max_grad_norm", 0.0), epsilon)
+    bidirectional_median_grad_norm_ratio = max(
+        candidate_over_reference_median_grad_norm_ratio,
+        reference_over_candidate_median_grad_norm_ratio,
+    )
+    candidate_over_reference_median_grad_norm_p999_ratio = candidate_medians.get(
+        "grad_norm_p999", float("inf")
+    ) / max(reference_medians.get("grad_norm_p999", 0.0), epsilon)
+    reference_median_runtime_s = reference_medians.get("runtime_s", float("nan"))
+    candidate_median_runtime_s = candidate_medians.get("runtime_s", float("nan"))
+    runtime_comparable = bool(
+        math.isfinite(reference_median_runtime_s)
+        and math.isfinite(candidate_median_runtime_s)
+        and reference_median_runtime_s > 0.0
+        and candidate_median_runtime_s > 0.0
+    )
+    candidate_over_reference_throughput_ratio = (
+        reference_median_runtime_s / candidate_median_runtime_s
+        if runtime_comparable
+        else float("nan")
     )
     reference_successes = sum(
         row["min_validation_loss"] <= success_threshold for row in reference_rows
@@ -1523,7 +2087,8 @@ def compare_convergence_cohorts(
     reference_min_median = reference_medians.get("min_validation_loss", float("inf"))
     candidate_min_median = candidate_medians.get("min_validation_loss", float("inf"))
     min_validation_regressed = (
-        candidate_min_median > reference_min_median + max_median_min_validation_abs_increase
+        candidate_min_median
+        > reference_min_median + max_median_min_validation_abs_increase
         and candidate_min_median
         > reference_min_median * max_median_min_validation_relative_ratio
     )
@@ -1552,11 +2117,25 @@ def compare_convergence_cohorts(
     if train_auc_relative_diff > max_median_train_auc_relative_diff:
         failures.append("median train loss AUC relative difference exceeded target")
     if validation_auc_relative_diff > max_median_validation_auc_relative_diff:
-        failures.append("median validation loss AUC relative difference exceeded target")
+        failures.append(
+            "median validation loss AUC relative difference exceeded target"
+        )
     if min_validation_regressed:
         failures.append("median minimum validation loss regressed")
-    if median_grad_norm_ratio > max_median_grad_norm_ratio:
-        failures.append("median gradient norm ratio exceeded target")
+    if (
+        candidate_over_reference_median_grad_norm_p999_ratio
+        > max_median_grad_norm_ratio
+    ):
+        failures.append(
+            "candidate median p99.9 gradient norm increase exceeded target"
+        )
+    if not runtime_comparable:
+        failures.append("median training runtime is missing, non-finite or non-positive")
+    elif (
+        candidate_over_reference_throughput_ratio
+        < min_candidate_over_reference_throughput_ratio
+    ):
+        failures.append("candidate median training throughput ratio is below target")
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1576,7 +2155,25 @@ def compare_convergence_cohorts(
         "candidate_medians": candidate_medians,
         "median_train_loss_auc_relative_diff": train_auc_relative_diff,
         "median_validation_loss_auc_relative_diff": validation_auc_relative_diff,
-        "median_grad_norm_ratio": median_grad_norm_ratio,
+        "median_grad_norm_ratio": candidate_over_reference_median_grad_norm_ratio,
+        "candidate_over_reference_median_grad_norm_ratio": (
+            candidate_over_reference_median_grad_norm_ratio
+        ),
+        "reference_over_candidate_median_grad_norm_ratio": (
+            reference_over_candidate_median_grad_norm_ratio
+        ),
+        "bidirectional_median_grad_norm_ratio": (
+            bidirectional_median_grad_norm_ratio
+        ),
+        "gradient_norm_gate_percentile": 0.999,
+        "candidate_over_reference_median_grad_norm_p999_ratio": (
+            candidate_over_reference_median_grad_norm_p999_ratio
+        ),
+        "reference_median_runtime_s": reference_median_runtime_s,
+        "candidate_median_runtime_s": candidate_median_runtime_s,
+        "candidate_over_reference_throughput_ratio": (
+            candidate_over_reference_throughput_ratio
+        ),
         "reference_success_count": reference_successes,
         "candidate_success_count": candidate_successes,
         "reference_deep_success_count": reference_deep_successes,
@@ -1585,7 +2182,9 @@ def compare_convergence_cohorts(
             "min_runs": int(min_runs),
             "success_threshold": float(success_threshold),
             "deep_success_threshold": float(deep_success_threshold),
-            "max_median_train_auc_relative_diff": float(max_median_train_auc_relative_diff),
+            "max_median_train_auc_relative_diff": float(
+                max_median_train_auc_relative_diff
+            ),
             "max_median_validation_auc_relative_diff": float(
                 max_median_validation_auc_relative_diff
             ),
@@ -1596,6 +2195,10 @@ def compare_convergence_cohorts(
                 max_median_min_validation_relative_ratio
             ),
             "max_median_grad_norm_ratio": float(max_median_grad_norm_ratio),
+            "gradient_norm_gate_percentile": 0.999,
+            "min_candidate_over_reference_throughput_ratio": float(
+                min_candidate_over_reference_throughput_ratio
+            ),
         },
         "failures": failures,
     }
@@ -1623,8 +2226,31 @@ def build_parser() -> argparse.ArgumentParser:
     sequence.add_argument("--seq-len", type=int, default=16)
     sequence.add_argument("--steps", type=int, required=True)
     sequence.add_argument("--seed", type=int, required=True)
-    sequence.add_argument("--pattern", choices=["random", "increment"], default="random")
+    sequence.add_argument(
+        "--pattern", choices=["random", "increment"], default="random"
+    )
     sequence.add_argument("--active-vocab-size", type=int)
+
+    dataset_sequence = subparsers.add_parser("make-dataset-sequence")
+    dataset_sequence.add_argument("--output", required=True)
+    dataset_sequence.add_argument("--metadata")
+    dataset_sequence.add_argument("--data-prefix", required=True)
+    dataset_sequence.add_argument("--batch-size", type=int, default=16)
+    dataset_sequence.add_argument("--seq-len", type=int, default=512)
+    dataset_sequence.add_argument("--steps", type=int, required=True)
+    dataset_sequence.add_argument("--epoch", type=int, required=True)
+    dataset_sequence.add_argument("--magic-prime", type=int, required=True)
+    dataset_sequence.add_argument("--samples-per-epoch", type=int, default=40_320)
+
+    dataset_batch = subparsers.add_parser("make-dataset-batch")
+    dataset_batch.add_argument("--output", required=True)
+    dataset_batch.add_argument("--metadata")
+    dataset_batch.add_argument("--data-prefix", required=True)
+    dataset_batch.add_argument("--batch-size", type=int, default=16)
+    dataset_batch.add_argument("--seq-len", type=int, default=512)
+    dataset_batch.add_argument("--epoch", type=int, required=True)
+    dataset_batch.add_argument("--magic-prime", type=int, required=True)
+    dataset_batch.add_argument("--samples-per-epoch", type=int, default=40_320)
 
     compare = subparsers.add_parser("compare")
     compare.add_argument("--reference-json", required=True)
@@ -1638,7 +2264,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare_convergence.add_argument("--reference-json", required=True)
     compare_convergence.add_argument("--candidate-json", required=True)
     compare_convergence.add_argument("--output", required=True)
-    compare_convergence.add_argument("--max-train-auc-relative-diff", type=float, default=0.02)
+    compare_convergence.add_argument(
+        "--max-train-auc-relative-diff", type=float, default=0.02
+    )
     compare_convergence.add_argument(
         "--max-validation-auc-relative-diff", type=float, default=0.02
     )
@@ -1652,6 +2280,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-validation-threshold-step-diff", type=int, default=10
     )
     compare_convergence.add_argument("--max-grad-norm-ratio", type=float, default=2.0)
+    compare_convergence.add_argument(
+        "--min-candidate-over-reference-throughput-ratio",
+        type=float,
+        default=0.99,
+    )
 
     compare_cohort = subparsers.add_parser("compare-convergence-cohort")
     compare_cohort.add_argument("--reference-json", action="append", required=True)
@@ -1673,6 +2306,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-median-min-validation-relative-ratio", type=float, default=1.25
     )
     compare_cohort.add_argument("--max-median-grad-norm-ratio", type=float, default=2.0)
+    compare_cohort.add_argument(
+        "--min-candidate-over-reference-throughput-ratio",
+        type=float,
+        default=0.99,
+    )
 
     init = subparsers.add_parser("make-official-init")
     init.add_argument("--official-checkout", required=True)
@@ -1685,7 +2323,9 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument("--batch", required=True)
         capture.add_argument("--output-json", required=True)
         capture.add_argument("--snapshot", required=True)
-        capture.add_argument("--phase", choices=["forward", "backward", "step"], required=True)
+        capture.add_argument(
+            "--phase", choices=["forward", "backward", "step"], required=True
+        )
         capture.add_argument("--precision", choices=["bf16"], default="bf16")
         capture.add_argument("--device", default="cuda")
         capture.add_argument("--seed", type=int, default=42)
@@ -1695,6 +2335,14 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument("--beta2", type=float, default=0.99)
         capture.add_argument("--adam-eps", type=float, default=1.0e-18)
         capture.add_argument("--grad-clip", type=float, default=1.0)
+        capture.add_argument(
+            "--omit-logits",
+            action="store_true",
+            help=(
+                "Do not retain full logits in the safetensors snapshot. Scalar loss, "
+                "gradients, optimizer deltas and post-step loss remain gated."
+            ),
+        )
         capture.add_argument(
             "--optimizer",
             choices=["fused_adam", "torch_adamw"],
@@ -1711,9 +2359,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_capture_arguments(hf)
     hf.add_argument("--model", required=True)
     hf.add_argument("--checkpoint-sha256", required=True)
-    hf_backend = hf.add_mutually_exclusive_group()
-    hf_backend.add_argument("--native", action="store_true")
-    hf_backend.add_argument("--train-temp-cuda", action="store_true")
+    hf.add_argument("--native", action="store_true")
+    hf.add_argument("--train-temp-cuda", action="store_true")
+    hf.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Enable the HF model's checkpointed full-sequence training path.",
+    )
 
     def add_convergence_arguments(convergence: argparse.ArgumentParser) -> None:
         convergence.add_argument("--sequence", required=True)
@@ -1733,6 +2385,26 @@ def build_parser() -> argparse.ArgumentParser:
         convergence.add_argument("--grad-clip", type=float, default=1.0)
         convergence.add_argument("--eval-interval", type=int, default=10)
         convergence.add_argument(
+            "--resume-from",
+            help="Resume model, optimizer, curves and RNG from this fail-closed checkpoint.",
+        )
+        convergence.add_argument(
+            "--checkpoint-out",
+            help="Atomically write the latest resumable training checkpoint here.",
+        )
+        convergence.add_argument(
+            "--checkpoint-every",
+            type=int,
+            default=0,
+            help="Overwrite --checkpoint-out every N completed steps; zero saves only at exit.",
+        )
+        convergence.add_argument(
+            "--stop-after-step",
+            type=int,
+            default=0,
+            help="Stop after this absolute step and emit a partial resumable artifact.",
+        )
+        convergence.add_argument(
             "--optimizer",
             choices=["fused_adam", "torch_adamw"],
             default="fused_adam",
@@ -1748,10 +2420,19 @@ def build_parser() -> argparse.ArgumentParser:
     add_convergence_arguments(hf_convergence)
     hf_convergence.add_argument("--model", required=True)
     hf_convergence.add_argument("--checkpoint-sha256", required=True)
-    hf_convergence_backend = hf_convergence.add_mutually_exclusive_group()
-    hf_convergence_backend.add_argument("--native", action="store_true")
-    hf_convergence_backend.add_argument("--train-temp-cuda", action="store_true")
+    hf_convergence.add_argument("--native", action="store_true")
+    hf_convergence.add_argument("--train-temp-cuda", action="store_true")
+    hf_convergence.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Match the official train_temp grad_cp=1 full-sequence route.",
+    )
     return parser
+
+
+def _convergence_exit_code(result: dict[str, Any]) -> int:
+    expected_status = result.get("status") in {"pass", "partial"}
+    return 0 if expected_status and result.get("failure") is None else 1
 
 
 def main() -> int:
@@ -1785,6 +2466,35 @@ def main() -> int:
             write_json_atomic(args.metadata, metadata)
         print(json.dumps(metadata, ensure_ascii=False))
         return 0
+    if args.command == "make-dataset-sequence":
+        metadata = make_official_dataset_sequence(
+            args.output,
+            data_prefix=args.data_prefix,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            steps=args.steps,
+            epoch=args.epoch,
+            magic_prime=args.magic_prime,
+            samples_per_epoch=args.samples_per_epoch,
+        )
+        if args.metadata:
+            write_json_atomic(args.metadata, metadata)
+        print(json.dumps(metadata, ensure_ascii=False))
+        return 0
+    if args.command == "make-dataset-batch":
+        metadata = make_official_dataset_batch(
+            args.output,
+            data_prefix=args.data_prefix,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            epoch=args.epoch,
+            magic_prime=args.magic_prime,
+            samples_per_epoch=args.samples_per_epoch,
+        )
+        if args.metadata:
+            write_json_atomic(args.metadata, metadata)
+        print(json.dumps(metadata, ensure_ascii=False))
+        return 0
     if args.command == "compare":
         report = compare_artifacts(
             args.reference_json,
@@ -1806,6 +2516,9 @@ def main() -> int:
             max_final_validation_relative_diff=args.max_final_validation_relative_diff,
             max_validation_threshold_step_diff=args.max_validation_threshold_step_diff,
             max_grad_norm_ratio=args.max_grad_norm_ratio,
+            min_candidate_over_reference_throughput_ratio=(
+                args.min_candidate_over_reference_throughput_ratio
+            ),
         )
         write_json_atomic(args.output, report)
         print(json.dumps(report, ensure_ascii=False))
@@ -1828,6 +2541,9 @@ def main() -> int:
                 args.max_median_min_validation_relative_ratio
             ),
             max_median_grad_norm_ratio=args.max_median_grad_norm_ratio,
+            min_candidate_over_reference_throughput_ratio=(
+                args.min_candidate_over_reference_throughput_ratio
+            ),
         )
         write_json_atomic(args.output, report)
         print(json.dumps(report, ensure_ascii=False))
@@ -1868,7 +2584,7 @@ def main() -> int:
                 ensure_ascii=False,
             )
         )
-        return 0 if result["status"] == "pass" else 1
+        return _convergence_exit_code(result)
     if args.command == "converge-hf":
         result = converge_hf(args)
         print(
@@ -1887,7 +2603,7 @@ def main() -> int:
                 ensure_ascii=False,
             )
         )
-        return 0 if result["status"] == "pass" else 1
+        return _convergence_exit_code(result)
     raise AssertionError(args.command)
 
 

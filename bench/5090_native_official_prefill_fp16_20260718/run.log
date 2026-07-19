@@ -1,0 +1,123 @@
+{"batch_size": 1, "prompt_tokens": 128, "native_capture": "b1_t128_native.pt", "official_capture": "b1_t128_official.pt", "report": "b1_t128_report.json", "native_exit_code": 0, "official_exit_code": 0, "status": "pass", "quality_pass": true, "performance_gate_pass": true, "native_over_official_tokps": 1.0276949324086107, "native_median_ms": 14.688032150268555, "official_median_ms": 15.094816207885742, "native_peak_vram_mb": 13808.78564453125, "official_peak_vram_mb": 14232.025390625, "compare_exit_code": 0}
+{"batch_size": 1, "prompt_tokens": 512, "native_capture": "b1_t512_native.pt", "official_capture": "b1_t512_official.pt", "report": "b1_t512_report.json", "native_exit_code": 0, "official_exit_code": 0, "status": "pass", "quality_pass": true, "performance_gate_pass": true, "native_over_official_tokps": 1.0885477663903147, "native_median_ms": 46.832481384277344, "official_median_ms": 50.979393005371094, "native_peak_vram_mb": 13879.86083984375, "official_peak_vram_mb": 14355.0283203125, "compare_exit_code": 0}
+{"batch_size": 1, "prompt_tokens": 2048, "native_capture": "b1_t2048_native.pt", "official_capture": "b1_t2048_official.pt", "report": "b1_t2048_report.json", "native_exit_code": 0, "official_exit_code": 0, "status": "pass", "quality_pass": true, "performance_gate_pass": true, "native_over_official_tokps": 1.066360214175309, "native_median_ms": 172.20623779296875, "official_median_ms": 183.63388061523438, "native_peak_vram_mb": 14218.32177734375, "official_peak_vram_mb": 14577.2900390625, "compare_exit_code": 0}
+{"batch_size": 8, "prompt_tokens": 128, "native_capture": "b8_t128_native.pt", "official_capture": "b8_t128_official.pt", "report": "b8_t128_report.json", "native_exit_code": 0, "official_exit_code": 0, "status": "pass", "quality_pass": true, "performance_gate_pass": true, "native_over_official_tokps": 1.118252984604261, "native_median_ms": 69.5165786743164, "official_median_ms": 77.73712158203125, "native_peak_vram_mb": 14163.17431640625, "official_peak_vram_mb": 14633.2900390625, "compare_exit_code": 0}
+{"batch_size": 8, "prompt_tokens": 512, "native_capture": "b8_t512_native.pt", "official_capture": "b8_t512_official.pt", "report": "b8_t512_report.json", "native_exit_code": 0, "official_exit_code": 0, "status": "pass", "quality_pass": true, "performance_gate_pass": true, "native_over_official_tokps": 1.0247949898439543, "native_median_ms": 292.7793273925781, "official_median_ms": 300.0387878417969, "native_peak_vram_mb": 14788.72021484375, "official_peak_vram_mb": 15166.5009765625, "compare_exit_code": 0}
+{"batch_size": 8, "prompt_tokens": 2048, "native_capture": "b8_t2048_native.pt", "official_capture": "b8_t2048_official.pt", "report": "b8_t2048_report.json", "native_exit_code": 0, "official_exit_code": 0, "status": "pass", "quality_pass": true, "performance_gate_pass": true, "native_over_official_tokps": 1.0208655801468234, "native_median_ms": 1184.3094482421875, "official_median_ms": 1209.020751953125, "native_peak_vram_mb": 17498.28271484375, "official_peak_vram_mb": 17295.5947265625, "compare_exit_code": 0}
+{
+  "axis": "official_native_prefill_matrix",
+  "status": "pass",
+  "cases": 6,
+  "quality_pass_cases": 6,
+  "performance_pass_cases": 6,
+  "rows": [
+    {
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_capture": "b1_t128_native.pt",
+      "official_capture": "b1_t128_official.pt",
+      "report": "b1_t128_report.json",
+      "native_exit_code": 0,
+      "official_exit_code": 0,
+      "status": "pass",
+      "quality_pass": true,
+      "performance_gate_pass": true,
+      "native_over_official_tokps": 1.0276949324086107,
+      "native_median_ms": 14.688032150268555,
+      "official_median_ms": 15.094816207885742,
+      "native_peak_vram_mb": 13808.78564453125,
+      "official_peak_vram_mb": 14232.025390625,
+      "compare_exit_code": 0
+    },
+    {
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_capture": "b1_t512_native.pt",
+      "official_capture": "b1_t512_official.pt",
+      "report": "b1_t512_report.json",
+      "native_exit_code": 0,
+      "official_exit_code": 0,
+      "status": "pass",
+      "quality_pass": true,
+      "performance_gate_pass": true,
+      "native_over_official_tokps": 1.0885477663903147,
+      "native_median_ms": 46.832481384277344,
+      "official_median_ms": 50.979393005371094,
+      "native_peak_vram_mb": 13879.86083984375,
+      "official_peak_vram_mb": 14355.0283203125,
+      "compare_exit_code": 0
+    },
+    {
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_capture": "b1_t2048_native.pt",
+      "official_capture": "b1_t2048_official.pt",
+      "report": "b1_t2048_report.json",
+      "native_exit_code": 0,
+      "official_exit_code": 0,
+      "status": "pass",
+      "quality_pass": true,
+      "performance_gate_pass": true,
+      "native_over_official_tokps": 1.066360214175309,
+      "native_median_ms": 172.20623779296875,
+      "official_median_ms": 183.63388061523438,
+      "native_peak_vram_mb": 14218.32177734375,
+      "official_peak_vram_mb": 14577.2900390625,
+      "compare_exit_code": 0
+    },
+    {
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_capture": "b8_t128_native.pt",
+      "official_capture": "b8_t128_official.pt",
+      "report": "b8_t128_report.json",
+      "native_exit_code": 0,
+      "official_exit_code": 0,
+      "status": "pass",
+      "quality_pass": true,
+      "performance_gate_pass": true,
+      "native_over_official_tokps": 1.118252984604261,
+      "native_median_ms": 69.5165786743164,
+      "official_median_ms": 77.73712158203125,
+      "native_peak_vram_mb": 14163.17431640625,
+      "official_peak_vram_mb": 14633.2900390625,
+      "compare_exit_code": 0
+    },
+    {
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_capture": "b8_t512_native.pt",
+      "official_capture": "b8_t512_official.pt",
+      "report": "b8_t512_report.json",
+      "native_exit_code": 0,
+      "official_exit_code": 0,
+      "status": "pass",
+      "quality_pass": true,
+      "performance_gate_pass": true,
+      "native_over_official_tokps": 1.0247949898439543,
+      "native_median_ms": 292.7793273925781,
+      "official_median_ms": 300.0387878417969,
+      "native_peak_vram_mb": 14788.72021484375,
+      "official_peak_vram_mb": 15166.5009765625,
+      "compare_exit_code": 0
+    },
+    {
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_capture": "b8_t2048_native.pt",
+      "official_capture": "b8_t2048_official.pt",
+      "report": "b8_t2048_report.json",
+      "native_exit_code": 0,
+      "official_exit_code": 0,
+      "status": "pass",
+      "quality_pass": true,
+      "performance_gate_pass": true,
+      "native_over_official_tokps": 1.0208655801468234,
+      "native_median_ms": 1184.3094482421875,
+      "official_median_ms": 1209.020751953125,
+      "native_peak_vram_mb": 17498.28271484375,
+      "official_peak_vram_mb": 17295.5947265625,
+      "compare_exit_code": 0
+    }
+  ]
+}
