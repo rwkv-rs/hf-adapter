@@ -260,7 +260,7 @@ prompt/final cosine 是 13.3B B8 `0.99955201/0.99955237`。原始证据：
 `RWKV7_MARLIN_AUTOTUNE_PROFILE` 才会读取该文件；未知或版本不匹配的 profile
 自动回退，不会改动生产默认值。
 
-## 6. RTX 4080 B8 配对验收
+## 6. RTX 4080 B1/B8 配对验收
 
 **前置条件和支持环境。** 使用 Linux、单张 RTX 4080 16GB、CUDA 12.4 兼容的
 PyTorch、Transformers、FLA、causal-conv1d、bitsandbytes 和 TorchAO。安装仓库的
@@ -270,14 +270,15 @@ PyTorch、Transformers、FLA、causal-conv1d、bitsandbytes 和 TorchAO。安装
 python -m pip install -e ".[train,quant]"
 ```
 
-**最小安全模型和输入。** 准备本地转换后的官方 RWKV-7 1.5B HF 目录与官方
-Qwen3.5-2B 目录。该验收固定 B8，prompt 128/512/2048，decode 128/512；先在新的
-输出目录运行，避免覆盖以前的结果。
+**最小安全模型和输入。** 准备一组本地模型目录。支持的官方配对是 RWKV-7
+0.4B/Qwen3.5-0.8B、RWKV-7 1.5B/Qwen3.5-2B 和 RWKV-7 2.9B/Qwen3.5-4B。
+每次选择 B1 或 B8，脚本会运行 prompt 128/512/2048、decode 128/512；使用新的
+输出目录，避免覆盖以前的结果。
 
 **直接运行。** 在仓库根目录执行：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 \
+BATCH_SIZE=1 CUDA_VISIBLE_DEVICES=0 \
 PYTHON_BIN=python \
 bash bench/run_4080_qwen35_pair_acceptance.sh \
   rwkv-1.5b__qwen3.5-2b \
@@ -285,6 +286,10 @@ bash bench/run_4080_qwen35_pair_acceptance.sh \
   /path/to/Qwen3.5-2B \
   /tmp/rtx4080-acceptance
 ```
+
+把 `BATCH_SIZE=1` 改为 `BATCH_SIZE=8` 即可运行 B8。另两组模型只需替换配对名
+和两个模型目录：`rwkv-0.4b__qwen3.5-0.8b` 或
+`rwkv-2.9b__qwen3.5-4b`。
 
 **通过标准。** 命令退出码为 0，`matrix_failures.txt` 与
 `pipeline_exit_code.txt` 都是 0，`summary.json.status` 为 `pass`，coverage 为
@@ -297,8 +302,8 @@ footprint、cosine 和 greedy 门槛。
 新的输出目录。BNB8/BNB4 是全模型省内存路线；配对速度结论只覆盖输出头 A8W8/
 TorchAO-W4，不代表所有显卡和所有全模型量化都更快。
 
-完整的已验收示例与环境版本见
-[`../bench/4080_ada_validation_20260719/README.md`](../bench/4080_ada_validation_20260719/README.md)。需要 AI 代为检查环境、填写路径或解释失败时，统一使用
+完整的 B1/B8 三组模型示例、环境版本和大模型显存边界见
+[`../bench/4080_full_model_ladder_20260719/README.md`](../bench/4080_full_model_ladder_20260719/README.md)。需要 AI 代为检查环境、填写路径或解释失败时，统一使用
 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的“量化验收”入口。
 
 ## 7. 如何验收或否决量化路线

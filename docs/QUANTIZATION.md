@@ -113,18 +113,19 @@ Exact RTX 5070 Laptop 0.4B smoke evidence is in
 
 ## RTX 4080 output-head speed and full-model memory lanes
 
-The exact RTX 4080 bsz8 matrix covers the official 1.5B checkpoint at prompt
-128/512/2048 and decode 128/512. Full-model BNB8/BNB4 are memory routes: all six
-shapes execute with finite logits and reduce model footprint to
-`0.604572x/0.406858x` dense. No full-model speed claim is attached to them.
+The exact RTX 4080 matrix covers official 0.4B/1.5B/2.9B checkpoints at B1/B8,
+prompt 128/512/2048 and decode 128/512. Full-model BNB8/BNB4 are memory routes:
+all 72 rows execute with finite logits and reduce footprint to
+`0.573136x-0.665038x` and `0.359704x-0.497558x` dense. No full-model speed claim
+is attached to them.
 
 The paired speed routes replace one output-head module and measure fp16 and
 quantized execution in the same process:
 
 | Route | Prefill min | Decode min | `prefill + decode` min | Footprint | Min cosine | Greedy |
 |---|---:|---:|---:|---:|---:|---:|
-| A8W8 head | `0.9988x` | `1.0076x` | `1.005056x` | `0.9561x` | `0.999951` | 6/6 |
-| TorchAO-W4 head | `0.9996x` | `1.0458x` | `1.026122x` | `0.9355x` | `0.999520` | 6/6 |
+| A8W8 head | telemetry | `>=1.0045x` | `>=1.003101x` | `0.9258x-0.9716x` | `>=0.999931` | 36/36 |
+| TorchAO-W4 head | telemetry | `>=1.0246x` | `>=1.015996x` | `0.8907x-0.9612x` | `>=0.999475` | 36/36 |
 
 As on the promoted RTX 3090/4090 lanes, the quant speed contract requires both
 cached decode and complete-cell `prefill + decode` latency to be no slower than
@@ -132,7 +133,13 @@ fp16. Phase prefill is retained as telemetry and is not independently described
 as faster. Direct 8-row A8W8 GEMV and group64 W4 probes were slower than the
 selected routes and remain unpromoted.
 
-Evidence: [`../bench/4080_ada_validation_20260719/README.md`](../bench/4080_ada_validation_20260719/README.md).
+The 7.2B full-memory MM8/MM4 B1 rows reduce footprint to `0.5346x/0.3015x`
+and preserve the measured fp16 greedy sequence, but are slower than fp16.
+The 13.3B CPU-first MM8/MM4 routes fit in 16GB and execute deterministically;
+because the fp16 model does not fit, they are capacity routes without an fp16
+speed or logits-parity claim.
+
+Evidence: [`../bench/4080_full_model_ladder_20260719/README.md`](../bench/4080_full_model_ladder_20260719/README.md).
 
 ## RTX 4090 g1h 7.2B promoted result
 

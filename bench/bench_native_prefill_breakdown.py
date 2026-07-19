@@ -24,7 +24,10 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from bench_native_prefill_scan import prepare_model_dir
+try:
+    from bench.bench_native_prefill_scan import prepare_model_dir
+except ModuleNotFoundError:  # Direct ``python bench/...`` execution.
+    from bench_native_prefill_scan import prepare_model_dir
 from rwkv7_hf import native_jit
 
 
@@ -41,6 +44,16 @@ def parse_ints(raw: str) -> list[int]:
     return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
 
+def native_jit_packs(model):
+    """Return projection packs from either the wrapper or Native HF model."""
+
+    for name in ("_rwkv7_native_jit_packs", "_native_graph_packs", "_native_jit_packs"):
+        factory = getattr(model, name, None)
+        if callable(factory):
+            return factory()
+    raise AttributeError("model does not expose native JIT projection packs")
+
+
 def scan_block_m(model, batch_size: int | None = None) -> int | None:
     raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M")
     if raw is not None:
@@ -49,7 +62,7 @@ def scan_block_m(model, batch_size: int | None = None) -> int | None:
         except ValueError:
             return None
     try:
-        head_dim = int(model._rwkv7_native_jit_packs()[0][2])
+        head_dim = int(native_jit_packs(model)[0][2])
         return native_jit._native_prefill_scan_block_m(head_dim, batch_size)
     except Exception:
         return None
@@ -63,7 +76,7 @@ def scan_num_warps(model, block_m: int | None) -> int | None:
         except ValueError:
             return None
     try:
-        head_dim = int(model._rwkv7_native_jit_packs()[0][2])
+        head_dim = int(native_jit_packs(model)[0][2])
         return native_jit._native_prefill_scan_num_warps(head_dim, block_m)
     except Exception:
         return None
@@ -630,7 +643,7 @@ def profiled_native_prefill(
 
 def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
     ids = build_ids(tok, batch_size, prompt_tokens, args.device)
-    packs = model._rwkv7_native_jit_packs()
+    packs = native_jit_packs(model)
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
 
@@ -726,7 +739,10 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "fused_scan_effective": native_jit._native_prefill_fused_scan_enabled(),
         "self_chunk_requested": os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK"),
-        "self_chunk_effective": native_jit._native_prefill_self_chunk_enabled(prompt_tokens, int(model._rwkv7_native_jit_packs()[0][2])),
+        "self_chunk_effective": native_jit._native_prefill_self_chunk_enabled(
+            prompt_tokens,
+            int(native_jit_packs(model)[0][2]),
+        ),
         "scan_block_m": scan_m,
         "scan_num_warps": scan_num_warps(model, scan_m),
         "fine_attention_breakdown": bool(args.fine_attn),

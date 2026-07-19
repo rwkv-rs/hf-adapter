@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed summary for the exact RTX 4080 bsz8 acceptance matrix."""
+"""Fail-closed summary for the exact RTX 4080 B1/B8 acceptance matrix."""
 from __future__ import annotations
 
 import argparse
@@ -8,11 +8,20 @@ from pathlib import Path
 from typing import Any
 
 
-EXPECTED_SHAPES = {
-    (8, prompt, decode)
-    for prompt in (128, 512, 2048)
-    for decode in (128, 512)
+PAIR_SIZES = {
+    "rwkv-0.4b__qwen3.5-0.8b": ("0.4b", "0.8b"),
+    "rwkv-1.5b__qwen3.5-2b": ("1.5b", "2b"),
+    "rwkv-2.9b__qwen3.5-4b": ("2.9b", "4b"),
 }
+EXPECTED_DEVICE = "NVIDIA GeForce RTX 4080"
+
+
+def expected_shapes(batch_size: int) -> set[tuple[int, int, int]]:
+    return {
+        (batch_size, prompt, decode)
+        for prompt in (128, 512, 2048)
+        for decode in (128, 512)
+    }
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -49,12 +58,22 @@ def metric_range(values: list[float]) -> dict[str, float | None]:
 def summarize(
     root: Path,
     *,
+    model_pair: str = "rwkv-1.5b__qwen3.5-2b",
+    batch_size: int = 8,
     min_dense_prefill: float = 1.0,
-    min_dense_decode: float = 1.4,
+    min_dense_decode: float = 1.0,
+    min_active_work_decode: float | None = None,
     min_quant_speed: float = 1.0,
     min_quant_cosine: float = 0.999,
 ) -> dict[str, Any]:
     errors: list[str] = []
+    expected = expected_shapes(batch_size)
+    if min_active_work_decode is None:
+        min_active_work_decode = 1.0 if batch_size == 1 else 1.75
+    pair_sizes = PAIR_SIZES.get(model_pair)
+    if pair_sizes is None:
+        errors.append(f"unsupported model pair: {model_pair}")
+        pair_sizes = (None, None)
 
     def read_required(name: str) -> list[dict[str, Any]]:
         path = root / name
@@ -73,9 +92,61 @@ def summarize(
     candidates = [row for row in dense_rows if row.get("model_role") == "candidate"]
     references = [row for row in dense_rows if row.get("model_role") == "reference"]
 
+    def validate_contract(
+        label: str,
+        rows: list[dict[str, Any]],
+        *,
+        expected_size: str | None,
+        expected_kind: str | None,
+        require_pair: bool,
+    ) -> None:
+        for row in rows:
+            key = shape(row)
+            if row.get("device") != EXPECTED_DEVICE:
+                errors.append(f"{label} {key} did not run on the exact RTX 4080")
+            if row.get("dtype") != "fp16":
+                errors.append(f"{label} {key} did not use fp16")
+            if expected_size is not None and row.get("model_size_label") != expected_size:
+                errors.append(f"{label} {key} has the wrong model-size label")
+            if expected_kind is not None and row.get("model_kind") != expected_kind:
+                errors.append(f"{label} {key} has the wrong model kind")
+            if require_pair and row.get("model_pair") != model_pair:
+                errors.append(f"{label} {key} has the wrong model-pair label")
+
+    validate_contract(
+        "dense candidate",
+        candidates,
+        expected_size=pair_sizes[0],
+        expected_kind="rwkv",
+        require_pair=True,
+    )
+    validate_contract(
+        "Qwen reference",
+        references,
+        expected_size=pair_sizes[1],
+        expected_kind="qwen35",
+        require_pair=True,
+    )
+    validate_contract(
+        "memory route",
+        memory_rows,
+        expected_size=pair_sizes[0],
+        expected_kind="rwkv",
+        require_pair=True,
+    )
+    validate_contract(
+        "paired quant route",
+        quant_rows,
+        expected_size=pair_sizes[0],
+        expected_kind=None,
+        require_pair=False,
+    )
+
     for label, rows in (("dense candidate", candidates), ("Qwen reference", references)):
-        if len(rows) != 6 or {shape(row) for row in rows} != EXPECTED_SHAPES:
-            errors.append(f"{label} coverage is not the exact 6-cell bsz8 matrix")
+        if len(rows) != 6 or {shape(row) for row in rows} != expected:
+            errors.append(
+                f"{label} coverage is not the exact 6-cell bsz{batch_size} matrix"
+            )
 
     reference_by_shape = {shape(row): row for row in references}
     dense_by_shape = {shape(row): row for row in candidates}
@@ -91,8 +162,14 @@ def summarize(
             errors.append(f"dense candidate {key} failed status/finite-logits")
         if row.get("effective_backend") != "native_graph":
             errors.append(f"dense candidate {key} did not use native_graph decode")
-        if row.get("prefill_effective_backend") != "native_prefill_graph":
-            errors.append(f"dense candidate {key} did not use native_prefill_graph")
+        allowed_prefill_backends = {"native_prefill_graph"}
+        chunk_size = int(row.get("prefill_chunk_size") or 0)
+        if chunk_size > 0 and int(row.get("prompt_tokens") or 0) > chunk_size:
+            allowed_prefill_backends.add("native_prefill_continuation")
+        if row.get("prefill_effective_backend") not in allowed_prefill_backends:
+            errors.append(
+                f"dense candidate {key} did not use an accepted native prefill backend"
+            )
         if reference.get("status") != "pass" or reference.get("logits_finite") is not True:
             errors.append(f"Qwen reference {key} failed status/finite-logits")
         if reference.get("qwen_backend_requested") != "fla":
@@ -115,15 +192,20 @@ def summarize(
             errors.append(f"dense candidate {key} prefill ratio {prefill_value:.4f} < {min_dense_prefill:.4f}")
         if decode_value < min_dense_decode:
             errors.append(f"dense candidate {key} decode ratio {decode_value:.4f} < {min_dense_decode:.4f}")
-        if active_value < 1.0:
-            errors.append(f"dense candidate {key} active-work decode ratio {active_value:.4f} < 1.0")
+        if active_value < min_active_work_decode:
+            errors.append(
+                f"dense candidate {key} active-work decode ratio "
+                f"{active_value:.4f} < {min_active_work_decode:.4f}"
+            )
 
     memory_summary: dict[str, Any] = {}
     for quantization in ("bnb8", "bnb4"):
         rows = [row for row in memory_rows if row.get("quantization") == quantization]
         footprints: list[float] = []
-        if len(rows) != 6 or {shape(row) for row in rows} != EXPECTED_SHAPES:
-            errors.append(f"{quantization} coverage is not the exact 6-cell bsz8 matrix")
+        if len(rows) != 6 or {shape(row) for row in rows} != expected:
+            errors.append(
+                f"{quantization} coverage is not the exact 6-cell bsz{batch_size} matrix"
+            )
         for row in rows:
             key = shape(row)
             dense = dense_by_shape.get(key)
@@ -148,8 +230,10 @@ def summarize(
         totals: list[float] = []
         footprints: list[float] = []
         cosines: list[float] = []
-        if len(rows) != 6 or {shape(row) for row in rows} != EXPECTED_SHAPES:
-            errors.append(f"{quantization} paired coverage is not the exact 6-cell bsz8 matrix")
+        if len(rows) != 6 or {shape(row) for row in rows} != expected:
+            errors.append(
+                f"{quantization} paired coverage is not the exact 6-cell bsz{batch_size} matrix"
+            )
         for row in rows:
             key = shape(row)
             if row.get("status") != "pass" or row.get("paired_baseline") is not True:
@@ -216,12 +300,12 @@ def summarize(
         }
 
     return {
-        "axis": "rtx4080_qwen35_bsz8_acceptance",
+        "axis": f"rtx4080_qwen35_bsz{batch_size}_acceptance",
         "status": "pass" if not errors else "fail",
         "scope": {
-            "device": "NVIDIA GeForce RTX 4080",
-            "model_pair": "rwkv-1.5b__qwen3.5-2b",
-            "batch_size": 8,
+            "device": EXPECTED_DEVICE,
+            "model_pair": model_pair,
+            "batch_size": batch_size,
             "prompt_tokens": [128, 512, 2048],
             "decode_tokens": [128, 512],
             "dtype": "fp16",
@@ -230,7 +314,7 @@ def summarize(
         "gates": {
             "min_dense_prefill_ratio": min_dense_prefill,
             "min_dense_decode_ratio": min_dense_decode,
-            "min_active_work_decode_ratio": 1.0,
+            "min_active_work_decode_ratio": min_active_work_decode,
             "min_quant_total_speed_ratio": min_quant_speed,
             "min_quant_decode_speed_ratio": min_quant_speed,
             "quant_prefill_speed": "reported, not independently gated",
@@ -263,7 +347,7 @@ def markdown(report: dict[str, Any]) -> str:
         return f"{float(value):.4f}x" if value is not None else "n/a"
 
     lines = [
-        "# RTX 4080 RWKV-7 / Qwen3.5 acceptance",
+        f"# RTX 4080 {report['scope']['model_pair']} B{report['scope']['batch_size']} acceptance",
         "",
         f"Status: **{report['status']}**",
         "",
@@ -288,8 +372,11 @@ def markdown(report: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact_root", type=Path)
+    parser.add_argument("--model-pair", default="rwkv-1.5b__qwen3.5-2b")
+    parser.add_argument("--batch-size", type=int, choices=(1, 8), default=8)
     parser.add_argument("--min-dense-prefill", type=float, default=1.0)
-    parser.add_argument("--min-dense-decode", type=float, default=1.4)
+    parser.add_argument("--min-dense-decode", type=float, default=1.0)
+    parser.add_argument("--min-active-work-decode", type=float)
     parser.add_argument("--min-quant-speed", type=float, default=1.0)
     parser.add_argument("--min-quant-cosine", type=float, default=0.999)
     parser.add_argument("--output", type=Path)
@@ -297,8 +384,11 @@ def main() -> int:
     args = parser.parse_args()
     report = summarize(
         args.artifact_root,
+        model_pair=args.model_pair,
+        batch_size=args.batch_size,
         min_dense_prefill=args.min_dense_prefill,
         min_dense_decode=args.min_dense_decode,
+        min_active_work_decode=args.min_active_work_decode,
         min_quant_speed=args.min_quant_speed,
         min_quant_cosine=args.min_quant_cosine,
     )

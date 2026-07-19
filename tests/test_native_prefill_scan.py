@@ -295,6 +295,30 @@ def test_self_chunk_exact_model_shape_can_lower_the_generic_token_floor(monkeypa
     assert not native_jit._native_prefill_self_chunk_enabled(512, 64, 8, 2560, 24)
 
 
+def test_self_chunk_policy_can_require_an_exact_model_shape(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    policy = types.SimpleNamespace(
+        fused_prefill_self_chunk=True,
+        prefill_self_chunk_min_tokens=1024,
+        prefill_self_chunk_model_shapes=(
+            (2048, 24, 1, 512),
+            (2048, 24, 1, 2048),
+        ),
+        prefill_self_chunk_model_shapes_only=True,
+    )
+    monkeypatch.setattr(native_jit, "_kernel_policy", lambda: policy)
+    monkeypatch.setattr(native_jit, "self_chunk_rwkv7", object())
+    monkeypatch.setattr(native_jit, "self_chunk_rwkv7_available", lambda: True)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES", raising=False)
+
+    assert native_jit._native_prefill_self_chunk_enabled(512, 64, 1, 2048, 24)
+    assert native_jit._native_prefill_self_chunk_enabled(2048, 64, 1, 2048, 24)
+    assert not native_jit._native_prefill_self_chunk_enabled(2048, 64, 8, 2048, 24)
+    assert not native_jit._native_prefill_self_chunk_enabled(4096, 64, 1, 2048, 24)
+
+
 def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
     from rwkv7_hf import native_jit
 

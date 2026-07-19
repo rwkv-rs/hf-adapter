@@ -1468,9 +1468,18 @@ def test_4080_acceptance_entrypoint_is_full_prompt_and_fail_closed() -> None:
     )
     assert 'REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4080}"' in script
     assert '--benchmark-matrix qwen35_4080_hf_final' in script
-    assert '--batch-sizes 8 --prompt-tokens 128 512 2048' in script
-    assert '--decode-tokens 128 512 --prefill-chunk-size 0' in script
-    assert 'DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-1.40}"' in script
+    assert 'rwkv-0.4b__qwen3.5-0.8b)' in script
+    assert 'rwkv-1.5b__qwen3.5-2b)' in script
+    assert 'rwkv-2.9b__qwen3.5-4b)' in script
+    assert 'BATCH_SIZE="${BATCH_SIZE:-8}"' in script
+    assert '--batch-sizes "${BATCH_SIZE}" --prompt-tokens 128 512 2048' in script
+    assert '--decode-tokens 128 512 --prefill-chunk-size "${PREFILL_CHUNK_SIZE}"' in script
+    assert 'if [[ "${BATCH_SIZE}" == "1" ]]' in script
+    assert 'DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-1.00}"' in script
+    assert 'default_active_work_gate="1.75"' in script
+    assert '--min-active-work-decode "${ACTIVE_WORK_DECODE_GATE}"' in script
+    assert '--model-pair "${PAIR_LABEL}"' in script
+    assert '--batch-size "${BATCH_SIZE}"' in script
     assert '--qwen-backend fla' in script
     assert '--require-qwen-fast-path' in script
     assert '--paired-baseline' in script

@@ -1633,8 +1633,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ):
         """Inference-only prefill through the native model backend.
 
-        CUDA prompts use the compiled prefill/graph route when eligible. CPU,
-        quantized, adapter, masked, and cache-continuation calls retain the
+        CUDA prompts use the compiled prefill/graph route when eligible, and
+        eligible cache continuations reuse compiled prefill with the existing
+        recurrent state. CPU, quantized, adapter, and masked calls retain the
         same public contract through the native eager implementation.
         """
 
@@ -1977,10 +1978,11 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         *,
         logits_to_keep,
         seen_tokens: int,
+        initial_cache=None,
     ):
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
-        if _native_prefill_graph_enabled(
+        if initial_cache is None and _native_prefill_graph_enabled(
             batch_size,
             prompt_tokens,
             int(self.config.hidden_size),
@@ -2008,10 +2010,16 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             self._rwkv7_native_model_last_prefill_backend = "native_prefill_graph"
             return logits, cache
         packs = self._native_graph_packs()
+        state = xpa = xpf = None
+        if initial_cache is not None:
+            state, xpa, xpf, _ = _copy_native_cache_tuple(initial_cache)
         logits, state, xpa, xpf = _native_jit_prefill(
             self,
             input_ids,
             packs,
+            state=state,
+            xpa=xpa,
+            xpf=xpf,
             logits_to_keep=logits_to_keep,
         )
         v_first = torch.zeros(
@@ -2027,7 +2035,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             dtype=self.model.embeddings.weight.dtype,
         )
         cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=int(seen_tokens))
-        self._rwkv7_native_model_last_prefill_backend = "native_prefill"
+        self._rwkv7_native_model_last_prefill_backend = (
+            "native_prefill_continuation" if initial_cache is not None else "native_prefill"
+        )
         return logits, cache
 
     def _native_prefill_graph_runner(
@@ -2693,6 +2703,24 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 input_ids,
                 logits_to_keep=logits_to_keep,
                 seen_tokens=seq_len,
+            )
+            logits = _slice_native_logits(logits, logits_to_keep)
+            new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)
+            if not return_dict:
+                return logits, new_cache
+            return CausalLMOutputWithPast(logits=logits, past_key_values=new_cache)
+        if native_cache is not None and self._native_prefill_can_run(
+            input_ids,
+            attention_mask=native_attention_mask,
+            output_hidden_states=output_hidden_states,
+            use_cache=use_cache,
+            logits_to_keep=logits_to_keep,
+        ):
+            logits, new_cache = self._native_prefill(
+                input_ids,
+                logits_to_keep=logits_to_keep,
+                seen_tokens=_cache_seen(past_key_values) + seq_len,
+                initial_cache=native_cache,
             )
             logits = _slice_native_logits(logits, logits_to_keep)
             new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)
