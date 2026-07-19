@@ -42,6 +42,7 @@ try:
         quantize_w4_groupwise,
         quantize_w4_row,
         w4_groupwise_linear as sm70_w4_groupwise_linear,
+        w4_prefill_dequant_weight as sm70_w4_prefill_dequant_weight,
         w4_linear_add as sm70_w4_linear_add,
         w4_linear_relu2 as sm70_w4_linear_relu2,
         w4_linear as sm70_w4_linear,
@@ -51,6 +52,7 @@ except Exception:  # pragma: no cover
     quantize_w4_groupwise = None  # type: ignore[assignment]
     quantize_w4_row = None  # type: ignore[assignment]
     sm70_w4_groupwise_linear = None  # type: ignore[assignment]
+    sm70_w4_prefill_dequant_weight = None  # type: ignore[assignment]
     sm70_w4_linear_add = None  # type: ignore[assignment]
     sm70_w4_linear_relu2 = None  # type: ignore[assignment]
     sm70_w4_linear = None  # type: ignore[assignment]
@@ -602,6 +604,59 @@ class MM4Linear(torch.nn.Module):
         out.copy_(result)
         return out
 
+    def rwkv7_prefill_dequant_weight(self, rows, out=None):
+        """Prepare one transient fp16 GEMM operand on exact sm70 prefill."""
+
+        if sm70_w4_prefill_dequant_weight is None:
+            return None
+        if self.groupwise:
+            return sm70_w4_prefill_dequant_weight(
+                self.packed_group,
+                self.group_scales,
+                rows,
+                self.group_size,
+                out,
+            )
+        if self.sm70_rowwise:
+            return sm70_w4_prefill_dequant_weight(
+                self.packed_row,
+                self.row_scale,
+                rows,
+                0,
+                out,
+            )
+        return None
+
+    def rwkv7_prefill_dequant_shape(self, rows):
+        """Describe the reusable dense workspace without materialising it."""
+
+        try:
+            threshold = max(
+                0,
+                int(os.environ.get("RWKV7_SM70_W4_PREFILL_DENSE_MIN_ROWS", "16")),
+            )
+        except ValueError:
+            threshold = 16
+        if self.groupwise:
+            packed = self.packed_group
+            scales = self.group_scales
+        elif self.sm70_rowwise:
+            packed = self.packed_row
+            scales = self.row_scale
+        else:
+            return None
+        if (
+            threshold <= 0
+            or int(rows) < threshold
+            or self.bias is not None
+            or int(packed.shape[1]) * 2 != int(self.in_features)
+            or not packed.is_cuda
+            or scales.dtype != torch.float16
+            or torch.cuda.get_device_capability(packed.device) != (7, 0)
+        ):
+            return None
+        return (int(self.out_features), int(self.in_features))
+
     def rwkv7_forward_relu2(self, x):
         if (
             self.sm70_rowwise
@@ -725,6 +780,11 @@ def quantize_model_mm4(
         )
     setattr(model, "_rwkv7_native_mm_quantization", "mm4")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_quantized_head",
+        any(name == "lm_head" or name.endswith(".lm_head") for name in targets),
+    )
     setattr(model, "_rwkv7_native_mm4_group_size", int(group_size))
     setattr(model, "_rwkv7_native_mm4_group_policy", group_policy)
     setattr(

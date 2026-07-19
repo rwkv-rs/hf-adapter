@@ -19,6 +19,7 @@ from rwkv7_hf.sm70_quant import (
     w4_linear_relu2,
     w4_linear,
     w8_linear,
+    w8_prefill_dequant_weight,
 )
 
 
@@ -152,6 +153,22 @@ def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
     graph.replay()
     torch.cuda.synchronize()
     assert captured.data_ptr() == out4.data_ptr()
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.get_device_capability() != (7, 0),
+    reason="exact sm_70 CUDA device required",
+)
+def test_sm70_w8_prefill_dequant_writes_reusable_workspace() -> None:
+    torch.manual_seed(72)
+    weight = torch.randn(256, 128, device="cuda", dtype=torch.float16) * 0.03
+    q8, s8 = quantize_w8_row(weight)
+    workspace = torch.empty_like(weight)
+    returned = w8_prefill_dequant_weight(q8, s8, rows=128, out=workspace)
+    assert returned is not None
+    assert returned.data_ptr() == workspace.data_ptr()
+    reference = q8.to(torch.float16) * s8[:, None]
+    torch.testing.assert_close(returned, reference, rtol=0.0, atol=0.0)
 
 
 @pytest.mark.skipif(

@@ -48,7 +48,7 @@ def test_cpu_fallback_tracks_dense_linear_for_strided_last_token_slice() -> None
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("batch_size", [2, 4, 8])
+@pytest.mark.parametrize("batch_size", [2, 4, 8, 17])
 def test_cuda_kernel_tracks_strided_last_token_slice(batch_size: int) -> None:
     torch.manual_seed(5)
     dense = torch.nn.Linear(1024, 2048, bias=False, dtype=torch.float16, device="cuda")
@@ -70,6 +70,7 @@ def test_speed_policy_replaces_head_only() -> None:
     assert isinstance(model.lm_head, A8W8Linear)
     assert isinstance(model.proj, torch.nn.Linear)
     assert model._rwkv7_native_mm_quantization == "a8w8"
+    assert model._rwkv7_native_mm_quantized_head is True
     assert model._rwkv7_native_mm_block_replaced_modules == 0
 
 

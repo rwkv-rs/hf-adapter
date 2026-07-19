@@ -193,6 +193,15 @@ class NativeRWKV7Cache(_HFCache):
         runner = ref() if ref is not None else None
         return runner if runner is not None and self._rwkv7_native_graph_bound_runner_id == id(runner) else None
 
+    def _materialize_native_graph_binding(self) -> None:
+        """Make borrowed graph outputs private before mutating cache views."""
+
+        runner = self._native_graph_bound_runner()
+        if runner is not None and hasattr(runner, "detach_bound_cache"):
+            runner.detach_bound_cache()
+        if self._rwkv7_native_graph_bound_runner_id is not None:
+            self._invalidate_native_graph_binding()
+
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(seen_tokens={self._seen_tokens}, "
@@ -320,7 +329,7 @@ class NativeRWKV7Cache(_HFCache):
 
     def detach(self, *, inplace: bool = True) -> "NativeRWKV7Cache":
         target = self if inplace else self.clone()
-        target._invalidate_native_graph_binding()
+        target._materialize_native_graph_binding()
 
         def detach_list(values):
             if values is None:
@@ -345,7 +354,7 @@ class NativeRWKV7Cache(_HFCache):
         inplace: bool = True,
     ) -> "NativeRWKV7Cache":
         target = self if inplace else self.clone()
-        target._invalidate_native_graph_binding()
+        target._materialize_native_graph_binding()
 
         def move_tensor(value: torch.Tensor) -> torch.Tensor:
             kwargs = {"non_blocking": non_blocking, "copy": copy}
@@ -693,11 +702,19 @@ def _native_prefill_graph_cache_size() -> int:
 def _native_prefill_graph_signature() -> tuple[tuple[str, str], ...]:
     """Return every explicit prefill setting that changes a captured graph."""
 
+    prefixes = (
+        "RWKV7_NATIVE_PREFILL_",
+        "RWKV7_PREFILL_",
+        "RWKV7_FUSED_",
+        "RWKV7_NATIVE_BNB",
+        "RWKV7_NATIVE_MM",
+        "RWKV7_SM70_",
+    )
     return tuple(
         sorted(
             (name, value)
             for name, value in os.environ.items()
-            if name.startswith("RWKV7_NATIVE_PREFILL_")
+            if name.startswith(prefixes)
         )
     )
 
@@ -1190,6 +1207,36 @@ class _NativePrefillGraphRunner:
             device=self.device,
             dtype=torch.long,
         )
+        self.state_inputs = [
+            torch.zeros(
+                self.batch_size,
+                int(pack[1]),
+                int(pack[2]),
+                int(pack[2]),
+                device=self.device,
+                dtype=torch.float32,
+            )
+            for pack in packs
+        ]
+        self.xpa_inputs = [
+            torch.zeros(
+                self.batch_size,
+                int(owner.config.hidden_size),
+                device=self.device,
+                dtype=self.dtype,
+            )
+            for _ in packs
+        ]
+        self.xpf_inputs = [
+            torch.zeros(
+                self.batch_size,
+                int(owner.config.hidden_size),
+                device=self.device,
+                dtype=self.dtype,
+            )
+            for _ in packs
+        ]
+        self.inputs_are_zero = True
         self.logits: torch.Tensor | None = None
         self.state_outputs: list[torch.Tensor] = []
         self.xpa_outputs: list[torch.Tensor] = []
@@ -1216,6 +1263,9 @@ class _NativePrefillGraphRunner:
             self.owner,
             self.input_ids,
             self.packs,
+            state=list(self.state_inputs),
+            xpa=list(self.xpa_inputs),
+            xpf=list(self.xpf_inputs),
             logits_to_keep=self.logits_to_keep,
         )
 
@@ -1246,9 +1296,43 @@ class _NativePrefillGraphRunner:
             and self.runtime_signature == _native_prefill_graph_signature()
         )
 
-    def _detach_bound_cache(self) -> None:
+    @staticmethod
+    def _copy_or_zero(target: torch.Tensor, source: torch.Tensor | None) -> None:
+        if source is None:
+            target.zero_()
+            return
+        converted = source.to(device=target.device, dtype=target.dtype)
+        if (
+            target.data_ptr() != converted.data_ptr()
+            or target.storage_offset() != converted.storage_offset()
+            or target.stride() != converted.stride()
+        ):
+            target.copy_(converted.contiguous())
+
+    def _load_cache_inputs(self, cache: NativeRWKV7Cache, initial_seen: int) -> None:
+        if int(initial_seen) <= 0 or cache._state is None:
+            if not getattr(self, "inputs_are_zero", True):
+                for value in (*self.state_inputs, *self.xpa_inputs, *self.xpf_inputs):
+                    value.zero_()
+                self.inputs_are_zero = True
+            return
+        if (
+            cache._xpa is None
+            or cache._xpf is None
+            or len(cache._state) != len(self.packs)
+            or len(cache._xpa) != len(self.packs)
+            or len(cache._xpf) != len(self.packs)
+        ):
+            raise ValueError("native prefill graph cache layout does not match the model")
+        for layer_index in range(len(self.packs)):
+            self._copy_or_zero(self.state_inputs[layer_index], cache._state[layer_index])
+            self._copy_or_zero(self.xpa_inputs[layer_index], cache._xpa[layer_index])
+            self._copy_or_zero(self.xpf_inputs[layer_index], cache._xpf[layer_index])
+        self.inputs_are_zero = False
+
+    def _detach_bound_cache(self, keep: NativeRWKV7Cache | None = None) -> None:
         previous = self._bound_cache_ref() if self._bound_cache_ref is not None else None
-        if previous is None:
+        if previous is None or previous is keep:
             return
         # The first decode replay replaces/binds the cache to its own stable
         # buffers. In that common generate flow this prefill graph no longer
@@ -1267,7 +1351,9 @@ class _NativePrefillGraphRunner:
         self,
         input_ids: torch.Tensor,
         *,
-        seen_tokens: int,
+        cache: NativeRWKV7Cache | None = None,
+        initial_seen: int | None = None,
+        seen_tokens: int | None = None,
     ) -> tuple[torch.Tensor, NativeRWKV7Cache]:
         if tuple(input_ids.shape) != (self.batch_size, self.prompt_tokens):
             raise ValueError("native prefill graph input shape changed after capture")
@@ -1275,16 +1361,22 @@ class _NativePrefillGraphRunner:
             raise ValueError("native prefill graph input must be CUDA int64 on the model device")
         if self.graph is None or self.logits is None:
             raise RuntimeError("native prefill graph was not captured")
-        self._detach_bound_cache()
+        if initial_seen is None:
+            if seen_tokens is None:
+                raise TypeError("native prefill graph replay requires initial_seen or seen_tokens")
+            initial_seen = max(0, int(seen_tokens) - self.prompt_tokens)
+        if cache is None:
+            cache = NativeRWKV7Cache(seen_tokens=int(initial_seen))
+        self._detach_bound_cache(keep=cache)
+        self._load_cache_inputs(cache, int(initial_seen))
         self.input_ids.copy_(input_ids)
         self.graph.replay()
-        cache = NativeRWKV7Cache(
-            self.state_outputs,
-            self.xpa_outputs,
-            self.xpf_outputs,
-            self.v_first,
-            seen_tokens=int(seen_tokens),
-        )
+        cache._invalidate_native_graph_binding()
+        cache._state = list(self.state_outputs)
+        cache._xpa = list(self.xpa_outputs)
+        cache._xpf = list(self.xpf_outputs)
+        cache._v_first = self.v_first
+        cache._seen_tokens = int(initial_seen) + self.prompt_tokens
         cache._bind_native_graph_runner(self)
         self._bound_cache_ref = weakref.ref(cache)
         # Public HF forward owns its returned logits. A later replay may reuse
@@ -1404,6 +1496,10 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             delattr(self, "_rwkv7_native_adapter_layers_present")
         self.rwkv7_clear_native_graph_cache()
         self.rwkv7_clear_native_prefill_graph_cache()
+        if hasattr(self, "_rwkv7_native_prefill_quant_workspaces"):
+            delattr(self, "_rwkv7_native_prefill_quant_workspaces")
+        if hasattr(self, "_rwkv7_native_prefill_quant_stream"):
+            delattr(self, "_rwkv7_native_prefill_quant_stream")
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
@@ -1484,6 +1580,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ):
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
+        initial_seen = max(0, int(seen_tokens) - prompt_tokens)
         if _native_prefill_graph_enabled(
             batch_size,
             prompt_tokens,
@@ -1508,7 +1605,15 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                     self._rwkv7_native_prefill_graph_cache_stats = stats
                 stats["requests"] = int(stats.get("requests", 0)) + 1
                 stats["hits"] = int(stats.get("hits", 0)) + 1
-            logits, cache = runner.replay(input_ids, seen_tokens=int(seen_tokens))
+            native_cache = NativeRWKV7Cache.from_legacy_cache(
+                cache,
+                seen_tokens=initial_seen,
+            )
+            logits, cache = runner.replay(
+                input_ids,
+                cache=native_cache,
+                initial_seen=initial_seen,
+            )
             self._rwkv7_native_model_last_prefill_backend = "native_prefill_graph"
             return logits, cache
         packs = self._native_graph_packs()
@@ -1562,6 +1667,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             normalized_keep,
             _native_prefill_graph_signature(),
             str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+            int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
         )
         cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
         if not isinstance(cache, OrderedDict):
@@ -1817,6 +1923,55 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             else:
                 chosen = "eager"
             warmed[batch_size] = chosen
+        return warmed
+
+    @torch.inference_mode()
+    def rwkv7_warmup_fast_prefill(
+        self,
+        shapes: tuple[int, int]
+        | list[tuple[int, int]]
+        | tuple[tuple[int, int], ...] = ((1, 512),),
+        *,
+        logits_to_keep: int = 1,
+    ) -> dict[str, str]:
+        """Pre-capture fixed Native prefill shapes selected by card policy."""
+
+        if self.training:
+            raise RuntimeError(
+                "rwkv7_warmup_fast_prefill is inference-only; call model.eval() first"
+            )
+        if (
+            isinstance(shapes, tuple)
+            and len(shapes) == 2
+            and all(isinstance(value, int) for value in shapes)
+        ):
+            normalized = [shapes]
+        else:
+            normalized = list(shapes)
+        if not normalized or any(
+            int(batch_size) <= 0 or int(prompt_tokens) <= 1
+            for batch_size, prompt_tokens in normalized
+        ):
+            raise ValueError(
+                "rwkv7_warmup_fast_prefill requires positive batch and prompt_tokens > 1"
+            )
+        warmed = {}
+        for batch_size, prompt_tokens in normalized:
+            if not _native_prefill_graph_enabled(
+                int(batch_size),
+                int(prompt_tokens),
+                int(self.config.hidden_size),
+                int(self.config.num_hidden_layers),
+            ):
+                raise RuntimeError(
+                    f"native prefill graph is not enabled for {batch_size}x{prompt_tokens}"
+                )
+            self._native_prefill_graph_runner(
+                int(batch_size),
+                int(prompt_tokens),
+                int(logits_to_keep),
+            )
+            warmed[f"{int(batch_size)}x{int(prompt_tokens)}"] = "native_prefill_graph"
         return warmed
 
     @torch.inference_mode()

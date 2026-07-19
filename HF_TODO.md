@@ -4,7 +4,7 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-19**.
 
 ## Current milestone — COMPLETE
 
@@ -45,10 +45,19 @@ remaining fp16-or-faster across representative batch/prompt/decode shapes.
       same-next 8/8. The group-128 per-launch BN/TN audit passes 280/280 rows;
       group-32 experimental coverage passes another 48/48. Evidence:
       [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md).
+- [x] Close the exact V100 1.5B W4 `speed` profile at B1/B8,
+      prompt128/decode16: minimum prefill/decode speedups are
+      `1.0024x/1.0012x`, footprint is `0.9348x` fp16, and cosine, same-greedy
+      and determinism gates pass. Fixed-shape Native prefill also exceeds the
+      prior wrapper by `1.048x/1.045x` at B1/B8. Evidence:
+      [`bench/v100_native_prefill_graph_quant_20260719/`](bench/v100_native_prefill_graph_quant_20260719/README.md).
 - [ ] Add all-phase fused quant prefill for the remaining cards/shapes;
       decode-only wins are insufficient.
 - [ ] Validate the same large-payload contract on V100, 4090 and at least one
       Ampere professional card; RTX 5090 exact-lane evidence is complete.
+      V100 full-memory W4/W8 B1 prompt128 prefill has improved to best clean
+      `0.9166x/0.8514x` fp16 with `0.5395x/0.6932x` footprint, but it is not
+      speed-complete and therefore is not checked off.
 - [ ] Preserve cosine, same-next, footprint and paired timing gates.
 - [x] Add 0.4B/1.5B/2.9B/7.2B/13.3B boundary rows. The four g1h profiles are
       promoted; g1d 0.4B full-FFN is explicitly rejected and remains on its

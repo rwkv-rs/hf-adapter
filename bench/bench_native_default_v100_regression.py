@@ -157,8 +157,12 @@ def main() -> int:
             warmup=args.warmup,
             repeats=args.repeats,
         )
+        graph_stats_fn = getattr(
+            model, "rwkv7_native_prefill_graph_cache_stats", None
+        )
+        graph_stats = graph_stats_fn() if callable(graph_stats_fn) else None
         row_passed = bool(
-            effective == "native_prefill"
+            effective in {"native_prefill", "native_prefill_graph"}
             and metrics["prompt_top1_equal"]
             and metrics["continuation_top1_equal"]
             and metrics["prompt_min_cosine"] >= args.min_cosine
@@ -174,6 +178,7 @@ def main() -> int:
             "prompt_tokens": args.prompt_tokens,
             "correctness_tokens": min(args.correctness_tokens, args.prompt_tokens),
             "prefill_backend": effective,
+            "prefill_graph_cache_stats": graph_stats,
             "prefill_ms": round(median_ms, 4),
             "prefill_tokps": round(1000.0 * batch_size * args.prompt_tokens / median_ms, 2),
             "peak_allocated_mib": round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1),

@@ -33,6 +33,8 @@ x @ w.T``), quantize ``weight.t().contiguous()`` (i.e. ``W = weight.T`` with
 """
 from __future__ import annotations
 
+import os
+
 try:  # pragma: no cover
     import torch
 except Exception:  # pragma: no cover
@@ -236,6 +238,36 @@ if _HAS_TRITON:
             mask=mask_b[:, None] & mask_m[None, :],
         )
 
+    @triton.jit
+    def _mm8_dequant_transpose_kernel(
+        w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, out_ptr,
+        N, M,
+        BLOCK_N: tl.constexpr, BLOCK_M: tl.constexpr,
+    ):
+        """Dequantize ``[N,M]`` uint8 storage to contiguous ``[M,N]`` fp16."""
+
+        pid_n = tl.program_id(0)
+        pid_m = tl.program_id(1)
+        n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        mask_n = n < N
+        mask_m = m < M
+        weight = tl.load(
+            w_ptr + n[:, None].to(tl.int64) * M + m[None, :].to(tl.int64),
+            mask=mask_n[:, None] & mask_m[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        mx = tl.load(mx_ptr + m, mask=mask_m, other=0.0).to(tl.float32)
+        rx = tl.load(rx_ptr + m, mask=mask_m, other=0.0).to(tl.float32)
+        my = tl.load(my_ptr + n, mask=mask_n, other=0.0).to(tl.float32)
+        ry = tl.load(ry_ptr + n, mask=mask_n, other=0.0).to(tl.float32)
+        dense = (weight + 0.5) * ry[:, None] * rx[None, :] + my[:, None] + mx[None, :]
+        tl.store(
+            out_ptr + m[:, None].to(tl.int64) * N + n[None, :].to(tl.int64),
+            tl.trans(dense).to(tl.float16),
+            mask=mask_m[:, None] & mask_n[None, :],
+        )
+
 
 def mm8_gemv_available(device=None) -> bool:
     """Return whether the fused Triton GEMV path can run on ``device``.
@@ -262,6 +294,12 @@ def _mm8_decode_blocks(x, block_m, block_n):
         return int(block_m), int(block_n)
     blackwell = bool(x.is_cuda and torch.cuda.get_device_capability(x.device)[0] >= 12)
     return int(block_m or (128 if blackwell else 64)), int(block_n or (128 if blackwell else 64))
+
+
+def _mm8_batched_gemv_max_rows_for_capability(major: int, minor: int) -> int:
+    """Return the exact-card fused MM8 batch ceiling."""
+
+    return 16 if (int(major), int(minor)) == (7, 0) else 0
 
 
 def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None):
@@ -336,7 +374,13 @@ def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int | None = No
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
     if int(x.shape[0]) == 1:
         return mm8_gemv_triton(x[0], w_u8, mx, rx, my, ry).unsqueeze(0)
-    blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
+    capability = torch.cuda.get_device_capability(x.device)
+    blackwell = capability[0] >= 12
+    sm70_batched_rows = _mm8_batched_gemv_max_rows_for_capability(*capability)
+    if max_gemv_rows is not None:
+        sm70_batched_rows = min(sm70_batched_rows, int(max_gemv_rows))
+    if 2 <= int(x.shape[0]) <= sm70_batched_rows:
+        return mm8_batched_gemv_triton(x, w_u8, mx, rx, my, ry)
     row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell else 4)
     if int(x.shape[0]) > row_limit:
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
@@ -347,6 +391,65 @@ def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int | None = No
     # Preserve the measured pre-sm120 route until every older family has
     # an exact-card batched-kernel A/B artifact.
     return torch.stack([mm8_gemv_triton(row, w_u8, mx, rx, my, ry) for row in x], dim=0)
+
+
+def _mm8_prefill_dequant_tile(n: int, m: int) -> tuple[int, int, int]:
+    """Resolve the measured exact-sm70 transpose tile for ``[N,M]`` storage."""
+
+    if int(m) >= 2 * int(n):
+        default_n, default_m = 32, 64
+    elif int(n) >= 2 * int(m):
+        default_n, default_m = 32, 16
+    else:
+        default_n, default_m = 32, 32
+    try:
+        block_n = int(os.environ.get("RWKV7_SM70_MM8_DEQUANT_BLOCK_N", default_n))
+        block_m = int(os.environ.get("RWKV7_SM70_MM8_DEQUANT_BLOCK_M", default_m))
+        num_warps = int(os.environ.get("RWKV7_SM70_MM8_DEQUANT_WARPS", "4"))
+    except ValueError:
+        return default_n, default_m, 4
+    if block_n not in {16, 32, 64} or block_m not in {16, 32, 64}:
+        return default_n, default_m, 4
+    if num_warps not in {4, 8}:
+        num_warps = 4
+    return block_n, block_m, num_warps
+
+
+def mm8_prefill_dequant_weight(w_u8, mx, rx, my, ry, out):
+    """Materialize one contiguous fp16 Linear operand with a single kernel."""
+
+    if not (
+        _HAS_TRITON
+        and w_u8.is_cuda
+        and w_u8.dtype == torch.uint8
+        and out.is_cuda
+        and out.dtype == torch.float16
+        and out.is_contiguous()
+        and mx.dtype == rx.dtype == my.dtype == ry.dtype == torch.float16
+    ):
+        return None
+    n, m = (int(value) for value in w_u8.shape)
+    if tuple(out.shape) != (m, n):
+        raise ValueError(
+            f"MM8 prefill workspace must have shape {(m, n)}, got {tuple(out.shape)}"
+        )
+    block_n, block_m, num_warps = _mm8_prefill_dequant_tile(n, m)
+    _mm8_dequant_transpose_kernel[
+        (triton.cdiv(n, block_n), triton.cdiv(m, block_m))
+    ](
+        w_u8,
+        _as_1d(mx),
+        _as_1d(rx),
+        _as_1d(my),
+        _as_1d(ry),
+        out,
+        n,
+        m,
+        BLOCK_N=block_n,
+        BLOCK_M=block_m,
+        num_warps=num_warps,
+    )
+    return out
 
 
 if _HAS_TRITON:
@@ -441,6 +544,48 @@ class MM8Linear(torch.nn.Module):
             y = y + self.bias
         return y
 
+    def rwkv7_prefill_dequant_shape(self, rows):
+        """Select the measured V100 tensor-core prefill route."""
+
+        try:
+            threshold = max(
+                0,
+                int(os.environ.get("RWKV7_SM70_MM8_PREFILL_DENSE_MIN_ROWS", "16")),
+            )
+        except ValueError:
+            threshold = 16
+        if (
+            threshold <= 0
+            or int(rows) < threshold
+            or self.bias is not None
+            or not self.w_u8.is_cuda
+            or self.mx.dtype != torch.float16
+            or torch.cuda.get_device_capability(self.w_u8.device) != (7, 0)
+        ):
+            return None
+        return (int(self.out_features), int(self.in_features))
+
+    def rwkv7_prefill_dequant_weight(self, rows, out=None):
+        """Fill a reusable dense operand for graph-captured V100 prefill."""
+
+        shape = self.rwkv7_prefill_dequant_shape(rows)
+        if shape is None:
+            return None
+        if out is None:
+            out = torch.empty(
+                shape,
+                device=self.w_u8.device,
+                dtype=self.mx.dtype,
+            )
+        return mm8_prefill_dequant_weight(
+            self.w_u8,
+            self.mx,
+            self.rx,
+            self.my,
+            self.ry,
+            out,
+        )
+
     def extra_repr(self):
         return f"in={self.in_features}, out={self.out_features}, mm8(fused={self.fused})"
 
@@ -478,6 +623,11 @@ def quantize_model_mm8(
         setattr(parent, attr, MM8Linear(getattr(parent, attr), fused=fused))
     setattr(model, "_rwkv7_native_mm_quantization", "mm8")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_quantized_head",
+        any(name == "lm_head" or name.endswith(".lm_head") for name in targets),
+    )
     setattr(
         model,
         "_rwkv7_native_mm_block_replaced_modules",

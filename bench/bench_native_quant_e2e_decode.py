@@ -183,6 +183,7 @@ def save_baseline(
             "prefill_tokps_total": float(row["prefill_tokps_total"]),
             "decode_tokps_total": float(row["decode_tokps_total"]),
             "model_footprint_mb": float(row["model_footprint_mb"]),
+            "peak_vram_mb": float(row.get("peak_vram_mb", 0.0)),
         },
         path,
     )
@@ -446,6 +447,14 @@ def benchmark_decode(args, tok, model, ids):
                 "next_token": int(nxt[0, -1].detach().cpu()),
                 "fast_token_backend_effective": step_backend,
                 "native_model_decode_backend_effective": last_native_model_decode_backend(model),
+                "native_prefill_quant_dense_effective": bool(
+                    getattr(model, "_rwkv7_native_prefill_quant_dense_effective", False)
+                ),
+                "native_prefill_quant_prefetch_phase_effective": getattr(
+                    model,
+                    "_rwkv7_native_prefill_quant_prefetch_phase_effective",
+                    None,
+                ),
                 "cache_type": type(state).__name__ if state is not None else None,
             }
         )
@@ -587,6 +596,7 @@ def main() -> int:
     baseline_prefill_tokps = None
     baseline_tokps = None
     baseline_footprint = None
+    baseline_peak_vram = None
     out_path = Path(args.results) if args.results else None
     if out_path is not None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -600,6 +610,9 @@ def main() -> int:
             baseline_footprint = module_footprint_mb(model)
         if quantization != "none" and args.paired_baseline:
             dense_footprint = module_footprint_mb(model)
+            if args.device.startswith("cuda"):
+                torch.cuda.synchronize()
+                torch.cuda.reset_peak_memory_stats()
             dense_res = benchmark_decode(args, tok, model, ids)
             baseline_prompt = dense_res["prompt_logits"]
             baseline_final = dense_res["final_logits"]
@@ -608,6 +621,7 @@ def main() -> int:
             baseline_prefill_tokps = dense_res["prefill_tokps_total"]
             baseline_tokps = dense_res["decode_tokps_total"]
             baseline_footprint = dense_footprint
+            baseline_peak_vram = peak_mb(args.device)
         replaced, module_counts = quantize_model(
             model,
             quantization,
@@ -647,6 +661,7 @@ def main() -> int:
             baseline_prefill_tokps = res["prefill_tokps_total"]
             baseline_tokps = res["decode_tokps_total"]
             baseline_footprint = footprint
+            baseline_peak_vram = peak_mb(args.device)
             prompt_cos = final_cos = 1.0
             same_next = True
             same_greedy = True
@@ -654,6 +669,7 @@ def main() -> int:
             prefill_speed_ratio = 1.0
             speed_ratio = 1.0
             footprint_ratio = 1.0
+            peak_vram_ratio = 1.0
         else:
             if baseline_prompt is None or baseline_final is None:
                 cached_baseline = load_baseline(args)
@@ -670,6 +686,13 @@ def main() -> int:
                     ) or None
                     baseline_tokps = float(cached_baseline["decode_tokps_total"])
                     baseline_footprint = float(cached_baseline["model_footprint_mb"])
+                    cached_peak = cached_baseline.get(
+                        "peak_vram_mb",
+                        cached_baseline.get("row", {}).get("peak_vram_mb"),
+                    )
+                    baseline_peak_vram = (
+                        float(cached_peak) if cached_peak is not None else None
+                    )
             prompt_logits = res.pop("prompt_logits")
             final_logits = res.pop("final_logits")
             greedy_tokens = res.pop("greedy_tokens")
@@ -685,6 +708,12 @@ def main() -> int:
                 footprint_ratio = (
                     float(footprint) / float(baseline_footprint)
                     if baseline_footprint is not None
+                    else None
+                )
+                current_peak = peak_mb(args.device)
+                peak_vram_ratio = (
+                    float(current_peak) / float(baseline_peak_vram)
+                    if baseline_peak_vram
                     else None
                 )
             else:
@@ -714,6 +743,13 @@ def main() -> int:
                 )
                 speed_ratio = float(res["decode_tokps_total"]) / float(baseline_tokps)
                 footprint_ratio = float(footprint) / float(baseline_footprint)
+                current_peak = peak_mb(args.device)
+                peak_vram_ratio = (
+                    float(current_peak) / float(baseline_peak_vram)
+                    if baseline_peak_vram
+                    else None
+                )
+        current_peak_vram = peak_mb(args.device)
         sm70_active = bool(
             quantization == "mm4"
             and args.device.startswith("cuda")
@@ -808,6 +844,8 @@ def main() -> int:
             "baseline_decode_tokps_total": round(float(baseline_tokps), 1) if baseline_tokps is not None else None,
             "baseline_model_footprint_mb": round(float(baseline_footprint), 1) if baseline_footprint is not None else None,
             "footprint_ratio_vs_fp16": round(footprint_ratio, 4) if footprint_ratio is not None else None,
+            "baseline_peak_vram_mb": round(float(baseline_peak_vram), 1) if baseline_peak_vram is not None else None,
+            "peak_vram_ratio_vs_fp16": round(peak_vram_ratio, 4) if peak_vram_ratio is not None else None,
             "prefill_speed_ratio_vs_fp16": round(prefill_speed_ratio, 4) if prefill_speed_ratio is not None else None,
             "decode_speed_ratio_vs_fp16": round(speed_ratio, 4) if speed_ratio is not None else None,
             "prompt_logits_cos_vs_fp16": round(float(prompt_cos), 8) if prompt_cos is not None else None,
@@ -817,7 +855,7 @@ def main() -> int:
                 bool(same_greedy) if same_greedy is not None else None
             ),
             "first_greedy_mismatch_flat_index": first_greedy_mismatch,
-            "peak_vram_mb": peak_mb(args.device),
+            "peak_vram_mb": current_peak_vram,
             **{k: v for k, v in res.items() if k not in {"prompt_logits", "final_logits"}},
         }
         if quantization == "none":

@@ -29,11 +29,17 @@ except Exception:  # pragma: no cover - remote-code fallback
     current_kernel_policy = None  # type: ignore[assignment]
 
 try:
-    from .sm70_quant import is_sm70, quantize_w8_row, w8_linear as sm70_w8_linear
+    from .sm70_quant import (
+        is_sm70,
+        quantize_w8_row,
+        w8_linear as sm70_w8_linear,
+        w8_prefill_dequant_weight as sm70_w8_prefill_dequant_weight,
+    )
 except Exception:  # pragma: no cover
     is_sm70 = lambda _device=None: False  # type: ignore[assignment]
     quantize_w8_row = None  # type: ignore[assignment]
     sm70_w8_linear = None  # type: ignore[assignment]
+    sm70_w8_prefill_dequant_weight = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional CUDA dependency
     import triton
@@ -353,7 +359,22 @@ class A8W8Linear(torch.nn.Module):
 
     def forward(self, x):
         if self.sm70_rowwise and sm70_w8_linear is not None:
-            result = sm70_w8_linear(x, self.q_weight_row, self.weight_scale)
+            rows = int(x.numel() // x.shape[-1])
+            if rows <= 8:
+                result = sm70_w8_linear(x, self.q_weight_row, self.weight_scale)
+            else:
+                dense = (
+                    sm70_w8_prefill_dequant_weight(
+                        self.q_weight_row,
+                        self.weight_scale,
+                        rows,
+                    )
+                    if sm70_w8_prefill_dequant_weight is not None
+                    else None
+                )
+                if dense is None:
+                    dense = self.q_weight_row.to(x.dtype) * self.weight_scale[:, None]
+                result = F.linear(x, dense)
             return result if self.bias is None else result + self.bias
         return a8w8_linear(x, self.q_weight_t, self.weight_scale, self.bias)
 
@@ -361,12 +382,47 @@ class A8W8Linear(torch.nn.Module):
         """Write graph-replay head output directly into a stable buffer."""
 
         if self.sm70_rowwise and sm70_w8_linear is not None:
-            if self.bias is None:
+            rows = int(x.numel() // x.shape[-1])
+            if self.bias is None and rows <= 8:
                 return sm70_w8_linear(x, self.q_weight_row, self.weight_scale, out=out)
-            result = sm70_w8_linear(x, self.q_weight_row, self.weight_scale) + self.bias
+            result = self.forward(x)
             out.copy_(result)
             return out
         return a8w8_linear(x, self.q_weight_t, self.weight_scale, self.bias, out=out)
+
+    def rwkv7_prefill_dequant_shape(self, rows):
+        """Expose the bounded sm70 dense-prefill workspace contract."""
+
+        try:
+            threshold = max(
+                0,
+                int(os.environ.get("RWKV7_SM70_W8_PREFILL_DENSE_MIN_ROWS", "16")),
+            )
+        except ValueError:
+            threshold = 16
+        if (
+            not self.sm70_rowwise
+            or sm70_w8_prefill_dequant_weight is None
+            or threshold <= 0
+            or int(rows) < threshold
+            or self.bias is not None
+            or not self.q_weight_row.is_cuda
+            or self.weight_scale.dtype != torch.float16
+        ):
+            return None
+        return (self.out_features, self.in_features)
+
+    def rwkv7_prefill_dequant_weight(self, rows, out=None):
+        """Fill the reusable fp16 operand used by native tensor-core prefill."""
+
+        if self.rwkv7_prefill_dequant_shape(rows) is None:
+            return None
+        return sm70_w8_prefill_dequant_weight(
+            self.q_weight_row,
+            self.weight_scale,
+            rows,
+            out=out,
+        )
 
     def extra_repr(self) -> str:
         return f"in={self.in_features}, out={self.out_features}, dynamic_a8w8"
@@ -406,6 +462,11 @@ def quantize_model_a8w8(
         setattr(parent, attribute, A8W8Linear(getattr(parent, attribute)))
     setattr(model, "_rwkv7_native_mm_quantization", "a8w8")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_quantized_head",
+        any(name == "lm_head" or name.endswith(".lm_head") for name in targets),
+    )
     setattr(
         model,
         "_rwkv7_native_mm_block_replaced_modules",
