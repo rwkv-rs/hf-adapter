@@ -95,9 +95,9 @@ print({"backend": backend, "loss": float(loss), "finite_grad_tensors": grad_coun
 2,500+2,500 恢复哈希和稳态显存采样见
 [`5090_native_train_temp_real_minipile_20260718`](../bench/5090_native_train_temp_real_minipile_20260718/README.md)。
 
-### 官方 shell 配方门槛
+### 官方 shell 运行方式
 
-官方标准固定为 RWKV-LM commit `e6f74b6` 的
+以下示例对应 RWKV-LM commit `e6f74b6` 中的
 `RWKV-v7/train_temp/demo-training-prepare.sh` 和
 `RWKV-v7/train_temp/demo-training-run.sh`。前者在 CPU 用 B1 创建初始化；后者在单卡
 使用 B16、BF16、T512、有效 FFN3072、DeepSpeed ZeRO-2、`kernel=@rwkv3` 训练。两条脚本
@@ -112,17 +112,17 @@ print({"backend": backend, "loss": float(loss), "finite_grad_tensors": grad_coun
 ```
 
 Windows/CPU 用户需要的是 [`WINDOWS_CPU.md`](WINDOWS_CPU.md) 的 tiny 演示；官方
-`run.sh` 验收需要 Linux、NVIDIA CUDA 和 DeepSpeed。正式复现时建议使用下面的安全
-runner，由它定位并核对两条官方脚本，而不是从错误目录直接运行 `sh ./...`。
+`run.sh` 需要 Linux、NVIDIA CUDA 和 DeepSpeed。本仓库提供下面的 runner，负责定位
+两条官方脚本并把输出写入单独目录，避免在错误目录直接运行 `sh ./...`。
 
-下面的安全 runner 会先核对 commit、脚本 SHA256、Minipile 大小/哈希和
-`magic_prime`，把输出限制在独立目录，并在不执行官方清理命令的情况下复现脚本
-参数。`--max-steps 1` 只给正式训练增加可审计的有界停止点：
+runner 会读取对应 commit、脚本和 MiniPile 数据，并按 shell 中的参数启动训练。
+`--max-steps 1` 表示这里只运行一个 optimizer step，便于先确认环境能够正常启动；
+它不会修改官方脚本文件。
 
 ```bash
 export OFFICIAL=/path/to/RWKV-LM
 export DATA=/path/to/minipile
-export OUT=/path/to/isolated/train-temp-acceptance
+export OUT=/path/to/train-temp-output
 
 python scripts/run_train_temp_official_recipe.py verify \
   --official-checkout "$OFFICIAL" --data-prefix "$DATA" \
@@ -139,18 +139,15 @@ python scripts/run_train_temp_official_recipe.py run \
   --log "$OUT/run.log" --max-steps 1
 ```
 
-通过标准是三个 JSON 均为 `status=pass`、两个执行阶段 `exit_code=0`、输出目录出现
-`rwkv-init.pth`，且 checkpoint 中 FFN key/value 形状为 `3072x768` / `768x3072`，
-run 日志显示 B16/BF16/T512、单 GPU、`deepspeed_stage_2` 和至少一个有限 loss。
-中断后保留相同输出和 extension cache
-原地重跑；若脚本哈希或数据哈希变化则停止，不能把不同配方结果合并。
+三个命令分别生成 `verify.json`、`prepare.json`、`run.json` 和相应日志。训练中断时
+保留输出目录与 extension cache，再从相同目录重新运行即可。
 
 注意：pinned `train.py` 会在参数摘要中打印通用 3.5x 默认值
-`dim_ffn=2688`，但生产 fast `RWKV_CMix_x070` 明确创建 4x 矩阵。验收以实际源码和
-checkpoint 形状 FFN3072 为准，不能把日志字段误写成有效模型宽度。
+`dim_ffn=2688`，但生产 fast `RWKV_CMix_x070` 明确创建 4x 矩阵。实际模型使用
+checkpoint 中的 FFN3072，日志里的通用字段不是有效模型宽度。
 
 RTX 5090 的独立复测已经直接执行未修改的两条 shell 命令。`run` 仅通过临时 PATH
-wrapper 追加 `--max_steps 1` 形成有界验收，没有修改脚本内容。官方一轮报告
+wrapper 追加 `--max_steps 1`，没有修改脚本内容。官方一轮报告
 B16/BF16/T512、ZeRO-2、loss `11.20`；等价 Native runner 报告 loss
 `11.249235`、`399/399` 有限 ZeRO 梯度、模型 hash 变化和 4,355.95 MiB 峰值。
 脚本哈希、数据哈希、原始日志和结果见
