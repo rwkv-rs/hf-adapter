@@ -103,14 +103,14 @@ greedy-trace SHA256. The repository alignment script passes 64 teacher-forced
 steps with minimum logits cosine `0.9999934435`, max absolute difference
 `0.0625`, and exact top-1 at B1 and B8.
 
-A fresh real-browser run through the current official Gradio page also exercises
-the committed bridge rather than the standalone benchmark. Its stable 100-token
-labels are Native/official `138.5/137.7 tok/s` at B1 and `831.8/837.7 tok/s`
-at B8. A separate readable B1 prompt ends at 54 tokens with byte-identical
-official and Native text. The post-B1/B8 process allocations are 15,520 MiB
-Native and 14,886 MiB official, so this browser smoke proves output parity and
-near speed parity, not memory parity or an all-shape lead. Screenshots, full
-text, environment and logs are in
+A raw-text real-browser smoke through the current official Gradio page also
+exercises the committed bridge rather than the standalone benchmark. Its stable
+100-token labels are Native/official `138.5/137.7 tok/s` at B1 and
+`831.8/837.7 tok/s` at B8. A separate readable B1 prompt ends at 54 tokens with
+byte-identical official and Native text. The post-B1/B8 process allocations are
+15,520 MiB Native and 14,886 MiB official. These rows are interface and local
+throughput telemetry, not HTML-generation acceptance. Screenshots, full text,
+environment and logs are in
 [`bench/5090_gradio_native_hf_frontend_ab_20260719/`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md).
 
 The follow-up fp16-state profile closes that former gap. Three deterministic
@@ -441,14 +441,10 @@ greedy `16/16` and `128/128`, recurrent state, xpa and xpf.
 
 Sequence prefill covers g1h 2.9B and 13.3B at B1/B8 and prompt
 128/512/2048. All 12 cells pass tensor, state, token and throughput gates at
-`1.0029x–1.5690x` pinned v3a throughput. The real RWKV-Gradio-3 browser A/B
-also records byte-identical Native/official output and B1/B8 page rates of
-`138.5/831.8 tok/s` Native versus `137.7/837.7 tok/s` official.
+`1.0029x–1.5690x` pinned v3a throughput.
 
 Evidence:
-[`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md)
-and
-[`bench/5090_gradio_native_hf_frontend_ab_20260719/`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md).
+[`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md).
 
 ### Full-FLA Qwen3.5 B1/B8 matrix
 

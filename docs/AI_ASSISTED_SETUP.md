@@ -26,7 +26,7 @@
 | `first-run` | 安装、下载 0.4B、转换并生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、`[PASS] Model directory`、生成退出 0 且有新文本 |
 | `windows-cpu` | Windows/CPU 无下载 tiny 推理、训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 退出码 0、四个 `CPU ... PASS`、loss 下降、梯度/参数变化非零、重载 logits 差为 0 |
 | `inference` | 转换、HF API、保存重载、离线/native | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选章节的退出码 0、`PASS` 或有限 loss/logits |
-| `gradio-native-hf` | 在官方 RWKV-Gradio-3 网页运行 Native HF | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) | B1/B8 生成、切换后复用、速度标签、截图和进程显存全部可观察 |
+| `gradio-native-hf` | 在官方 RWKV-Gradio-3 网页运行 Native HF | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) | 固定 HTML5 任务生成完整页面，实际渲染和按钮交互通过，并保存渲染前后截图 |
 | `cache` | 循环状态、动态 batch、chunked prefill | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选 cache 测试所有 mode/shape 打印 `PASS` |
 | `speculative` | 投机解码 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | target greedy 完全一致、draft/target 调用计数有效、`PASS` |
 | `training` | PEFT LoRA、Trainer、保存合并、恢复 | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | 有限 loss、非零梯度/参数变化、所选精确 `PASS` |
