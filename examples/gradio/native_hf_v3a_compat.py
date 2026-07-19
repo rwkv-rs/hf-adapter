@@ -99,6 +99,20 @@ class RWKV7:
 
     def _forward(self, state: NativeHFState, **inputs) -> torch.Tensor:
         with torch.inference_mode():
+            token_ids = inputs.get("input_ids")
+            if (
+                state.cache is not None
+                and token_ids is not None
+                and token_ids.dim() == 2
+                and int(token_ids.shape[1]) == 1
+            ):
+                logits, state.cache = self.model.rwkv7_forward_token(
+                    token_ids,
+                    past_key_values=state.cache,
+                    return_dict=False,
+                    copy_logits=False,
+                )
+                return logits[:, -1]
             result = self.model(
                 **inputs,
                 past_key_values=state.cache,

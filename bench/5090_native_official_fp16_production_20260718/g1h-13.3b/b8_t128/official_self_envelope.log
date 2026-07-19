@@ -1,0 +1,400 @@
+{
+  "axis": "official_prefill_self_repeat",
+  "status": "pass",
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "precision": "fp16_state_fp16_io",
+  "batch_size": 8,
+  "prompt_tokens": 128,
+  "repetitions": 4,
+  "envelope": {
+    "logits": {
+      "max_abs": 0.0,
+      "max_fraction_over_abs_threshold": 0.0,
+      "min_cosine": 1.0,
+      "total": 3
+    },
+    "first_decode_logits": {
+      "max_abs": 0.21875,
+      "max_fraction_over_abs_threshold": 0.0002288818359375,
+      "min_cosine": 0.9999997034320168,
+      "total": 3
+    },
+    "layer_outputs": {
+      "max_abs": 0.0,
+      "max_fraction_over_abs_threshold": 0.0,
+      "min_cosine": 1.0,
+      "total": 3
+    },
+    "state": {
+      "max_abs": 0.0,
+      "max_fraction_over_abs_threshold": 0.0,
+      "min_cosine": 1.0,
+      "total": 3
+    },
+    "xpa": {
+      "max_abs": 0.0,
+      "max_fraction_over_abs_threshold": 0.0,
+      "min_cosine": 1.0,
+      "total": 3
+    },
+    "xpf": {
+      "max_abs": 0.0,
+      "max_fraction_over_abs_threshold": 0.0,
+      "min_cosine": 1.0,
+      "total": 3
+    }
+  },
+  "rows": [
+    {
+      "repeat": 1,
+      "first_token_exact": true,
+      "first_decode_token_exact": true,
+      "metrics": {
+        "logits": {
+          "shape": [
+            8,
+            65536
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "first_decode_logits": {
+          "shape": [
+            8,
+            65536
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.21875,
+          "max_abs_native_value": -23.421875,
+          "max_abs_official_value": -23.203125,
+          "max_abs_ulps_at_max": 14.0,
+          "count_over_abs_threshold": 120,
+          "fraction_over_abs_threshold": 0.0002288818359375,
+          "mean_abs": 0.013904026243835688,
+          "cosine": 0.9999997034320168
+        },
+        "layer_outputs": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "state": {
+          "shape": [
+            61,
+            8,
+            64,
+            64,
+            64
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "xpa": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "xpf": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        }
+      }
+    },
+    {
+      "repeat": 2,
+      "first_token_exact": true,
+      "first_decode_token_exact": true,
+      "metrics": {
+        "logits": {
+          "shape": [
+            8,
+            65536
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "first_decode_logits": {
+          "shape": [
+            8,
+            65536
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.21875,
+          "max_abs_native_value": -23.140625,
+          "max_abs_official_value": -23.359375,
+          "max_abs_ulps_at_max": 14.0,
+          "count_over_abs_threshold": 93,
+          "fraction_over_abs_threshold": 0.0001773834228515625,
+          "mean_abs": 0.008585416013374925,
+          "cosine": 0.9999998492091952
+        },
+        "layer_outputs": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "state": {
+          "shape": [
+            61,
+            8,
+            64,
+            64,
+            64
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "xpa": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "xpf": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        }
+      }
+    },
+    {
+      "repeat": 3,
+      "first_token_exact": true,
+      "first_decode_token_exact": true,
+      "metrics": {
+        "logits": {
+          "shape": [
+            8,
+            65536
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "first_decode_logits": {
+          "shape": [
+            8,
+            65536
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.125,
+          "max_abs_native_value": -23.3125,
+          "max_abs_official_value": -23.1875,
+          "max_abs_ulps_at_max": 8.0,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.01120683504268527,
+          "cosine": 0.9999997984338493
+        },
+        "layer_outputs": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "state": {
+          "shape": [
+            61,
+            8,
+            64,
+            64,
+            64
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "xpa": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        },
+        "xpf": {
+          "shape": [
+            61,
+            8,
+            4096
+          ],
+          "dtype_native": "torch.float16",
+          "dtype_official": "torch.float16",
+          "finite": true,
+          "max_abs": 0.0,
+          "max_abs_native_value": null,
+          "max_abs_official_value": null,
+          "max_abs_ulps_at_max": null,
+          "count_over_abs_threshold": 0,
+          "fraction_over_abs_threshold": 0.0,
+          "mean_abs": 0.0,
+          "cosine": 1.0
+        }
+      }
+    }
+  ],
+  "reference_sha256": "243d0671b66a9bb24585cc2c99b8873699d9dedc9a775e8a34d1d1ff95db4f83",
+  "repeat_sha256": [
+    "e2e7caa2da9117f0b2c3ae0adc8ad372034da355ff9f193805d440d9201bc0e3",
+    "a4e346a262e4a81ad5a07e6e25a0c82d5a410eeb00022417862833dac43c7485",
+    "ac0acca9b560c1770eda9f51a8e0f1e98b80a54e0bb345ee06ef9be9d7412e74"
+  ]
+}

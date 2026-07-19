@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_convergence_compare",
+  "status": "pass",
+  "reference_backend": "hf_native_train_temp_cuda",
+  "candidate_backend": "hf_native_train_temp_cuda",
+  "steps": 5000,
+  "provenance_mismatches": [],
+  "optimizer_groups_match": true,
+  "train_steps_match": true,
+  "validation_steps_match": true,
+  "train_loss_auc_reference": 4.4874056434154515,
+  "train_loss_auc_candidate": 4.492930535268783,
+  "train_loss_auc_relative_diff": 0.0012311995599147204,
+  "grad_norm_auc_reference": 2.14619765625,
+  "grad_norm_auc_candidate": 2.0681,
+  "grad_norm_auc_relative_diff": 0.03638884611702464,
+  "max_reference_grad_norm": 194.0,
+  "max_candidate_grad_norm": 194.0,
+  "max_grad_norm_ratio": 1.0,
+  "candidate_over_reference_max_grad_norm_ratio": 1.0,
+  "reference_over_candidate_max_grad_norm_ratio": 1.0,
+  "bidirectional_max_grad_norm_ratio": 1.0,
+  "gradient_norm_gate_percentile": 0.999,
+  "reference_grad_norm_p999": 46.25,
+  "candidate_grad_norm_p999": 47.75,
+  "candidate_over_reference_grad_norm_p999_ratio": 1.0324324324324323,
+  "reference_runtime_s": 410.4144310569973,
+  "candidate_runtime_s": 411.1472025339608,
+  "candidate_over_reference_throughput_ratio": 0.9982177393584406,
+  "validation_loss_auc_reference": 4.375130658102508,
+  "validation_loss_auc_candidate": 4.385723069162652,
+  "validation_loss_auc_relative_diff": 0.002421050224072166,
+  "final_validation_loss_reference": 3.8037257194519043,
+  "final_validation_loss_candidate": 3.814462423324585,
+  "final_validation_relative_diff": 0.0028226808830547757,
+  "final_validation_abs_diff": 0.010736703872680664,
+  "max_validation_relative_diff": 0.008261427894990278,
+  "max_validation_scaled_diff": 0.008261427894990278,
+  "validation_threshold_steps": [
+    {
+      "loss_threshold": 10.0,
+      "reference_step": 50,
+      "candidate_step": 50,
+      "step_diff": 0,
+      "comparable": true
+    },
+    {
+      "loss_threshold": 5.0,
+      "reference_step": 600,
+      "candidate_step": 650,
+      "step_diff": 50,
+      "comparable": true
+    },
+    {
+      "loss_threshold": 1.0,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    },
+    {
+      "loss_threshold": 0.1,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    },
+    {
+      "loss_threshold": 0.01,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    }
+  ],
+  "max_validation_threshold_step_diff": 50,
+  "targets": {
+    "max_train_auc_relative_diff": 0.02,
+    "max_validation_auc_relative_diff": 0.02,
+    "max_final_validation_abs_diff": 0.05,
+    "max_final_validation_relative_diff": 0.02,
+    "max_validation_threshold_step_diff": 50,
+    "max_grad_norm_ratio": 2.0,
+    "gradient_norm_gate_percentile": 0.999,
+    "min_candidate_over_reference_throughput_ratio": 0.99
+  },
+  "failures": []
+}

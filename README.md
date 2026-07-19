@@ -14,6 +14,7 @@ For normal inference, start here instead of the benchmark sections below:
 
 - [English step-by-step guide](docs/USER_GUIDE.md)
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
+- [Windows and CPU inference/tiny-training demo](docs/WINDOWS_CPU.md)
 - [唯一 AI 操作入口：安装、推理、训练、量化与多卡](docs/AI_ASSISTED_SETUP.md)
 - [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md)
@@ -21,7 +22,8 @@ For normal inference, start here instead of the benchmark sections below:
 - [Run the official RWKV-Gradio-3 UI with Native HF](docs/GRADIO_NATIVE_HF.md)
 
 After first generation, use the complete index to find copyable tutorials for
-conversion and cache workflows, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
+conversion and cache workflows, Windows/CPU inference and tiny training,
+PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
 speculative decoding, and multi-GPU execution. Each tutorial provides an
 observable PASS gate, recovery steps, and guidance for choosing a suitable
 model and device route.
@@ -70,6 +72,14 @@ and 13.3B at B1/B8. Across the eight prompt128/decode128 rows, footprint is
 above `0.9995`, and every next token matches. The group-128 physical grid
 contract passes 280/280 checks. See
 [`bench/5090_bntn_all_models_20260716/README.md`](bench/5090_bntn_all_models_20260716/README.md).
+
+The 2026-07-18 same-precision Native matrix compares against pinned official
+RWKV-Gradio-3 FP16 weights/state/I/O. RTX 5090 g1h 7.2B cached decode passes B1
+and B8 at `1.0010x/1.0104x` official throughput with logits/state/greedy gates;
+g1h 2.9B and 13.3B prefill passes all 12 measured B1/B8,
+prompt128/512/2048 cells. Exact profiles are selected automatically only for
+the measured card/model/shapes. See
+[`bench/5090_native_official_fp16_production_20260718/README.md`](bench/5090_native_official_fp16_production_20260718/README.md).
 
 The 2026-07-12 RTX 5090 production-close artifact adds Blackwell batched
 MM8/MM4 kernels, low-memory 13.3B conversion, and a full 0.4B MATH500

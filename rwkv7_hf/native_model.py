@@ -22,6 +22,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 
 from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
+from .kernel_policy import current_kernel_policy
 
 # Some Transformers releases only copy files directly referenced by the
 # remote-code entrypoint. Keep static discovery edges to the dependencies
@@ -30,6 +31,7 @@ from .native import _init_state_batched, _step_token_batched, attn_step_batched,
 if False:  # pragma: no cover
     from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _native_ada_sparse_ffn_dependency_sentinel
+    from .blackwell_norm_mix import blackwell_ffn_add_norm_mix as _native_sm120_norm_mix_dependency_sentinel
     from .dplr_prefill import dplr_chunk_scan as _native_dplr_dependency_sentinel
     from .dplr_prefill_triton import dplr_chunk_scan_triton as _native_dplr_triton_dependency_sentinel
     from .fused_attention_projection import fused_rkv_wag_projection as _native_fused_attn_projection_dependency_sentinel
@@ -44,6 +46,7 @@ if False:  # pragma: no cover
     from .kernel_policy import current_kernel_policy as _native_kernel_policy_dependency_sentinel
     from .native_quant_bnb8 import fused_bnb8_relu_square_quant as _native_bnb8_dependency_sentinel
     from .native_quant_policy import normalize_native_mm_policy as _native_quant_policy_dependency_sentinel
+    from .native_wkv_fp16 import native_fp16_sequence as _native_wkv_fp16_dependency_sentinel  # noqa: F401
     from .self_chunk_A_fwd import chunk_dplr_fwd_intra as _native_self_chunk_a_dependency_sentinel
     from .self_chunk_cumsum import chunk_rwkv6_fwd_cumsum as _native_self_chunk_cumsum_dependency_sentinel
     from .self_chunk_h_fwd import chunk_dplr_fwd_h as _native_self_chunk_h_dependency_sentinel
@@ -210,7 +213,7 @@ class NativeRWKV7Cache(_HFCache):
 
     @property
     def is_initialized(self) -> bool:
-        return self.has_previous_state()
+        return self._is_initialized()
 
     @property
     def is_sliding(self) -> bool:
@@ -456,12 +459,15 @@ class NativeRWKV7Cache(_HFCache):
             "run a fresh prefill for that prefix instead."
         )
 
-    def has_previous_state(self, layer_idx: int | None = None) -> bool:
+    def _is_initialized(self, layer_idx: int | None = None) -> bool:
         if self._state is None or self._xpa is None or self._xpf is None or self._v_first is None:
             return False
         if layer_idx is not None and (int(layer_idx) < 0 or int(layer_idx) >= len(self._state)):
             return False
-        return self._seen_tokens > 0
+        return True
+
+    def has_previous_state(self, layer_idx: int | None = None) -> bool:
+        return self._is_initialized(layer_idx) and self._seen_tokens > 0
 
     def update(self, *args, **kwargs):
         raise NotImplementedError(
@@ -640,6 +646,60 @@ def _native_model_backend_requested() -> str:
             f"got {raw!r}"
         )
     return backend
+
+
+def _native_prefill_graph_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH")
+    if raw is not None:
+        selected = raw not in _FALSE_VALUES
+    else:
+        policy = current_kernel_policy(torch_module=torch)
+        selected = bool(getattr(policy, "prefill_graph", False))
+        shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, "prefill_graph_model_shapes", ())
+            if len(shape) == 4
+        }
+        if selected and shapes:
+            if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+                selected = False
+            else:
+                selected = (
+                    int(hidden_size),
+                    int(num_layers),
+                    int(batch_size),
+                    int(prompt_tokens),
+                ) in shapes
+    return bool(
+        selected
+        and torch.cuda.is_available()
+        and _native_jit_prefill is not None
+    )
+
+
+def _native_prefill_graph_cache_size() -> int:
+    try:
+        value = int(os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", "2"))
+    except ValueError:
+        value = 2
+    return max(1, min(value, 16))
+
+
+def _native_prefill_graph_signature() -> tuple[tuple[str, str], ...]:
+    """Return every explicit prefill setting that changes a captured graph."""
+
+    return tuple(
+        sorted(
+            (name, value)
+            for name, value in os.environ.items()
+            if name.startswith("RWKV7_NATIVE_PREFILL_")
+        )
+    )
 
 
 def _validate_native_attention_mask(
@@ -1095,6 +1155,146 @@ class NativeRWKV7Model(PreTrainedModel):
         )
 
 
+class _NativePrefillGraphRunner:
+    """Fixed-shape CUDA graph for the canonical Native HF prefill path."""
+
+    def __init__(
+        self,
+        owner: "NativeRWKV7ForCausalLM",
+        packs,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep: int | None,
+    ) -> None:
+        if not _native_prefill_graph_enabled(
+            batch_size,
+            prompt_tokens,
+            int(owner.config.hidden_size),
+            int(owner.config.num_hidden_layers),
+        ):
+            raise RuntimeError("native prefill graph is not enabled or available")
+        self.owner = owner
+        self.packs = packs
+        self.batch_size = int(batch_size)
+        self.prompt_tokens = int(prompt_tokens)
+        self.logits_to_keep = None if logits_to_keep is None else int(logits_to_keep)
+        self.runtime_signature = _native_prefill_graph_signature()
+        weight = owner.model.embeddings.weight
+        self.device = weight.device
+        self.dtype = weight.dtype
+        if self.device.type != "cuda":
+            raise RuntimeError("native prefill graph requires CUDA model weights")
+        self.input_ids = torch.zeros(
+            self.batch_size,
+            self.prompt_tokens,
+            device=self.device,
+            dtype=torch.long,
+        )
+        self.logits: torch.Tensor | None = None
+        self.state_outputs: list[torch.Tensor] = []
+        self.xpa_outputs: list[torch.Tensor] = []
+        self.xpf_outputs: list[torch.Tensor] = []
+        attention_hidden = int(
+            getattr(
+                owner.config,
+                "attention_hidden_size",
+                owner.config.num_heads * owner.config.head_dim,
+            )
+        )
+        self.v_first = torch.zeros(
+            self.batch_size,
+            attention_hidden,
+            device=self.device,
+            dtype=self.dtype,
+        )
+        self.graph: torch.cuda.CUDAGraph | None = None
+        self._bound_cache_ref: weakref.ReferenceType[NativeRWKV7Cache] | None = None
+        self._capture()
+
+    def _run_once(self):
+        return _native_jit_prefill(
+            self.owner,
+            self.input_ids,
+            self.packs,
+            logits_to_keep=self.logits_to_keep,
+        )
+
+    def _capture(self) -> None:
+        warm = torch.cuda.Stream(device=self.device)
+        warm.wait_stream(torch.cuda.current_stream(self.device))
+        with torch.cuda.stream(warm), torch.inference_mode():
+            for _ in range(3):
+                self._run_once()
+        torch.cuda.current_stream(self.device).wait_stream(warm)
+        torch.cuda.synchronize(self.device)
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph), torch.inference_mode():
+            outputs = self._run_once()
+        self.logits, self.state_outputs, self.xpa_outputs, self.xpf_outputs = outputs
+
+    def matches(
+        self,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep: int | None,
+    ) -> bool:
+        normalized_keep = None if logits_to_keep is None else int(logits_to_keep)
+        return bool(
+            self.batch_size == int(batch_size)
+            and self.prompt_tokens == int(prompt_tokens)
+            and self.logits_to_keep == normalized_keep
+            and self.runtime_signature == _native_prefill_graph_signature()
+        )
+
+    def _detach_bound_cache(self) -> None:
+        previous = self._bound_cache_ref() if self._bound_cache_ref is not None else None
+        if previous is None:
+            return
+        # The first decode replay replaces/binds the cache to its own stable
+        # buffers. In that common generate flow this prefill graph no longer
+        # owns the cache and can immediately reuse its outputs.
+        if not previous._native_graph_bound_to(self):
+            self._bound_cache_ref = None
+            return
+        previous._state = [value.clone() for value in previous._state]
+        previous._xpa = [value.clone() for value in previous._xpa]
+        previous._xpf = [value.clone() for value in previous._xpf]
+        previous._v_first = previous._v_first.clone()
+        previous._invalidate_native_graph_binding()
+        self._bound_cache_ref = None
+
+    def replay(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        seen_tokens: int,
+    ) -> tuple[torch.Tensor, NativeRWKV7Cache]:
+        if tuple(input_ids.shape) != (self.batch_size, self.prompt_tokens):
+            raise ValueError("native prefill graph input shape changed after capture")
+        if input_ids.device != self.device or input_ids.dtype != torch.long:
+            raise ValueError("native prefill graph input must be CUDA int64 on the model device")
+        if self.graph is None or self.logits is None:
+            raise RuntimeError("native prefill graph was not captured")
+        self._detach_bound_cache()
+        self.input_ids.copy_(input_ids)
+        self.graph.replay()
+        cache = NativeRWKV7Cache(
+            self.state_outputs,
+            self.xpa_outputs,
+            self.xpf_outputs,
+            self.v_first,
+            seen_tokens=int(seen_tokens),
+        )
+        cache._bind_native_graph_runner(self)
+        self._bound_cache_ref = weakref.ref(cache)
+        # Public HF forward owns its returned logits. A later replay may reuse
+        # the graph buffers before the caller has finished consuming them.
+        return self.logits.clone(), cache
+
+    def detach_bound_cache(self) -> None:
+        self._detach_bound_cache()
+
+
 class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     """Experimental batched native PyTorch CausalLM for converted RWKV-7 weights."""
 
@@ -1200,7 +1400,10 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             delattr(self, "_rwkv7_native_model_jit_pack_cache")
         if hasattr(self, "_rwkv7_native_graph_pack_cache"):
             delattr(self, "_rwkv7_native_graph_pack_cache")
+        if hasattr(self, "_rwkv7_native_adapter_layers_present"):
+            delattr(self, "_rwkv7_native_adapter_layers_present")
         self.rwkv7_clear_native_graph_cache()
+        self.rwkv7_clear_native_prefill_graph_cache()
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
@@ -1279,6 +1482,35 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         seen_tokens: int,
         cache: NativeRWKV7Cache | tuple | list | None = None,
     ):
+        batch_size = int(input_ids.shape[0])
+        prompt_tokens = int(input_ids.shape[1])
+        if _native_prefill_graph_enabled(
+            batch_size,
+            prompt_tokens,
+            int(self.config.hidden_size),
+            int(self.config.num_hidden_layers),
+        ):
+            runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
+            if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
+                batch_size,
+                prompt_tokens,
+                logits_to_keep,
+            ):
+                runner = self._native_prefill_graph_runner(
+                    batch_size,
+                    prompt_tokens,
+                    logits_to_keep,
+                )
+            else:
+                stats = getattr(self, "_rwkv7_native_prefill_graph_cache_stats", None)
+                if not isinstance(stats, dict):
+                    stats = _native_graph_stats_template()
+                    self._rwkv7_native_prefill_graph_cache_stats = stats
+                stats["requests"] = int(stats.get("requests", 0)) + 1
+                stats["hits"] = int(stats.get("hits", 0)) + 1
+            logits, cache = runner.replay(input_ids, seen_tokens=int(seen_tokens))
+            self._rwkv7_native_model_last_prefill_backend = "native_prefill_graph"
+            return logits, cache
         packs = self._native_graph_packs()
         state = xpa = xpf = None
         native_cache = _native_cache_tuple_or_none(cache)
@@ -1295,13 +1527,74 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         )
         v_first = torch.zeros(
             int(input_ids.shape[0]),
-            int(self.config.hidden_size),
+            int(
+                getattr(
+                    self.config,
+                    "attention_hidden_size",
+                    self.config.num_heads * self.config.head_dim,
+                )
+            ),
             device=input_ids.device,
             dtype=self.model.embeddings.weight.dtype,
         )
         cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=int(seen_tokens))
         self._rwkv7_native_model_last_prefill_backend = "native_prefill"
         return logits, cache
+
+    def _native_prefill_graph_runner(
+        self,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep,
+    ) -> _NativePrefillGraphRunner:
+        packs = self._native_graph_packs()
+        weight = self.model.embeddings.weight
+        normalized_keep = None if logits_to_keep is None else int(logits_to_keep)
+        key = (
+            weight.device.type,
+            weight.device.index,
+            weight.dtype,
+            len(packs),
+            int(packs[0][1]),
+            int(packs[0][2]),
+            int(batch_size),
+            int(prompt_tokens),
+            normalized_keep,
+            _native_prefill_graph_signature(),
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+        )
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, OrderedDict):
+            cache = OrderedDict()
+            self._rwkv7_native_prefill_graph_runner_cache = cache
+        stats = getattr(self, "_rwkv7_native_prefill_graph_cache_stats", None)
+        if not isinstance(stats, dict):
+            stats = _native_graph_stats_template()
+            self._rwkv7_native_prefill_graph_cache_stats = stats
+        stats["requests"] = int(stats.get("requests", 0)) + 1
+        runner = cache.get(key)
+        if runner is not None:
+            stats["hits"] = int(stats.get("hits", 0)) + 1
+            cache.move_to_end(key)
+            self._rwkv7_native_prefill_graph_hot_runner = runner
+            return runner
+        stats["misses"] = int(stats.get("misses", 0)) + 1
+        while len(cache) >= _native_prefill_graph_cache_size():
+            _, evicted = cache.popitem(last=False)
+            if getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None) is evicted:
+                self._rwkv7_native_prefill_graph_hot_runner = None
+            evicted.detach_bound_cache()
+            stats["evictions"] = int(stats.get("evictions", 0)) + 1
+        runner = _NativePrefillGraphRunner(
+            self,
+            packs,
+            int(batch_size),
+            int(prompt_tokens),
+            normalized_keep,
+        )
+        cache[key] = runner
+        self._rwkv7_native_prefill_graph_hot_runner = runner
+        return runner
 
     def _native_graph_can_run(
         self,
@@ -1324,7 +1617,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return False
         if token_ids.device != self.model.embeddings.weight.device:
             return False
-        if not cache.has_previous_state() or cache.get_batch_size() != int(token_ids.shape[0]):
+        if not cache.is_initialized or cache.get_batch_size() != int(token_ids.shape[0]):
             return False
         return not self._native_model_has_adapter_layers()
 
@@ -1406,6 +1699,38 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         )
         return stats
 
+    def rwkv7_native_prefill_graph_cache_shapes(self) -> list[tuple[int, int]]:
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, dict):
+            return []
+        return sorted(
+            {
+                (int(runner.batch_size), int(runner.prompt_tokens))
+                for runner in cache.values()
+            }
+        )
+
+    def rwkv7_native_prefill_graph_cache_stats(self) -> dict[str, Any]:
+        stats = dict(
+            getattr(
+                self,
+                "_rwkv7_native_prefill_graph_cache_stats",
+                _native_graph_stats_template(),
+            )
+        )
+        requests = int(stats.get("requests", 0))
+        hits = int(stats.get("hits", 0))
+        shapes = self.rwkv7_native_prefill_graph_cache_shapes()
+        stats.update(
+            {
+                "size": len(shapes),
+                "limit": _native_prefill_graph_cache_size(),
+                "shapes": shapes,
+                "hit_rate": float(hits) / float(requests) if requests else None,
+            }
+        )
+        return stats
+
     def rwkv7_native_graph_runner_copy_stats(self) -> dict[str, Any]:
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
         runners = list(cache.items()) if isinstance(cache, dict) else []
@@ -1448,9 +1773,28 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             self._rwkv7_native_graph_runner_cache = OrderedDict()
         return len(runners)
 
+    def rwkv7_clear_native_prefill_graph_cache(self) -> int:
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, dict):
+            self._rwkv7_native_prefill_graph_runner_cache = OrderedDict()
+            self._rwkv7_native_prefill_graph_hot_runner = None
+            return 0
+        runners = list(cache.values())
+        for runner in runners:
+            runner.detach_bound_cache()
+        cache.clear()
+        if not isinstance(cache, OrderedDict):
+            self._rwkv7_native_prefill_graph_runner_cache = OrderedDict()
+        self._rwkv7_native_prefill_graph_hot_runner = None
+        return len(runners)
+
     def rwkv7_reset_native_graph_cache_stats(self) -> dict[str, Any]:
         self._rwkv7_native_graph_cache_stats = _native_graph_stats_template()
         return self.rwkv7_native_graph_cache_stats()
+
+    def rwkv7_reset_native_prefill_graph_cache_stats(self) -> dict[str, Any]:
+        self._rwkv7_native_prefill_graph_cache_stats = _native_graph_stats_template()
+        return self.rwkv7_native_prefill_graph_cache_stats()
 
     @torch.inference_mode()
     def rwkv7_warmup_fast_token(
@@ -1632,6 +1976,15 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     def _native_model_has_adapter_layers(self) -> bool:
         """True when PEFT-style adapter wrappers sit inside native layers."""
 
+        adapter_metadata_present = bool(
+            getattr(self, "peft_config", None)
+            or getattr(self, "_hf_peft_config_loaded", False)
+        )
+        cached = getattr(self, "_rwkv7_native_adapter_layers_present", None)
+        if cached is True:
+            return True
+        if cached is False and not adapter_metadata_present:
+            return False
         try:
             modules = self.model.layers.modules()
         except Exception:
@@ -1643,9 +1996,12 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 cls_module.startswith("peft.")
                 and (hasattr(module, "base_layer") or hasattr(module, "lora_A") or hasattr(module, "lora_B"))
             ):
+                self._rwkv7_native_adapter_layers_present = True
                 return True
             if hasattr(module, "base_layer") and (hasattr(module, "lora_A") or hasattr(module, "lora_B")):
+                self._rwkv7_native_adapter_layers_present = True
                 return True
+        self._rwkv7_native_adapter_layers_present = False
         return False
 
     def _native_model_requires_eager_decode(self) -> bool:

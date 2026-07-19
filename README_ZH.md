@@ -47,6 +47,15 @@ python -m pip install -e ".[cuda]"
 RESULT: READY
 ```
 
+没有 GPU 或模型时，可以先运行不下载权重的 Windows/CPU tiny 演示。它会验证
+标准生成、CPU 反向传播、参数更新和保存重载：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_cpu_demo.ps1 -Install
+```
+
+完整命令、通过标记和失败恢复见 [Windows 与 CPU 教程](docs/WINDOWS_CPU.md)。
+
 ## 准备模型
 
 如果你已经有转换好的 Hugging Face 模型目录，可以直接进入下一节。模型目录至少应
@@ -95,6 +104,13 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 > 转换后的模型使用仓库代码，因此需要 `trust_remote_code=True`。只加载你信任的
 > 本地目录或 Hugging Face 仓库。
 
+RTX 5090 的同精度 Native 证据使用官方 RWKV-Gradio-3 的 FP16 权重、状态和输入输出
+作为对照。g1h 7.2B 缓存解码在 B1/B8 达到官方 `1.0010x/1.0104x`，并通过
+logits、状态和 greedy 门禁；g1h 2.9B/13.3B 在 B1/B8、提示长度
+128/512/2048 的 12 个 prefill 单元全部通过。仓库只会对这些精确卡、模型和形状
+自动选择已验证策略，证据见
+[`bench/5090_native_official_fp16_production_20260718/README.md`](bench/5090_native_official_fp16_production_20260718/README.md)。
+
 ## 使用标准 Transformers API
 
 ```python
@@ -138,6 +154,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 |---|---|
 | 零基础安装、下载、转换与生成 | [中文逐步指南](docs/USER_GUIDE_ZH.md) |
 | 全部功能导航 | [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md) |
+| Windows/CPU 无模型下载推理与微型训练 | [Windows 与 CPU 教程](docs/WINDOWS_CPU.md) |
 | 批量转换、HF API、缓存和分块 prefill | [推理工作流](docs/INFERENCE_WORKFLOWS.md) |
 | PEFT LoRA、Trainer、SFT、DPO、GRPO | [训练工作流](docs/TRAINING_WORKFLOWS.md) |
 | 对齐官方 train_temp 数学和训练效果 | [train_temp CUDA 训练对齐教程](docs/TRAIN_TEMP_CUDA.md) |
@@ -155,7 +172,8 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
   启用对应环境变量。
 - **Apple Silicon：** 普通 Transformers 工作流使用 MPS；追求 Apple 原生性能时
   使用 MLX 教程。
-- **CPU 或便携环境：** 原生后端可以完成转换、接口检查和小模型生成。
+- **CPU 或便携环境：** 原生后端可以完成转换、接口检查、真实小模型生成和无下载
+  tiny 训练演示；从 [Windows 与 CPU 教程](docs/WINDOWS_CPU.md) 开始。
 - **量化：** 显存优先时查看 W8/W4 footprint；速度优先时选择与你的显卡、模型和
   batch 完全一致的配对结果。
 

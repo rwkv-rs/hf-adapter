@@ -12,6 +12,7 @@ from __future__ import annotations
 ADAPTER_FILES = [
     "ada_lora.py",
     "ada_sparse_ffn.py",
+    "blackwell_norm_mix.py",
     "dplr_prefill.py",
     "dplr_prefill_triton.py",
     "fused_attention_projection.py",
@@ -54,6 +55,7 @@ ADAPTER_FILES = [
     "native_quant_marlin_sources.py",
     "native_quant_torchao.py",
     "native_quant_policy.py",
+    "native_wkv_fp16.py",
     "self_chunk_A_fwd.py",
     "self_chunk_cumsum.py",
     "self_chunk_h_fwd.py",

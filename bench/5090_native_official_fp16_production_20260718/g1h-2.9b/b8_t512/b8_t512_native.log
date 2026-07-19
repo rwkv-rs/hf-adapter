@@ -1,0 +1,36 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:  12%|█▏        | 126/1059 [00:00<00:00, 1179.87it/s]Loading weights:  23%|██▎       | 245/1059 [00:00<00:00, 1184.74it/s]Loading weights:  34%|███▍      | 364/1059 [00:00<00:00, 1156.60it/s]Loading weights:  46%|████▋     | 491/1059 [00:00<00:00, 1185.74it/s]Loading weights:  58%|█████▊    | 612/1059 [00:00<00:00, 1188.85it/s]Loading weights:  69%|██████▉   | 731/1059 [00:00<00:00, 1173.19it/s]Loading weights:  81%|████████  | 855/1059 [00:00<00:00, 1186.96it/s]Loading weights:  92%|█████████▏| 974/1059 [00:00<00:00, 1180.30it/s]Loading weights: 100%|██████████| 1059/1059 [00:00<00:00, 1179.47it/s]
+{
+  "engine": "native_hf_sequence",
+  "batch_size": 8,
+  "prompt_tokens": 512,
+  "timing": {
+    "times_ms": [
+      139.70169067382812,
+      139.66192626953125,
+      139.66268920898438,
+      139.65321350097656,
+      139.71273803710938,
+      139.68319702148438,
+      139.7189178466797,
+      139.72438049316406,
+      139.73036193847656,
+      139.74525451660156,
+      139.72802734375,
+      139.77232360839844,
+      139.7412109375,
+      139.7776641845703,
+      139.80015563964844,
+      139.78451538085938,
+      139.7855987548828,
+      139.81004333496094,
+      139.80313110351562,
+      139.81353759765625,
+      139.8120574951172
+    ],
+    "median_ms": 139.7412109375,
+    "aggregate_tokps": 29311.324644466964
+  },
+  "peak_vram_mb": 7829.27197265625
+}

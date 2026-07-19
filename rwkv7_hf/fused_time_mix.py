@@ -40,6 +40,66 @@ _HAS_TRITON = triton is not None and tl is not None
 if _HAS_TRITON:
 
     @triton.jit
+    def _attn_sequence_shift_mix_fp16_rn(
+        x,
+        previous,
+        xr,
+        xw,
+        xk,
+        xv,
+        xa,
+        xg,
+    ):
+        # PyTorch eager materialises fp16 subtraction, multiplication, and
+        # addition separately. Use explicit half2 instructions so LLVM cannot
+        # contract the expression into a wider/FMA operation.
+        return tl.inline_asm_elementwise(
+            asm="""
+            {
+                .reg .b32 delta;
+                .reg .b32 product;
+                sub.rn.f16x2 delta, $7, $6;
+                mul.rn.f16x2 product, delta, $8;
+                add.rn.f16x2 $0, $6, product;
+                mul.rn.f16x2 product, delta, $9;
+                add.rn.f16x2 $1, $6, product;
+                mul.rn.f16x2 product, delta, $10;
+                add.rn.f16x2 $2, $6, product;
+                mul.rn.f16x2 product, delta, $11;
+                add.rn.f16x2 $3, $6, product;
+                mul.rn.f16x2 product, delta, $12;
+                add.rn.f16x2 $4, $6, product;
+                mul.rn.f16x2 product, delta, $13;
+                add.rn.f16x2 $5, $6, product;
+            }
+            """,
+            constraints="=r,=r,=r,=r,=r,=r,r,r,r,r,r,r,r,r",
+            args=[x, previous, xr, xw, xk, xv, xa, xg],
+            dtype=(tl.float16, tl.float16, tl.float16, tl.float16, tl.float16, tl.float16),
+            is_pure=True,
+            pack=2,
+        )
+
+    @triton.jit
+    def _sequence_shift_mix_fp16_rn(x, previous, mix):
+        return tl.inline_asm_elementwise(
+            asm="""
+            {
+                .reg .b32 delta;
+                .reg .b32 product;
+                sub.rn.f16x2 delta, $2, $1;
+                mul.rn.f16x2 product, delta, $3;
+                add.rn.f16x2 $0, $1, product;
+            }
+            """,
+            constraints="=r,r,r,r",
+            args=[x, previous, mix],
+            dtype=tl.float16,
+            is_pure=True,
+            pack=2,
+        )
+
+    @triton.jit
     def _attn_shift_mix_kernel(
         x_ptr,
         prev_ptr,
@@ -103,6 +163,7 @@ if _HAS_TRITON:
         tokens: tl.constexpr,
         total: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
+        STRICT_FP16_ROUNDING: tl.constexpr,
     ):
         offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         mask = offsets < total
@@ -117,19 +178,31 @@ if _HAS_TRITON:
             mask=mask & (token_ids == 0),
             other=0.0,
         )
-        delta = seq_prev + initial_prev - x
+        previous = seq_prev + initial_prev
         xr = tl.load(xr_mix_ptr + columns, mask=mask, other=0.0)
         xw = tl.load(xw_mix_ptr + columns, mask=mask, other=0.0)
         xk = tl.load(xk_mix_ptr + columns, mask=mask, other=0.0)
         xv = tl.load(xv_mix_ptr + columns, mask=mask, other=0.0)
         xa = tl.load(xa_mix_ptr + columns, mask=mask, other=0.0)
         xg = tl.load(xg_mix_ptr + columns, mask=mask, other=0.0)
-        tl.store(out_r_ptr + offsets, x + delta * xr, mask=mask)
-        tl.store(out_w_ptr + offsets, x + delta * xw, mask=mask)
-        tl.store(out_k_ptr + offsets, x + delta * xk, mask=mask)
-        tl.store(out_v_ptr + offsets, x + delta * xv, mask=mask)
-        tl.store(out_a_ptr + offsets, x + delta * xa, mask=mask)
-        tl.store(out_g_ptr + offsets, x + delta * xg, mask=mask)
+        if STRICT_FP16_ROUNDING:
+            out_r, out_w, out_k, out_v, out_a, out_g = _attn_sequence_shift_mix_fp16_rn(
+                x, previous, xr, xw, xk, xv, xa, xg
+            )
+            tl.store(out_r_ptr + offsets, out_r, mask=mask)
+            tl.store(out_w_ptr + offsets, out_w, mask=mask)
+            tl.store(out_k_ptr + offsets, out_k, mask=mask)
+            tl.store(out_v_ptr + offsets, out_v, mask=mask)
+            tl.store(out_a_ptr + offsets, out_a, mask=mask)
+            tl.store(out_g_ptr + offsets, out_g, mask=mask)
+        else:
+            delta = previous - x
+            tl.store(out_r_ptr + offsets, x + delta * xr, mask=mask)
+            tl.store(out_w_ptr + offsets, x + delta * xw, mask=mask)
+            tl.store(out_k_ptr + offsets, x + delta * xk, mask=mask)
+            tl.store(out_v_ptr + offsets, x + delta * xv, mask=mask)
+            tl.store(out_a_ptr + offsets, x + delta * xa, mask=mask)
+            tl.store(out_g_ptr + offsets, x + delta * xg, mask=mask)
         tl.store(
             next_ptr + batch_ids * hidden + columns,
             x,
@@ -147,6 +220,7 @@ if _HAS_TRITON:
         tokens: tl.constexpr,
         total: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
+        STRICT_FP16_ROUNDING: tl.constexpr,
     ):
         offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         mask = offsets < total
@@ -162,7 +236,12 @@ if _HAS_TRITON:
             other=0.0,
         )
         mix = tl.load(mix_ptr + columns, mask=mask, other=0.0)
-        tl.store(out_ptr + offsets, x + (seq_prev + initial_prev - x) * mix, mask=mask)
+        previous = seq_prev + initial_prev
+        if STRICT_FP16_ROUNDING:
+            output = _sequence_shift_mix_fp16_rn(x, previous, mix)
+        else:
+            output = x + (previous - x) * mix
+        tl.store(out_ptr + offsets, output, mask=mask)
         tl.store(
             next_ptr + batch_ids * hidden + columns,
             x,
@@ -284,7 +363,9 @@ def fused_attn_sequence_shift_mix(
     initial_prev: Any,
     *mixes: Any,
     block_size: int = 256,
+    num_warps: int = 4,
     workspace: Any | None = None,
+    strict_fp16_rounding: bool = False,
 ):
     """Shift-mix a full ``[B,T,C]`` sequence without materialising ``cat``."""
 
@@ -323,7 +404,12 @@ def fused_attn_sequence_shift_mix(
     total = int(source.numel())
     _attn_sequence_shift_mix_kernel[(triton.cdiv(total, int(block_size)),)](
         source, initial.contiguous(), *flat_mixes, *outs, next_state,
-        hidden, tokens, total, BLOCK_SIZE=int(block_size), num_warps=4,
+        hidden,
+        tokens,
+        total,
+        BLOCK_SIZE=int(block_size),
+        STRICT_FP16_ROUNDING=bool(strict_fp16_rounding and source.dtype == torch.float16),
+        num_warps=int(num_warps),
     )
     return (*outs, next_state)
 
@@ -333,7 +419,9 @@ def fused_ffn_sequence_shift_mix(
     initial_prev: Any,
     mix: Any,
     block_size: int = 256,
+    num_warps: int = 4,
     workspace: Any | None = None,
+    strict_fp16_rounding: bool = False,
 ):
     """Compute the full FFN shift-mix and next state in one launch."""
 
@@ -364,6 +452,11 @@ def fused_ffn_sequence_shift_mix(
     total = int(source.numel())
     _ffn_sequence_shift_mix_kernel[(triton.cdiv(total, int(block_size)),)](
         source, initial.contiguous(), flat_mix, out, next_state,
-        hidden, tokens, total, BLOCK_SIZE=int(block_size), num_warps=4,
+        hidden,
+        tokens,
+        total,
+        BLOCK_SIZE=int(block_size),
+        STRICT_FP16_ROUNDING=bool(strict_fp16_rounding and source.dtype == torch.float16),
+        num_warps=int(num_warps),
     )
     return out, next_state

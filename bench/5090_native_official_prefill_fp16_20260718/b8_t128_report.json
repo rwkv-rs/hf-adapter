@@ -1,0 +1,200 @@
+{
+  "axis": "official_native_sequence_prefill_alignment",
+  "status": "pass",
+  "quality_pass": true,
+  "performance_gate_pass": true,
+  "batch_size": 8,
+  "prompt_tokens": 128,
+  "precision": "fp16_state_fp16_io",
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "thresholds": {
+    "logits": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "first_decode_logits": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "state": {
+      "min_cosine": 0.9999,
+      "max_abs": 4.0,
+      "max_mean_abs": 0.001,
+      "outlier_abs": 1.0,
+      "max_outlier_fraction": 1e-05
+    },
+    "xpa": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "xpf": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "layer_outputs": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.25
+    }
+  },
+  "metrics": {
+    "logits": {
+      "shape": [
+        8,
+        65536
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.09375,
+      "mean_abs": 0.025650614872574806,
+      "cosine": 0.9999997622129152,
+      "threshold_pass": true
+    },
+    "first_decode_logits": {
+      "shape": [
+        8,
+        65536
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.078125,
+      "mean_abs": 0.011491573854073067,
+      "cosine": 0.9999998279436126,
+      "threshold_pass": true
+    },
+    "layer_outputs": {
+      "shape": [
+        32,
+        8,
+        4096
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.078125,
+      "mean_abs": 0.0008406775191360794,
+      "cosine": 0.9999857141589199,
+      "threshold_pass": true
+    },
+    "state": {
+      "shape": [
+        32,
+        8,
+        64,
+        64,
+        64
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.5,
+      "mean_abs": 0.0002878814385809392,
+      "cosine": 0.9999975886141761,
+      "outlier_abs": 1.0,
+      "outlier_count": 0,
+      "outlier_fraction": 0.0,
+      "threshold_pass": true
+    },
+    "xpa": {
+      "shape": [
+        32,
+        8,
+        4096
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.03125,
+      "mean_abs": 0.0023842233226787357,
+      "cosine": 0.9999854198429176,
+      "threshold_pass": true
+    },
+    "xpf": {
+      "shape": [
+        32,
+        8,
+        4096
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.06640625,
+      "mean_abs": 0.0037532324381572835,
+      "cosine": 0.9999809395535839,
+      "threshold_pass": true
+    }
+  },
+  "first_token_exact": true,
+  "first_decode_token_exact": true,
+  "native": {
+    "timing": {
+      "times_ms": [
+        69.37353515625,
+        69.36172485351562,
+        69.53376007080078,
+        69.5018539428711,
+        69.52754974365234,
+        69.49884796142578,
+        69.5165786743164,
+        69.50534057617188,
+        69.5251235961914,
+        69.54975891113281,
+        69.50947570800781,
+        69.54608154296875,
+        69.54828643798828,
+        69.5248031616211,
+        69.51468658447266,
+        69.52320098876953,
+        69.5054702758789,
+        69.50444793701172,
+        69.5278091430664,
+        69.51407623291016,
+        69.5241928100586
+      ],
+      "median_ms": 69.5165786743164,
+      "aggregate_tokps": 14730.29915349282
+    },
+    "peak_vram_mb": 14163.17431640625,
+    "execution": "eager",
+    "backend": "native_prefill_graph",
+    "first_decode_backend": "native_graph",
+    "prefill_state_dtype": "torch.float16",
+    "first_decode_state_dtype": "torch.float16",
+    "stacked_rkv_effective": false,
+    "wavg_lora_effective": false,
+    "sequence_ffn_effective": false,
+    "fp16_accum_ffn_key_effective": true
+  },
+  "official": {
+    "timing": {
+      "times_ms": [
+        77.51058959960938,
+        77.4257583618164,
+        77.56822204589844,
+        77.55999755859375,
+        77.5374755859375,
+        77.73145294189453,
+        77.73001861572266,
+        77.73712158203125,
+        77.81241607666016,
+        77.73104095458984,
+        77.76217651367188,
+        77.81356811523438,
+        77.71862030029297,
+        77.74607849121094,
+        77.7126693725586,
+        77.75299072265625,
+        77.74947357177734,
+        77.82978820800781,
+        77.76761627197266,
+        77.80435180664062,
+        77.79865264892578
+      ],
+      "median_ms": 77.73712158203125,
+      "aggregate_tokps": 13172.599900286186
+    },
+    "peak_vram_mb": 14633.2900390625
+  },
+  "native_over_official_tokps": 1.118252984604261
+}

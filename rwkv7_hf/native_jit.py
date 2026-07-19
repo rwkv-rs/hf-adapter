@@ -84,6 +84,38 @@ def _graph_linear_shape(operand) -> tuple[int, int]:
     return int(operand.out_features), int(operand.in_features)
 
 
+def _native_graph_sparse_ffn_low_memory_pack_enabled() -> bool:
+    policy = _kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK",
+        bool(getattr(policy, "ada_sparse_ffn_low_memory_pack", False)),
+    )
+
+
+def _native_graph_relayout_ffn_value_weight(module):
+    """Store an FFN down weight in the sparse kernel's transposed layout.
+
+    The exposed parameter keeps its original ``[hidden, ffn]`` shape, so
+    ``F.linear`` and state-dict names remain compatible. Its backing storage is
+    contiguous as ``[ffn, hidden]``, allowing the sparse decode kernel to reuse
+    the same bytes instead of allocating a second full-size model copy.
+    """
+
+    if type(module) is not torch.nn.Linear or module.bias is not None:
+        raise TypeError("low-memory sparse FFN packing requires a bias-free nn.Linear")
+    if getattr(module, "_rwkv7_sparse_low_memory_layout", False):
+        return module.weight
+    weight = module.weight
+    if weight.dim() != 2:
+        raise ValueError("low-memory sparse FFN packing requires a rank-2 weight")
+    packed = weight.detach().transpose(0, 1).contiguous()
+    module.weight = torch.nn.Parameter(
+        packed.transpose(0, 1), requires_grad=bool(weight.requires_grad)
+    )
+    module._rwkv7_sparse_low_memory_layout = True
+    return module.weight
+
+
 def _native_bnb8_policy_flag(env_name: str, policy_name: str) -> bool:
     try:
         default = bool(getattr(_kernel_policy(), policy_name, False))
@@ -298,11 +330,34 @@ def _graph_linear_call(x: torch.Tensor, operand) -> torch.Tensor:
     return operand(x)
 
 
-def _native_prefill_linear(x: torch.Tensor, operand, bias=None) -> torch.Tensor:
+def _native_prefill_linear(
+    x: torch.Tensor,
+    operand,
+    bias=None,
+    *,
+    allow_fp16_accumulation: bool = False,
+) -> torch.Tensor:
     """Sequence linear supporting dense and HF/native quantized operands."""
 
     if _graph_linear_is_dense(operand):
-        return F.linear(x, operand, bias)
+        matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
+        can_select_accumulation = bool(
+            allow_fp16_accumulation
+            and x.is_cuda
+            and x.dtype == torch.float16
+            and matmul is not None
+            and hasattr(matmul, "allow_fp16_accumulation")
+        )
+        if not can_select_accumulation:
+            return F.linear(x, operand, bias)
+        previous = bool(matmul.allow_fp16_accumulation)
+        if not previous:
+            matmul.allow_fp16_accumulation = True
+        try:
+            return F.linear(x, operand, bias)
+        finally:
+            if not previous:
+                matmul.allow_fp16_accumulation = False
     direct = _bnb8_direct_linear(x, operand)
     if direct is not None:
         return direct
@@ -602,6 +657,7 @@ try:  # pragma: no cover - optional sm_89 sparse FFN contraction
         ada_linear_should_use,
         ada_sparse_ffn_down_add,
         ada_sparse_ffn_pack_weight,
+        ada_sparse_ffn_prepare_deterministic_scratch,
         ada_sparse_ffn_prepare_fp32_scratch,
         ada_sparse_ffn_should_use,
     )
@@ -613,6 +669,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             ada_linear_should_use,
             ada_sparse_ffn_down_add,
             ada_sparse_ffn_pack_weight,
+            ada_sparse_ffn_prepare_deterministic_scratch,
             ada_sparse_ffn_prepare_fp32_scratch,
             ada_sparse_ffn_should_use,
         )
@@ -622,6 +679,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_linear_should_use = None  # type: ignore[assignment]
         ada_sparse_ffn_down_add = None  # type: ignore[assignment]
         ada_sparse_ffn_pack_weight = None  # type: ignore[assignment]
+        ada_sparse_ffn_prepare_deterministic_scratch = None  # type: ignore[assignment]
         ada_sparse_ffn_prepare_fp32_scratch = None  # type: ignore[assignment]
         ada_sparse_ffn_should_use = None  # type: ignore[assignment]
 
@@ -645,6 +703,36 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_wagv_lora = None  # type: ignore[assignment]
         ada_wagv_lora_available = None  # type: ignore[assignment]
         ada_wagv_lora_should_use = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional exact-shape FP16 recurrent state
+    from .native_wkv_fp16 import (
+        native_fp16_recurrent_output_prepare_raw,
+        native_fp16_sequence,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from native_wkv_fp16 import (
+            native_fp16_recurrent_output_prepare_raw,
+            native_fp16_sequence,
+        )
+    except Exception:
+        native_fp16_recurrent_output_prepare_raw = None  # type: ignore[assignment]
+        native_fp16_sequence = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional exact official-order SM120 norm/mix
+    from .blackwell_norm_mix import (
+        blackwell_ffn_add_norm_mix,
+        blackwell_norm_mix_should_use,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from blackwell_norm_mix import (
+            blackwell_ffn_add_norm_mix,
+            blackwell_norm_mix_should_use,
+        )
+    except Exception:
+        blackwell_ffn_add_norm_mix = None  # type: ignore[assignment]
+        blackwell_norm_mix_should_use = None  # type: ignore[assignment]
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -685,6 +773,25 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return bool(fused_recurrent_scan_available())
     except Exception:
         return False
+
+
+def _native_prefill_fp16_recurrent_requested() -> bool:
+    """Select official-precision sequence recurrence without changing defaults."""
+
+    policy = _kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_PREFILL_FP16_RECURRENT",
+        bool(getattr(policy, "prefill_fp16_recurrent", False)),
+    )
+
+
+def _native_prefill_fp16_recurrent_enabled(state: torch.Tensor) -> bool:
+    return bool(
+        _native_prefill_fp16_recurrent_requested()
+        and native_fp16_sequence is not None
+        and state.dtype == torch.float16
+        and int(state.shape[-1]) == 64
+    )
 
 
 def _native_prefill_self_chunk_enabled(
@@ -1015,13 +1122,91 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
     return value
 
 
-def _native_prefill_fused_shift_mix_enabled() -> bool:
+def _native_prefill_model_shape_selected(
+    env_name: str,
+    policy_name: str,
+    batch_size: int | None,
+    prompt_tokens: int | None,
+    hidden_size: int | None,
+    num_layers: int | None,
+) -> bool:
+    """Apply an optional exact model-shape restriction to a prefill route."""
+
+    policy = _kernel_policy()
+    raw = os.environ.get(env_name)
+    if raw is None:
+        shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, policy_name, ())
+            if len(shape) == 4
+        }
+    else:
+        shapes = set()
+        try:
+            for item in raw.replace(",", " ").split():
+                values = tuple(int(value) for value in item.lower().split("x"))
+                if len(values) != 4 or any(value <= 0 for value in values):
+                    raise ValueError
+                shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(f"{env_name} must contain HxLxBxT tuples") from exc
+    if not shapes:
+        return True
+    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+        return False
+    return (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    ) in shapes
+
+
+def _native_prefill_policy_model_shape_selected(
+    policy_name: str,
+    batch_size: int | None,
+    prompt_tokens: int | None,
+    hidden_size: int | None,
+    num_layers: int | None,
+) -> bool:
+    """Return whether an exact shape is explicitly promoted by policy."""
+
+    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+        return False
+    target = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    return target in {
+        tuple(int(value) for value in shape)
+        for shape in getattr(_kernel_policy(), policy_name, ())
+        if len(shape) == 4
+    }
+
+
+def _native_prefill_fused_shift_mix_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
     policy = _kernel_policy()
     if not env_flag(
         "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX",
         bool(getattr(policy, "fused_prefill_shift_mix", False)),
+    ):
+        return False
+    if not _native_prefill_model_shape_selected(
+        "RWKV7_NATIVE_PREFILL_SHIFT_MIX_MODEL_SHAPES",
+        "prefill_shift_mix_model_shapes",
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
     ):
         return False
     if fused_attn_shift_mix is None or fused_attn_shift_mix_available is None:
@@ -1032,7 +1217,146 @@ def _native_prefill_fused_shift_mix_enabled() -> bool:
         return False
 
 
-def _native_prefill_fused_state_prep_enabled() -> bool:
+def _native_prefill_shift_mix_layers(
+    batch_size: int,
+    prompt_tokens: int,
+    num_layers: int,
+) -> set[int] | None:
+    """Return selected shift-mix layers, or ``None`` for every layer."""
+
+    specific = f"RWKV7_NATIVE_PREFILL_SHIFT_MIX_LAYERS_B{batch_size}_T{prompt_tokens}"
+    raw = os.environ.get(
+        specific,
+        os.environ.get("RWKV7_NATIVE_PREFILL_SHIFT_MIX_LAYERS"),
+    )
+    if raw is None:
+        return None
+    selected: set[int] = set()
+    try:
+        for item in raw.replace(" ", ",").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if "-" in item:
+                start, end = (int(value) for value in item.split("-", 1))
+                if start < 0 or end < start:
+                    raise ValueError
+                selected.update(range(start, end + 1))
+            else:
+                value = int(item)
+                if value < 0:
+                    raise ValueError
+                selected.add(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{specific} must contain non-negative layers or inclusive ranges"
+        ) from exc
+    return {value for value in selected if value < int(num_layers)}
+
+
+def _native_prefill_shift_mix_launch_profile(
+    role: str,
+    batch_size: int | None,
+    prompt_tokens: int | None,
+    hidden_size: int | None,
+    num_layers: int | None,
+) -> tuple[int, int] | None:
+    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+        return None
+    policy_name = f"prefill_{role.lower()}_shift_mix_launch_profiles"
+    target = (int(hidden_size), int(num_layers), int(batch_size), int(prompt_tokens))
+    for profile in getattr(_kernel_policy(), policy_name, ()):
+        if len(profile) == 6 and tuple(int(value) for value in profile[:4]) == target:
+            return int(profile[4]), int(profile[5])
+    return None
+
+
+def _native_prefill_attn_shift_mix_block_size(
+    strict_fp16_rounding: bool,
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> int:
+    """Choose a validated elementwise tile for sequence attention shift-mix."""
+
+    profile = _native_prefill_shift_mix_launch_profile(
+        "attn", batch_size, prompt_tokens, hidden_size, num_layers
+    )
+    default = profile[0] if profile is not None else (2048 if strict_fp16_rounding else 256)
+    value = env_int(
+        "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE",
+        default,
+        lower=64,
+        upper=2048,
+    )
+    if value not in (64, 128, 256, 512, 1024, 2048):
+        raise ValueError(
+            "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_BLOCK_SIZE must be a power "
+            "of two between 64 and 2048"
+        )
+    return value
+
+
+def _native_prefill_shift_mix_num_warps(
+    role: str,
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> int:
+    """Return a validated launch width for attention or FFN sequence mix."""
+
+    role = role.strip().upper()
+    if role not in ("ATTN", "FFN"):
+        raise ValueError("shift-mix role must be ATTN or FFN")
+    profile = _native_prefill_shift_mix_launch_profile(
+        role.lower(), batch_size, prompt_tokens, hidden_size, num_layers
+    )
+    value = env_int(
+        f"RWKV7_NATIVE_PREFILL_{role}_SHIFT_MIX_NUM_WARPS",
+        profile[1] if profile is not None else 4,
+        lower=1,
+        upper=8,
+    )
+    if value not in (1, 2, 4, 8):
+        raise ValueError(
+            f"RWKV7_NATIVE_PREFILL_{role}_SHIFT_MIX_NUM_WARPS must be 1, 2, 4, or 8"
+        )
+    return value
+
+
+def _native_prefill_ffn_shift_mix_block_size(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> int:
+    """Return a validated elementwise tile for FFN sequence shift-mix."""
+
+    profile = _native_prefill_shift_mix_launch_profile(
+        "ffn", batch_size, prompt_tokens, hidden_size, num_layers
+    )
+    value = env_int(
+        "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE",
+        profile[0] if profile is not None else 256,
+        lower=64,
+        upper=2048,
+    )
+    if value not in (64, 128, 256, 512, 1024, 2048):
+        raise ValueError(
+            "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_BLOCK_SIZE must be a power "
+            "of two between 64 and 2048"
+        )
+    return value
+
+
+def _native_prefill_fused_state_prep_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for the native prefill state-prep fusion probe."""
 
     policy = _kernel_policy()
@@ -1041,12 +1365,72 @@ def _native_prefill_fused_state_prep_enabled() -> bool:
         bool(getattr(policy, "fused_prefill_state_prep", False)),
     ):
         return False
+    if not _native_prefill_model_shape_selected(
+        "RWKV7_NATIVE_PREFILL_STATE_PREP_MODEL_SHAPES",
+        "prefill_state_prep_model_shapes",
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
+    ):
+        return False
     if fused_prefill_state_prep is None or fused_prefill_state_prep_available is None:
         return False
     try:
         return bool(fused_prefill_state_prep_available())
     except Exception:
         return False
+
+
+def _native_prefill_state_prep_layers(
+    batch_size: int,
+    prompt_tokens: int,
+    hidden_size: int,
+    num_layers: int,
+) -> set[int] | None:
+    """Return selected state-prep layers, or ``None`` for every layer."""
+
+    specific = f"RWKV7_NATIVE_PREFILL_STATE_PREP_LAYERS_B{batch_size}_T{prompt_tokens}"
+    raw = os.environ.get(
+        specific,
+        os.environ.get("RWKV7_NATIVE_PREFILL_STATE_PREP_LAYERS"),
+    )
+    if raw is not None:
+        selected: set[int] = set()
+        try:
+            for item in raw.replace(" ", ",").split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "-" in item:
+                    start, end = (int(value) for value in item.split("-", 1))
+                    if start < 0 or end < start:
+                        raise ValueError
+                    selected.update(range(start, end + 1))
+                else:
+                    value = int(item)
+                    if value < 0:
+                        raise ValueError
+                    selected.add(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{specific} must contain non-negative layers or inclusive ranges"
+            ) from exc
+        return {value for value in selected if value < int(num_layers)}
+
+    target = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    for profile in getattr(
+        _kernel_policy(), "prefill_state_prep_layer_counts", ()
+    ):
+        if len(profile) == 5 and tuple(int(value) for value in profile[:4]) == target:
+            count = min(max(int(profile[4]), 0), int(num_layers))
+            return set(range(count))
+    return None
 
 
 def _native_prefill_fused_state_scan_max_batch() -> int | None:
@@ -1114,7 +1498,12 @@ def _native_prefill_state_prep_w_dtype() -> str:
     return aliases[raw]
 
 
-def _native_prefill_fused_output_enabled() -> bool:
+def _native_prefill_fused_output_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for native prefill output-prep fusion.
 
     This reuses the profitable decode fused-output-prep kernel, but keeps the
@@ -1126,6 +1515,15 @@ def _native_prefill_fused_output_enabled() -> bool:
     if not env_flag(
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
         bool(getattr(policy, "fused_prefill_output", False)),
+    ):
+        return False
+    if not _native_prefill_model_shape_selected(
+        "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_MODEL_SHAPES",
+        "prefill_fused_output_model_shapes",
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
     ):
         return False
     if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
@@ -1285,6 +1683,117 @@ def _native_prefill_fused_sequence_ffn_enabled(
         return bool(fused_sequence_ffn_available())
     except Exception:
         return False
+
+
+def _native_prefill_fp16_accum_ffn_key_enabled(
+    batch_size: int,
+    prompt_tokens: int,
+    hidden_size: int,
+    num_layers: int,
+    dtype: torch.dtype,
+) -> bool:
+    """Select reduced-precision accumulation only for measured FFN-key shapes."""
+
+    if dtype != torch.float16:
+        return False
+    matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
+    if matmul is None or not hasattr(matmul, "allow_fp16_accumulation"):
+        return False
+    policy = _kernel_policy()
+    raw_shapes = os.environ.get(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_MODEL_SHAPES"
+    )
+    if raw_shapes is None:
+        model_shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(
+                policy,
+                "prefill_fp16_accum_ffn_key_model_shapes",
+                (),
+            )
+            if len(shape) == 4
+        }
+    else:
+        model_shapes = set()
+        try:
+            for item in raw_shapes.replace(",", " ").split():
+                values = tuple(int(value) for value in item.lower().split("x"))
+                if len(values) != 4 or any(value <= 0 for value in values):
+                    raise ValueError
+                model_shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_MODEL_SHAPES must "
+                "contain HxLxBxT tuples"
+            ) from exc
+    exact_shape = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    selected = exact_shape in model_shapes
+    return bool(
+        selected
+        and env_flag(
+            "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY",
+            selected,
+        )
+    )
+
+
+def _native_prefill_fp16_accum_ffn_key_layers(
+    batch_size: int,
+    prompt_tokens: int,
+    hidden_size: int,
+    num_layers: int,
+) -> set[int] | None:
+    """Return selected FFN-key accumulation layers, or ``None`` for all."""
+
+    specific = (
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS_"
+        f"B{batch_size}_T{prompt_tokens}"
+    )
+    raw = os.environ.get(
+        specific,
+        os.environ.get("RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS"),
+    )
+    if raw is not None:
+        selected: set[int] = set()
+        try:
+            for item in raw.replace(" ", ",").split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "-" in item:
+                    start, end = (int(value) for value in item.split("-", 1))
+                    if start < 0 or end < start:
+                        raise ValueError
+                    selected.update(range(start, end + 1))
+                else:
+                    value = int(item)
+                    if value < 0:
+                        raise ValueError
+                    selected.add(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{specific} must contain non-negative layers or inclusive ranges"
+            ) from exc
+        return {value for value in selected if value < int(num_layers)}
+
+    target = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    for profile in getattr(
+        _kernel_policy(), "prefill_fp16_accum_ffn_key_layer_counts", ()
+    ):
+        if len(profile) == 5 and tuple(int(value) for value in profile[:4]) == target:
+            count = min(max(int(profile[4]), 0), int(num_layers))
+            return set(range(count))
+    return None
 
 
 def _native_prefill_stacked_rkv_enabled(
@@ -1470,6 +1979,20 @@ def _native_graph_fused_recurrent_raw_enabled() -> bool:
     return bool(fused_recurrent_output_prepare_raw is not None and _native_graph_fused_recurrent_output_enabled())
 
 
+def _native_graph_fp16_recurrent_enabled(state: torch.Tensor, elapsed) -> bool:
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_FP16_RECURRENT",
+            bool(getattr(policy, "native_graph_fp16_recurrent", False)),
+        )
+        and native_fp16_recurrent_output_prepare_raw is not None
+        and elapsed is not None
+        and state.dtype == torch.float16
+        and int(state.shape[-1]) == 64
+    )
+
+
 def _native_graph_fused_output_enabled() -> bool:
     """Runtime switch for the experimental native-graph output-prep Triton path."""
 
@@ -1603,6 +2126,33 @@ def _native_graph_fused_norm_mix_num_warps() -> int:
     return value
 
 
+def _native_graph_blackwell_norm_mix_enabled(
+    residual, attention, previous, *, layer_index: int
+) -> bool:
+    if not env_flag("RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX", False):
+        return False
+    batch_size = int(residual.shape[0]) if residual.ndim > 1 else 1
+    selected = os.environ.get(
+        f"RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS_B{batch_size}",
+        os.environ.get("RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS", ""),
+    ).strip()
+    if selected:
+        try:
+            layers = {int(value.strip()) for value in selected.split(",") if value.strip()}
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX_LAYERS must be comma-separated integers"
+            ) from exc
+        if int(layer_index) not in layers:
+            return False
+    if blackwell_ffn_add_norm_mix is None or blackwell_norm_mix_should_use is None:
+        return False
+    try:
+        return bool(blackwell_norm_mix_should_use(residual, attention, previous))
+    except Exception:
+        return False
+
+
 def _native_graph_sm70_linear_enabled() -> bool:
     """Whether measured sm_70 small-row linear routes may be captured."""
 
@@ -1660,7 +2210,9 @@ def _native_graph_ada_linear_should_route(rows: int, role: str) -> bool:
         enabled_rows = {2}
     raw_roles = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES")
     if raw_roles is None:
-        raw_roles = "hidden" if int(rows) == 4 else "hidden,ffn_up,ffn_down"
+        raw_roles = str(getattr(policy, "ada_linear_roles", "auto"))
+        if raw_roles.strip().lower() == "auto":
+            raw_roles = "hidden" if int(rows) == 4 else "hidden,ffn_up,ffn_down"
     enabled_roles = {item.strip().lower() for item in raw_roles.replace(",", " ").split() if item.strip()}
     return int(rows) in enabled_rows and role.lower() in enabled_roles
 
@@ -1683,7 +2235,11 @@ def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: i
 def _native_graph_ada_wag_lora_enabled() -> bool:
     """Whether the exact-card W/A/G-only low-rank route may be captured."""
 
-    if not env_flag("RWKV7_NATIVE_GRAPH_ADA_WAG_LORA", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA",
+        bool(getattr(policy, "ada_wag_lora", False)),
+    ):
         return False
     if ada_wag_lora is None or ada_wagv_lora_available is None:
         return False
@@ -1852,10 +2408,23 @@ def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
             continue
         ada_sparse_ffn_pack_weight(down_weight, cache_tag=int(rows))
         if (
-            env_flag("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM", False)
+            env_flag(
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM",
+                bool(getattr(_kernel_policy(), "ada_sparse_ffn_fp32_accum", False)),
+            )
             and ada_sparse_ffn_prepare_fp32_scratch is not None
         ):
             ada_sparse_ffn_prepare_fp32_scratch(down_weight, int(rows))
+        elif (
+            os.environ.get(
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS",
+                str(getattr(_kernel_policy(), "ada_sparse_ffn_deterministic_splits", 0)),
+            ).strip()
+            == "4"
+            and int(rows) >= 8
+            and ada_sparse_ffn_prepare_deterministic_scratch is not None
+        ):
+            ada_sparse_ffn_prepare_deterministic_scratch(down_weight, int(rows))
         packed += 1
     return packed
 
@@ -2302,6 +2871,17 @@ def extract_graph(model):
     stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     embed_ref = model.model.embeddings.weight
     for i, layer in enumerate(layers):
+        if _native_graph_sparse_ffn_low_memory_pack_enabled():
+            if model.training or torch.is_grad_enabled():
+                raise RuntimeError(
+                    "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK is inference-only"
+                )
+            value_weight = layer.ffn.value.weight
+            if value_weight.device.type != "cuda" or value_weight.dtype != torch.float16:
+                raise RuntimeError(
+                    "low-memory sparse FFN packing requires CUDA fp16 value weights"
+                )
+            _native_graph_relayout_ffn_value_weight(layer.ffn.value)
         a = layer.attn
         vl = getattr(a, "v_lora", None)
         if vl is not None:
@@ -2367,12 +2947,21 @@ def _init(model, device, dtype):
     return state, xpa, xpf, v_first
 
 
-def _init_batched_from_packs(packs, batch_size: int, device, dtype):
+def _init_batched_from_packs(
+    packs,
+    batch_size: int,
+    device,
+    dtype,
+    *,
+    state_dtype=None,
+):
     n = len(packs)
     H = int(packs[0][1])
     N = int(packs[0][2])
     hid = int(packs[0][7].numel())
-    state = [torch.zeros(batch_size, H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
+    if state_dtype is None:
+        state_dtype = torch.float32
+    state = [torch.zeros(batch_size, H, N, N, device=device, dtype=state_dtype) for _ in range(n)]
     xpa = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
     xpf = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
     return state, xpa, xpf
@@ -2520,6 +3109,7 @@ def prefill(
     xpa=None,
     xpf=None,
     logits_to_keep: int | None = 1,
+    fp16_elapsed=None,
 ):
     """Layer-wise native RWKV-7 prefill over a full prompt.
 
@@ -2545,16 +3135,40 @@ def prefill(
     attention_hidden = H * N
     residual_hidden = int(packs[0][7].numel())
     dtype = base.embeddings.weight.dtype
+    use_fp16_recurrent_requested = bool(
+        _native_prefill_fp16_recurrent_requested()
+        and native_fp16_sequence is not None
+        and dtype == torch.float16
+        and N == 64
+    )
+    state_dtype = torch.float16 if use_fp16_recurrent_requested else torch.float32
     if state is None or xpa is None or xpf is None:
-        state, xpa, xpf = _init_batched_from_packs(packs, B, ids.device, dtype)
+        state, xpa, xpf = _init_batched_from_packs(
+            packs,
+            B,
+            ids.device,
+            dtype,
+            state_dtype=state_dtype,
+        )
     else:
-        state = [s.to(device=ids.device, dtype=torch.float32).contiguous() for s in state]
+        state = [s.to(device=ids.device, dtype=state_dtype).contiguous() for s in state]
         xpa = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpa]
         xpf = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpf]
+    if use_fp16_recurrent_requested:
+        if fp16_elapsed is None:
+            fp16_elapsed = torch.zeros(B, device=ids.device, dtype=torch.int32)
+        elif not (
+            fp16_elapsed.is_cuda
+            and fp16_elapsed.device == ids.device
+            and fp16_elapsed.dtype == torch.int32
+            and fp16_elapsed.is_contiguous()
+            and int(fp16_elapsed.numel()) == B
+        ):
+            raise ValueError("fp16_elapsed must be contiguous CUDA int32 [batch]")
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, residual_hidden)
     v_first_seq = torch.zeros(B, T, attention_hidden, device=ids.device, dtype=dtype)
-    use_clampw_scan_requested = _native_prefill_fused_clampw_scan_enabled(
+    use_clampw_scan_requested = not use_fp16_recurrent_requested and _native_prefill_fused_clampw_scan_enabled(
         B,
         T,
         attention_hidden,
@@ -2580,12 +3194,119 @@ def prefill(
     bnb8_ffn_scale_workspace = None
     self_chunk_used = False
     sequence_ffn_used = False
+    use_fp16_accum_ffn_key = _native_prefill_fp16_accum_ffn_key_enabled(
+        B,
+        T,
+        residual_hidden,
+        len(packs),
+        dtype,
+    )
+    fp16_accum_ffn_key_layers = (
+        _native_prefill_fp16_accum_ffn_key_layers(
+            B,
+            T,
+            residual_hidden,
+            len(packs),
+        )
+        if use_fp16_accum_ffn_key
+        else set()
+    )
+    fp16_accum_ffn_key_used = False
+    use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled(
+        B, T, residual_hidden, len(packs)
+    )
+    strict_shift_mix_fp16 = bool(
+        dtype == torch.float16
+        and env_flag("RWKV7_NATIVE_PREFILL_SHIFT_MIX_STRICT_FP16", False)
+    )
+    strict_attn_default = _native_prefill_policy_model_shape_selected(
+        "prefill_attn_shift_mix_strict_fp16_model_shapes",
+        B,
+        T,
+        residual_hidden,
+        len(packs),
+    )
+    strict_attn_shift_mix_fp16 = bool(
+        dtype == torch.float16
+        and env_flag(
+            "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16",
+            strict_shift_mix_fp16 or strict_attn_default,
+        )
+        and _native_prefill_model_shape_selected(
+            "RWKV7_NATIVE_PREFILL_ATTN_SHIFT_MIX_STRICT_FP16_MODEL_SHAPES",
+            "prefill_attn_shift_mix_strict_fp16_model_shapes",
+            B,
+            T,
+            residual_hidden,
+            len(packs),
+        )
+    )
+    strict_ffn_default = _native_prefill_policy_model_shape_selected(
+        "prefill_ffn_shift_mix_strict_fp16_model_shapes",
+        B,
+        T,
+        residual_hidden,
+        len(packs),
+    )
+    strict_ffn_shift_mix_fp16 = bool(
+        dtype == torch.float16
+        and env_flag(
+            "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16",
+            strict_shift_mix_fp16 or strict_ffn_default,
+        )
+        and _native_prefill_model_shape_selected(
+            "RWKV7_NATIVE_PREFILL_FFN_SHIFT_MIX_STRICT_FP16_MODEL_SHAPES",
+            "prefill_ffn_shift_mix_strict_fp16_model_shapes",
+            B,
+            T,
+            residual_hidden,
+            len(packs),
+        )
+    )
+    attn_shift_mix_block_size = _native_prefill_attn_shift_mix_block_size(
+        strict_attn_shift_mix_fp16,
+        B,
+        T,
+        residual_hidden,
+        len(packs),
+    )
+    attn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps(
+        "ATTN", B, T, residual_hidden, len(packs)
+    )
+    ffn_shift_mix_block_size = _native_prefill_ffn_shift_mix_block_size(
+        B, T, residual_hidden, len(packs)
+    )
+    ffn_shift_mix_num_warps = _native_prefill_shift_mix_num_warps(
+        "FFN", B, T, residual_hidden, len(packs)
+    )
+    prefill_shift_mix_layers = (
+        _native_prefill_shift_mix_layers(B, T, len(packs))
+        if use_prefill_shift_mix
+        else set()
+    )
+    use_prefill_state_prep = _native_prefill_fused_state_prep_enabled(
+        B, T, residual_hidden, len(packs)
+    )
+    use_prefill_output = _native_prefill_fused_output_enabled(
+        B, T, residual_hidden, len(packs)
+    )
+    prefill_state_prep_layers = (
+        _native_prefill_state_prep_layers(B, T, residual_hidden, len(packs))
+        if use_prefill_state_prep
+        else set()
+    )
+    capture_layer_outputs = env_flag(
+        "RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS",
+        False,
+    )
+    layer_outputs = [] if capture_layer_outputs else None
     stacked_rkv_weights = (
         _native_prefill_stacked_rkv_weights(model, packs)
         if _native_prefill_stacked_rkv_enabled(B * T, B, T, residual_hidden, len(packs))
         else None
     )
     stacked_rkv_used = False
+    wavg_lora_used = False
 
     for p in packs:
         (i, H, N, eps, has_pre,
@@ -2598,16 +3319,41 @@ def prefill(
         N = int(N)
         attention_hidden = H * N
         residual_hidden = int(an_w.numel())
+        use_fp16_recurrent = _native_prefill_fp16_recurrent_enabled(state[layer_idx])
+        use_layer_state_prep = bool(
+            use_prefill_state_prep
+            and (
+                prefill_state_prep_layers is None
+                or layer_idx in prefill_state_prep_layers
+            )
+        )
+        use_layer_shift_mix = bool(
+            use_prefill_shift_mix
+            and (
+                prefill_shift_mix_layers is None
+                or layer_idx in prefill_shift_mix_layers
+            )
+        )
+        use_layer_attn_shift_mix = bool(
+            use_layer_shift_mix
+            and env_flag("RWKV7_NATIVE_PREFILL_FUSED_ATTN_SHIFT_MIX", True)
+        )
+        use_layer_ffn_shift_mix = bool(
+            use_layer_shift_mix
+            and env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+        )
         residual = F.layer_norm(x, [residual_hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [residual_hidden], an_w, an_b, 1e-5)
         defer_state_sigmoid = bool(
-            _native_prefill_fused_state_prep_enabled()
+            not use_fp16_recurrent
+            and use_layer_state_prep
             and not _native_prefill_fused_state_scan_enabled(B)
             and not use_clampw_scan_requested
         )
         state_sigmoid_is_raw = False
-        use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled()
-        use_sequence_attn_mix = use_prefill_shift_mix and fused_attn_sequence_shift_mix is not None
+        use_sequence_attn_mix = (
+            use_layer_attn_shift_mix and fused_attn_sequence_shift_mix is not None
+        )
         v_gate = None
         prequantized_rkv = None
         use_bnb8_rkv_mix = bool(
@@ -2654,7 +3400,10 @@ def prefill(
                 x_v,
                 x_a,
                 x_g,
+                block_size=attn_shift_mix_block_size,
+                num_warps=attn_shift_mix_num_warps,
                 workspace=sequence_attn_mix_workspace,
+                strict_fp16_rounding=strict_attn_shift_mix_fp16,
             )
         else:
             prev_h = torch.cat([xpa[layer_idx].view(B, 1, residual_hidden), h[:, :-1, :]], dim=1)
@@ -2700,11 +3449,13 @@ def prefill(
             k = _native_prefill_linear(xk, Kw)
             v = _native_prefill_linear(xv, Vw)
         use_prefill_wavg_lora = bool(
-            layer_idx > 0
+            (not use_fp16_recurrent or T > 16)
+            and layer_idx > 0
             and _native_prefill_fused_wavg_lora_enabled(B * T)
             and _graph_linears_are_dense(w1, w2, a1, a2, g1, g2, v1, v2)
         )
         if use_prefill_wavg_lora:
+            wavg_lora_used = True
             block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
             w, a, g, v_gate = fused_wavg_lora(
                 xw.reshape(B * T, residual_hidden),
@@ -2734,7 +3485,12 @@ def prefill(
         else:
             w_mid = _native_prefill_linear(xw, w1)
             w_mid.tanh_()
-            w = _native_prefill_linear(w_mid, w2, w0)
+            if use_fp16_recurrent and T <= 16:
+                w = _native_prefill_linear(w_mid, w2)
+                fp16_w0 = w0.reshape(-1).contiguous()
+            else:
+                w = _native_prefill_linear(w_mid, w2, w0)
+                fp16_w0 = None
             a_mid = _native_prefill_linear(xa, a1)
             a = _native_prefill_linear(a_mid, a2, a0)
             if not defer_state_sigmoid:
@@ -2749,19 +3505,25 @@ def prefill(
                 v_gate = _native_prefill_linear(v_mid, v2, v0)
                 if not defer_state_sigmoid:
                     v_gate.sigmoid_()
-        use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
+        use_fused_scan_output = bool(
+            not use_fp16_recurrent and _native_prefill_fused_scan_output_enabled()
+        )
         use_self_chunk = _native_prefill_self_chunk_enabled(
             T,
             N,
             B,
             attention_hidden,
             len(packs),
-        ) and not use_fused_scan_output
+        ) and not use_fused_scan_output and not use_fp16_recurrent
         self_chunk_used = bool(self_chunk_used or use_self_chunk)
         self_chunk_w_is_log = False
         use_clampw_scan = use_clampw_scan_requested and not use_fused_scan_output
-        use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
-        if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
+        use_fused_state_scan = bool(
+            not use_fp16_recurrent
+            and _native_prefill_fused_state_scan_enabled(B)
+            and not use_fused_scan_output
+        )
+        if use_clampw_scan and use_layer_state_prep and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
         state_scan_done = False
         if use_fused_state_scan:
@@ -2802,7 +3564,35 @@ def prefill(
             k = k.reshape(B, T, attention_hidden)
             v = v.reshape(B, T, attention_hidden)
             state_scan_done = True
-        elif _native_prefill_fused_state_prep_enabled():
+        elif use_layer_state_prep and use_fp16_recurrent:
+            if fused_prefill_kv_kk_prep is None:
+                raise RuntimeError(
+                    "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP requires the fused K/V/KK prep kernel"
+                )
+            if layer_idx == 0:
+                k, v, kk = fused_prefill_kv_kk_prep(
+                    k,
+                    v,
+                    a,
+                    k_k,
+                    k_a,
+                    num_heads=H,
+                    head_dim=N,
+                )
+                v_first_seq = v
+            else:
+                k, v, kk = fused_prefill_kv_kk_prep(
+                    k,
+                    v,
+                    a,
+                    k_k,
+                    k_a,
+                    v_first=v_first_seq,
+                    v_gate=v_gate,
+                    num_heads=H,
+                    head_dim=N,
+                )
+        elif use_layer_state_prep and not use_fp16_recurrent:
             self_chunk_w_is_log = bool(use_self_chunk and not use_clampw_scan)
             if use_clampw_scan:
                 if layer_idx == 0:
@@ -2872,10 +3662,25 @@ def prefill(
                 v_first_seq = v
             else:
                 v = v + (v_first_seq - v) * v_gate
-            if not use_clampw_scan:
+            if not use_clampw_scan and not use_fp16_recurrent:
                 w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
-        if use_fused_scan_output:
+        if use_fp16_recurrent:
+            assert fp16_elapsed is not None
+            out = native_fp16_sequence(
+                r.view(B, T, H, N).contiguous(),
+                w.view(B, T, H, N).contiguous(),
+                k.view(B, T, H, N).contiguous(),
+                v.view(B, T, H, N).contiguous(),
+                (-kk).view(B, T, H, N).contiguous(),
+                (kk * a).view(B, T, H, N).contiguous(),
+                state[layer_idx],
+                fp16_elapsed,
+                w0=fp16_w0,
+            ).reshape(B, T, attention_hidden)
+            new_state = state[layer_idx]
+            state_scan_done = True
+        elif use_fused_scan_output:
             out, new_state = fused_recurrent_scan_output_prepare(
                 r.view(B, T, H, N),
                 w.view(B, T, H, N),
@@ -2923,7 +3728,7 @@ def prefill(
                 block_m=_native_prefill_fused_output_project_block_m(),
             ).view(B, T, residual_hidden)
             out_projected = True
-        elif _native_prefill_fused_output_enabled():
+        elif use_prefill_output:
             out = fused_attn_output_prepare(
                 out.reshape(B * T, attention_hidden),
                 r.reshape(B * T, H, N),
@@ -2989,7 +3794,7 @@ def prefill(
             x = residual + ffn_out
         else:
             ffn_up_prequantized = False
-            if use_prefill_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
+            if use_layer_ffn_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
                 (
                     qfk,
                     sfk,
@@ -3010,14 +3815,17 @@ def prefill(
                 bnb8_ffn_scale_workspace = sfk
                 fk = _bnb8_prequant_linear(qfk, sfk, fK, dtype=h2.dtype, output_shape=(B, T))
                 ffn_up_prequantized = True
-            elif use_prefill_shift_mix and fused_ffn_sequence_shift_mix is not None:
+            elif use_layer_ffn_shift_mix and fused_ffn_sequence_shift_mix is not None:
                 if sequence_ffn_mix_workspace is None:
                     sequence_ffn_mix_workspace = torch.empty_like(h2)
                 fk, next_xpf = fused_ffn_sequence_shift_mix(
                     h2,
                     xpf[layer_idx],
                     fx_k,
+                    block_size=ffn_shift_mix_block_size,
+                    num_warps=ffn_shift_mix_num_warps,
                     workspace=sequence_ffn_mix_workspace,
+                    strict_fp16_rounding=strict_ffn_shift_mix_fp16,
                 )
             else:
                 prev_h2 = torch.cat(
@@ -3033,7 +3841,24 @@ def prefill(
                 fused_up_relu2 = bool(
                     getattr(fK, "fused_relu2", False) and callable(fused)
                 )
-                fk = fused(fk) if fused_up_relu2 else _native_prefill_linear(fk, fK)
+                if fused_up_relu2:
+                    fk = fused(fk)
+                else:
+                    fp16_accum_ffn_key_layer = bool(
+                        use_fp16_accum_ffn_key and _graph_linear_is_dense(fK)
+                        and (
+                            fp16_accum_ffn_key_layers is None
+                            or layer_idx in fp16_accum_ffn_key_layers
+                        )
+                    )
+                    fp16_accum_ffn_key_used = bool(
+                        fp16_accum_ffn_key_used or fp16_accum_ffn_key_layer
+                    )
+                    fk = _native_prefill_linear(
+                        fk,
+                        fK,
+                        allow_fp16_accumulation=fp16_accum_ffn_key_layer,
+                    )
             fused_bnb8_ffn = (
                 None
                 if fused_up_relu2
@@ -3044,7 +3869,7 @@ def prefill(
             elif fused_up_relu2:
                 x = _native_prefill_project_residual(fk, fV, residual)
             elif (
-                use_prefill_shift_mix
+                use_layer_ffn_shift_mix
                 and fused_relu_square is not None
                 and fused_relu_square_available is not None
                 and fused_relu_square_available()
@@ -3055,6 +3880,8 @@ def prefill(
                 fk = torch.relu(fk) ** 2
                 x = _native_prefill_project_residual(fk, fV, residual)
         xpf[layer_idx] = next_xpf
+        if layer_outputs is not None:
+            layer_outputs.append(x[:, -1, :].detach().clone())
 
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
     # Recurrent/shift state is already complete. Final norm is consumed only
@@ -3075,8 +3902,20 @@ def prefill(
         bool(clampw_scan_used),
     )
     setattr(model, "_rwkv7_native_prefill_stacked_rkv_effective", bool(stacked_rkv_used))
+    setattr(model, "_rwkv7_native_prefill_wavg_lora_effective", bool(wavg_lora_used))
     setattr(model, "_rwkv7_native_prefill_self_chunk_effective", bool(self_chunk_used))
     setattr(model, "_rwkv7_native_prefill_sequence_ffn_effective", bool(sequence_ffn_used))
+    setattr(
+        model,
+        "_rwkv7_native_prefill_fp16_accum_ffn_key_effective",
+        bool(fp16_accum_ffn_key_used),
+    )
+    setattr(
+        model,
+        "_rwkv7_native_prefill_fp16_recurrent_effective",
+        bool(use_fp16_recurrent_requested),
+    )
+    setattr(model, "_rwkv7_native_prefill_layer_outputs", layer_outputs)
     return logits, state, xpa, xpf
 
 
@@ -3120,7 +3959,17 @@ def decode_speed(model, ids, packs, n=128):
     return n / dt
 
 
-def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
+def _block_ip(
+    x,
+    state,
+    xpa,
+    xpf,
+    v_first,
+    p,
+    sparse_ffn_out=None,
+    fp16_elapsed=None,
+    fp16_advance_elapsed=False,
+):
     """In-place (eager) block step for CUDA-graph capture: state/xpa/xpf/v_first
     are fixed buffers updated in place. Same math as block_step."""
     (i, H, N, eps, has_pre,
@@ -3287,8 +4136,13 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
-    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
-    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    use_fused_recurrent_output = (
+        use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
+    )
+    use_fused_recurrent_raw = use_fp16_recurrent or (
+        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(A)
         k = k * (1 + (a - 1) * k_a)
@@ -3298,7 +4152,26 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         if v_gate is None:
             v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
-    if use_fused_recurrent_raw:
+    new_state = None
+    if use_fp16_recurrent:
+        out = native_fp16_recurrent_output_prepare_raw(
+            r.view(1, H, N),
+            w.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            a.view(1, H, N),
+            state.view(1, H, N, N),
+            g.view(1, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            fp16_elapsed,
+            advance_elapsed=fp16_advance_elapsed,
+            eps=eps,
+        ).view(A)
+    elif use_fused_recurrent_raw:
         out, new_state = fused_recurrent_output_prepare_raw(
             r.view(1, H, N),
             w.view(1, H, N),
@@ -3380,17 +4253,25 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(H, N)).view(A)) * g
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
-    state.copy_(new_state)
+    if new_state is not None:
+        state.copy_(new_state)
     if use_fused_norm_mix:
-        residual, fk = fused_ffn_add_norm_mix_decode(
-            residual,
-            out,
-            xpf,
-            fn_w,
-            fn_b,
-            fx_k,
-            num_warps=_native_graph_fused_norm_mix_num_warps(),
-        )
+        if _native_graph_blackwell_norm_mix_enabled(
+            residual, out, xpf, layer_index=int(i)
+        ):
+            residual, fk = blackwell_ffn_add_norm_mix(
+                residual, out, xpf, fn_w, fn_b, fx_k, eps=1.0e-5
+            )
+        else:
+            residual, fk = fused_ffn_add_norm_mix_decode(
+                residual,
+                out,
+                xpf,
+                fn_w,
+                fn_b,
+                fx_k,
+                num_warps=_native_graph_fused_norm_mix_num_warps(),
+            )
     else:
         xpa.copy_(h)
         residual = residual + out
@@ -3401,7 +4282,17 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     return _native_graph_ffn_dispatch(fk, fK, fV, residual, sparse_out=sparse_ffn_out)
 
 
-def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
+def _block_ip_batched(
+    x,
+    state,
+    xpa,
+    xpf,
+    v_first,
+    p,
+    sparse_ffn_out=None,
+    fp16_elapsed=None,
+    fp16_advance_elapsed=False,
+):
     """In-place batched block step for CUDA-graph capture.
 
     Shapes:
@@ -3563,8 +4454,13 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
-    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
-    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
+    use_fused_recurrent_output = (
+        use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
+    )
+    use_fused_recurrent_raw = use_fp16_recurrent or (
+        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, A)
         k = k * (1 + (a - 1) * k_a)
@@ -3574,7 +4470,26 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         if v_gate is None:
             v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
-    if use_fused_recurrent_raw:
+    new_state = None
+    if use_fp16_recurrent:
+        out = native_fp16_recurrent_output_prepare_raw(
+            r.view(B, H, N),
+            w.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            a.view(B, H, N),
+            state,
+            g.view(B, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            fp16_elapsed,
+            advance_elapsed=fp16_advance_elapsed,
+            eps=eps,
+        ).reshape(B, A)
+    elif use_fused_recurrent_raw:
         out, new_state = fused_recurrent_output_prepare_raw(
             r.view(B, H, N),
             w.view(B, H, N),
@@ -3654,17 +4569,25 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(B, H, N)).view(B, A)) * g
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
-    state.copy_(new_state)
+    if new_state is not None:
+        state.copy_(new_state)
     if use_fused_norm_mix:
-        residual, fk = fused_ffn_add_norm_mix_decode(
-            residual,
-            out,
-            xpf,
-            fn_w,
-            fn_b,
-            fx_k,
-            num_warps=_native_graph_fused_norm_mix_num_warps(),
-        )
+        if _native_graph_blackwell_norm_mix_enabled(
+            residual, out, xpf, layer_index=int(i)
+        ):
+            residual, fk = blackwell_ffn_add_norm_mix(
+                residual, out, xpf, fn_w, fn_b, fx_k, eps=1.0e-5
+            )
+        else:
+            residual, fk = fused_ffn_add_norm_mix_decode(
+                residual,
+                out,
+                xpf,
+                fn_w,
+                fn_b,
+                fx_k,
+                num_warps=_native_graph_fused_norm_mix_num_warps(),
+            )
     else:
         xpa.copy_(h)
         residual = residual + out

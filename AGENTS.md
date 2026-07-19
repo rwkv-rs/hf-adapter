@@ -64,12 +64,14 @@ roadmap.
 - Follow train_temp-style fused boundaries: `tmix_mix6`, `kk_pre/state_prep`,
   `lnx_rkvres_xg`, `cmix`, and `clampw`.
 - RTX 5090 Native training evidence is closed for the exact L12/D768/FFN3072,
-  BF16, B16/T512 lane: 399/399 gradients and parameter deltas are exact;
-  three seeds x 1,000 steps, 500+500 resume and steady-memory gates pass under
-  `bench/5090_native_train_temp_b16_20260718/`. Do not rerun that matrix unless
-  training math, optimizer grouping, scheduler, checkpointing or CUDA kernels
-  change. Its median throughput is `0.9499x` official, so do not claim training
-  performance parity.
+  BF16, B16/T512 lane on real MiniPile tokens: 399/399 gradients and parameter
+  deltas are exact; three paired 1,000-step seeds, a continuous 5,000-step run,
+  a 2,500+2,500 resume, and steady-memory gates pass under
+  `bench/5090_native_train_temp_real_minipile_20260718/`. Median three-seed
+  throughput is `1.00049x` official and the 5,000-step ratio is `1.00255x`.
+  Do not rerun unless training math, optimizer grouping, scheduler,
+  checkpointing, data order, or CUDA kernels change, and do not generalize this
+  exact lane to other models, precisions, cards, or distributed training.
 - Use Albatross-style GPU-specific layout/autotune. Exact-card rows decide
   defaults; V100, 4090, A100/H100, and Blackwell must not blindly share tile
   choices.
@@ -172,11 +174,11 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
   cosine `0.9999934435`, max absolute difference `0.0625`, and top-1 `64/64`
   at B1 plus `512/512` at B8. The rejected half-atomic route remains negative
   evidence because batch divergence appeared during repeated tuning.
-- The official fp16-state route remains faster at `146.28/890.21 tok/s`.
-  Therefore `RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN`, its FP32 scratch route, the
-  SM120 W/A/G paths, manual RKV policy, and exact linear/norm settings remain
-  independently default-off. Do not generalize this row beyond RTX 5090,
-  g1h 7.2B, T1 cached decode, and B1/B8.
+- The precision-matched FP32-state row remains useful historical evidence. The
+  follow-up fp16-state/default-policy work closes the exact validated RTX 5090
+  profiles instead of promoting a generic Blackwell switch: decode and prefill
+  dispatch now come from `kernel_policy.py`, explicit environment overrides
+  still win, and unlisted Blackwell cards/shapes remain conservative.
 - The unchanged official `demo-training-prepare.sh` and
   `demo-training-run.sh` commands pass on the 5090 for the pinned B16/T512/
   BF16/ZeRO-2 recipe when the run is bounded to one step externally. The
@@ -184,8 +186,9 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
   and a changed model hash. Do not compare the two runtime numbers because
   their harness boundaries differ.
 - Canonical performance evidence is
-  `bench/5090_native_decode_fused_20260718/README.md`; browser and official
-  shell evidence remains in
+  `bench/5090_native_decode_fused_20260718/README.md` plus
+  `bench/5090_native_official_fp16_production_20260718/README.md`; browser and
+  official shell evidence remains in
   `bench/5090_native_hf_gradio_train_temp_20260718/README.md`. Ordinary users
   start from `docs/GRADIO_NATIVE_HF.md`; AI execution remains centralized in
   `docs/AI_ASSISTED_SETUP.md`.
@@ -1099,15 +1102,19 @@ Run this checklist for every new GPU before marking it as supported:
     environment overrides still win, and these tiles must not be projected to
     Ada, Volta, Ampere, Hopper, or another Blackwell card without exact-card
     rows.
-  - RTX 5090 Native/no-FLA cached decode has one exact precision-matched lane
+  - RTX 5090 Native/no-FLA cached decode first closed the precision-matched lane
     under `bench/5090_native_decode_fused_20260718/`: official g1h 7.2B, FP16
     weights, FP32 recurrent state, T1, B1/B8. Three 512-token process repeats
     reach `1.0041x/1.0045x` official v3a `fp32io16`, while minimum logits cosine
-    is `0.9999934435` and top-1 is exact. The faster official fp16-state lane
-    remains open. Every candidate run must use
+    is `0.9999934435` and top-1 is exact. The follow-up fp16-state work and
+    same-precision prefill matrix are under
+    `bench/5090_native_official_fp16_production_20260718/`; exact 2.9B and
+    13.3B B1/B8 prompt128/512/2048 cells pass tensor/state/greedy and
+    same-card throughput gates. Only the listed RTX 5090 model/shape profiles
+    are defaults. Every candidate run must use
     `bench/bench_native_model_decode.py --require-active-extensions`; `ninja`
     is required through the `cuda` extra. All candidate fusion flags stay
-    default-off outside this exact benchmark command.
+    conservative outside exact policy rows.
   - External-quant native prefill is opt-in through
     `RWKV7_FAST_PREFILL_QUANT=1`; BNB4 external-quant graph capture additionally
     requires `RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1` and is validated for

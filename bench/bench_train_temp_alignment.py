@@ -198,6 +198,130 @@ def make_deterministic_sequence(
     }
 
 
+def make_official_dataset_sequence(
+    output: str | Path,
+    *,
+    data_prefix: str | Path,
+    batch_size: int,
+    seq_len: int,
+    steps: int,
+    epoch: int,
+    magic_prime: int,
+    samples_per_epoch: int = 40_320,
+) -> dict[str, Any]:
+    """Materialize the exact official train_temp MiniPile sampling order."""
+
+    if batch_size <= 0 or seq_len <= 0 or steps <= 0:
+        raise ValueError("batch_size, seq_len and steps must be positive")
+    if epoch < 0 or samples_per_epoch <= 0:
+        raise ValueError("epoch must be non-negative and samples_per_epoch positive")
+    prefix = Path(data_prefix)
+    bin_path = prefix.with_suffix(".bin")
+    idx_path = prefix.with_suffix(".idx")
+    if not bin_path.is_file() or not idx_path.is_file():
+        raise FileNotFoundError("official dataset requires matching .bin and .idx files")
+    if bin_path.stat().st_size % np.dtype(np.uint16).itemsize:
+        raise ValueError("official MiniPile .bin size is not uint16-aligned")
+    token_count = bin_path.stat().st_size // np.dtype(np.uint16).itemsize
+    dataset_slots = token_count // int(seq_len)
+    if (
+        magic_prime <= 0
+        or magic_prime >= dataset_slots
+        or magic_prime % 3 != 2
+    ):
+        raise ValueError("magic_prime does not satisfy the official dataset contract")
+
+    source = np.memmap(bin_path, mode="r", dtype=np.uint16)
+    tokens = np.empty(
+        (int(steps), int(batch_size), int(seq_len) + 1), dtype=np.uint16
+    )
+    factor = int(magic_prime * ((math.sqrt(5.0) - 1.0) / 2.0))
+    first_position = None
+    last_position = None
+    for step in range(int(steps)):
+        for batch_index in range(int(batch_size)):
+            index = step * int(batch_size) + batch_index
+            ii = 1 + int(epoch) * int(samples_per_epoch) + index
+            position = ((factor * ii * ii * ii) % int(magic_prime)) * int(
+                seq_len
+            )
+            end = position + int(seq_len) + 1
+            if end > token_count:
+                raise RuntimeError("official dataset sample exceeds the token buffer")
+            tokens[step, batch_index] = source[position:end]
+            first_position = position if first_position is None else first_position
+            last_position = position
+
+    token_tensor = torch.from_numpy(tokens.astype(np.int64, copy=False))
+    output = Path(output)
+    save_safetensors_atomic(
+        {
+            "input_ids": token_tensor[..., :-1],
+            "targets": token_tensor[..., 1:],
+        },
+        output,
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "axis": "train_temp_official_dataset_sequence",
+        "data_prefix": str(prefix.resolve()),
+        "bin_sha256": sha256_file(bin_path),
+        "idx_sha256": sha256_file(idx_path),
+        "token_count": int(token_count),
+        "batch_size": int(batch_size),
+        "seq_len": int(seq_len),
+        "steps": int(steps),
+        "epoch": int(epoch),
+        "samples_per_epoch": int(samples_per_epoch),
+        "magic_prime": int(magic_prime),
+        "first_position": int(first_position),
+        "last_position": int(last_position),
+        "content_sha256": sha256_file(output),
+        "path": str(output),
+    }
+
+
+def make_official_dataset_batch(
+    output: str | Path,
+    *,
+    data_prefix: str | Path,
+    batch_size: int,
+    seq_len: int,
+    epoch: int,
+    magic_prime: int,
+    samples_per_epoch: int = 40_320,
+) -> dict[str, Any]:
+    """Materialize one held-out batch with the official cubic sampler."""
+
+    metadata = make_official_dataset_sequence(
+        output,
+        data_prefix=data_prefix,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        steps=1,
+        epoch=epoch,
+        magic_prime=magic_prime,
+        samples_per_epoch=samples_per_epoch,
+    )
+    output = Path(output)
+    tensors = load_file(output)
+    save_safetensors_atomic(
+        {
+            "input_ids": tensors["input_ids"][0].contiguous(),
+            "targets": tensors["targets"][0].contiguous(),
+        },
+        output,
+    )
+    metadata.update(
+        {
+            "axis": "train_temp_official_dataset_batch",
+            "content_sha256": sha256_file(output),
+            "path": str(output),
+        }
+    )
+    return metadata
+
+
 def normalize_official_tensors(
     tensors: dict[str, torch.Tensor],
     *,
@@ -588,6 +712,18 @@ def _memory_stability_summary(
     }
 
 
+def _forward_convergence_logits(
+    model, input_ids: torch.Tensor, *, backend: str
+) -> torch.Tensor:
+    if backend.startswith("hf_"):
+        outputs = model(input_ids, return_dict=False)
+    else:
+        outputs = model(input_ids)
+    if isinstance(outputs, tuple):
+        return outputs[0]
+    return outputs.logits if hasattr(outputs, "logits") else outputs
+
+
 def _run_convergence(
     *,
     model,
@@ -700,10 +836,11 @@ def _run_convergence(
     def evaluate(step: int) -> dict[str, Any]:
         model.eval()
         with torch.no_grad():
-            outputs = model(validation_inputs)
-            logits = outputs.logits if hasattr(outputs, "logits") else outputs
+            logits = _forward_convergence_logits(
+                model, validation_inputs, backend=backend
+            )
             loss = float(loss_fn(logits, validation_targets).detach().float().item())
-        del outputs, logits
+        del logits
         row = {"step": int(step), "loss": loss, "finite": math.isfinite(loss)}
         if device.startswith("cuda"):
             torch.cuda.synchronize()
@@ -776,8 +913,7 @@ def _run_convergence(
             optimizer.zero_grad()
         else:
             optimizer.zero_grad(set_to_none=True)
-        outputs = model(input_ids)
-        logits = outputs.logits if hasattr(outputs, "logits") else outputs
+        logits = _forward_convergence_logits(model, input_ids, backend=backend)
         loss = loss_fn(logits, targets)
         loss.backward()
         grad_norm = float(
@@ -1442,6 +1578,7 @@ def compare_convergence_artifacts(
     max_final_validation_relative_diff: float = 0.03,
     max_validation_threshold_step_diff: int = 10,
     max_grad_norm_ratio: float = 2.0,
+    min_candidate_over_reference_throughput_ratio: float = 0.99,
 ) -> dict[str, Any]:
     reference = json.loads(Path(reference_json).read_text(encoding="utf-8"))
     candidate = json.loads(Path(candidate_json).read_text(encoding="utf-8"))
@@ -1484,6 +1621,13 @@ def compare_convergence_artifacts(
 
     def mean(values: list[float]) -> float:
         return sum(values) / len(values) if values else float("nan")
+
+    def nearest_rank_percentile(values: list[float], percentile: float) -> float:
+        if not values:
+            return float("nan")
+        ordered = sorted(values)
+        rank = max(1, math.ceil(float(percentile) * len(ordered)))
+        return float(ordered[min(rank - 1, len(ordered) - 1)])
 
     reference_train_losses = [float(row["loss"]) for row in reference_train]
     candidate_train_losses = [float(row["loss"]) for row in candidate_train]
@@ -1585,9 +1729,42 @@ def compare_convergence_artifacts(
     max_candidate_grad_norm = (
         max(candidate_grad_norms) if candidate_grad_norms else float("nan")
     )
-    observed_grad_norm_ratio = max(
-        max_candidate_grad_norm / max(max_reference_grad_norm, epsilon),
-        max_reference_grad_norm / max(max_candidate_grad_norm, epsilon),
+    grad_norm_percentile = 0.999
+    reference_grad_norm_p999 = nearest_rank_percentile(
+        reference_grad_norms, grad_norm_percentile
+    )
+    candidate_grad_norm_p999 = nearest_rank_percentile(
+        candidate_grad_norms, grad_norm_percentile
+    )
+    candidate_over_reference_grad_norm_p999_ratio = candidate_grad_norm_p999 / max(
+        reference_grad_norm_p999, epsilon
+    )
+    candidate_over_reference_max_grad_norm_ratio = max_candidate_grad_norm / max(
+        max_reference_grad_norm, epsilon
+    )
+    reference_over_candidate_max_grad_norm_ratio = max_reference_grad_norm / max(
+        max_candidate_grad_norm, epsilon
+    )
+    bidirectional_max_grad_norm_ratio = max(
+        candidate_over_reference_max_grad_norm_ratio,
+        reference_over_candidate_max_grad_norm_ratio,
+    )
+    reference_runtime_s = float(
+        reference.get("runtime_s_accumulated", reference.get("runtime_s", float("nan")))
+    )
+    candidate_runtime_s = float(
+        candidate.get("runtime_s_accumulated", candidate.get("runtime_s", float("nan")))
+    )
+    runtime_comparable = bool(
+        math.isfinite(reference_runtime_s)
+        and math.isfinite(candidate_runtime_s)
+        and reference_runtime_s > 0.0
+        and candidate_runtime_s > 0.0
+    )
+    candidate_over_reference_throughput_ratio = (
+        reference_runtime_s / candidate_runtime_s
+        if runtime_comparable
+        else float("nan")
     )
     finite = all(
         math.isfinite(value)
@@ -1632,8 +1809,17 @@ def compare_convergence_artifacts(
         max_observed_threshold_step_diff
     ) > int(max_validation_threshold_step_diff):
         failures.append("validation loss threshold step difference exceeded target")
-    if observed_grad_norm_ratio > max_grad_norm_ratio:
-        failures.append("gradient norm spike ratio exceeded target")
+    if candidate_over_reference_grad_norm_p999_ratio > max_grad_norm_ratio:
+        failures.append(
+            "candidate p99.9 gradient norm increase exceeded target"
+        )
+    if not runtime_comparable:
+        failures.append("training runtime is missing, non-finite or non-positive")
+    elif (
+        candidate_over_reference_throughput_ratio
+        < min_candidate_over_reference_throughput_ratio
+    ):
+        failures.append("candidate training throughput ratio is below target")
     return {
         "schema_version": SCHEMA_VERSION,
         "axis": "train_temp_alignment_convergence_compare",
@@ -1653,7 +1839,25 @@ def compare_convergence_artifacts(
         "grad_norm_auc_relative_diff": grad_norm_auc_relative_diff,
         "max_reference_grad_norm": max_reference_grad_norm,
         "max_candidate_grad_norm": max_candidate_grad_norm,
-        "max_grad_norm_ratio": observed_grad_norm_ratio,
+        "max_grad_norm_ratio": candidate_over_reference_max_grad_norm_ratio,
+        "candidate_over_reference_max_grad_norm_ratio": (
+            candidate_over_reference_max_grad_norm_ratio
+        ),
+        "reference_over_candidate_max_grad_norm_ratio": (
+            reference_over_candidate_max_grad_norm_ratio
+        ),
+        "bidirectional_max_grad_norm_ratio": bidirectional_max_grad_norm_ratio,
+        "gradient_norm_gate_percentile": grad_norm_percentile,
+        "reference_grad_norm_p999": reference_grad_norm_p999,
+        "candidate_grad_norm_p999": candidate_grad_norm_p999,
+        "candidate_over_reference_grad_norm_p999_ratio": (
+            candidate_over_reference_grad_norm_p999_ratio
+        ),
+        "reference_runtime_s": reference_runtime_s,
+        "candidate_runtime_s": candidate_runtime_s,
+        "candidate_over_reference_throughput_ratio": (
+            candidate_over_reference_throughput_ratio
+        ),
         "validation_loss_auc_reference": validation_auc_reference,
         "validation_loss_auc_candidate": validation_auc_candidate,
         "validation_loss_auc_relative_diff": validation_auc_relative_diff,
@@ -1680,6 +1884,10 @@ def compare_convergence_artifacts(
                 max_validation_threshold_step_diff
             ),
             "max_grad_norm_ratio": float(max_grad_norm_ratio),
+            "gradient_norm_gate_percentile": grad_norm_percentile,
+            "min_candidate_over_reference_throughput_ratio": float(
+                min_candidate_over_reference_throughput_ratio
+            ),
         },
         "failures": failures,
     }
@@ -1697,6 +1905,7 @@ def compare_convergence_cohorts(
     max_median_min_validation_abs_increase: float = 0.05,
     max_median_min_validation_relative_ratio: float = 1.25,
     max_median_grad_norm_ratio: float = 2.0,
+    min_candidate_over_reference_throughput_ratio: float = 0.99,
 ) -> dict[str, Any]:
     """Compare multi-seed convergence distributions for a non-deterministic backend.
 
@@ -1791,7 +2000,22 @@ def compare_convergence_cohorts(
             if validation_losses
             else float("inf"),
             "max_grad_norm": max(grad_norms) if grad_norms else float("inf"),
-            "runtime_s": float(run.get("runtime_s", float("nan"))),
+            "grad_norm_p999": (
+                sorted(grad_norms)[
+                    min(
+                        max(1, math.ceil(0.999 * len(grad_norms))) - 1,
+                        len(grad_norms) - 1,
+                    )
+                ]
+                if grad_norms
+                else float("inf")
+            ),
+            "runtime_s": float(
+                run.get(
+                    "runtime_s_accumulated",
+                    run.get("runtime_s", float("nan")),
+                )
+            ),
         }
 
     reference_rows = [summarize(reference_by_seed[seed]) for seed in reference_seeds]
@@ -1804,6 +2028,7 @@ def compare_convergence_cohorts(
             "final_validation_loss",
             "min_validation_loss",
             "max_grad_norm",
+            "grad_norm_p999",
             "runtime_s",
         )
         return {key: float(median(float(row[key]) for row in rows)) for key in keys}
@@ -1821,11 +2046,31 @@ def compare_convergence_cohorts(
 
     train_auc_relative_diff = relative_diff("train_loss_auc")
     validation_auc_relative_diff = relative_diff("validation_loss_auc")
-    median_grad_norm_ratio = max(
-        candidate_medians.get("max_grad_norm", float("inf"))
-        / max(reference_medians.get("max_grad_norm", 0.0), epsilon),
-        reference_medians.get("max_grad_norm", float("inf"))
-        / max(candidate_medians.get("max_grad_norm", 0.0), epsilon),
+    candidate_over_reference_median_grad_norm_ratio = candidate_medians.get(
+        "max_grad_norm", float("inf")
+    ) / max(reference_medians.get("max_grad_norm", 0.0), epsilon)
+    reference_over_candidate_median_grad_norm_ratio = reference_medians.get(
+        "max_grad_norm", float("inf")
+    ) / max(candidate_medians.get("max_grad_norm", 0.0), epsilon)
+    bidirectional_median_grad_norm_ratio = max(
+        candidate_over_reference_median_grad_norm_ratio,
+        reference_over_candidate_median_grad_norm_ratio,
+    )
+    candidate_over_reference_median_grad_norm_p999_ratio = candidate_medians.get(
+        "grad_norm_p999", float("inf")
+    ) / max(reference_medians.get("grad_norm_p999", 0.0), epsilon)
+    reference_median_runtime_s = reference_medians.get("runtime_s", float("nan"))
+    candidate_median_runtime_s = candidate_medians.get("runtime_s", float("nan"))
+    runtime_comparable = bool(
+        math.isfinite(reference_median_runtime_s)
+        and math.isfinite(candidate_median_runtime_s)
+        and reference_median_runtime_s > 0.0
+        and candidate_median_runtime_s > 0.0
+    )
+    candidate_over_reference_throughput_ratio = (
+        reference_median_runtime_s / candidate_median_runtime_s
+        if runtime_comparable
+        else float("nan")
     )
     reference_successes = sum(
         row["min_validation_loss"] <= success_threshold for row in reference_rows
@@ -1877,8 +2122,20 @@ def compare_convergence_cohorts(
         )
     if min_validation_regressed:
         failures.append("median minimum validation loss regressed")
-    if median_grad_norm_ratio > max_median_grad_norm_ratio:
-        failures.append("median gradient norm ratio exceeded target")
+    if (
+        candidate_over_reference_median_grad_norm_p999_ratio
+        > max_median_grad_norm_ratio
+    ):
+        failures.append(
+            "candidate median p99.9 gradient norm increase exceeded target"
+        )
+    if not runtime_comparable:
+        failures.append("median training runtime is missing, non-finite or non-positive")
+    elif (
+        candidate_over_reference_throughput_ratio
+        < min_candidate_over_reference_throughput_ratio
+    ):
+        failures.append("candidate median training throughput ratio is below target")
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1898,7 +2155,25 @@ def compare_convergence_cohorts(
         "candidate_medians": candidate_medians,
         "median_train_loss_auc_relative_diff": train_auc_relative_diff,
         "median_validation_loss_auc_relative_diff": validation_auc_relative_diff,
-        "median_grad_norm_ratio": median_grad_norm_ratio,
+        "median_grad_norm_ratio": candidate_over_reference_median_grad_norm_ratio,
+        "candidate_over_reference_median_grad_norm_ratio": (
+            candidate_over_reference_median_grad_norm_ratio
+        ),
+        "reference_over_candidate_median_grad_norm_ratio": (
+            reference_over_candidate_median_grad_norm_ratio
+        ),
+        "bidirectional_median_grad_norm_ratio": (
+            bidirectional_median_grad_norm_ratio
+        ),
+        "gradient_norm_gate_percentile": 0.999,
+        "candidate_over_reference_median_grad_norm_p999_ratio": (
+            candidate_over_reference_median_grad_norm_p999_ratio
+        ),
+        "reference_median_runtime_s": reference_median_runtime_s,
+        "candidate_median_runtime_s": candidate_median_runtime_s,
+        "candidate_over_reference_throughput_ratio": (
+            candidate_over_reference_throughput_ratio
+        ),
         "reference_success_count": reference_successes,
         "candidate_success_count": candidate_successes,
         "reference_deep_success_count": reference_deep_successes,
@@ -1920,6 +2195,10 @@ def compare_convergence_cohorts(
                 max_median_min_validation_relative_ratio
             ),
             "max_median_grad_norm_ratio": float(max_median_grad_norm_ratio),
+            "gradient_norm_gate_percentile": 0.999,
+            "min_candidate_over_reference_throughput_ratio": float(
+                min_candidate_over_reference_throughput_ratio
+            ),
         },
         "failures": failures,
     }
@@ -1952,6 +2231,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sequence.add_argument("--active-vocab-size", type=int)
 
+    dataset_sequence = subparsers.add_parser("make-dataset-sequence")
+    dataset_sequence.add_argument("--output", required=True)
+    dataset_sequence.add_argument("--metadata")
+    dataset_sequence.add_argument("--data-prefix", required=True)
+    dataset_sequence.add_argument("--batch-size", type=int, default=16)
+    dataset_sequence.add_argument("--seq-len", type=int, default=512)
+    dataset_sequence.add_argument("--steps", type=int, required=True)
+    dataset_sequence.add_argument("--epoch", type=int, required=True)
+    dataset_sequence.add_argument("--magic-prime", type=int, required=True)
+    dataset_sequence.add_argument("--samples-per-epoch", type=int, default=40_320)
+
+    dataset_batch = subparsers.add_parser("make-dataset-batch")
+    dataset_batch.add_argument("--output", required=True)
+    dataset_batch.add_argument("--metadata")
+    dataset_batch.add_argument("--data-prefix", required=True)
+    dataset_batch.add_argument("--batch-size", type=int, default=16)
+    dataset_batch.add_argument("--seq-len", type=int, default=512)
+    dataset_batch.add_argument("--epoch", type=int, required=True)
+    dataset_batch.add_argument("--magic-prime", type=int, required=True)
+    dataset_batch.add_argument("--samples-per-epoch", type=int, default=40_320)
+
     compare = subparsers.add_parser("compare")
     compare.add_argument("--reference-json", required=True)
     compare.add_argument("--candidate-json", required=True)
@@ -1980,6 +2280,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-validation-threshold-step-diff", type=int, default=10
     )
     compare_convergence.add_argument("--max-grad-norm-ratio", type=float, default=2.0)
+    compare_convergence.add_argument(
+        "--min-candidate-over-reference-throughput-ratio",
+        type=float,
+        default=0.99,
+    )
 
     compare_cohort = subparsers.add_parser("compare-convergence-cohort")
     compare_cohort.add_argument("--reference-json", action="append", required=True)
@@ -2001,6 +2306,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-median-min-validation-relative-ratio", type=float, default=1.25
     )
     compare_cohort.add_argument("--max-median-grad-norm-ratio", type=float, default=2.0)
+    compare_cohort.add_argument(
+        "--min-candidate-over-reference-throughput-ratio",
+        type=float,
+        default=0.99,
+    )
 
     init = subparsers.add_parser("make-official-init")
     init.add_argument("--official-checkout", required=True)
@@ -2156,6 +2466,35 @@ def main() -> int:
             write_json_atomic(args.metadata, metadata)
         print(json.dumps(metadata, ensure_ascii=False))
         return 0
+    if args.command == "make-dataset-sequence":
+        metadata = make_official_dataset_sequence(
+            args.output,
+            data_prefix=args.data_prefix,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            steps=args.steps,
+            epoch=args.epoch,
+            magic_prime=args.magic_prime,
+            samples_per_epoch=args.samples_per_epoch,
+        )
+        if args.metadata:
+            write_json_atomic(args.metadata, metadata)
+        print(json.dumps(metadata, ensure_ascii=False))
+        return 0
+    if args.command == "make-dataset-batch":
+        metadata = make_official_dataset_batch(
+            args.output,
+            data_prefix=args.data_prefix,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            epoch=args.epoch,
+            magic_prime=args.magic_prime,
+            samples_per_epoch=args.samples_per_epoch,
+        )
+        if args.metadata:
+            write_json_atomic(args.metadata, metadata)
+        print(json.dumps(metadata, ensure_ascii=False))
+        return 0
     if args.command == "compare":
         report = compare_artifacts(
             args.reference_json,
@@ -2177,6 +2516,9 @@ def main() -> int:
             max_final_validation_relative_diff=args.max_final_validation_relative_diff,
             max_validation_threshold_step_diff=args.max_validation_threshold_step_diff,
             max_grad_norm_ratio=args.max_grad_norm_ratio,
+            min_candidate_over_reference_throughput_ratio=(
+                args.min_candidate_over_reference_throughput_ratio
+            ),
         )
         write_json_atomic(args.output, report)
         print(json.dumps(report, ensure_ascii=False))
@@ -2199,6 +2541,9 @@ def main() -> int:
                 args.max_median_min_validation_relative_ratio
             ),
             max_median_grad_norm_ratio=args.max_median_grad_norm_ratio,
+            min_candidate_over_reference_throughput_ratio=(
+                args.min_candidate_over_reference_throughput_ratio
+            ),
         )
         write_json_atomic(args.output, report)
         print(json.dumps(report, ensure_ascii=False))

@@ -1,0 +1,43 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[rwkv7_fast_v3a] loading CUDA extensions v3a_ops + fast_ops + wkv=fp16
+[rwkv7_fast_v3a] CUDA extensions loaded in 0.058s
+[rwkv7_fast_v3a] loading weights from /home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-13.3b-20260710-ctx10240.pth
+[rwkv7_fast_v3a] weights mmap loaded in 0.125s tensors=2019
+[rwkv7_fast_v3a] detected model C=4096 H=64 N=64 V=65536
+[rwkv7_fast_v3a] cmix no-fc path: rows<=19 row20_t<=5
+[rwkv7_fast_v3a] moving and preprocessing weights to CUDA emb=cpu
+[rwkv7_fast_v3a] model ready in 26.690s L=61 C=4096 H=64 N=64 V=65536
+[rwkv7_fast_v3a] gpu_mem used=25.51GiB allocated=24.26GiB reserved=24.90GiB total=31.36GiB
+{
+  "engine": "official_v3a_sequence",
+  "batch_size": 1,
+  "prompt_tokens": 512,
+  "timing": {
+    "times_ms": [
+      94.74342346191406,
+      94.72246551513672,
+      94.75484466552734,
+      94.67756652832031,
+      94.76399993896484,
+      94.714111328125,
+      94.7359390258789,
+      94.70358276367188,
+      94.7437744140625,
+      94.720703125,
+      94.75398254394531,
+      94.70476531982422,
+      94.74143981933594,
+      94.73961639404297,
+      94.78736114501953,
+      94.69731140136719,
+      94.79261016845703,
+      94.74566650390625,
+      94.82857513427734,
+      94.7245101928711,
+      94.79161834716797
+    ],
+    "median_ms": 94.74143981933594,
+    "aggregate_tokps": 5404.182171775535
+  },
+  "peak_vram_mb": 24970.9658203125
+}

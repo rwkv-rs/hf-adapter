@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import builtins
+import inspect
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -38,6 +40,101 @@ def test_train_temp_backend_reports_unavailable_without_cuda(monkeypatch) -> Non
     assert train_temp_cuda.train_temp_cuda_available() is False
     with pytest.raises(RuntimeError, match="requires Linux with an available CUDA GPU"):
         train_temp_cuda.load_train_temp_cuda_extension()
+
+
+def test_train_temp_checkpoint_prefers_official_deepspeed_backend(monkeypatch) -> None:
+    calls = []
+
+    def checkpoint(function, *args):
+        calls.append(args)
+        return function(*args)
+
+    fake = SimpleNamespace(checkpointing=SimpleNamespace(checkpoint=checkpoint))
+    monkeypatch.delenv("RWKV7_TRAIN_TEMP_CHECKPOINT_BACKEND", raising=False)
+    monkeypatch.setattr(
+        train_temp_cuda.importlib.util, "find_spec", lambda name: object()
+    )
+    monkeypatch.setitem(sys.modules, "deepspeed", fake)
+
+    result = train_temp_cuda._train_temp_checkpoint(lambda value: value + 1, 4)
+
+    assert result == 5
+    assert calls == [(4,)]
+
+
+def test_train_temp_checkpoint_has_explicit_torch_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_TRAIN_TEMP_CHECKPOINT_BACKEND", "torch")
+
+    value = torch.tensor(2.0, requires_grad=True)
+    result = train_temp_cuda._train_temp_checkpoint(lambda item: item.square(), value)
+    result.backward()
+
+    assert result.item() == 4.0
+    assert value.grad.item() == 4.0
+
+
+def test_native_train_temp_backend_directly_dispatches_and_restores_forwards(
+    monkeypatch,
+) -> None:
+    assert (
+        inspect.signature(train_temp_cuda.native_train_temp_causal_lm_forward)
+        .parameters["input_ids"]
+        .kind
+        is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    )
+
+    class Attention(torch.nn.Module):
+        pass
+
+    class FFN(torch.nn.Module):
+        pass
+
+    class Layer(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attn = Attention()
+            self.ffn = FFN()
+
+    Attention.__name__ = "NativeRWKV7Attention"
+    FFN.__name__ = "NativeRWKV7FFN"
+    Layer.__name__ = "NativeRWKV7Layer"
+
+    class Model(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layer = Layer()
+            self.config = SimpleNamespace(model_type="rwkv7_native", use_cache=True)
+
+    model = Model()
+    original_model_forward = model.forward
+    original_layer_forward = model.layer.forward
+    original_attn_forward = model.layer.attn.forward
+    original_ffn_forward = model.layer.ffn.forward
+    monkeypatch.setattr(train_temp_cuda, "load_train_temp_cuda_extension", lambda: object())
+    monkeypatch.setattr(
+        train_temp_cuda.importlib.util, "find_spec", lambda name: None
+    )
+
+    metadata = train_temp_cuda.enable_train_temp_cuda_backend(model)
+
+    assert model.forward.__func__ is train_temp_cuda.native_train_temp_causal_lm_forward
+    assert model.layer.forward.__func__ is train_temp_cuda.native_train_temp_layer_forward
+    assert (
+        model.layer.attn.forward.__func__
+        is train_temp_cuda.native_train_temp_attention_forward
+    )
+    assert model.layer.ffn.forward.__func__ is train_temp_cuda.native_train_temp_ffn_forward
+    assert metadata["layer_modules"] == 1
+    assert metadata["checkpoint_backend"] == "torch_non_reentrant"
+    assert metadata["forward_dispatch"] == "direct"
+
+    train_temp_cuda.disable_train_temp_cuda_backend(model)
+
+    assert model.forward == original_model_forward
+    assert model.layer.forward == original_layer_forward
+    assert model.layer.attn.forward == original_attn_forward
+    assert model.layer.ffn.forward == original_ffn_forward
+    assert model.config.use_cache is True
 
 
 def test_cuda_include_paths_support_pip_split_toolkit(tmp_path, monkeypatch) -> None:
