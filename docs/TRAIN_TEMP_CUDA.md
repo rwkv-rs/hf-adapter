@@ -45,6 +45,69 @@ export PATH="$CUDA_HOME/bin:$PATH"
 
 ## 3. 可直接复制的 API
 
+### 可配置 Native 训练命令
+
+普通用户可以直接使用 `scripts/train_native.py`。下面的命令读取 MiniPile 风格的
+`DATA.bin` / `DATA.idx`，按指定 batch、ctx 和步数生成可复现的 packed sequence，
+然后运行 Native/no-FLA `train_temp_cuda`：
+
+```bash
+python scripts/train_native.py \
+  --model "$MODEL" \
+  --dataset /path/to/minipile \
+  --output-dir outputs/my-run \
+  --batch-size 4 \
+  --seq-length 1024 \
+  --steps 10000 \
+  --learning-rate 3e-4 \
+  --learning-rate-final 3e-5 \
+  --warmup-steps 100 \
+  --checkpoint-every 500
+```
+
+`--seq-length` 可以选择任意 16 的倍数，实际上限由模型、显存和训练数据决定。命令会
+生成 `resolved_config.json`、`result.json`、`checkpoint.pt`、训练/验证 loss 曲线和
+显存记录。中断后追加下面的参数即可恢复：
+
+```bash
+python scripts/train_native.py \
+  --config outputs/my-run/resolved_config.json \
+  --resume-from outputs/my-run/checkpoint.pt
+```
+
+也可以从 [`train_native_example.json`](../configs/train_native_example.json) 开始，并用
+CLI 覆盖其中任意软参数：
+
+```bash
+python scripts/train_native.py \
+  --config configs/train_native_example.json \
+  --model "$MODEL" --dataset /path/to/minipile --output-dir outputs/my-run \
+  --batch-size 8 --steps 5000
+```
+
+需要复现官方示例参数时选择 preset；`--steps` 仍由用户决定：
+
+```bash
+python scripts/train_native.py \
+  --preset official-x070-12x768-b16 \
+  --model "$MODEL" --dataset /path/to/minipile \
+  --output-dir outputs/official-shape --steps 1000
+```
+
+已有自己的 packed token 数据时，传入包含同形状 `input_ids` / `targets` 的
+`[steps,batch,tokens]` 训练文件和 `[batch,tokens]` 验证文件：
+
+```bash
+python scripts/train_native.py \
+  --model "$MODEL" --output-dir outputs/packed-run \
+  --sequence train.safetensors --validation-batch validation.safetensors
+```
+
+先检查配置而不启动 CUDA 时添加 `--dry-run`；它不会扫描整份模型权重或生成 packed
+数据。运行 `python scripts/train_native.py --help` 可以查看全部可调参数。参数解析顺序为
+preset、JSON、CLI，后者优先。熟悉官方 shell 的用户也可以直接使用 `--micro-bsz`、
+`--ctx-len`、`--lr-init`、`--lr-final` 和 `--max-steps` 别名；官方固定配置文件保持不变。
+
 下面是一轮完整的 dense causal-LM 更新。`train_temp_causal_cross_entropy`
 会自动完成 next-token shift，不需要手工切 labels：
 
