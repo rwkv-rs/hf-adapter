@@ -69,7 +69,7 @@ def test_cpu_tiny_demo_restores_backend_environment(
 def test_cpu_tiny_demo_executable_contract() -> None:
     root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(root)
+    env.pop("PYTHONPATH", None)
     proc = subprocess.run(
         [
             sys.executable,
