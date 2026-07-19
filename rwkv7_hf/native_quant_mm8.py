@@ -545,7 +545,7 @@ class MM8Linear(torch.nn.Module):
         return y
 
     def rwkv7_prefill_dequant_shape(self, rows):
-        """Select the measured V100 tensor-core prefill route."""
+        """Select the measured exact-sm70 tensor-core prefill route."""
 
         try:
             threshold = max(
@@ -566,7 +566,7 @@ class MM8Linear(torch.nn.Module):
         return (int(self.out_features), int(self.in_features))
 
     def rwkv7_prefill_dequant_weight(self, rows, out=None):
-        """Fill a reusable dense operand for graph-captured V100 prefill."""
+        """Fill a reusable dense operand for graph-captured sm70 prefill."""
 
         shape = self.rwkv7_prefill_dequant_shape(rows)
         if shape is None:

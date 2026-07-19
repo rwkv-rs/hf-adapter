@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-19**.
 
 ## Benchmark contract
 
@@ -24,7 +24,7 @@ Status vocabulary:
 
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
-| V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4 decode | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x` | **PASS measured lanes** |
+| V100 32GB | fresh 1.5B Native/Albatross B1/B2/B4/B8, dynamic/chunk cache, W4 balanced all-phase, Qwen lanes and 1.5B/2.9B/7.2B packed-MM4 decode | dense top-1/cosine; dynamic hit rate `1.0`; balanced W4 greedy/determinism; packed MM4 hashes 21/21 | Native decode `0.9105x–1.0616x` and prefill `0.9205x–1.1110x` Albatross; W4 balanced at fp16 parity-or-better with `0.9183x` footprint | **PASS measured lanes** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
@@ -141,6 +141,40 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 | Native W8/W4 paired prefill / fp16 | `0.996x–1.007x` | 1% equivalence PASS |
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+
+### Fresh V100 PR58 Native/Albatross and balanced quant closure
+
+The current Native code and Albatross were rebuilt and measured in the same
+V100 session on the official 1.5B checkpoint. Prompt and continuation top-1
+match in every dense row; minimum cosine is at least `0.99999988`.
+
+| Lane | B1 | B2 | B4 | B8 |
+|---|---:|---:|---:|---:|
+| Native graph replay decode / Albatross | `0.9930x` | `0.9166x` | `1.0246x` | `1.0654x` |
+| Native end-to-end decode / Albatross | `0.9845x` | `0.9105x` | `1.0176x` | `1.0616x` |
+| Native prompt128 prefill / Albatross | `0.9206x` | `1.1110x` | `0.9618x` | `0.9812x` |
+| Native prompt512 prefill / Albatross | `0.9205x` | `1.0297x` | `0.9980x` | `0.9393x` |
+
+The dynamic B8→B2 run executes 64 steps, 16 reorders and 6 drops at
+`594.4 tok/s`, with Native graph-cache requests/hits `64/64`. Prompt512
+chunked/full throughput ratios are `0.4192/0.6279/0.8705/1.0017x` at B1 and
+`0.7715/0.9095/0.9677/0.9937x` at B8 for chunks 64/128/256/512. Continuation
+correctness passes; the small B1 chunks remain bounded-memory choices rather
+than whole-prompt speed wins.
+
+The W4 `balanced` profile quantizes the head and first FFN key/value pair:
+
+| Batch | Prefill / fp16 | Decode / fp16 | Footprint / fp16 | Peak / fp16 |
+|---:|---:|---:|---:|---:|
+| 1 | `1.0108x` | `1.0345x` | `0.9183x` | `0.9579x` |
+| 8 | `0.9986x` | `1.0037x` | `0.9183x` | `0.9514x` |
+
+Cosine is above `0.99980`; greedy and determinism gates pass. W8 `speed`
+also meets fp16 speed with `0.9562x` model footprint, but its graph peak is
+`1.0341x/1.0379x`. Full-memory W4 preserves the larger `0.5395x` footprint
+win and faster decode, while prefill remains `0.8992x/0.9533x`; this route is
+still open for all-phase speed. Evidence and raw rows:
+[`bench/v100_pr58_final_20260719/`](bench/v100_pr58_final_20260719/README.md).
 
 ### V100 packed-MM4 BN/TN decode matrix
 

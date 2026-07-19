@@ -21,7 +21,7 @@ CELLS = (
 )
 
 # Full-memory MM4 is the default acceptance lane. Exact cells may use the
-# smaller speed policy only after a paired fp16 row closes every production
+# smaller speed/balanced policy only after a paired fp16 row closes every production
 # gate; keeping this table explicit prevents accidental policy promotion.
 CELL_POLICY_OVERRIDES = {
     ("2.9b", 4, 128, 128): "speed",
@@ -93,10 +93,10 @@ def main() -> int:
     parser.add_argument("--group-policy", default="lm_head", choices=("lm_head",))
     parser.add_argument(
         "--policy",
-        choices=("auto", "memory", "speed"),
+        choices=("auto", "memory", "speed", "balanced"),
         default="memory",
         help=(
-            "MM4 deployment policy. memory or speed validates one configuration "
+            "MM4 deployment policy. memory, speed, or balanced validates one configuration "
             "across the whole matrix; auto is an explicit per-workload evidence "
             "route and starts a fresh model process for every cell."
         ),
@@ -242,6 +242,9 @@ def main() -> int:
         ),
         "speed_policy_cells": sum(
             row.get("native_mm_policy") == "speed" for row in rows
+        ),
+        "balanced_policy_cells": sum(
+            row.get("native_mm_policy") == "balanced" for row in rows
         ),
         "requested_policy": args.policy,
         "fused_epilogue": fused_epilogue,

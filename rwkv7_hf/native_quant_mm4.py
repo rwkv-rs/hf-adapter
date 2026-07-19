@@ -521,10 +521,13 @@ class MM4Linear(torch.nn.Module):
         self.groupwise = bool(
             self.group_size == 128 and quantize_w4_groupwise is not None
         )
+        target_sm70_pack = os.environ.get(
+            "RWKV7_SM70_TARGET_PACK", "0"
+        ).strip().lower() not in {"", "0", "false", "no", "off"}
         self.sm70_rowwise = bool(
             not self.groupwise
-            and is_sm70(linear.weight.device)
             and quantize_w4_row is not None
+            and (is_sm70(linear.weight.device) or target_sm70_pack)
         )
         if self.groupwise:
             packed_group, group_scales, packed_inputs = quantize_w4_groupwise(

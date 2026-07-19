@@ -3313,10 +3313,10 @@ def prefill(
         model._rwkv7_native_prefill_quant_workspaces = quant_workspaces
     quant_dense_prefetch_used = False
     quant_prefetch_phase = os.environ.get(
-        "RWKV7_SM70_QUANT_PREFETCH_PHASE", "early"
+        "RWKV7_SM70_QUANT_PREFETCH_PHASE", "scan"
     ).strip().lower()
     if quant_prefetch_phase not in {"early", "scan"}:
-        quant_prefetch_phase = "early"
+        quant_prefetch_phase = "scan"
 
     def schedule_quant_prefetch(key_module, value_module):
         """Dequantize one FFN pair into bounded reusable dense operands."""

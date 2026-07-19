@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - direct remote-file execution fallback
     try:
         from native_quant_policy import NATIVE_MM_POLICIES as _RWKV7_NATIVE_MM_POLICIES
     except Exception:
-        _RWKV7_NATIVE_MM_POLICIES = ("memory", "speed")
+        _RWKV7_NATIVE_MM_POLICIES = ("memory", "speed", "balanced")
 
 try:
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7Model as _RWKV7Model

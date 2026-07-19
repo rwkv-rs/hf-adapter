@@ -63,11 +63,19 @@ def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
-    model = AutoModelForCausalLM.from_pretrained(
+    if args.code_source == "repo":
+        from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+
+        model_cls = NativeRWKV7ForCausalLM
+        model_kwargs = {}
+    else:
+        model_cls = AutoModelForCausalLM
+        model_kwargs = {"trust_remote_code": True}
+    model = model_cls.from_pretrained(
         args.hf_dir,
-        trust_remote_code=True,
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
+        **model_kwargs,
     ).eval()
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
@@ -263,6 +271,7 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
     row = {
         "axis": "dynamic_batch",
         "backend": "hf_adapter",
+        "code_source": args.code_source,
         "decode_api": decode_api,
         "dtype": args.dtype,
         "device": device_name(args.device),
@@ -326,6 +335,7 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--code-source", choices=("repo", "model"), default="repo")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])

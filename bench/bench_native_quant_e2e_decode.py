@@ -372,8 +372,10 @@ def validate_quantize_before_device(args) -> None:
         raise ValueError(
             "--quantize-before-device requires --single-quantization mm8 or mm4"
         )
-    if args.policy != "memory":
-        raise ValueError("--quantize-before-device requires --policy memory")
+    if args.policy not in {"memory", "balanced"}:
+        raise ValueError(
+            "--quantize-before-device requires --policy memory or balanced"
+        )
     if args.paired_baseline:
         raise ValueError(
             "--quantize-before-device cannot measure an in-process fp16 baseline"
@@ -402,8 +404,10 @@ def benchmark_decode(args, tok, model, ids):
     samples = []
     # Exclude one-time import/compile/cache construction from paired steady
     # prefill timing, just as decode excludes its warmup steps.
+    prefill_warmup = max(3, int(args.warmup))
     with torch.inference_mode():
-        model(ids, use_cache=True, logits_to_keep=1)
+        for _ in range(prefill_warmup):
+            model(ids, use_cache=True, logits_to_keep=1)
     cuda_sync(args.device)
     for _repeat in range(args.timing_repeats):
         with torch.inference_mode():
@@ -466,6 +470,7 @@ def benchmark_decode(args, tok, model, ids):
     selected["prefill_sec"] = prefill_selected["prefill_sec"]
     selected["prefill_tokps_total"] = prefill_selected["prefill_tokps_total"]
     selected["timing_repeats"] = len(samples)
+    selected["prefill_warmup"] = prefill_warmup
     selected["prefill_tokps_samples"] = [
         float(item["prefill_tokps_total"]) for item in samples
     ]
@@ -544,8 +549,11 @@ def main() -> int:
     ap.add_argument(
         "--policy",
         default="memory",
-        choices=["memory", "speed"],
-        help="native MM module-selection policy: memory=all size-gated linears, speed=lm_head only",
+        choices=["memory", "speed", "balanced"],
+        help=(
+            "native MM module-selection policy: memory=all size-gated linears, "
+            "speed=lm_head only, balanced=lm_head plus a small leading FFN layer set"
+        ),
     )
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--prompt-tokens", type=int, default=32)
@@ -608,6 +616,10 @@ def main() -> int:
         model = load_model(args, dtype, load_on_cpu=args.quantize_before_device)
         if args.quantize_before_device:
             baseline_footprint = module_footprint_mb(model)
+            if args.device.startswith("cuda") and torch.cuda.get_device_capability(
+                args.device
+            ) == (7, 0):
+                os.environ.setdefault("RWKV7_SM70_TARGET_PACK", "1")
         if quantization != "none" and args.paired_baseline:
             dense_footprint = module_footprint_mb(model)
             if args.device.startswith("cuda"):
@@ -646,7 +658,12 @@ def main() -> int:
         # Measure steady-state inference memory, not temporary fp32 tensors
         # created while quantizing a dense checkpoint at process startup.
         # Production deployments normally load an already packed checkpoint.
+        # Quantization also invalidates the dense CUDA-graph runners.  Collect
+        # them before resetting the allocator peak so paired-baseline storage
+        # is not incorrectly charged to the packed deployment.
+        gc.collect()
         if args.device.startswith("cuda"):
+            torch.cuda.empty_cache()
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
         res = benchmark_decode(args, tok, model, ids)
@@ -784,6 +801,7 @@ def main() -> int:
                 if sm70_active
                 else None
             ),
+            "sm70_target_pack": os.environ.get("RWKV7_SM70_TARGET_PACK"),
             "sm70_w4_fused_epilogue": (
                 os.environ.get("RWKV7_SM70_W4_FUSED_EPILOGUE", "0").strip().lower()
                 not in {"", "0", "false", "no", "off"}

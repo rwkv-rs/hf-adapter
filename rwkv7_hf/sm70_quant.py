@@ -495,7 +495,7 @@ def _w4_transient_dense_linear(x, q, scales, out_features, group_size=0):
 
 def _w4_dequant_block_cap() -> int:
     try:
-        # Eight blocks per V100 SM saturated both FFN matrix orientations in
+        # Eight blocks per sm70 multiprocessor saturated both FFN orientations in
         # the exact-sm70 sweep; larger grids only added scheduling overhead.
         return max(1, int(os.environ.get("RWKV7_SM70_W4_DEQUANT_BLOCKS", "640")))
     except ValueError:

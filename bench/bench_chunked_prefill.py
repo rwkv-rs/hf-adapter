@@ -72,6 +72,12 @@ def append(path: str, row: dict[str, Any]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument(
+        "--code-source",
+        choices=("repo", "model"),
+        default="repo",
+        help="load the repository Native model by default; model preserves the historical remote-code probe",
+    )
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
@@ -86,11 +92,19 @@ def main() -> int:
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
+    if args.code_source == "repo":
+        from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+
+        model_cls = NativeRWKV7ForCausalLM
+        model_kwargs = {}
+    else:
+        model_cls = AutoModelForCausalLM
+        model_kwargs = {"trust_remote_code": True}
+    model = model_cls.from_pretrained(
         args.hf_dir,
-        trust_remote_code=True,
         torch_dtype=DTYPES[args.dtype],
         device_map=args.device if args.device.startswith("cuda") else None,
+        **model_kwargs,
     ).eval()
     set_attn_mode(model, args.attn_mode)
     if args.fuse_norm != "auto":
@@ -119,6 +133,7 @@ def main() -> int:
         {
             "axis": "chunked_prefill",
             "backend": "hf_adapter",
+            "code_source": args.code_source,
             "prefill_mode": "full",
             "dtype": args.dtype,
             "device": device_name(args.device),
@@ -157,6 +172,7 @@ def main() -> int:
         row = {
             "axis": "chunked_prefill",
             "backend": "hf_adapter",
+            "code_source": args.code_source,
             "prefill_mode": "chunked",
             "dtype": args.dtype,
             "device": device_name(args.device),

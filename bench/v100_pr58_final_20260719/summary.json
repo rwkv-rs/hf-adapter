@@ -1,0 +1,225 @@
+{
+  "status": "primary_acceptance_pass",
+  "gpu": "Tesla V100-PCIE-32GB",
+  "model": "RWKV7-G1G 1.5B",
+  "torch": "2.5.1+cu124",
+  "decode": {
+    "graph_replay": {
+      "1": {
+        "native_tokps": 232.38,
+        "albatross_tokps": 234.02,
+        "ratio": 0.993
+      },
+      "2": {
+        "native_tokps": 383.45,
+        "albatross_tokps": 418.36,
+        "ratio": 0.9166
+      },
+      "4": {
+        "native_tokps": 614.72,
+        "albatross_tokps": 599.95,
+        "ratio": 1.0246
+      },
+      "8": {
+        "native_tokps": 921.88,
+        "albatross_tokps": 865.27,
+        "ratio": 1.0654
+      }
+    },
+    "end_to_end": {
+      "1": {
+        "native_tokps": 230.39,
+        "albatross_tokps": 234.02,
+        "ratio": 0.9845
+      },
+      "2": {
+        "native_tokps": 380.92,
+        "albatross_tokps": 418.36,
+        "ratio": 0.9105
+      },
+      "4": {
+        "native_tokps": 610.5,
+        "albatross_tokps": 599.95,
+        "ratio": 1.0176
+      },
+      "8": {
+        "native_tokps": 918.59,
+        "albatross_tokps": 865.27,
+        "ratio": 1.0616
+      }
+    }
+  },
+  "prefill": {
+    "128": {
+      "1": {
+        "native_tokps": 7267.86,
+        "albatross_tokps": 7894.9,
+        "ratio": 0.9206,
+        "status": "pass"
+      },
+      "2": {
+        "native_tokps": 12311.03,
+        "albatross_tokps": 11080.82,
+        "ratio": 1.111,
+        "status": "pass"
+      },
+      "4": {
+        "native_tokps": 16068.39,
+        "albatross_tokps": 16706.48,
+        "ratio": 0.9618,
+        "status": "pass"
+      },
+      "8": {
+        "native_tokps": 18842.33,
+        "albatross_tokps": 19202.7,
+        "ratio": 0.9812,
+        "status": "pass"
+      }
+    },
+    "512": {
+      "1": {
+        "native_tokps": 11597.97,
+        "albatross_tokps": 12599.69,
+        "ratio": 0.9205,
+        "status": "pass"
+      },
+      "2": {
+        "native_tokps": 16843.81,
+        "albatross_tokps": 16357.38,
+        "ratio": 1.0297,
+        "status": "pass"
+      },
+      "4": {
+        "native_tokps": 20125.79,
+        "albatross_tokps": 20166.37,
+        "ratio": 0.998,
+        "status": "pass"
+      },
+      "8": {
+        "native_tokps": 20670.87,
+        "albatross_tokps": 22006.19,
+        "ratio": 0.9393,
+        "status": "pass"
+      }
+    }
+  },
+  "chunked_prefill": {
+    "1": {
+      "64": 0.4192,
+      "128": 0.6279,
+      "256": 0.8705,
+      "512": 1.0017
+    },
+    "8": {
+      "64": 0.7715,
+      "128": 0.9095,
+      "256": 0.9677,
+      "512": 0.9937
+    }
+  },
+  "dynamic_batch": {
+    "initial_batch_size": 8,
+    "final_batch_size": 2,
+    "decode_steps": 64,
+    "decode_tokps_total": 594.4,
+    "native_graph_cache_hit_rate": 1.0,
+    "native_graph_copy_from_cache_fast_skip_rate": 0.8906,
+    "drop_count": 6,
+    "reorder_count": 16
+  },
+  "quant": {
+    "w4_balanced": {
+      "1": {
+        "prefill_speed_ratio_vs_fp16": 1.0108,
+        "decode_speed_ratio_vs_fp16": 1.0345,
+        "footprint_ratio_vs_fp16": 0.9183,
+        "peak_vram_ratio_vs_fp16": 0.9579,
+        "prompt_logits_cos_vs_fp16": 0.99984682,
+        "final_logits_cos_vs_fp16": 0.99985588,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 3
+      },
+      "8": {
+        "prefill_speed_ratio_vs_fp16": 0.9986,
+        "decode_speed_ratio_vs_fp16": 1.0037,
+        "footprint_ratio_vs_fp16": 0.9183,
+        "peak_vram_ratio_vs_fp16": 0.9514,
+        "prompt_logits_cos_vs_fp16": 0.99980372,
+        "final_logits_cos_vs_fp16": 0.99981284,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 3
+      }
+    },
+    "w8_speed": {
+      "1": {
+        "prefill_speed_ratio_vs_fp16": 1.004,
+        "decode_speed_ratio_vs_fp16": 1.0004,
+        "footprint_ratio_vs_fp16": 0.9562,
+        "peak_vram_ratio_vs_fp16": 1.0341,
+        "prompt_logits_cos_vs_fp16": 0.99999505,
+        "final_logits_cos_vs_fp16": 0.99999565,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 1
+      },
+      "8": {
+        "prefill_speed_ratio_vs_fp16": 1.0005,
+        "decode_speed_ratio_vs_fp16": 1.0007,
+        "footprint_ratio_vs_fp16": 0.9562,
+        "peak_vram_ratio_vs_fp16": 1.0379,
+        "prompt_logits_cos_vs_fp16": 0.99996191,
+        "final_logits_cos_vs_fp16": 0.9999634,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 1
+      }
+    },
+    "w4_full_memory": {
+      "1": {
+        "prefill_speed_ratio_vs_fp16": 0.8992,
+        "decode_speed_ratio_vs_fp16": 1.1736,
+        "footprint_ratio_vs_fp16": 0.5395,
+        "peak_vram_ratio_vs_fp16": 0.6631,
+        "prompt_logits_cos_vs_fp16": 0.99847066,
+        "final_logits_cos_vs_fp16": 0.99842948,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 49
+      },
+      "8": {
+        "prefill_speed_ratio_vs_fp16": 0.9533,
+        "decode_speed_ratio_vs_fp16": 1.027,
+        "footprint_ratio_vs_fp16": 0.5395,
+        "peak_vram_ratio_vs_fp16": 0.6109,
+        "prompt_logits_cos_vs_fp16": 0.99844372,
+        "final_logits_cos_vs_fp16": 0.99840748,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 49
+      }
+    },
+    "w8_full_memory": {
+      "1": {
+        "prefill_speed_ratio_vs_fp16": 1.0061,
+        "decode_speed_ratio_vs_fp16": 1.0004,
+        "footprint_ratio_vs_fp16": 0.6932,
+        "peak_vram_ratio_vs_fp16": 1.2397,
+        "prompt_logits_cos_vs_fp16": 0.99999505,
+        "final_logits_cos_vs_fp16": 0.99999464,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 49
+      },
+      "8": {
+        "prefill_speed_ratio_vs_fp16": 1.001,
+        "decode_speed_ratio_vs_fp16": 1.0002,
+        "footprint_ratio_vs_fp16": 0.6932,
+        "peak_vram_ratio_vs_fp16": 1.2754,
+        "prompt_logits_cos_vs_fp16": 0.99996191,
+        "final_logits_cos_vs_fp16": 0.9999634,
+        "same_greedy_tokens_as_fp16": true,
+        "replaced_modules": 49
+      }
+    }
+  },
+  "open_limits": [
+    "full-memory W4 prefill remains 0.8992x/0.9533x fp16 at B1/B8; use balanced for the speed lane",
+    "paired W8 model footprint drops but peak VRAM is 1.0341x-1.2754x; do not claim a peak-VRAM win",
+    "B1 chunk64/128 remain throughput tradeoffs, not whole-prompt speed wins"
+  ]
+}

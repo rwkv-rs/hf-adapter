@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-19**.
 
 ## Status definitions
 
@@ -16,7 +16,7 @@ Last updated: **2026-07-18**.
 
 | Platform | Status | Models / scope | Strongest current evidence | Open work |
 |---|---|---|---|---|
-| Tesla V100 32GB, sm70 | **Production-close** | dense/Qwen lanes; packed-MM4 cached decode for 1.5B/2.9B/7.2B; larger inference/training smoke | Albatross P1; three exact MM4 profiles pass 7/7 each with lower footprint and complete greedy equality; 1.5B alone opts into fused epilogues | Larger-model P2/P3, full-memory prefill and broader optimized-Qwen shapes |
+| Tesla V100 32GB, sm70 | **Production-close** | fresh 1.5B dense Native/Albatross B1/B2/B4/B8; dynamic/chunk cache; W4 balanced all-phase; packed-MM4 cached decode for 1.5B/2.9B/7.2B; larger inference/training smoke | Fresh decode `0.9105x–1.0616x` and prompt128/512 prefill `0.9205x–1.1110x` Albatross; dynamic graph hit rate `1.0`; W4 balanced footprint `0.9183x`, peak `0.9514x–0.9579x`, and fp16-parity-or-better speed; three exact MM4 decode profiles pass 7/7 each | Larger-model P2/P3, full-memory W4 prefill, W8 graph peak and broader optimized-Qwen shapes |
 | RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
 | RTX 4090 24GB, sm89 | **Production-close for measured bsz8 lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B, dense/W8/W4 | Small-model matrix passes 54/54 and 7.2B passes 18/18; dense prefill/decode, active-work, full Qwen FLA, quant speed and quant-local memory gates pass | bsz1/2/4 latest matrix, task quality, full-memory W4, other Ada cards |
 | RTX 5090, sm120 | **Production-close for measured Qwen/W4/train_temp/Native lanes** | Existing Qwen/W4/MATH lanes; Native B16/T512 training; Native fp16-state 7.2B decode and 2.9B/13.3B prefill | Full-FLA Qwen 8/8; BN/TN W4 B1/B8; exact-step plus real-MiniPile 3-seed/5,000-step/resume training; Native decode `1.0010x/1.0104x` and prefill 12/12 at `1.0029x–1.5690x` versus pinned same-precision v3a | Broader models/cards/quality, cross-harness memory parity and distributed train_temp |
@@ -33,6 +33,7 @@ Last updated: **2026-07-18**.
 
 ## Promoted artifacts
 
+- V100 fresh Native/Albatross, cache and balanced quant: [`../bench/v100_pr58_final_20260719/README.md`](../bench/v100_pr58_final_20260719/README.md)
 - V100: [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md)
 - V100 packed MM4 BN/TN: [`../bench/v100_sm70_mm4_bntn_20260716/README.md`](../bench/v100_sm70_mm4_bntn_20260716/README.md)
 - V100 full-FLA Qwen B1/B8: [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md)
