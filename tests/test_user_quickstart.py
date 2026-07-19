@@ -277,10 +277,10 @@ def test_train_temp_tutorial_has_user_acceptance_contract() -> None:
 
     for required in (
         "前置条件和支持环境",
-        "最小安全输入",
+        "推荐起步配置",
         "可直接复制的 API",
-        "精确通过标准",
-        "失败恢复和当前限制",
+        "已验证结果",
+        "常见问题与扩展",
         "AI_ASSISTED_SETUP.md",
         "train_temp_causal_cross_entropy",
         "compare_convergence_cohort.json",
