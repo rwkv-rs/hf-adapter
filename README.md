@@ -85,10 +85,6 @@ documented in [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKE
   continuous 5,000-step training and 2,500+2,500 checkpoint recovery. Median
   paired throughput is `1.00049x` official and the 5,000-step run is
   `1.00255x` official.
-- **Browser integration:** the current RWKV-Gradio-3 page runs through the
-  Native HF fast-token bridge. The retained browser A/B records byte-identical
-  output and B1/B8 page rates of `138.5/831.8 tok/s` Native versus
-  `137.7/837.7 tok/s` official.
 - **MATH500:** the full `500 x 64` run reaches pass@64 `0.38` and passes the
   committed Albatross reference at `4.336x` summary throughput and `4.871x`
   steady decode throughput.
@@ -97,8 +93,7 @@ Evidence:
 [`Native/v3a`](bench/5090_native_official_fp16_production_20260718/README.md),
 [`Qwen3.5`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md),
 [`W4`](bench/5090_bntn_all_models_20260716/README.md),
-[`training`](bench/5090_native_train_temp_real_minipile_20260718/README.md),
-and [`browser A/B`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md).
+and [`training`](bench/5090_native_train_temp_real_minipile_20260718/README.md).
 
 ## Current status and documentation
 
