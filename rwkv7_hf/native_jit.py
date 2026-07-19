@@ -761,11 +761,28 @@ def _native_graph_fused_recurrent_enabled() -> bool:
         return False
 
 
-def _native_prefill_fused_scan_enabled() -> bool:
+def _native_prefill_fused_scan_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Runtime switch for the experimental native prefill recurrent scan."""
 
     policy = _kernel_policy()
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_SCAN", bool(getattr(policy, "fused_prefill_scan", False))):
+    flag_name = "RWKV7_NATIVE_PREFILL_FUSED_SCAN"
+    shape_name = "RWKV7_NATIVE_PREFILL_SCAN_MODEL_SHAPES"
+    explicit_flag = os.environ.get(flag_name)
+    if not env_flag(flag_name, bool(getattr(policy, "fused_prefill_scan", False))):
+        return False
+    if (explicit_flag is None or os.environ.get(shape_name) is not None) and not _native_prefill_model_shape_selected(
+        shape_name,
+        "prefill_scan_model_shapes",
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
+    ):
         return False
     if fused_recurrent_scan is None or fused_recurrent_scan_available is None:
         return False
@@ -838,6 +855,9 @@ def _native_prefill_self_chunk_enabled(
         if None not in (hidden_size, num_layers, batch_size)
         else None
     )
+    if bool(getattr(policy, "prefill_self_chunk_model_shapes_only", False)):
+        if exact_model_shape not in model_shapes:
+            return False
     if (
         int(tokens) < min_tokens
         and exact_model_shape not in model_shapes
@@ -973,7 +993,12 @@ def _native_prefill_fused_clampw_scan_enabled(
             or exact_model_shape in model_shapes
         ):
             return False
-    if not _native_prefill_fused_scan_enabled():
+    if not _native_prefill_fused_scan_enabled(
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
+    ):
         return False
     if fused_recurrent_scan_clampw is None or fused_recurrent_scan_clampw_available is None:
         return False
@@ -3052,7 +3077,7 @@ def _native_prefill_scan(
     if w_is_log:
         w = torch.exp(w.float())
 
-    if _native_prefill_fused_scan_enabled():
+    if _native_prefill_fused_scan_enabled(B, T, H * N, num_layers):
         scan_block_m = _native_prefill_scan_block_m(N, B, T, H * N)
         out, new_state = fused_recurrent_scan(
             r.view(B, T, H, N),

@@ -343,18 +343,23 @@ def load_model(args, dtype, *, load_on_cpu: bool = False):
 
 
 def validate_quantize_before_device(args) -> None:
-    """Keep CPU-first packing explicit, memory-only, and quant-only."""
+    """Keep CPU-first packing explicit and limited to supported fresh-process lanes."""
 
     if not args.quantize_before_device:
         return
     if not args.device.startswith("cuda"):
         raise ValueError("--quantize-before-device requires a CUDA target device")
-    if args.single_quantization not in {"mm8", "mm4"}:
+    memory_quantizations = {"mm8", "mm4"}
+    speed_quantizations = {"a8w8"}
+    if args.single_quantization not in memory_quantizations | speed_quantizations:
         raise ValueError(
-            "--quantize-before-device requires --single-quantization mm8 or mm4"
+            "--quantize-before-device requires --single-quantization "
+            "mm8, mm4, or a8w8"
         )
-    if args.policy != "memory":
-        raise ValueError("--quantize-before-device requires --policy memory")
+    if args.single_quantization in memory_quantizations and args.policy != "memory":
+        raise ValueError("CPU-first MM8/MM4 requires --policy memory")
+    if args.single_quantization in speed_quantizations and args.policy != "speed":
+        raise ValueError("CPU-first A8W8 requires --policy speed")
     if args.paired_baseline:
         raise ValueError(
             "--quantize-before-device cannot measure an in-process fp16 baseline"
@@ -537,9 +542,9 @@ def main() -> int:
         "--quantize-before-device",
         action="store_true",
         help=(
-            "Load dense weights on CPU, apply the native MM8/MM4 memory policy, "
-            "then move only the packed model to CUDA. Requires one native "
-            "quantization and --allow-missing-baseline."
+            "Load dense weights on CPU, pack either native MM8/MM4 memory lanes "
+            "or the A8W8 speed lane, then move only the packed model to "
+            "CUDA. Requires one supported quantization and --allow-missing-baseline."
         ),
     )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))

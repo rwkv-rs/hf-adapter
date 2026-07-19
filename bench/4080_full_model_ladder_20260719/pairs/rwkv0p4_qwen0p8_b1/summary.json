@@ -1,0 +1,119 @@
+{
+  "axis": "rtx4080_qwen35_bsz1_acceptance",
+  "coverage": {
+    "dense_candidate_rows": 6,
+    "memory_rows": 12,
+    "paired_quant_rows": 12,
+    "qwen_reference_rows": 6
+  },
+  "dense_vs_qwen": {
+    "active_work_decode_ratio": {
+      "max": 8.196243,
+      "min": 8.111217
+    },
+    "decode_speed_ratio": {
+      "max": 4.910462,
+      "min": 4.859517
+    },
+    "prefill_speed_ratio": {
+      "max": 4.06636,
+      "min": 1.385151
+    },
+    "qwen_full_fla_rows": 6
+  },
+  "errors": [],
+  "gates": {
+    "max_quant_footprint_ratio": "<1.0",
+    "min_active_work_decode_ratio": 1.0,
+    "min_dense_decode_ratio": 1.0,
+    "min_dense_prefill_ratio": 1.0,
+    "min_quant_decode_speed_ratio": 1.0,
+    "min_quant_logits_cosine": 0.999,
+    "min_quant_total_speed_ratio": 1.0,
+    "quant_greedy_match": true,
+    "quant_prefill_speed": "reported, not independently gated"
+  },
+  "memory_routes": {
+    "bnb4": {
+      "footprint_ratio_vs_fp16": {
+        "max": 0.497558,
+        "min": 0.497558
+      },
+      "rows": 6
+    },
+    "bnb8": {
+      "footprint_ratio_vs_fp16": {
+        "max": 0.665038,
+        "min": 0.665038
+      },
+      "rows": 6
+    }
+  },
+  "paired_speed_routes": {
+    "a8w8": {
+      "decode_speed_ratio_vs_fp16": {
+        "max": 1.0145,
+        "min": 1.0071
+      },
+      "footprint_ratio_vs_fp16": {
+        "max": 0.9258,
+        "min": 0.9258
+      },
+      "greedy_pass_rows": 6,
+      "minimum_logits_cosine": {
+        "max": 0.999996,
+        "min": 0.999993
+      },
+      "prefill_speed_ratio_vs_fp16": {
+        "max": 1.0241,
+        "min": 0.9913
+      },
+      "rows": 6,
+      "total_speed_ratio_vs_fp16": {
+        "max": 1.013301,
+        "min": 1.004941
+      }
+    },
+    "torchao_w4": {
+      "decode_speed_ratio_vs_fp16": {
+        "max": 1.0867,
+        "min": 1.082
+      },
+      "footprint_ratio_vs_fp16": {
+        "max": 0.8907,
+        "min": 0.8907
+      },
+      "greedy_pass_rows": 6,
+      "minimum_logits_cosine": {
+        "max": 0.999783,
+        "min": 0.999677
+      },
+      "prefill_speed_ratio_vs_fp16": {
+        "max": 1.0559,
+        "min": 0.9734
+      },
+      "rows": 6,
+      "total_speed_ratio_vs_fp16": {
+        "max": 1.086065,
+        "min": 1.070146
+      }
+    }
+  },
+  "scope": {
+    "batch_size": 1,
+    "decode_tokens": [
+      128,
+      512
+    ],
+    "device": "NVIDIA GeForce RTX 4080",
+    "dtype": "fp16",
+    "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+    "prompt_tokens": [
+      128,
+      512,
+      2048
+    ],
+    "qwen_backend": "full FLA"
+  },
+  "status": "pass"
+}

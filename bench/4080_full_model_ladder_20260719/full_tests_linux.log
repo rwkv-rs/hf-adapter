@@ -1,0 +1,23 @@
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+.................sss..........sss....................................... [ 37%]
+........................................................................ [ 50%]
+........................................................................ [ 63%]
+........................................................................ [ 75%]
+...........................sss.......................................... [ 88%]
+..................................................................       [100%]
+=============================== warnings summary ===============================
+../venv/lib/python3.11/site-packages/torchao/dtypes/uintx/__init__.py:1
+  <PRIVATE_ROOT>/venv/lib/python3.11/site-packages/torchao/dtypes/uintx/__init__.py:1: DeprecationWarning: Importing from torchao.dtypes.uintx.dyn_int8_act_int4_wei_cpu_layout is deprecated. Please use 'from torchao.prototype.dtypes import Int8DynamicActInt4WeightCPULayout' instead. This import path will be removed in a future release of torchao. See https://github.com/pytorch/ao/issues/2752 for more details.
+    from .dyn_int8_act_int4_wei_cpu_layout import (
+
+../venv/lib/python3.11/site-packages/torchao/dtypes/uintx/__init__.py:22
+  <PRIVATE_ROOT>/venv/lib/python3.11/site-packages/torchao/dtypes/uintx/__init__.py:22: DeprecationWarning: Importing from torchao.dtypes.uintx.uintx_layout is deprecated. Please use 'from torchao.prototype.dtypes import UintxLayout, UintxTensor' instead. This import path will be removed in a future release of torchao. See https://github.com/pytorch/ao/issues/2752 for more details.
+    from .uintx_layout import (
+
+../venv/lib/python3.11/site-packages/torchao/dtypes/__init__.py:23
+  <PRIVATE_ROOT>/venv/lib/python3.11/site-packages/torchao/dtypes/__init__.py:23: DeprecationWarning: Importing BlockSparseLayout from torchao.dtypes is deprecated. Please use 'from torchao.prototype.dtypes import BlockSparseLayout' instead. This import path will be removed in a future torchao release. Please check issue: https://github.com/pytorch/ao/issues/2752 for more details.
+    from .uintx.block_sparse_layout import BlockSparseLayout
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+561 passed, 9 skipped, 3 warnings in 44.29s

@@ -10,7 +10,7 @@ boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
 | Path | Purpose | Current status |
 |---|---|---|
 | bitsandbytes 8-bit / 4-bit | Standard HF compatibility and memory reduction | Functional across tested CUDA cards; not generally faster than native fp16 |
-| Native MM8/MM4 `speed` policy | Preserve dense block speed and quantize selected expensive projections | Promoted on measured V100/4090/5090 lanes |
+| Native MM8/MM4 `speed` policy | Preserve dense block speed and quantize selected expensive projections | Promoted on measured V100/4080/4090/5090 lanes |
 | Native MM8/MM4 `memory` policy | Quantize many eligible Linear modules for larger footprint reduction | Functional and memory-saving; universal fp16-or-faster speed is open |
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
@@ -110,6 +110,36 @@ use backticks for line continuation.
 
 Exact RTX 5070 Laptop 0.4B smoke evidence is in
 [`../bench/5070_native_memory_loading_20260716/README.md`](../bench/5070_native_memory_loading_20260716/README.md).
+
+## RTX 4080 output-head speed and full-model memory lanes
+
+The exact RTX 4080 matrix covers official 0.4B/1.5B/2.9B checkpoints at B1/B8,
+prompt 128/512/2048 and decode 128/512. Full-model BNB8/BNB4 are memory routes:
+all 72 rows execute with finite logits and reduce footprint to
+`0.573136x-0.665038x` and `0.359704x-0.497558x` dense. No full-model speed claim
+is attached to them.
+
+The paired speed routes replace one output-head module and measure fp16 and
+quantized execution in the same process:
+
+| Route | Prefill min | Decode min | `prefill + decode` min | Footprint | Min cosine | Greedy |
+|---|---:|---:|---:|---:|---:|---:|
+| A8W8 head | telemetry | `>=1.0045x` | `>=1.003101x` | `0.9258x-0.9716x` | `>=0.999931` | 36/36 |
+| TorchAO-W4 head | telemetry | `>=1.0246x` | `>=1.015996x` | `0.8907x-0.9612x` | `>=0.999475` | 36/36 |
+
+As on the promoted RTX 3090/4090 lanes, the quant speed contract requires both
+cached decode and complete-cell `prefill + decode` latency to be no slower than
+fp16. Phase prefill is retained as telemetry and is not independently described
+as faster. Direct 8-row A8W8 GEMV and group64 W4 probes were slower than the
+selected routes and remain unpromoted.
+
+The 7.2B full-memory MM8/MM4 B1 rows reduce footprint to `0.5346x/0.3015x`
+and preserve the measured fp16 greedy sequence, but are slower than fp16.
+The 13.3B CPU-first MM8/MM4 routes fit in 16GB and execute deterministically;
+because the fp16 model does not fit, they are capacity routes without an fp16
+speed or logits-parity claim.
+
+Evidence: [`../bench/4080_full_model_ladder_20260719/README.md`](../bench/4080_full_model_ladder_20260719/README.md).
 
 ## RTX 4090 g1h 7.2B promoted result
 

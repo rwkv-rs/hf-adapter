@@ -54,13 +54,17 @@ def trainable_snapshot(model):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument("--dtype", default="fp32", choices=["fp32", "fp16"])
+    ap.add_argument("--dtype", default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--max-steps", type=int, default=3)
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--max-length", type=int, default=48)
     args = ap.parse_args()
 
-    dt = torch.float32 if args.dtype == "fp32" else torch.float16
+    dt = {
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }[args.dtype]
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token or 0
@@ -96,7 +100,7 @@ def main() -> int:
             save_strategy="no",
             report_to=[],
             fp16=(args.dtype == "fp16"),
-            bf16=False,
+            bf16=(args.dtype == "bf16"),
             gradient_checkpointing=False,
             optim="adamw_torch",
             remove_unused_columns=False,

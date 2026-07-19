@@ -119,7 +119,7 @@ def make_args(out_dir: str, max_steps: int, batch_size: int, dtype: str) -> Trai
         report_to=[],
         remove_unused_columns=False,
         fp16=(dtype == "fp16"),
-        bf16=False,
+        bf16=(dtype == "bf16"),
         dataloader_num_workers=0,
         gradient_checkpointing=False,
         optim="adamw_torch",
@@ -130,7 +130,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--dtype", default="fp32", choices=["fp32", "fp16"])
+    ap.add_argument("--dtype", default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--first-steps", type=int, default=2)
     ap.add_argument("--resume-steps", type=int, default=3)
     ap.add_argument("--batch-size", type=int, default=2)
@@ -138,7 +138,11 @@ def main() -> int:
     args = ap.parse_args()
     assert args.resume_steps > args.first_steps, "resume-steps must exceed first-steps"
 
-    dtype = torch.float32 if args.dtype == "fp32" else torch.float16
+    dtype = {
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }[args.dtype]
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     rows = build_rows(tok, args.length)
     collator = FixedLenCollator()

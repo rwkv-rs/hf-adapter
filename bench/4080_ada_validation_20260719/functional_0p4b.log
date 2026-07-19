@@ -1,0 +1,55 @@
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+
+Writing model shards:   0%|          | 0/1 [00:00<?, ?it/s]
+Writing model shards: 100%|██████████| 1/1 [00:00<00:00, 770.73it/s]
+
+Loading weights:   0%|          | 0/68 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 68/68 [00:00<00:00, 17185.63it/s]
+[transformers] [1mNativeRWKV7Model LOAD REPORT[0m from: $PRIVATE_ROOT/tmp/rwkv7_native_contract_z6ad_88j
+Key            | Status     |  |
+---------------+------------+--+-
+lm_head.weight | UNEXPECTED |  |
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+
+Loading weights:   0%|          | 0/69 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 69/69 [00:00<00:00, 13952.70it/s]
+PASS
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  91%|█████████ | 722/795 [00:00<00:00, 7105.29it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 6572.02it/s]
+fast_cache_type NativeRWKV7Cache
+prefill_max_abs_diff 0.0
+decode_max_abs_diff 0.0
+greedy_equal 8 / 8
+seq_length 22
+PASS
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:  66%|██████▌   | 526/795 [00:00<00:00, 5233.89it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 3940.99it/s]
+trainable 1769472 total 452537344 pct 0.391
+loss 2.338193655014038
+nonzero_grad_count 144
+nonzero_grad base_model.model.model.layers.0.attn.r_proj.lora_B.default.weight 0.7721686959266663
+nonzero_grad base_model.model.model.layers.0.attn.k_proj.lora_B.default.weight 2.2716479301452637
+nonzero_grad base_model.model.model.layers.0.attn.v_proj.lora_B.default.weight 7.646020412445068
+nonzero_grad base_model.model.model.layers.0.attn.o_proj.lora_B.default.weight 6.447755813598633
+nonzero_grad base_model.model.model.layers.0.ffn.key.lora_B.default.weight 6.21662712097168
+Skipping import of cpp extensions due to incompatible torch version 2.6.0+cu124 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 795/795 [00:00<00:00, 16297.28it/s]
+[transformers] The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
+speculative_stats {'generated_tokens': 8, 'proposed_tokens': 8, 'accepted_tokens': 8, 'corrected_tokens': 0, 'resyncs': 0, 'resync_tokens': 0, 'full_resync_tokens': 0, 'resync_saved_tokens': 0, 'target_forward_calls': 3, 'draft_forward_calls': 9, 'acceptance_rate': 1.0}
+decoded User: Hello!
+
+Assistant: Hello! How can I assist you today
+PASS
