@@ -17,8 +17,10 @@ def test_prefill_breakdown_accepts_native_model_pack_api() -> None:
 
 
 def test_native_prefill_graph_is_explicit_and_signature_tracks_flags(monkeypatch) -> None:
+    policy = SimpleNamespace(prefill_graph=False, prefill_graph_model_shapes=())
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(native_model, "_native_jit_prefill", object())
+    monkeypatch.setattr(native_model, "current_kernel_policy", lambda **_kwargs: policy)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_GRAPH", raising=False)
     assert not native_model._native_prefill_graph_enabled()
 
@@ -69,6 +71,25 @@ def test_native_prefill_graph_policy_is_exact_shape_allowlisted(monkeypatch) -> 
 
     monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GRAPH", "1")
     assert native_model._native_prefill_graph_enabled(8, 2048, 4096, 61)
+
+
+def test_native_prefill_graph_policy_layer_ceiling_is_auto_only(monkeypatch) -> None:
+    policy = SimpleNamespace(
+        prefill_graph=True,
+        prefill_graph_model_shapes=(),
+        prefill_graph_max_layers=32,
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(native_model, "_native_jit_prefill", object())
+    monkeypatch.setattr(native_model, "current_kernel_policy", lambda **_kwargs: policy)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_GRAPH", raising=False)
+
+    assert native_model._native_prefill_graph_enabled(1, 128, 4096, 32)
+    assert not native_model._native_prefill_graph_enabled(1, 128, 4096, 61)
+    assert not native_model._native_prefill_graph_enabled()
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GRAPH", "1")
+    assert native_model._native_prefill_graph_enabled(1, 128, 4096, 61)
 
 
 def test_native_prefill_graph_cache_size_uses_policy_and_env_override(monkeypatch) -> None:

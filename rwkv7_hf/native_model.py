@@ -702,6 +702,12 @@ def _native_prefill_graph_enabled(
     else:
         policy = current_kernel_policy(torch_module=torch)
         selected = bool(getattr(policy, "prefill_graph", False))
+        max_layers = getattr(policy, "prefill_graph_max_layers", None)
+        if selected and max_layers is not None:
+            selected = (
+                num_layers is not None
+                and int(num_layers) <= int(max_layers)
+            )
         shapes = {
             tuple(int(value) for value in shape)
             for shape in getattr(policy, "prefill_graph_model_shapes", ())
@@ -2106,6 +2112,12 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         requested = _native_model_backend_requested()
         if requested not in {"auto", "native_graph"}:
             return False
+        if requested == "auto":
+            policy = current_kernel_policy(torch_module=torch)
+            max_layers = getattr(policy, "native_graph_max_layers", None)
+            num_layers = int(getattr(self.config, "num_hidden_layers", 0) or 0)
+            if max_layers is not None and num_layers > int(max_layers):
+                return False
         if self.training or torch.is_grad_enabled() or not _native_graph_available():
             return False
         if self._native_model_has_adapter_layers():

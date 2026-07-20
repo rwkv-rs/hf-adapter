@@ -108,6 +108,9 @@ class KernelPolicy:
     prefill_graph: bool = False
     prefill_graph_cache_size: int = 2
     prefill_graph_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    # Auto-policy safety ceiling.  Explicit RWKV7_NATIVE_PREFILL_GRAPH keeps
+    # its force-on semantics for experiments that intentionally exceed it.
+    prefill_graph_max_layers: int | None = None
     prefill_fp16_recurrent: bool = False
     fused_prefill_shift_mix: bool = False
     prefill_shift_mix_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
@@ -153,6 +156,9 @@ class KernelPolicy:
     native_graph_state_dtype: str = "fp32"
     native_graph_fp16_recurrent: bool = False
     native_graph_precompute_embedding: bool = False
+    # Auto backend safety ceiling.  An explicitly requested native_graph
+    # backend remains available for profiling/experimentation.
+    native_graph_max_layers: int | None = None
     sm70_linear: bool = False
     sm70_wagv_lora: bool = False
     ada_linear: bool = False
@@ -567,12 +573,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_scan=True,
             prefill_graph=True,
             prefill_graph_cache_size=4,
+            prefill_graph_max_layers=32,
             fused_prefill_shift_mix=True,
             fused_prefill_state_prep=True,
             fused_prefill_state_scan=True,
             fused_prefill_state_scan_max_batch=1,
             fused_prefill_output=True,
             fused_norm_mix=True,
+            native_graph_max_layers=32,
             fused_wavg_lora=True,
             wavg_lora_bsz1_max_hidden=4096,
             wavg_lora_blocks=(32, 64, 256),
@@ -585,7 +593,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_sparse_ffn_up=False,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
+            notes="V100 production path: graph capture is automatic through 32 layers and falls back to native_jit for larger checkpoints; four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
         )
     if family == "turing":
         is_tesla_t4 = is_tesla_t4_name(profile.name)

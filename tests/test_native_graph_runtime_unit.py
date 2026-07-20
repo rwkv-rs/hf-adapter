@@ -136,6 +136,47 @@ def test_native_graph_rejects_non_native_quant_but_consults_native_safety(monkey
     assert consulted
 
 
+def test_native_graph_policy_layer_ceiling_is_auto_only(monkeypatch) -> None:
+    model = build_tiny_model()
+    model.config.num_hidden_layers = 61
+    cache = build_cache(batch_size=1)
+    token = torch.tensor([[1]], dtype=torch.long)
+    policy = type("Policy", (), {"native_graph_max_layers": 32})()
+    adapter_checks = 0
+
+    def has_adapter_layers() -> bool:
+        nonlocal adapter_checks
+        adapter_checks += 1
+        return False
+
+    monkeypatch.setattr(native_model_module, "current_kernel_policy", lambda **_kwargs: policy)
+    monkeypatch.setattr(native_model_module, "_native_graph_available", lambda: True)
+    monkeypatch.setattr(model, "_native_model_has_adapter_layers", has_adapter_layers)
+    monkeypatch.setenv("RWKV7_NATIVE_MODEL_BACKEND", "auto")
+
+    with torch.inference_mode():
+        assert not model._native_graph_can_run(
+            token,
+            cache,
+            attention_mask=None,
+            output_hidden_states=False,
+        )
+    assert adapter_checks == 0
+
+    # Explicit native_graph bypasses the production auto ceiling.  This CPU
+    # fixture still cannot execute a CUDA graph, but the downstream adapter
+    # safety check proves that the policy ceiling no longer caused the return.
+    monkeypatch.setenv("RWKV7_NATIVE_MODEL_BACKEND", "native_graph")
+    with torch.inference_mode():
+        assert not model._native_graph_can_run(
+            token,
+            cache,
+            attention_mask=None,
+            output_hidden_states=False,
+        )
+    assert adapter_checks == 1
+
+
 def test_native_graph_cache_management_surface() -> None:
     model = build_tiny_model()
     model._rwkv7_native_graph_runner_cache = {("cpu", 1): object()}

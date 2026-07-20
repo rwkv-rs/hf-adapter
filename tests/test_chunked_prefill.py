@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 
 import torch
+import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -29,6 +30,7 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--chunk-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
     ap.add_argument("--max-diff", type=float, default=0.15)
+    ap.add_argument("--min-cosine", type=float, default=0.999)
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -64,16 +66,32 @@ def main() -> int:
             seq_chunked = chunked.past_key_values.get_seq_length()
             chunk_next = model(next_token, past_key_values=chunked.past_key_values, use_cache=True, logits_to_keep=1)
             decode_diff = float((full_next.logits.float() - chunk_next.logits.float()).abs().max().detach().cpu())
+            prompt_cosine = float(
+                F.cosine_similarity(full.logits.float(), chunked.logits.float(), dim=-1).min().detach().cpu()
+            )
+            decode_cosine = float(
+                F.cosine_similarity(full_next.logits.float(), chunk_next.logits.float(), dim=-1).min().detach().cpu()
+            )
+            prompt_greedy = torch.equal(full.logits.argmax(dim=-1), chunked.logits.argmax(dim=-1))
+            decode_greedy = torch.equal(full_next.logits.argmax(dim=-1), chunk_next.logits.argmax(dim=-1))
             print(
                 "chunked_prefill",
                 "chunk_size", chunk_size,
                 "max_abs_diff", diff,
                 "decode_max_abs_diff", decode_diff,
+                "min_cosine", prompt_cosine,
+                "decode_min_cosine", decode_cosine,
+                "greedy_match", prompt_greedy,
+                "decode_greedy_match", decode_greedy,
                 "seq_full", seq_full,
                 "seq_chunked", seq_chunked,
             )
             assert diff <= args.max_diff, (chunk_size, diff)
             assert decode_diff <= args.max_diff, (chunk_size, decode_diff)
+            assert prompt_cosine >= args.min_cosine, (chunk_size, prompt_cosine)
+            assert decode_cosine >= args.min_cosine, (chunk_size, decode_cosine)
+            assert prompt_greedy, chunk_size
+            assert decode_greedy, chunk_size
             assert seq_full == seq_chunked, (chunk_size, seq_full, seq_chunked)
 
     print("PASS")

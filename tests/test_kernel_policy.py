@@ -59,12 +59,14 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.fused_prefill_scan
     assert v100.prefill_graph
     assert v100.prefill_graph_cache_size == 4
+    assert v100.prefill_graph_max_layers == 32
     assert v100.fused_prefill_shift_mix
     assert v100.fused_prefill_state_prep
     assert v100.fused_prefill_state_scan
     assert v100.fused_prefill_state_scan_max_batch == 1
     assert v100.fused_prefill_output
     assert v100.fused_norm_mix
+    assert v100.native_graph_max_layers == 32
     assert v100.fused_wavg_lora
     assert v100.wavg_lora_bsz1_max_hidden == 4096
     assert v100.wavg_lora_blocks == (32, 64, 256)
