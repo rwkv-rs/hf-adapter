@@ -17,12 +17,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.verify_release_assets import (  # noqa: E402
+    DEVICE_ORDER,
+    DEVICES,
     FLA_COMMIT,
     verify as verify_release_assets,
 )
 
 
-DEVICES = ("rtx-4080", "tesla-v100", "rtx-4090")
 ZERO_COMPARISON_SUMMARY = {
     "candidate_comparisons": 96,
     "metric_failures": 0,
@@ -74,7 +75,7 @@ def parse_device_paths(values: list[str], label: str) -> dict[str, Path]:
             raise ValueError(f"invalid or duplicate {label}: {value}")
         result[device] = Path(raw_path)
     if set(result) != set(DEVICES):
-        raise ValueError(f"{label} does not cover all three devices")
+        raise ValueError(f"{label} does not cover all required devices")
     return result
 
 
@@ -96,7 +97,7 @@ def validate_inputs(
     if validation.get("status") != "passed" or set(
         validation.get("devices") or {}
     ) != set(DEVICES):
-        raise ValueError("three-device release provenance did not pass")
+        raise ValueError("required-device release provenance did not pass")
     expected_wheels = {
         "rwkv7_hf": provenance["artifacts"][
             f"rwkv7_hf-{provenance['version']}-py3-none-any.whl"
@@ -105,7 +106,7 @@ def validate_inputs(
             f"rwkv7_kernels-{provenance['version']}-py3-none-any.whl"
         ]["sha256"],
     }
-    for device in DEVICES:
+    for device in DEVICE_ORDER:
         speed = speeds[device]
         if (
             speed.get("schema") != "rwkv7-backend-v2-three-way-speed-v1"
@@ -175,14 +176,14 @@ def render_issue(
         f"- `{kernel_name}` SHA256: `{provenance['artifacts'][kernel_name]['sha256']}`",
         "",
         "The same wheel pair was used sequentially, with non-overlapping "
-        "acceptance runs in the fixed RTX 4080 -> V100 -> RTX 4090 order.",
+        "acceptance runs in the fixed RTX 4080 -> RTX 4090 order.",
         "",
         "| device | acceptance started (UTC) | acceptance completed (UTC) |",
         "|---|---|---|",
         *[
             f"| {device} | {devices[device]['acceptance_started_at']} | "
             f"{devices[device]['acceptance_completed_at']} |"
-            for device in DEVICES
+            for device in DEVICE_ORDER
         ],
         "",
         "## Gate matrix",
@@ -190,7 +191,7 @@ def render_issue(
         "| device | correctness | HF ecosystem | training | quantization | FLA | speed | SFT | DPO | GRPO | lm_eval |",
         "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for device in DEVICES:
+    for device in DEVICE_ORDER:
         row = devices[device]
         lines.append(
             "| "
@@ -247,7 +248,7 @@ def render_issue(
             "|---|---|---|",
         ]
     )
-    for device in DEVICES:
+    for device in DEVICE_ORDER:
         for phase, routes in sorted(devices[device]["actual_routes"].items()):
             values = [routes] if isinstance(routes, str) else routes
             lines.append(f"| {device} | {phase} | `{', '.join(values)}` |")
@@ -263,7 +264,7 @@ def render_issue(
             "|---|---|---|---|---:|---:|---:|---:|---:|",
         ]
     )
-    for device in DEVICES:
+    for device in DEVICE_ORDER:
         for model, payload in sorted(speeds[device]["models"].items()):
             for phase in ("prefill", "decode"):
                 lanes = payload["lanes"]
@@ -286,7 +287,7 @@ def render_issue(
             "|---|---|---|---:|---:|---:|---:|---:|",
         ]
     )
-    for device in DEVICES:
+    for device in DEVICE_ORDER:
         operator = speeds[device].get("operator", {}).get("lanes", {})
         for shape, optimized_row in sorted(operator.get("optimized", {}).items()):
             optimized = optimized_row["forward"]
@@ -327,7 +328,7 @@ def render_issue(
             "|---|---|---|---|---|",
         ]
     )
-    for device in DEVICES:
+    for device in DEVICE_ORDER:
         metrics = lm_evals[device]["aggregate_metrics"]
         for unit in sorted(metrics["reference"]):
             reference_metrics = metrics["reference"][unit]

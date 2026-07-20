@@ -67,8 +67,9 @@ historical package tree and reconstructs its frozen Git tree object, so the
 recurrent-wheel subtree and byte-verifies its Graph and Triton implementations.
 The release-wheel audit checks all four files from the built ZIP, not merely from
 the checkout. Full-model production `auto` is promoted only after the same
-immutable wheel passes the RTX 4080, V100 and RTX 4090 functional, HF/training,
-speed, FLA and 144-unit `lm_eval` gates.
+immutable wheel passes the RTX 4080 and RTX 4090 functional, HF/training,
+speed, FLA and 144-unit `lm_eval` gates. V100 remains implemented and retains
+historical evidence, but it is not a v1.0 release gate.
 
 ## Numerical reproducibility
 

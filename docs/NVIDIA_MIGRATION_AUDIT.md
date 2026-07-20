@@ -85,7 +85,7 @@ v0.8 NVIDIA files.
 The inventory deliberately distinguishes `migrated` from `production auto`.
 All implementation families are present behind API v2, but full-model v2
 families remain diagnostic until the same immutable wheel passes the complete
-three-device gate. Native quantization stays an explicit user opt-in. This
+RTX 4080 and RTX 4090 gate. Native quantization stays an explicit user opt-in. This
 prevents a source-completeness statement from being mistaken for unmeasured
 device/shape promotion.
 

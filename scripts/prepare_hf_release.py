@@ -216,7 +216,7 @@ Equivalent: `python -m pip install "rwkv7-hf[kernels]==1.0.0"`.
 
 The optional package includes recurrent, fused prefill/decode, projection,
 norm, FFN/LoRA, CUDA Graph/state-pool, SM70/Ada/Blackwell, quantization and
-training operator families. Exact supported routes and three-device evidence
+training operator families. Exact supported routes and required-device evidence
 are recorded in the source repository; requested environment settings alone
 are not accepted as proof that an optimized route executed.
 

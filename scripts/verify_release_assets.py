@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that a GitHub release contains the exact three-device validated artifacts."""
+"""Verify release artifacts against the required RTX acceptance devices."""
 
 from __future__ import annotations
 
@@ -33,7 +33,8 @@ from scripts.audit_release_wheels import (  # noqa: E402
 
 
 FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
-DEVICES = {"rtx-4080", "tesla-v100", "rtx-4090"}
+DEVICE_ORDER = ("rtx-4080", "rtx-4090")
+DEVICES = frozenset(DEVICE_ORDER)
 REQUIRED_ROUTE_PHASES = {"prefill", "decode", "training", "quantization"}
 SELECTOR_ONLY_ROUTES = {
     "auto",
@@ -43,7 +44,6 @@ SELECTOR_ONLY_ROUTES = {
     "reference",
     "triton",
 }
-DEVICE_ORDER = ("rtx-4080", "tesla-v100", "rtx-4090")
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -293,10 +293,10 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
 
     validation = provenance.get("validation") or {}
     if args.require_validation_passed and validation.get("status") != "passed":
-        raise ValueError("three-device release validation has not passed")
+        raise ValueError("required-device release validation has not passed")
     devices = validation.get("devices") or {}
     if set(devices) != DEVICES:
-        raise ValueError("release provenance does not cover the three required devices")
+        raise ValueError("release provenance does not cover the required devices")
     hf_wheel = artifacts[f"rwkv7_hf-{args.version}-py3-none-any.whl"]["sha256"]
     kernel_wheel = artifacts[f"rwkv7_kernels-{args.version}-py3-none-any.whl"]["sha256"]
     for device, row in devices.items():

@@ -75,13 +75,11 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             ).hexdigest(),
             "acceptance_started_at": {
                 "rtx-4080": "2026-08-28T00:00:00+00:00",
-                "tesla-v100": "2026-08-28T01:00:00+00:00",
-                "rtx-4090": "2026-08-28T02:00:00+00:00",
+                "rtx-4090": "2026-08-28T01:00:00+00:00",
             }[device],
             "acceptance_completed_at": {
                 "rtx-4080": "2026-08-28T01:00:00+00:00",
-                "tesla-v100": "2026-08-28T02:00:00+00:00",
-                "rtx-4090": "2026-08-28T03:00:00+00:00",
+                "rtx-4090": "2026-08-28T02:00:00+00:00",
             }[device],
             "actual_routes": {
                 "prefill": ["native-self-chunk-prefill-v2"],
@@ -117,7 +115,7 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
     )
 
 
-def test_release_asset_verifier_accepts_exact_three_device_artifacts(tmp_path: Path):
+def test_release_asset_verifier_accepts_exact_required_device_artifacts(tmp_path: Path):
     report = verify(write_release(tmp_path))
     assert report["status"] == "passed"
     assert set(report["devices"]) == DEVICES
@@ -133,7 +131,7 @@ def test_release_asset_verifier_rejects_overlapping_device_order(tmp_path: Path)
     args = write_release(tmp_path)
     path = tmp_path / "release-provenance.json"
     provenance = json.loads(path.read_text())
-    provenance["validation"]["devices"]["tesla-v100"][
+    provenance["validation"]["devices"]["rtx-4090"][
         "acceptance_started_at"
     ] = "2026-08-28T00:30:00+00:00"
     path.write_text(json.dumps(provenance) + "\n")

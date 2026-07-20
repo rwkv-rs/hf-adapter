@@ -24,8 +24,7 @@ SOURCE_SHA = "a" * 40
 HARNESS_SHA = "b" * 40
 DEVICE_TIMES = {
     "rtx-4080": ("2026-08-28T00:00:00+00:00", "2026-08-28T01:00:00+00:00"),
-    "tesla-v100": ("2026-08-28T01:00:00+00:00", "2026-08-28T02:00:00+00:00"),
-    "rtx-4090": ("2026-08-28T02:00:00+00:00", "2026-08-28T03:00:00+00:00"),
+    "rtx-4090": ("2026-08-28T01:00:00+00:00", "2026-08-28T02:00:00+00:00"),
 }
 
 
@@ -202,7 +201,7 @@ def test_builder_rejects_missing_gate(tmp_path: Path):
 
 def test_builder_rejects_different_wheel(tmp_path: Path):
     args, bundles, _ = setup_release(tmp_path)
-    device = "tesla-v100"
+    device = "rtx-4090"
     replacement = rewrite_bundle(
         tmp_path,
         device=device,
@@ -244,8 +243,8 @@ def test_builder_rejects_requested_selector_as_actual_route(tmp_path: Path):
 
 def test_builder_rejects_overlapping_device_acceptance(tmp_path: Path):
     args, bundles, _ = setup_release(tmp_path)
-    device = "tesla-v100"
-    source = tmp_path / "overlap-v100"
+    device = "rtx-4090"
+    source = tmp_path / "overlap-4090"
     source.mkdir()
     report_path = source / DEVICE_REPORT
     report_path.write_bytes((bundles[device] / DEVICE_REPORT).read_bytes())

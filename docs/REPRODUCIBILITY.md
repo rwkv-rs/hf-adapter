@@ -16,8 +16,8 @@ GPU reports also record the requested backend selectors separately from the
 actual route, plus `CUDA_HOME`, `TORCH_EXTENSIONS_DIR`, `nvcc --version`, and a
 hash of the external CUDA toolchain provenance when lazy native extensions are
 built. RTX 4080/4090 release summaries reject native training evidence that
-does not identify its compiler. The V100 summary instead requires the explicit
-SM70 `reference-fallback` training profile.
+does not identify its compiler. V100 results retain the explicit SM70
+`reference-fallback` profile as historical evidence, not as a release gate.
 
 Before a native-training run, create its compiler gate with:
 
@@ -89,7 +89,7 @@ python scripts/run_hub_release_smokes.py \
 ```
 
 The GitHub release is prepared as a draft after the final wheel pair completes
-all three device gates. The exact wheel/source archives, `SHA256SUMS`, and
+the RTX 4080 and RTX 4090 gates. The exact wheel/source archives, `SHA256SUMS`, and
 `release-provenance.json` are attached before that draft is published. The
 release-triggered PyPI workflow downloads those assets, verifies their hashes,
 source SHA, fixed FLA commit, shared harness/wheel identities and every required
@@ -121,12 +121,12 @@ the checked-out release tag. Thus PyPI cannot receive a correct wheel paired
 with a stale or unsafe sdist, nor mutually consistent archives built from a
 different source tree.
 
-Generate the final provenance from the three compact bundles rather than
+Generate the final provenance from the required compact bundles rather than
 writing it by hand:
 
 ```bash
-# Start this marker before the first GPU command on each device. Finish the
-# complete RTX 4080 run before starting V100, and finish V100 before RTX 4090.
+# Start this marker before the first GPU command on each release device. Finish
+# the complete RTX 4080 run before starting RTX 4090.
 python evaluation/record_device_acceptance.py start \
   --device rtx-4080 \
   --source-sha "$FINAL_SOURCE_SHA" \
@@ -162,14 +162,13 @@ python evaluation/build_backend_v2_compact_bundle.py \
   --device rtx-4080 \
   --harness-sha "$FINAL_HARNESS_SHA"
 
-# Run after all three device summaries and compact bundles pass.
+# Run after both required device summaries and compact bundles pass.
 python scripts/build_release_provenance.py \
   --directory /artifacts/rwkv7-v1.0.0 \
   --version 1.0.0 \
   --source-sha "$(git rev-parse HEAD)" \
   --harness-sha "$FINAL_HARNESS_SHA" \
   --device-evidence rtx-4080=/results/4080-final-compact \
-  --device-evidence tesla-v100=/results/v100-final-compact \
   --device-evidence rtx-4090=/results/4090-final-compact
 
 python scripts/verify_release_assets.py \
@@ -182,7 +181,7 @@ python scripts/verify_release_assets.py \
 Each compact bundle must contain manifest-covered `release-validation.json`
 and `device-acceptance.json` files. The generator cryptographically binds the
 run marker to the device summary and rejects overlapping or out-of-order
-RTX 4080 -> V100 -> RTX 4090 lifetimes, a missing gate, selector-only route
+RTX 4080 -> RTX 4090 lifetimes, a missing gate, selector-only route
 name, invalid compact manifest, different wheel byte hash, different
 harness/source revision, or an FLA revision other than the pinned commit. It
 then deterministically writes `release-provenance.json` and `SHA256SUMS` for
@@ -203,10 +202,8 @@ python scripts/render_release_issue.py \
   --version 1.0.0 \
   --source-sha "$FINAL_SOURCE_SHA" \
   --speed rtx-4080=/results/4080/speed.json \
-  --speed tesla-v100=/results/v100/speed.json \
   --speed rtx-4090=/results/4090/speed.json \
   --lm-eval rtx-4080=/results/4080/lm-eval/validation-three-way.json \
-  --lm-eval tesla-v100=/results/v100/lm-eval/validation-three-way.json \
   --lm-eval rtx-4090=/results/4090/lm-eval/validation-three-way.json \
   --output /results/release/validation-issue-v1.0.0.md \
   --report /results/release/validation-issue-v1.0.0.json
@@ -237,7 +234,7 @@ python scripts/verify_end_to_end_release.py \
   --output /results/release/end-to-end-v1.0.0.json
 ```
 
-This final verifier repeats the three-device release-asset gate, requires the
+This final verifier repeats the required-device release-asset gate, requires the
 six Hub tags and unchanged weight baselines, exact PyPI wheel bytes, a GitHub
 tag contained in `main`, merged release PR, required architecture/evaluation
 documentation, a comprehensive public validation Issue, and six genuine

@@ -37,7 +37,6 @@ REQUIRED_ISSUE_TERMS = (
     "route",
     "sha256",
     "rtx 4080",
-    "v100",
     "rtx 4090",
     "fla",
     "reference",

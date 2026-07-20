@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build final release provenance from three validated compact evidence bundles."""
+"""Build final release provenance from the required compact device bundles."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from evaluation.build_backend_v2_compact_bundle import validate_bundle  # noqa: E402
 from scripts.verify_release_assets import (  # noqa: E402
+    DEVICE_ORDER,
     DEVICES,
     FLA_COMMIT,
     expected_artifacts,
@@ -62,7 +63,7 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="DEVICE=COMPACT_BUNDLE",
-        help="repeat exactly once for rtx-4080, tesla-v100, and rtx-4090",
+        help="repeat exactly once for rtx-4080 and rtx-4090",
     )
     return parser.parse_args(argv)
 
@@ -259,8 +260,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             parse_device_evidence(args.device_evidence).items()
         )
     }
-    ordered = ("rtx-4080", "tesla-v100", "rtx-4090")
-    for previous, following in zip(ordered, ordered[1:]):
+    for previous, following in zip(DEVICE_ORDER, DEVICE_ORDER[1:]):
         previous_completed = aware_datetime(
             devices[previous]["acceptance_completed_at"],
             label=f"{previous} completion",
