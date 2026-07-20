@@ -1,0 +1,20 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:   6%|▌         | 64/1059 [00:00<00:01, 570.33it/s]Loading weights:  13%|█▎        | 140/1059 [00:00<00:01, 676.47it/s]Loading weights:  20%|█▉        | 209/1059 [00:00<00:01, 681.80it/s]Loading weights:  26%|██▋       | 278/1059 [00:00<00:01, 672.78it/s]Loading weights:  33%|███▎      | 346/1059 [00:00<00:01, 672.35it/s]Loading weights:  40%|████      | 426/1059 [00:00<00:00, 687.41it/s]Loading weights:  47%|████▋     | 495/1059 [00:00<00:00, 664.04it/s]Loading weights:  54%|█████▍    | 572/1059 [00:00<00:00, 691.32it/s]Loading weights:  61%|██████    | 642/1059 [00:00<00:00, 680.75it/s]Loading weights:  67%|██████▋   | 713/1059 [00:01<00:00, 688.15it/s]Loading weights:  75%|███████▍  | 789/1059 [00:01<00:00, 690.02it/s]Loading weights:  81%|████████  | 859/1059 [00:01<00:00, 674.76it/s]Loading weights:  88%|████████▊ | 934/1059 [00:01<00:00, 692.82it/s]Loading weights:  95%|█████████▍| 1004/1059 [00:01<00:00, 687.99it/s]Loading weights: 100%|██████████| 1059/1059 [00:01<00:00, 679.38it/s]
+Adding EOS to train dataset:   0%|          | 0/4 [00:00<?, ? examples/s]Adding EOS to train dataset: 100%|██████████| 4/4 [00:00<00:00, 1131.61 examples/s]
+Parameter 'fn_kwargs'={'processing_class': RWKV7Tokenizer(name_or_path='/opt/models/rwkv7-g1g-2.9b-hf', vocab_size=65536, model_max_length=1000000000000000019884624838656, padding_side='right', truncation_side='right', special_tokens={'eos_token': '<|endoftext|>', 'pad_token': '<|padding|>'}, added_tokens_decoder={
+	65536: AddedToken("<|endoftext|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+	65537: AddedToken("<|padding|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+})} of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only shown once. Subsequent hashing failures won't be shown.
+Tokenizing train dataset:   0%|          | 0/4 [00:00<?, ? examples/s]Tokenizing train dataset: 100%|██████████| 4/4 [00:00<00:00, 640.52 examples/s]
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:02<00:00,  2.99s/it]100%|██████████| 1/1 [00:02<00:00,  2.99s/it]100%|██████████| 1/1 [00:02<00:00,  2.99s/it]100%|██████████| 1/1 [00:02<00:00,  2.99s/it]
+{'loss': '0.6934', 'grad_norm': '0', 'learning_rate': '0.0001', 'entropy': '0', 'num_tokens': '32', 'logits/chosen': '0', 'logits/rejected': '0', 'mean_token_accuracy': '0', 'rewards/chosen': '0', 'rewards/rejected': '0', 'rewards/accuracies': '0', 'rewards/margins': '0', 'logps/chosen': '0', 'logps/rejected': '0', 'epoch': '0.5'}
+{'train_runtime': '2.995', 'train_samples_per_second': '0.668', 'train_steps_per_second': '0.334', 'train_loss': '0.6934', 'epoch': '0.5'}
+Traceback (most recent call last):
+  File "/opt/rwkv7-hf-adapter-t4-final2-20260720/tests/test_hf_rl_training_smoke.py", line 332, in <module>
+    raise SystemExit(main())
+  File "/opt/rwkv7-hf-adapter-t4-final2-20260720/tests/test_hf_rl_training_smoke.py", line 321, in main
+    rows.append(run_dpo(args))
+  File "/opt/rwkv7-hf-adapter-t4-final2-20260720/tests/test_hf_rl_training_smoke.py", line 197, in run_dpo
+    assert delta > 0.0, "DPO LoRA/trainable parameters did not update"
+AssertionError: DPO LoRA/trainable parameters did not update

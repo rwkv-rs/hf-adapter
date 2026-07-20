@@ -3337,6 +3337,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 return input_ids
         except Exception:
             return None
+        # An exact-card fast-prefill policy uses native prefill as a compatibility
+        # route because the measured FLA/Triton chunk kernel cannot lower for
+        # sm_75.  rwkv7_prefill_native accepts and updates RWKV7StateCache, so
+        # continued chunks must stay on the same native state path as the first
+        # chunk.  Explicit RWKV7_FAST_PREFILL experiments on other cards retain
+        # the historical first-prefill-only behavior.
+        if bool(getattr(_rwkv7_kernel_policy(), "fast_prefill", False)) and isinstance(past_key_values, RWKV7StateCache):
+            return input_ids
         return None
 
     def forward(self, *args, **kwargs):

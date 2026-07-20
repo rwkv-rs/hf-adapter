@@ -1,0 +1,55 @@
+{
+  "axis": "native_graph_fused_output",
+  "backend": "hf_adapter",
+  "status": "pass",
+  "dtype": "fp16",
+  "device": "Tesla T4",
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "batch_size": 2,
+  "prompt_tokens": 32,
+  "steps": 48,
+  "fixed_token": false,
+  "fused_recurrent_enabled": false,
+  "baseline_effective_backend": "native_graph",
+  "fused_effective_backend": "native_graph",
+  "baseline_fused_output": false,
+  "fused_output": true,
+  "baseline_ms_per_step": 12.2457,
+  "fused_ms_per_step": 10.1851,
+  "speedup": 1.2023,
+  "baseline_tokps_total": 163.3,
+  "fused_tokps_total": 196.4,
+  "max_abs_diff_first_step": 0.0625,
+  "min_cosine_first_step": 1.0000001192092896,
+  "greedy_match": 96,
+  "greedy_total": 96,
+  "baseline_cache_stats": {
+    "requests": 52,
+    "hits": 51,
+    "misses": 1,
+    "evictions": 0,
+    "size": 1,
+    "limit": 8,
+    "batch_sizes": [
+      2
+    ],
+    "hit_rate": 0.9807692307692307
+  },
+  "fused_cache_stats": {
+    "requests": 52,
+    "hits": 51,
+    "misses": 1,
+    "evictions": 0,
+    "size": 1,
+    "limit": 8,
+    "batch_sizes": [
+      2
+    ],
+    "hit_rate": 0.9807692307692307
+  },
+  "peak_vram_mb": 942.0
+}
+
+appended 1 row -> bench/t4_production_close_20260720/results_t4.jsonl

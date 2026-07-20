@@ -139,10 +139,43 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
         if actual != desired:
             raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
     set_attn_mode(model, args.attn_mode)
-    for name in ("_rwkv7_native_jit_packs", "_rwkv7_native_graph_runner", "rwkv7_forward_token"):
-        if not hasattr(model, name):
-            raise ValueError(f"Loaded model does not expose {name}")
+    if not hasattr(model, "rwkv7_forward_token"):
+        raise ValueError("Loaded model does not expose rwkv7_forward_token")
+    if not (
+        hasattr(model, "_native_graph_runner")
+        or (
+            hasattr(model, "_rwkv7_native_jit_packs")
+            and hasattr(model, "_rwkv7_native_graph_runner")
+        )
+    ):
+        raise ValueError(
+            "Loaded model exposes neither the native-model nor legacy-wrapper "
+            "native-graph runner interface"
+        )
     return model
+
+
+def resolve_native_graph_runner(model, batch_size: int):
+    """Return a graph runner across native-model and legacy wrapper APIs."""
+
+    getter = getattr(model, "_native_graph_runner", None)
+    if callable(getter):
+        return getter(int(batch_size)), "native_model"
+    packs_getter = getattr(model, "_rwkv7_native_jit_packs", None)
+    runner_getter = getattr(model, "_rwkv7_native_graph_runner", None)
+    if callable(packs_getter) and callable(runner_getter):
+        return runner_getter(packs_getter(), int(batch_size)), "legacy_wrapper"
+    raise ValueError("native-graph runner interface is unavailable")
+
+
+def runner_token_buffer(runner):
+    """Return the fixed token-id buffer used by either graph runner API."""
+
+    for name in ("token_ids", "tok_id"):
+        value = getattr(runner, name, None)
+        if value is not None:
+            return value
+    raise ValueError("native-graph runner does not expose a token-id buffer")
 
 
 def encode(tok, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
@@ -163,8 +196,8 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
         out = model(ids, use_cache=True, logits_to_keep=1)
         base_state = out.past_key_values
         token = fixed if args.fixed_token else out.logits[:, -1:].argmax(dim=-1)
-        packs = model._rwkv7_native_jit_packs()
-        runner = model._rwkv7_native_graph_runner(packs, int(token.numel()))
+        runner, runner_interface = resolve_native_graph_runner(model, int(token.numel()))
+        token_buffer = runner_token_buffer(runner)
         state_manual = base_state.clone()
         state_api = base_state.clone()
 
@@ -193,7 +226,7 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
             def step_parts() -> None:
                 nonlocal copy_ms, token_ms, replay_ms, bind_ms, argmax_ms, token_parts
                 copy_ms += event_time_ms(lambda: runner.copy_from_cache(state_parts), args.device)
-                token_ms += event_time_ms(lambda: runner.tok_id.copy_(token_parts.reshape(batch_size)), args.device)
+                token_ms += event_time_ms(lambda: token_buffer.copy_(token_parts.reshape(batch_size)), args.device)
                 replay_ms += event_time_ms(lambda: runner.graph.replay(), args.device)
                 t_bind0 = time.perf_counter()
                 runner.bind_cache(state_parts)
@@ -247,6 +280,7 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
         "fast_token_backend": "native_graph",
         "fast_token_backend_effective": effective_backend,
+        "native_graph_runner_interface": runner_interface,
         "native_graph_fused_recurrent": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in _FALSE_VALUES,
         "native_graph_fused_recurrent_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "1") not in _FALSE_VALUES,
         "native_graph_fused_recurrent_raw": effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", "fused_recurrent_raw", False),

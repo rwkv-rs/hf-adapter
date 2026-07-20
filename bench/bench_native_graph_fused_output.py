@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,21 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 128
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
+
+
+def model_metadata(hf_dir: str, model) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(hf_dir).name.lower())
+    return {
+        "model_name": Path(hf_dir).name,
+        "model_size_label": match.group(1) if match else None,
+        "hf_model_dir": hf_dir,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 def cuda_sync(device: str) -> None:
@@ -174,6 +190,7 @@ def main() -> int:
     row = {
         "axis": "native_graph_fused_output",
         "backend": "hf_adapter",
+        **model_metadata(args.hf_dir, model),
         "status": "pass",
         "dtype": args.dtype,
         "device": device_name(args.device),

@@ -61,6 +61,27 @@ def self_chunk_rwkv7(
     if N != 64 or T % int(chunk_size):
         raise ValueError("self chunk RWKV-7 requires head_dim=64 and T divisible by chunk_size")
 
+    # The vendored tensor-core chunk kernels do not lower on every CUDA
+    # generation. Keep the public route correct when explicitly requested on
+    # an older device by using the already validated recurrent scan backend.
+    major, _minor = torch.cuda.get_device_capability(r.device)
+    if int(major) < 8:
+        from .fused_recurrent_update import fused_recurrent_scan
+
+        w_scan = torch.exp(w_decay.float()) if w_is_log else w_decay
+        return fused_recurrent_scan(
+            r,
+            w_scan,
+            k,
+            v,
+            kk,
+            a_gate,
+            state_native,
+            block_n=N,
+            block_m=8,
+            num_warps=4,
+        )
+
     if safe_gate is None:
         safe_gate = os.environ.get(
             "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SAFE_GATE", "1"

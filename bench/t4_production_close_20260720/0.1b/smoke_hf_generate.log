@@ -1,0 +1,10 @@
+logits_shape (1, 8, 65536)
+top5 [36786, 308, 3880, 295, 20063]
+forward_sec 1.2509
+generate_fast_token_backend native_graph
+generated_ids_shape (1, 12)
+decoded_BEGIN
+User: Hello!
+
+Assistant: Hello! I'm
+decoded_END

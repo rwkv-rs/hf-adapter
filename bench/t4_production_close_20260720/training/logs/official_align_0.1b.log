@@ -1,0 +1,48 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:  72%|███████▏  | 289/399 [00:00<00:00, 2878.98it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 2832.28it/s]
+
+### RWKV-7 "Goose" enabled ###
+
+Loading /opt/models/raw/rwkv7-g1d-0.1b-20260129-ctx8192 (cpu fp32)
+
+'The quick brown fox jumps over the lazy dog.'     top5=0.80 argmax=1 cos=0.999998 max=0.0315 mean=0.00740
+'Once upon a time, in a faraway land,'             top5=1.00 argmax=1 cos=0.999999 max=0.0406 mean=0.00769
+'User: Hello!\n\nAssistant:'                       top5=1.00 argmax=1 cos=0.999998 max=0.0343 mean=0.00825
+'import torch\nx = torch.randn('                   top5=1.00 argmax=1 cos=0.999997 max=0.1401 mean=0.05016
+'The capital of France is'                         top5=1.00 argmax=1 cos=0.999997 max=0.0357 mean=0.00544
+
+=== summary ===
+{
+  "axis": "official_alignment",
+  "backend": "hf_adapter",
+  "status": "pass",
+  "ts": 1784535905,
+  "hf_dir": "/opt/models/rwkv7-g1d-0.1b-hf",
+  "model_name": "rwkv7-g1d-0.1b-hf",
+  "model_size_label": "0.1b",
+  "hf_model_dir": "/opt/models/rwkv7-g1d-0.1b-hf",
+  "pth": "/opt/models/raw/rwkv7-g1d-0.1b-20260129-ctx8192.pth",
+  "dtype": "fp16",
+  "device": "Tesla T4",
+  "official_strategy": "cpu fp32",
+  "fuse_norm": false,
+  "n_prompts": 5,
+  "top5_match": 0.96,
+  "argmax_match": 1.0,
+  "cosine": 0.9999978423118592,
+  "max_abs_diff": 0.14012908935546875,
+  "mean_abs_diff": 0.015785931795835494,
+  "greedy_window": {
+    "requested": 64,
+    "matched": 64,
+    "mismatches": []
+  },
+  "targets": {
+    "top5_match": 0.9,
+    "cosine": 0.9999,
+    "max_abs_diff": 0.15,
+    "greedy_matched": 64
+  }
+}
+appended -> /opt/rwkv7-hf-adapter-t4-final2-20260720/bench/t4_production_close_20260720/training/results_official_alignment.jsonl
+PASS

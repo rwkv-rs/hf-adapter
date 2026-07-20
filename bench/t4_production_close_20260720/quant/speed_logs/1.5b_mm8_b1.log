@@ -1,0 +1,96 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:   0%|          | 2/795 [00:00<00:41, 18.90it/s]Loading weights:  12%|█▏        | 93/795 [00:00<00:01, 529.83it/s]Loading weights:  19%|█▊        | 148/795 [00:00<00:01, 423.19it/s]Loading weights:  30%|███       | 241/795 [00:00<00:00, 587.36it/s]Loading weights:  42%|████▏     | 336/795 [00:00<00:00, 702.75it/s]Loading weights:  52%|█████▏    | 414/795 [00:00<00:00, 724.01it/s]Loading weights:  62%|██████▏   | 493/795 [00:00<00:00, 717.38it/s]Loading weights:  72%|███████▏  | 575/795 [00:00<00:00, 744.92it/s]Loading weights:  84%|████████▍ | 668/795 [00:00<00:00, 798.65it/s]Loading weights:  94%|█████████▍| 750/795 [00:01<00:00, 716.44it/s]Loading weights: 100%|██████████| 795/795 [00:01<00:00, 404.31it/s]
+{
+  "axis": "native_quant_e2e_decode",
+  "backend": "hf_adapter",
+  "code_source": "repo",
+  "effective_hf_dir": "/opt/models/rwkv7_native_quant_repo_code_8m1rcz9d",
+  "status": "pass",
+  "quantization": "mm8",
+  "native_mm4_group_size": null,
+  "native_mm4_group_policy": null,
+  "sm70_w4_tuning_policy": null,
+  "sm70_w4_fused_epilogue": null,
+  "sm70_w4_block_n": null,
+  "sm70_w4_thread_n": null,
+  "sm70_w4_group_block_n": null,
+  "sm70_w4_group_thread_n": null,
+  "dtype": "fp16",
+  "device": "Tesla T4",
+  "model_name": "rwkv7-g1g-1.5b-hf",
+  "model_size_label": "1.5b",
+  "hf_model_dir": "/opt/models/rwkv7-g1g-1.5b-hf",
+  "hidden_size": 2048,
+  "intermediate_size": 8192,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 32,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "batch_size": 1,
+  "prompt_tokens": 64,
+  "decode_tokens": 32,
+  "min_params": 8000000,
+  "quant_group_size": 128,
+  "quantized_head": false,
+  "marlin_skip_last_layers": 0,
+  "native_mm_policy": "speed",
+  "paired_baseline": true,
+  "quantize_before_device": false,
+  "replaced_modules": 1,
+  "module_counts": {
+    "linear_dense": 334,
+    "mm8": 1,
+    "mm4": 0,
+    "a8w8": 0,
+    "marlin_w4": 0,
+    "torchao_w8": 0,
+    "torchao_w4": 0
+  },
+  "native_mm_kernel": "sm7x_dp4a_w8",
+  "fused_relu2_ffn_modules": 0,
+  "model_footprint_mb": 2785.4,
+  "baseline_prefill_tokps_total": 1256.1,
+  "baseline_decode_tokps_total": 65.1,
+  "baseline_model_footprint_mb": 2913.3,
+  "footprint_ratio_vs_fp16": 0.9561,
+  "prefill_speed_ratio_vs_fp16": 0.9928,
+  "decode_speed_ratio_vs_fp16": 1.0338,
+  "prompt_logits_cos_vs_fp16": 0.99999487,
+  "final_logits_cos_vs_fp16": 0.99999428,
+  "same_next_token_as_fp16": true,
+  "same_greedy_tokens_as_fp16": true,
+  "first_greedy_mismatch_flat_index": null,
+  "peak_vram_mb": 2863.2,
+  "prefill_sec": 0.051320552825927734,
+  "prefill_tokps_total": 1247.1,
+  "decode_sec": 0.47553157806396484,
+  "decode_tokps_total": 67.3,
+  "decode_tokps_per_seq": 67.3,
+  "decode_ms_per_step": 14.86,
+  "next_token": 47,
+  "fast_token_backend_effective": "native_graph",
+  "native_model_decode_backend_effective": "native_graph",
+  "native_model_prefill_backend_effective": "native_prefill",
+  "cache_type": "NativeRWKV7Cache",
+  "timing_repeats": 3,
+  "prefill_tokps_samples": [
+    1247.1,
+    1247.1,
+    1271.8
+  ],
+  "decode_tokps_samples": [
+    67.4,
+    67.3,
+    67.2
+  ],
+  "greedy_tokens_sha256": "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7",
+  "greedy_repeat_sha256": [
+    "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7",
+    "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7",
+    "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7"
+  ],
+  "greedy_repeat_deterministic": true
+}
+appended 1 row -> /opt/rwkv7-hf-adapter-t4-final2-20260720/bench/t4_production_close_20260720/quant/results_quant_speed.jsonl

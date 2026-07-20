@@ -38,7 +38,7 @@ from .native_quant_policy import normalize_native_mm_policy, should_quantize_lin
 
 try:
     from .sm70_quant import (
-        is_sm70,
+        is_sm7x_quant_device,
         quantize_w4_groupwise,
         quantize_w4_row,
         w4_groupwise_linear as sm70_w4_groupwise_linear,
@@ -47,7 +47,7 @@ try:
         w4_linear as sm70_w4_linear,
     )
 except Exception:  # pragma: no cover
-    is_sm70 = lambda _device=None: False  # type: ignore[assignment]
+    is_sm7x_quant_device = lambda _device=None: False  # type: ignore[assignment]
     quantize_w4_groupwise = None  # type: ignore[assignment]
     quantize_w4_row = None  # type: ignore[assignment]
     sm70_w4_groupwise_linear = None  # type: ignore[assignment]
@@ -517,11 +517,14 @@ class MM4Linear(torch.nn.Module):
         if self.group_size not in {0, 128, 256}:
             raise ValueError("native MM4 group_size must be 0, 128, or 256")
         self.groupwise = bool(
-            self.group_size == 128 and quantize_w4_groupwise is not None
+            self.group_size == 128
+            and int(linear.weight.shape[1]) % self.group_size == 0
+            and quantize_w4_groupwise is not None
         )
+        quant_device = linear.weight.device if linear.weight.is_cuda else None
         self.sm70_rowwise = bool(
             not self.groupwise
-            and is_sm70(linear.weight.device)
+            and is_sm7x_quant_device(quant_device)
             and quantize_w4_row is not None
         )
         if self.groupwise:
@@ -725,6 +728,19 @@ def quantize_model_mm4(
         )
     setattr(model, "_rwkv7_native_mm_quantization", "mm4")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    sm7x_modules = [
+        module
+        for module in model.modules()
+        if isinstance(module, MM4Linear)
+        and (bool(module.groupwise) or bool(module.sm70_rowwise))
+    ]
+    if sm7x_modules:
+        route = (
+            f"sm7x_dp4a_w4_group{int(group_size)}"
+            if int(group_size)
+            else "sm7x_dp4a_w4_row"
+        )
+        setattr(model, "_rwkv7_native_mm_kernel", route)
     setattr(model, "_rwkv7_native_mm4_group_size", int(group_size))
     setattr(model, "_rwkv7_native_mm4_group_policy", group_policy)
     setattr(
@@ -738,6 +754,7 @@ def quantize_model_mm4(
         "_rwkv7_native_graph_runner_cache",
         "_rwkv7_native_prefill_graph_runner_cache",
         "_rwkv7_native_prefill_graph_hot_runner",
+        "_rwkv7_native_model_jit_pack_cache",
     ):
         if hasattr(model, cache_attr):
             delattr(model, cache_attr)

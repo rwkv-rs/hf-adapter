@@ -1,0 +1,10 @@
+logits_shape (1, 8, 65536)
+top5 [36786, 3880, 33, 50809, 267]
+forward_sec 1.4941
+generate_fast_token_backend native_graph
+generated_ids_shape (1, 12)
+decoded_BEGIN
+User: Hello!
+
+Assistant: Hello! How can
+decoded_END
