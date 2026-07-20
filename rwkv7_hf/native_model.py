@@ -973,6 +973,11 @@ class NativeRWKV7Attention(nn.Module):
             "attention_hidden_size",
             config.num_heads * config.head_dim,
         )
+        # Wrapper/FLA-compatible value-width aliases used by generic kernel
+        # probes. The native implementation currently shares the recurrent
+        # key/value projection width, so these are exact, metadata-only names.
+        self.value_dim = int(self.attention_hidden_size)
+        self.head_v_dim = self.value_dim // self.num_heads
         hidden = config.hidden_size
         attention_hidden = self.attention_hidden_size
         for p in ("x_r", "x_w", "x_k", "x_v", "x_a", "x_g"):

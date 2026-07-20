@@ -69,6 +69,8 @@ def test_width_split_forward_backward_cache_generate_and_reload() -> None:
     assert attention.v_proj.weight.shape == (16, 8)
     assert attention.o_proj.weight.shape == (8, 16)
     assert attention.g_norm.weight.shape == (16,)
+    assert attention.value_dim == 16
+    assert attention.head_v_dim == 4
 
     input_ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
     result = model(input_ids=input_ids, labels=input_ids, use_cache=True)
