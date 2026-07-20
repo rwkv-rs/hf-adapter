@@ -1,0 +1,20 @@
+{
+  "kind": "local",
+  "path": "/home/wzu/codex-run/models/training-adaptive-453e29a29e1a/rwkv7_01b_hf",
+  "requested_revision": "local",
+  "resolved_revision": "0ca705b132d39cf1d3f25df58e57405e2ef243ea38edf6baf11566a8dccd312d",
+  "files": {
+    "cache_rwkv7.py": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76",
+    "chat_template.jinja": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+    "config.json": "983e4fd48d1c5181864457c2dc745e622eb842fc212ac279b66c7bd16b2d38c1",
+    "configuration_rwkv7.py": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503",
+    "generation_config.json": "318c7c61295040eb8c3e3944c30add36caf0ed08c7ddb548cb6a34cd8fe92b0c",
+    "model.safetensors": "12d208adf2880927615656c2dc3f6fb6a3ea3120a9ed9fdfeeea55c841723d79",
+    "modeling_rwkv7.py": "02b4ad1be97083a89b782a956cddc402bbb0352b4424114e52f02c3efe7cb733",
+    "ops_rwkv7.py": "92f901366e1bf96c5d843b7a5f78bc3bad4098843747621675342178462e66de",
+    "rwkv_vocab_v20230424.txt": "e6dee3d4e31b4d5c40ac99508ac6c701ceef4bed681bf2167ce9a908552bca89",
+    "special_tokens_map.json": "37c7ff84c6d1505bfb79f523ced0656802fe4bc420fe68aa89b612166944b850",
+    "tokenization_rwkv7.py": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+    "tokenizer_config.json": "0a8bbc94fb5f6644b21e2653aea79407245a9a4b24d25c5f6a84698f5d9c5f27"
+  }
+}

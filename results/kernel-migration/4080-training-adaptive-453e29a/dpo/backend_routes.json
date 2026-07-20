@@ -1,0 +1,101 @@
+[
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "model",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-model-v1",
+    "reason": "native prefill requires the causal-LM boundary",
+    "phase": "training"
+  },
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "recurrent",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-v1",
+    "reason": "the matrix training leaf requires an autograd request"
+  },
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-linear-v1",
+    "reason": "the adaptive candidate retains reference linears for masked or standalone requests"
+  },
+  {
+    "event": "log",
+    "boundary": "model",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-model-v1",
+    "reason": "native prefill requires the causal-LM boundary",
+    "phase": "training"
+  },
+  {
+    "event": "log",
+    "boundary": "recurrent",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-v1",
+    "reason": "the matrix training leaf requires an autograd request"
+  },
+  {
+    "event": "log",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-linear-v1",
+    "reason": "the adaptive candidate retains reference linears for masked or standalone requests"
+  },
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-linear-v1",
+    "reason": "the optimized training linear requires autograd"
+  },
+  {
+    "event": "log",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-linear-v1",
+    "reason": "the optimized training linear requires autograd"
+  },
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-linear-v1",
+    "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+  },
+  {
+    "event": "log",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-linear-v1",
+    "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+  },
+  {
+    "event": "log",
+    "boundary": "model",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-model-v1",
+    "reason": "native prefill requires the causal-LM boundary",
+    "phase": "prefill"
+  },
+  {
+    "event": "log",
+    "boundary": "recurrent",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-v1",
+    "reason": "unsupported input dtype torch.bfloat16"
+  }
+]

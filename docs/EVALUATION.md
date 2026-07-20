@@ -60,10 +60,10 @@ Run the 48 units (3 models x 2 batch sizes x 8 tasks):
 
 ```bash
 python evaluation/run_lm_eval_matrix.py \
-  --output-dir results/lm_eval/v0.9.0 \
+  --output-dir results/lm_eval/v1.0.0 \
   --device cuda
 python evaluation/validate_lm_eval_matrix.py \
-  --result-dir results/lm_eval/v0.9.0
+  --result-dir results/lm_eval/v1.0.0
 ```
 
 On a two-GPU V100 host, the checked-in launcher partitions the eight tasks,
@@ -71,7 +71,7 @@ runs both shards concurrently, merges them, and invokes the same validator:
 
 ```bash
 MODEL_ROOT=/models/rwkv7-reference \
-OUTPUT_DIR="$PWD/results/lm_eval/v0.9.0" \
+OUTPUT_DIR="$PWD/results/lm_eval/v1.0.0" \
 PYTHON="$VIRTUAL_ENV/bin/python" \
 CODE_SHA="$(git rev-parse HEAD)" \
 bash evaluation/run_lm_eval_v100_parallel.sh
@@ -88,7 +88,7 @@ V100 capacity without changing any lm_eval command or batch size:
 ```bash
 python evaluation/run_lm_eval_v100_pool.py \
   --model-root /models/rwkv7-reference \
-  --output-dir results/lm_eval/v0.9.0 \
+  --output-dir results/lm_eval/v1.0.0 \
   --python "$VIRTUAL_ENV/bin/python" \
   --code-sha "$(git rev-parse HEAD)"
 ```
@@ -105,3 +105,144 @@ difference must be at most 0.001; Wikitext perplexity relative difference must
 be at most 0.1%. The fixed execution shapes described in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#numerical-reproducibility) prevent normal
 FP16 GEMM shape selection from changing close multiple-choice decisions.
+
+## Three-way optional-backend lm_eval
+
+The optional-backend release matrix is distinct from the single reference
+lane above. It runs `reference`, strict backend-v2 `optimized`, and the pinned
+FLA wrapper for 0.1B/0.4B/1.5B, batch 1/8, and all eight tasks: 144 formal
+commands in total. All lanes use one immutable HF wheel, one immutable kernel
+wheel and FLA commit
+`80e494f6c588e091fc8316b612870df29375c5b8`.
+
+Each lane uses the same command shape (shown for the optimized lane):
+
+```bash
+python evaluation/run_lm_eval_matrix.py \
+  --output-dir results/backend-v2/lm_eval/optimized \
+  --lane optimized \
+  --optimized-model-impl native \
+  --model 0.1b=/models/rwkv7-0.1b-hf \
+  --model 0.4b=/models/rwkv7-0.4b-hf \
+  --model 1.5b=/models/rwkv7-1.5b-hf \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl \
+  --fla-source /sources/fla-80e494f6 \
+  --code-sha "$(git rev-parse HEAD)"
+```
+
+Use the clean model directories for `reference`/`optimized` and directories
+created by `prepare_fla_lm_eval_model.py` for `fla`. Then run:
+
+```bash
+python evaluation/validate_lm_eval_three_way.py \
+  --reference-dir results/backend-v2/lm_eval/reference \
+  --optimized-dir results/backend-v2/lm_eval/optimized \
+  --fla-dir results/backend-v2/lm_eval/fla \
+  --output results/backend-v2/lm_eval/validation.json \
+  --require-model-routes
+```
+
+The validator rejects requested-route labels without actual backend-v2 trace
+counts. It also rejects different wheel hashes, FLA revisions, weights,
+tokenizer/vocabulary/template payloads, datasets, or harness SHAs. For
+classification it reconstructs each raw and normalized selected answer;
+LAMBADA compares greedy-continuation outcomes; Wikitext compares per-document
+rolling NLL/word/byte counts and aggregate NLL/PPL at the 0.1% relative gate.
+Raw samples remain outside Git; only compact manifests, hashes, commands and
+validation summaries are committed.
+
+## Compact release evidence
+
+After a device result root passes, build its reviewable Git artifact without
+copying samples, lm_eval result payloads, stdout/stderr logs, checkpoints,
+weights, wheels, W&B runtime files, or model directories:
+
+```bash
+python evaluation/build_backend_v2_compact_bundle.py \
+  --input-dir /results/backend-v2/4080-final \
+  --output-dir results/backend-v2/4080-final-compact \
+  --device RTX-4080 \
+  --harness-sha "$(git rev-parse HEAD)"
+```
+
+The builder retains JSON/JSONL summaries and manifests, resolved configs,
+environment reports, command lines, exit codes and small text evidence. It
+rejects symlinks, oversized evidence, known token forms and output directories
+inside the raw result tree. `BUNDLE.json` records the filtering policy and
+builder SHA; `MANIFEST.sha256` covers every other bundled file and is verified
+before the directory is published.
+
+## Optional training comparison
+
+Training comparison never substitutes a second model class. The reference and
+candidate lanes load the same `RWKV7ForCausalLM`; the candidate keeps the
+readable layer loop and replaces only canonical mathematical leaves.  The
+`adaptive` candidate uses the factorized recurrent and flattened linear leaves
+for fully active batches whose token length is divisible by 16. It selects the
+exact matrix recurrence and reference linears for masked or unaligned batches.
+`matrix` and `factorized` remain explicit isolation modes. FLA is loaded from
+the pinned checkout as an independent comparison lane.
+
+The factorized rows require a CUDA development toolkit matching
+`torch.version.cuda`. The kernel wheel installs Ninja, but it deliberately does
+not install or guess a system toolkit. Point `CUDA_HOME` at a prefix containing
+`bin/nvcc`, and record both values before running the immutable-wheel gate:
+
+```bash
+export CUDA_HOME=/opt/cuda
+export PATH="$CUDA_HOME/bin:$PATH"
+"$CUDA_HOME/bin/nvcc" --version
+python -c 'import torch; print(torch.__version__, torch.version.cuda)'
+```
+
+If that toolchain is absent, `adaptive` records the reason and uses the exact
+matrix leaf; such a row is valid fallback evidence but cannot be counted as a
+factorized speed result. `matrix` never requires a compiler.
+
+Leaf-level output, state and gradient comparison:
+
+```bash
+RWKV7_BACKEND=auto \
+RWKV7_TRAINING_KERNEL_IMPL=adaptive \
+python evaluation/validate_recurrent_training.py \
+  --candidate adaptive \
+  --fla-source /sources/fla-80e494f6 \
+  --output results/training/recurrent.json \
+  --batch 1 --batch 4 \
+  --tokens 16 --tokens 17 --tokens 128 \
+  --padding none --padding left --padding right \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
+```
+
+Full-model logits, causal loss, complete gradient vector, checkpointing and
+forward/backward throughput comparison:
+
+```bash
+python evaluation/validate_model_training.py \
+  --candidate adaptive \
+  --model /models/rwkv7-0.1b-hf \
+  --fla-source /sources/fla-80e494f6 \
+  --output results/training/model.json \
+  --batch 1 --batch 4 \
+  --tokens 16 --tokens 17 --tokens 128 \
+  --padding none --padding left --padding right \
+  --checkpointing off --checkpointing on \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
+```
+
+For the exact rows of `--candidate adaptive` (or `--candidate matrix`), the
+full-model gate requires actual recurrent route
+`torch-cuda-rwkv7-batched-matrix-recurrent-training-v1`, reference linear route
+`torch-reference-linear-v1`, and readable model route
+`torch-reference-model-v1`. For fully active, 16-token-aligned adaptive rows
+(or explicit `--candidate factorized` rows), the expected recurrent route is
+`native-nvidia-rwkv7-factorized-recurrent-training-v1`; the flattened linear
+route is required only when `batch * tokens >= 128`. The gate rejects
+non-finite tensors, missing gradients, loss/logit/optimizer-vector threshold
+failures, or a candidate result numerically worse than the pinned FLA lane. Named
+per-parameter diagnostics remain in JSON even when the aggregate
+optimizer-vector gate passes. Speed is reported only after correctness is
+evaluated and never changes the correctness result.

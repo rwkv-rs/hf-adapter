@@ -1,0 +1,12 @@
+===/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/01b===
+983e4fd48d1c5181864457c2dc745e622eb842fc212ac279b66c7bd16b2d38c1  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/01b/config.json
+12d208adf2880927615656c2dc3f6fb6a3ea3120a9ed9fdfeeea55c841723d79  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/01b/model.safetensors
+e6dee3d4e31b4d5c40ac99508ac6c701ceef4bed681bf2167ce9a908552bca89  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/01b/rwkv_vocab_v20230424.txt
+===/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/04b===
+ebbcc329fd332479b5f9730543d2c0d5b7412ae93688733536c209072d4eae11  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/04b/config.json
+8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/04b/model.safetensors
+e6dee3d4e31b4d5c40ac99508ac6c701ceef4bed681bf2167ce9a908552bca89  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/04b/rwkv_vocab_v20230424.txt
+===/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b===
+b7a9d98f1499f2e66dc14f97c94944a4c1e61b3e4acd2f822f353825ed53f9a8  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b/config.json
+d580d0c687d4e7e6c86985c61418712fc2904189575ac1b4cf199845497b9c23  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b/model.safetensors
+e6dee3d4e31b4d5c40ac99508ac6c701ceef4bed681bf2167ce9a908552bca89  /home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b/rwkv_vocab_v20230424.txt

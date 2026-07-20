@@ -1,0 +1,731 @@
+{
+  "files": [
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/SELF_CHUNK_LICENSE",
+      "destination_sha256": "41a83c8187efc1e3ccc21909e806a9e52338e69448554d9754706c3d1cd610e7",
+      "git_blob": "7ced50191b7f5f0eec4e14114d2bc613922bc3b2",
+      "source": "rwkv7_hf/SELF_CHUNK_LICENSE",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/ada_lora.py",
+      "destination_sha256": "0f1f93ee29a12632abeb6696164c73be1104aa55ca71d6e7b403907f8d6baa3b",
+      "git_blob": "504e9721e8cfb12a60eeec5c57e2cad6f24d913f",
+      "source": "rwkv7_hf/ada_lora.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/ada_sparse_ffn.py",
+      "destination_sha256": "aa5eb3572180ef38bc05dc82a56a48157fe4faa808f07c9ba54c0c8f5b8c6756",
+      "git_blob": "daca7a18218cd9a90aa7821d62a467f545ea5e36",
+      "source": "rwkv7_hf/ada_sparse_ffn.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/blackwell_norm_mix.py",
+      "destination_sha256": "02c809471cf1065bf1de6963448c752aba916e10e91c98c7571eaf4e797aa655",
+      "git_blob": "f741c74b6f37d281ae69ff39e75d7fe02362d255",
+      "source": "rwkv7_hf/blackwell_norm_mix.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/bn_tn_tuning.py",
+      "destination_sha256": "07c88c8a6878ef42cd974f995e3fb33dc9bdec82f98b16617d77fa198fe5b585",
+      "git_blob": "1dd99d9eff039ac4557a8b1b12ebaf8482ce2ae7",
+      "source": "rwkv7_hf/bn_tn_tuning.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/LICENSE",
+      "destination_sha256": "d63713e1d83b56d570b9f98fcb10eef316bf85907a1c49bcd5943ee8a02b61f3",
+      "git_blob": "375b95f6e9e72ce847b494bb9e4021526be2d2f3",
+      "source": "rwkv7_hf/csrc/marlin/LICENSE",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/README.md",
+      "destination_sha256": "7322f9b5eeb287b0eef473239b0ea4953d25ae0ff742587b152371dc3a206b16",
+      "git_blob": "fd7d1e062ca1c8fe9ce535331b85cc87ff51799e",
+      "source": "rwkv7_hf/csrc/marlin/README.md",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/awq_marlin_repack.cu",
+      "destination_sha256": "afeca7d2090d118682c5a11f6d6dce5fa2563b4b1a2cfc91fb030a518cbee9aa",
+      "git_blob": "814bd0c8af1fbf5afc680e32aff47f2fac0539ee",
+      "source": "rwkv7_hf/csrc/marlin/awq_marlin_repack.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/awq_marlin_repack.cuh",
+      "destination_sha256": "f93773c2abdbe11f3f99eb2752a513b7be36985a2aadc651fe5b94e3bc16838b",
+      "git_blob": "f4190d0f04e9b8f64a67e90cf4b30466d49b022b",
+      "source": "rwkv7_hf/csrc/marlin/awq_marlin_repack.cuh",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/core/registration.h",
+      "destination_sha256": "ccf8793487789f6842ce08d13e125b2c7e37dc57914357326d6858910c515424",
+      "git_blob": "c83d6cebfb1f5d5080e34b5ae22a1ae28c76016d",
+      "source": "rwkv7_hf/csrc/marlin/core/registration.h",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/core/scalar_type.hpp",
+      "destination_sha256": "37d2718309bc916821c91a6e34a93382bdd2afd02fd2c2da43e5db593aafc3d7",
+      "git_blob": "97078169db505e6adb57a523248acd89f88b7d47",
+      "source": "rwkv7_hf/csrc/marlin/core/scalar_type.hpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/dequant.h",
+      "destination_sha256": "5b2ccb48ef6fdbac19176dc3a8a46df412a52e6ce10e657bd7ba98c6dbac1a2f",
+      "git_blob": "a34986e06bb7787d3fd32c7b330365da21e74218",
+      "source": "rwkv7_hf/csrc/marlin/dequant.h",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin.cu",
+      "destination_sha256": "fef28e4cd513eab43bb6f12d3893254c367bebcef018595c69b24de96240c4c7",
+      "git_blob": "d92fa764fcf0372b534835ab950e0905f764e1b3",
+      "source": "rwkv7_hf/csrc/marlin/gptq_marlin.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin.cuh",
+      "destination_sha256": "2529a5e72bbf7e506823940f0edb94cfacd926d7734bf7f327bf213351300134",
+      "git_blob": "e82a168114498c04901441c887e067fcf54b6510",
+      "source": "rwkv7_hf/csrc/marlin/gptq_marlin.cuh",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_bf16.cu",
+      "destination_sha256": "3ebd5918f9a571a413f8dec09a7fdd530001b6f32f7b6fd8135d7acf8d6f8f88",
+      "git_blob": "4bc4ff239f458a4643d80c9728e85b583b39e215",
+      "source": "rwkv7_hf/csrc/marlin/gptq_marlin_bf16.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_repack.cu",
+      "destination_sha256": "09f7f9df03eb59eda51f6e1f7f4e566403c94ac266e153de511d2578ecdf7ff6",
+      "git_blob": "33e065083e09d3f85e79c37ca3fc00e69a8b41f4",
+      "source": "rwkv7_hf/csrc/marlin/gptq_marlin_repack.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_repack.cuh",
+      "destination_sha256": "100a900d6ab5059421d2a672bd343350a3cc77228a2ab78ff2891258e82017eb",
+      "git_blob": "f3814ae700cb5988dd9474a4ee5270d80cbd79de",
+      "source": "rwkv7_hf/csrc/marlin/gptq_marlin_repack.cuh",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel.h",
+      "destination_sha256": "4ac77793e0cce10c64bdcb80e0e162130308c5b7b9043ebc54a827d123637aa2",
+      "git_blob": "6f09f314391609e58e3794ef2ad4146adb547d64",
+      "source": "rwkv7_hf/csrc/marlin/kernel.h",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_kfe2m1f.cu",
+      "destination_sha256": "6f3e183af133a4ae574d271637aa06aa338e853000a8e13894b1a0be53bd7404",
+      "git_blob": "7538a4e186a3c918a82e13454f3d7132f8051294",
+      "source": "rwkv7_hf/csrc/marlin/kernel_bf16_kfe2m1f.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_kfe4m3fn.cu",
+      "destination_sha256": "7bffde6fc3731c6dee99a7b8db2fe7f0ceb3dba6aeb91d9dac8a70bab45661fe",
+      "git_blob": "c5d1bfa35e4e37de8230b4fe7abc69e7c922dc88",
+      "source": "rwkv7_hf/csrc/marlin/kernel_bf16_kfe4m3fn.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku4.cu",
+      "destination_sha256": "52b2f923faca1b5cf2fb1edc39be5f0b708dc03e4a9edbbbca130e52199fdc87",
+      "git_blob": "5488b2a7d42581e3ba3e3abc10ca5d668eee379a",
+      "source": "rwkv7_hf/csrc/marlin/kernel_bf16_ku4.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku4b8.cu",
+      "destination_sha256": "6d0b686b7b615629c4e3fe2a5636aacb1d14ee87007428f59b451775f4c56c84",
+      "git_blob": "a6402a75eaa74649a294e10a8e96fc94e9956b8d",
+      "source": "rwkv7_hf/csrc/marlin/kernel_bf16_ku4b8.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku8b128.cu",
+      "destination_sha256": "d5901ab94d06febb6436efb2a67240580153f13fab6e66da825bcf8de3a3c124",
+      "git_blob": "df916f6b31c96f5d3d7fe6faedaf4014b78a2de5",
+      "source": "rwkv7_hf/csrc/marlin/kernel_bf16_ku8b128.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin.cuh",
+      "destination_sha256": "dea86b85086fb5717c723bad6eec5eee1fc20bf55b5ed9b6399f8d61ffce1b68",
+      "git_blob": "b3abb81cedd10e9fa061563b64aa1d301be50535",
+      "source": "rwkv7_hf/csrc/marlin/marlin.cuh",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_dtypes.cuh",
+      "destination_sha256": "92112280e34f65491a177b7f529e4b5f5a2e382d498e003d3d114e4025fb693c",
+      "git_blob": "69bfe30193e94b301e92594fa909fa46d8a23b06",
+      "source": "rwkv7_hf/csrc/marlin/marlin_dtypes.cuh",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_mma.h",
+      "destination_sha256": "593f950ba5a03d7381f74eee4725d44ce133d96dc9ecdbe630cdf9deba70b368",
+      "git_blob": "ab5ad40c0f25adfb78da01ade64dee0ad1e4c17e",
+      "source": "rwkv7_hf/csrc/marlin/marlin_mma.h",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_template.h",
+      "destination_sha256": "e851e5c5a300d8f2d55e0a413d80d5187fde041f0e11b469d29be36bbc3db41c",
+      "git_blob": "b9e5e6c158b924874708851f159e797c38f4030e",
+      "source": "rwkv7_hf/csrc/marlin/marlin_template.h",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_torch_bf16.cpp",
+      "destination_sha256": "d8ed4ee6f33cb81ae24082356334a3a2531456467d7efaa04e208e03d4aff853",
+      "git_blob": "c6cf772ec4899ef595cc09c652d4d8a7c7660be9",
+      "source": "rwkv7_hf/csrc/marlin/marlin_torch_bf16.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/LICENSE",
+      "destination_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "git_blob": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+      "source": "rwkv7_hf/csrc/train_temp/LICENSE",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/README.md",
+      "destination_sha256": "669c65efddee205ed67cadeae7a4fd7de7d461167a9b1252b313f895b159cf02",
+      "git_blob": "154849e914a4e41d6981ec038e16ab5bc7da5507",
+      "source": "rwkv7_hf/csrc/train_temp/README.md",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted the historical BF16 raw-decay ABI to accept canonical FP32 decay values and return FP32 decay gradients without changing the public HF model",
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3.cpp",
+      "destination_sha256": "af534188b3e69105ba37528001057d94b633f7f4ed1c0d21a99c6cb9b10d0b5f",
+      "git_blob": "702966078c410e8ff8338c025790aeb77399739e",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3.cpp",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "adaptation": "adapted the historical raw-decay transform to consume canonical FP32 decay, retain FP32 state, and reproduce the clean BF16 outer-product and output rounding contract on SM80+",
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
+      "destination_sha256": "38940b46678e163e3194457d7ad0cfc5df21122b806f7e949bb53db99b0f2f4b",
+      "git_blob": "677ff81399fad6a1ede38ee25a87562716473323",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_cmix_bf16_v5.cpp",
+      "destination_sha256": "f5edb50e8df6306e40ff6a009d015e1a15e1356d5f50fb5de8fd9bf73d71823c",
+      "git_blob": "ecf66ca35aadecae5eecfdc84bd4211a79d88873",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted the SM90-only float2 atomic into an architecture-gated vector path with scalar FP32 atomic fallback for Ada, Ampere, and Volta training",
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
+      "destination_sha256": "ffa86c58ca12d4a593e9eccd0d45a1142a8defb14538f48bf862270bf8251437",
+      "git_blob": "e8304c36bbcb1a6a5d90622959e58ba6b0a8df2b",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cpp",
+      "destination_sha256": "6d8deb536b79d4030453bb9cde3d4aa70bf6665f73f480053fbe3383eb48108b",
+      "git_blob": "ad3b764c3b328d4c495d44464b73fc407aa91cdc",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cu",
+      "destination_sha256": "f5ed2d8df2d89c93a3eb1214ad014b4eca5a6863d11e1dab2bee695d7c14890f",
+      "git_blob": "70466f345129127ffc87934d951fbd1b48f20d6e",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cpp",
+      "destination_sha256": "a2b696c0932e527f15636ec5f005348b3a71feb44203fe448cddf6290eef0a62",
+      "git_blob": "550874c3ba8896b4d79bb5e700c91acfa9b4c6dc",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cu",
+      "destination_sha256": "7a49799269ef99da99e68594bccb73d83f0da1088b98e9243243d0879a8aa45d",
+      "git_blob": "f4ec4352e2602219f995887aa481f8608acdac3a",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cpp",
+      "destination_sha256": "2101b2e436c889d7c8fdf2949143bb1e7f63ca2280ffc4aeb19b7092456d6953",
+      "git_blob": "84b9ca8f0f4282dff249c833f62c1a1ae43bbf67",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted the SM90-only float2 atomic into an architecture-gated vector path with scalar FP32 atomic fallback for Ada, Ampere, and Volta training",
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
+      "destination_sha256": "2a8b642b76b80ffd15edebcf4bf2394956433886a8f4bfd3e6a06e542dbe3dc5",
+      "git_blob": "20e4c5b522dd682fbfd5d36eb6e0b0f95f3adb24",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp",
+      "destination_sha256": "cc1958b2908369a022f1e7a16dc70f024431cc2a4f701c95764dcbb1f13e2565",
+      "git_blob": "30aed3035a83851bb0b92a67fcdb5f5a62ee14ba",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu",
+      "destination_sha256": "bfe6dcf30b296f4bd614650f0adff0e8582c73fcbe74720c1ad264af6b5f4c47",
+      "git_blob": "d95073945955a7ed6899e0393aa3909e53c6f55b",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
+      "destination_sha256": "3e3549f2567e54e84f3ece77663846518032e92d390d9d9fb0d52493394f414a",
+      "git_blob": "857deb512db766665a67be4ba17b43f2c6d68a14",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted the SM90-only float2 atomic into an architecture-gated vector path with scalar FP32 atomic fallback for Ada, Ampere, and Volta training",
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
+      "destination_sha256": "ad069950e9b6624711d67de03d29006b1724d253a163af7b261acf82c4c7543a",
+      "git_blob": "56642f0cf92dc0ece37672028290a551abe07ca9",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cpp",
+      "destination_sha256": "5923e9845ac6f09d46a93547acded22814e75a28290b4934faef676d10b40579",
+      "git_blob": "ee6950344de1fbecbc16ea89f4a2d7b6be18771c",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cpp",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cu",
+      "destination_sha256": "0394eff6b237f482f206396d81714e6205df8c842c252a47fdd5d024aecc7881",
+      "git_blob": "1a3e8791adb1c1e3a1e613cc36e4e3b91784721a",
+      "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cu",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/dplr_prefill.py",
+      "destination_sha256": "6e2c1d3c3f47b89f38bfbb25bf611024a9c89b4879e31a1a9eb568bc37840bf9",
+      "git_blob": "e9224c6bdd7fdf1958375612463578dea8e7c8ea",
+      "source": "rwkv7_hf/dplr_prefill.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/dplr_prefill_triton.py",
+      "destination_sha256": "1b5559c0e0f2a28c65bcc41aeac163378d1ff883afc794aaab3e6da62acbb9ce",
+      "git_blob": "047369815404866f1e478b89b6d919dc311f500f",
+      "source": "rwkv7_hf/dplr_prefill_triton.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/extension_build.py",
+      "destination_sha256": "67e446b39311b838835ae4e71ace17eef6d2a360380ccf1cefcbb280d400c8a2",
+      "git_blob": "6d46a8771faf685f16db0dc7e121373218b36691",
+      "source": "rwkv7_hf/extension_build.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_attention_projection.py",
+      "destination_sha256": "388634428c3932faae558050ff1a9a7c2c57d8053ecd1651351e4af2c948f157",
+      "git_blob": "4e69c0274b29160edfae949e79dee23890746293",
+      "source": "rwkv7_hf/fused_attention_projection.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_decode_norm_mix.py",
+      "destination_sha256": "3e132d18f3dd1fc2b96aa651ec0910ca8fe34f7517882094552a3fe59b006995",
+      "git_blob": "235235dbc88e75f686c71bafd11548ea7856a7c8",
+      "source": "rwkv7_hf/fused_decode_norm_mix.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_elementwise.py",
+      "destination_sha256": "c68c10f17dea3c71bfe700366924270a4b3bf601f14af0bd180072599f2cda75",
+      "git_blob": "e66b8109ea5d3f6f6e6d4fe729fd1f36146cb319",
+      "source": "rwkv7_hf/fused_elementwise.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_ffn.py",
+      "destination_sha256": "0396114eeeaf0af2954ca0b8ce51b60087199ebea5b0bda7babf684be980acb3",
+      "git_blob": "cc84bdcf6072596ca6cbe305a668c19d0e3fdb48",
+      "source": "rwkv7_hf/fused_ffn.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_lora.py",
+      "destination_sha256": "5424b948957153ac7d955becced96c1d15e8d1764d8633b8864cf97dd9e8149d",
+      "git_blob": "6ee92e03dec1793daba0aaa5422b9e8556faa99b",
+      "source": "rwkv7_hf/fused_lora.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_norm_mix.py",
+      "destination_sha256": "f0ea209c963c6109acde49242ca76e59ceebd9024d588a87a799d595ff95e4dc",
+      "git_blob": "2888c8ae015a4f08447c6e29e8aa233968728dde",
+      "source": "rwkv7_hf/fused_norm_mix.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_output.py",
+      "destination_sha256": "6f4390312ff4adeabc20309e1b08e91b9e381aafd8076bb325c923941ba9007a",
+      "git_blob": "bbb6a8d8803cf0ee0565418d33db42ce90ec90c2",
+      "source": "rwkv7_hf/fused_output.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_prefill.py",
+      "destination_sha256": "02e433b5011196133e736090140df06724a9f82dc06676bda13b8a940645272e",
+      "git_blob": "751fdb345dfe9f3dd72f78c0d5e1d4930b80f6a7",
+      "source": "rwkv7_hf/fused_prefill.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_projection.py",
+      "destination_sha256": "0d1e3ce8811841dbad3788189f468ba7a59c6533a0855b54da6c1a4879aeb060",
+      "git_blob": "6967a15737fc908e1c9768defd5502844fbfe194",
+      "source": "rwkv7_hf/fused_projection.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_recurrent_update.py",
+      "destination_sha256": "2f586ce87fea6a3c92d87d7bea8c82b813a306678498af1e661d6c1873d22dbd",
+      "git_blob": "a9384ce08197a70101863894c70152b6e007bc69",
+      "source": "rwkv7_hf/fused_recurrent_update.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/fused_time_mix.py",
+      "destination_sha256": "cef04ca47f16b6b268a90068679df12128718edf4e92fecc80255b500453f60e",
+      "git_blob": "b1b155bcc4f08cb9aa394f64f7442170f0fd569a",
+      "source": "rwkv7_hf/fused_time_mix.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/kernel_package.py",
+      "destination_sha256": "77b3c1971c017c189de7de6e98602ed946f943f3172968e1cb2d2c13cc06a7d6",
+      "git_blob": "8ba76e4b5a459690813e7ea25bdde1f4b20e8f8c",
+      "source": "rwkv7_hf/kernel_package.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/kernel_policy.py",
+      "destination_sha256": "f35699e92d8b364d39518bff0b1376b46230787d2e1df944301aa4ca9690193d",
+      "git_blob": "3e179725133a3435f20a7bd493e9b291067905ef",
+      "source": "rwkv7_hf/kernel_policy.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/marlin_autotune.py",
+      "destination_sha256": "2c58404ec039e288de5bcc27730ea8d25fc154664a6d89f2d4d5bbf4949397b4",
+      "git_blob": "cf146a12b44192dfe5605670fb0279ff4246cdde",
+      "source": "rwkv7_hf/marlin_autotune.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted from the private cache ABI and exact nn.Linear identity checks to canonical RWKV7Cache and the clean RWKV7Linear dense contract without changing graph kernels",
+      "destination": "kernels/rwkv7_kernels/nvidia/native_graph_runtime.py",
+      "destination_sha256": "09395a89405ecb3822dc9ea8500498ce2ebec320b17934f86fe9f2df94772b5f",
+      "git_blob": "67bf1baef14e76148713679431975a2ec1213084",
+      "source": "rwkv7_hf/native_graph_runtime.py",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit.py",
+      "destination_sha256": "b4159e863248718a06fcb175cf972b94c6dd93c6566b7f764d0735695f408fab",
+      "git_blob": "98b44fde98ca2d5f26ddbaaa2c213f447d64773d",
+      "source": "rwkv7_hf/native_jit.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_bnb8.py",
+      "destination_sha256": "f2ae8754e5c7b0b23faadfac6f24a6ef1627d1e7fbf8210a1b1bd1b14b6f0e2a",
+      "git_blob": "bdec7a21373ce5d00eeba5cd391dbd8a70b04dc6",
+      "source": "rwkv7_hf/native_jit_bnb8.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted native decode W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path",
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_decode.py",
+      "destination_sha256": "1a8969c19eea1ea790a2866fb44ead4da1736f85dc93e1c7aca663f342886e13",
+      "git_blob": "9f253f5d205f5abd303ce718cf9f125eafeecb36",
+      "source": "rwkv7_hf/native_jit_decode.py",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_dense_step.py",
+      "destination_sha256": "73844847993bd8ef1f3d931079c3c99fc7dc86fce0d5c17bfc0c1866648eef6b",
+      "git_blob": "0111f9314f4711ef69ceb03d313435a76df3275c",
+      "source": "rwkv7_hf/native_jit_dense_step.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_graph_dispatch.py",
+      "destination_sha256": "da36725b4000a1e8b8251317b619ba1904cd4672c8b27dda1add66c6f5c0a11d",
+      "git_blob": "5b0723f570c2a58df039e26f826fb2b44a5867f0",
+      "source": "rwkv7_hf/native_jit_graph_dispatch.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted exact nn.Linear checks to accept the clean RWKV7Linear subclass only when it exposes an ordinary Parameter weight; packed quantized tensor subclasses remain callable operands",
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_linear.py",
+      "destination_sha256": "f53f40bb72f4bae05d4845a5cbef4d3576548373b110a04c962338e1e63bfb79",
+      "git_blob": "0f0b38ba0a4b8271a644f44db3f5c1689ac08dd3",
+      "source": "rwkv7_hf/native_jit_linear.py",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "adaptation": "adapted clean RWKV7Linear operands while retaining the decay bias as FP32 in private packs; ordinary LoRA biases remain activation dtype and public model parameters are never mutated",
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_packing.py",
+      "destination_sha256": "99083329c84fda294a5df8128bb4ba7adb9b8e899485527dbcb99f30ea9a226c",
+      "git_blob": "3a284bbcaa8b50230a25aa00705644af2a7cf071",
+      "source": "rwkv7_hf/native_jit_packing.py",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "adaptation": "adapted native prefill W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path; fixed-row projections and row-serialized B>1 recurrent scans preserve batch-invariant HF evaluation semantics",
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_prefill.py",
+      "destination_sha256": "7be6540147f30d68112de42b0856757e1d1c519c143f82083d2b81892f94353f",
+      "git_blob": "bb8f3141b60922a50b4caec363068f8670390e96",
+      "source": "rwkv7_hf/native_jit_prefill.py",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_prefill_policy.py",
+      "destination_sha256": "48b93732300c52020e62d3a8b3d3aca8545ef545aa5f300cbfd44bd6d5ef37e8",
+      "git_blob": "ece955fb2264d8bce40493dd36b369e8d085d1e3",
+      "source": "rwkv7_hf/native_jit_prefill_policy.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_prefill_runtime_policy.py",
+      "destination_sha256": "839e5432f9c0cbf0ef0f7a28b3ad2ce50ec0007ff05fac5be1ce7dfb63c0d257",
+      "git_blob": "4c55c07e562b2c59f9a00def72a48410e2cd922f",
+      "source": "rwkv7_hf/native_jit_prefill_runtime_policy.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_jit_recurrent.py",
+      "destination_sha256": "4e685c7716e3bbfbd07c293af3845205848f084aae1f3e481c6a19356005bc43",
+      "git_blob": "717cbf95f7235198bbde0b51d07d64e2457263d0",
+      "source": "rwkv7_hf/native_jit_recurrent.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant.py",
+      "destination_sha256": "9961473f2747da14572a1287c118c98eb00f3bc6b92ee4f352c72f365684f4af",
+      "git_blob": "db7d9dffc96d772cc3f1f73a08a7a7e90ce41bbf",
+      "source": "rwkv7_hf/native_quant.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_a8w8.py",
+      "destination_sha256": "40f71469bd34f714f91f42404e00589fb56cd40344cdbf0906092331022a544f",
+      "git_blob": "2ce47e2e2faba120caf943b9eea8826d365661e8",
+      "source": "rwkv7_hf/native_quant_a8w8.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_bn_tn.py",
+      "destination_sha256": "85e273bdc9842821f3a8602f4fc032b501fa5fb496dc39bb879cff913847efe3",
+      "git_blob": "f95f6e9a9e5714bef9bc8baf60a0662bc8770602",
+      "source": "rwkv7_hf/native_quant_bn_tn.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_bnb8.py",
+      "destination_sha256": "6151e0e6cbd54efe4ab1f10c1591021570870aef2b77d0310f6fda9eba5c533e",
+      "git_blob": "15b744856b52724ee4833f181ca6cc10419873ec",
+      "source": "rwkv7_hf/native_quant_bnb8.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_marlin.py",
+      "destination_sha256": "81ce61be99f88c7ef9eca238e4c659d954e53432548d798a7375856b5aed241d",
+      "git_blob": "786b3032b69e87df191fbc9e524ceebb833c0c11",
+      "source": "rwkv7_hf/native_quant_marlin.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_marlin_sources.py",
+      "destination_sha256": "bbb5a080b2f9dfeb7956e07bd043a6a770ad74017123df7a1c31330d48696d8a",
+      "git_blob": "f58dafe31377bc28fe0fb2268eff4b8f54c140e5",
+      "source": "rwkv7_hf/native_quant_marlin_sources.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_mm4.py",
+      "destination_sha256": "64b1803d3404125b91806c534865eaf890744b203ae33cfe8bb0ec4b1ec09470",
+      "git_blob": "bf97ab42c29fabde35b6bdc369219135e9240f36",
+      "source": "rwkv7_hf/native_quant_mm4.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_mm8.py",
+      "destination_sha256": "d4577c82a9e7bf536db19eea64b722406ab36952b731b38176ea534ca2de6a50",
+      "git_blob": "b91ef33ca32937a9864600129aff860e65070d13",
+      "source": "rwkv7_hf/native_quant_mm8.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_policy.py",
+      "destination_sha256": "09ee9a58bf0ca8a7eae4171b2e8e632a9216d61a8c5891a80bda62e76a21a4bd",
+      "git_blob": "4e804f7a03c81a4f7836513e9fbb813845d0f7d0",
+      "source": "rwkv7_hf/native_quant_policy.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_quant_torchao.py",
+      "destination_sha256": "f7b8e7477d5c91ee00687c70d8bafcf192e9554eb0ae8acf37dc62c896e58e20",
+      "git_blob": "b9685cfb9a0953906ef0c3fc426352680c5753d6",
+      "source": "rwkv7_hf/native_quant_torchao.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_wkv_fp16.py",
+      "destination_sha256": "4880fa46fa9991360894f5eba02dfde4ddf40c8966bc2c49b2012de6bb11a93a",
+      "git_blob": "8bfddb6c50a678b294b2de34755b52b66a478665",
+      "source": "rwkv7_hf/native_wkv_fp16.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/recurrent_state.py",
+      "destination_sha256": "e9e858c2766c3c26ca6f0904803f979a29bcbc37dbf1bea5fa841c0089ee55aa",
+      "git_blob": "fb4afa5569df2170428e101347534d1f1f5da1f2",
+      "source": "rwkv7_hf/recurrent_state.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_A_fwd.py",
+      "destination_sha256": "743b72dc8e667c824723f0d60f8aca31559f52a7e66da5d8a4e25c26974828bf",
+      "git_blob": "babefa9a64da6c74069a6975c69104cfb2d86063",
+      "source": "rwkv7_hf/self_chunk_A_fwd.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_cumsum.py",
+      "destination_sha256": "0991022a76da108160a0391c3b984315171cfda060c60bcf53010d1b3d158a1e",
+      "git_blob": "9cc78d8393a10fae212301eb3093af4db1302dcc",
+      "source": "rwkv7_hf/self_chunk_cumsum.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_h_fwd.py",
+      "destination_sha256": "407a0a798a63fcc0b764655c0b9c073eb5e01117328fe3a90ce6b440e7ea5865",
+      "git_blob": "0eef0e94964a8abcecf3564bc8ac9800bb4c9bf5",
+      "source": "rwkv7_hf/self_chunk_h_fwd.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_o_fwd.py",
+      "destination_sha256": "635ec70b4e0a30004c868a9c224fddbd996f6cde225f46fcca7c3bd36ac2ccc1",
+      "git_blob": "0ad5b7d7a26df4d7550d411cfa2f2ac71d61b350",
+      "source": "rwkv7_hf/self_chunk_o_fwd.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_rwkv7.py",
+      "destination_sha256": "5c72e4be7d23421bf28492ebc24c84f47967bfed340e9529c4a0658d5069f49d",
+      "git_blob": "836a9df1e6c9190dd5316b228ef4890be7f01bfa",
+      "source": "rwkv7_hf/self_chunk_rwkv7.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_utils.py",
+      "destination_sha256": "d4ed6d353d9caeeb6236b015a5d88fc8d58cf0ec245ac463020e35e6643bbee5",
+      "git_blob": "f9c453d0f3e076e117f73fbafc35f96514458714",
+      "source": "rwkv7_hf/self_chunk_utils.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_wy_fwd.py",
+      "destination_sha256": "565a928a3db0236f2ec857818d7d2ed42de4df5a89a6e0d5fb538cb63c203ad0",
+      "git_blob": "37dc7b2c17caf3e16ab21ba0f4926a5cf8820114",
+      "source": "rwkv7_hf/self_chunk_wy_fwd.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/sm120_compiled_ffn.py",
+      "destination_sha256": "0806f2ccda43008b8691394f5874f20e715974a8a9ffa39891915c637a3e02dc",
+      "git_blob": "e30888c709aa3ca84371423ae0e3860c73ea122e",
+      "source": "rwkv7_hf/sm120_compiled_ffn.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/sm70_linear.py",
+      "destination_sha256": "6e32a1d762b4bbbf420330154cfcb7c7480e5cf8e7e40ee216f1997e324fefb4",
+      "git_blob": "fd9fda3bca8fb0fc824fd88b3634ba183d6fc754",
+      "source": "rwkv7_hf/sm70_linear.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/sm70_quant.py",
+      "destination_sha256": "976af48c248cb333289eb9f4eedd0b16c72acd3f4eb716b1aa389a04098530a1",
+      "git_blob": "c9d03172eff79cc32456565a79bcd93ffbf8ab73",
+      "source": "rwkv7_hf/sm70_quant.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/sm70_wagv.py",
+      "destination_sha256": "1c75f0bccf79220ae6b5b6818714a425b7cabaad3ef654d28b58cb491c89d625",
+      "git_blob": "d8b94c93a54a7ad22cc79699fa4d392229e6affe",
+      "source": "rwkv7_hf/sm70_wagv.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/train_temp_alignment.py",
+      "destination_sha256": "2e156116e8646675ab3e15402a3f23785ca9751c94127aa477502d0dafaa7a71",
+      "git_blob": "f98784757fe9fcb13f6bdf3aeab0e8715827fb82",
+      "source": "rwkv7_hf/train_temp_alignment.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF fixed-row projection/value/a/key/GroupNorm/direct/gate math around the fused recurrence without recursively entering leaf dispatch, compile the recurrent operator independently without FMA contraction, use the native CUDA backward for standard detached-state training, replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers",
+      "destination": "kernels/rwkv7_kernels/nvidia/train_temp_cuda.py",
+      "destination_sha256": "316b17906959560dc2cd4ce2e8e0fec2ce71e45037c1355cf60d7a69e434528f",
+      "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
+      "source": "rwkv7_hf/train_temp_cuda.py",
+      "transfer": "adapted_clean_boundary"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/train_temp_resume.py",
+      "destination_sha256": "19f2b6a3e5889845b0e0edc49f666f43dd602b9c202d45dd5f9d00a2dd824610",
+      "git_blob": "b5e1db88c09c34b8dc5c97be2766f26590bbb39b",
+      "source": "rwkv7_hf/train_temp_resume.py",
+      "transfer": "byte_identical"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/triton_compat.py",
+      "destination_sha256": "265deccceb3bcbd017b5585503eb601ad8f7829af41aab24218a262d3ac7c37e",
+      "git_blob": "d17bc63e61bc95a0a52b8f09434fd82aa1bf42ff",
+      "source": "rwkv7_hf/triton_compat.py",
+      "transfer": "byte_identical"
+    }
+  ],
+  "schema": "rwkv7-nvidia-source-migration-v1",
+  "source_branch": "perf/native-kernels-v0.8"
+}

@@ -58,16 +58,9 @@ def convert_command(args: argparse.Namespace, input_path: Path, output_path: Pat
         str(output_path),
         "--precision",
         args.precision,
-        "--attn-mode",
-        args.attn_mode,
         "--max-shard-size",
         args.max_shard_size,
-        "--adapter-layout",
-        args.adapter_layout,
     ]
-    if args.runtime_package_version:
-        cmd += ["--runtime-package-version", args.runtime_package_version]
-    cmd.append("--fuse-norm" if args.fuse_norm else "--no-fuse-norm")
     if args.low_memory:
         cmd.append("--low-memory")
     if args.vocab_file:
@@ -82,11 +75,7 @@ def entry_base(args: argparse.Namespace, input_path: Path, output_path: Path) ->
         "size_bytes": input_path.stat().st_size,
         "sha256": sha256_file(input_path),
         "precision": args.precision,
-        "attn_mode": args.attn_mode,
-        "fuse_norm": bool(args.fuse_norm),
         "low_memory": bool(args.low_memory),
-        "adapter_layout": args.adapter_layout,
-        "runtime_package_version": args.runtime_package_version,
     }
 
 
@@ -149,22 +138,6 @@ def main() -> int:
     ap.add_argument("--converter", type=Path, default=repo_root / "scripts" / "convert_rwkv7_to_hf.py")
     ap.add_argument("--vocab-file", type=Path, default=None)
     ap.add_argument("--precision", default="fp16", choices=["fp16", "float16", "bf16", "bfloat16", "fp32", "float32"])
-    ap.add_argument("--attn-mode", choices=["chunk", "fused_recurrent"], default="chunk")
-    ap.add_argument(
-        "--adapter-layout",
-        choices=["reference", "thin"],
-        default="reference",
-        help="Write the self-contained reference implementation (default) or the legacy package-backed thin entrypoints",
-    )
-    ap.add_argument(
-        "--runtime-package-version",
-        default=None,
-        help="Optional rwkv7-hf version embedded in legacy thin-entrypoint install hints",
-    )
-    norm_group = ap.add_mutually_exclusive_group()
-    norm_group.add_argument("--fuse-norm", dest="fuse_norm", action="store_true")
-    norm_group.add_argument("--no-fuse-norm", dest="fuse_norm", action="store_false")
-    ap.set_defaults(fuse_norm=False)
     ap.add_argument("--max-shard-size", default="1000GB")
     ap.add_argument(
         "--low-memory",

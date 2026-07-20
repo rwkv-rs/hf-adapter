@@ -1,0 +1,498 @@
+{
+  "code_sha": "83c05b3c",
+  "dtype": "fp16",
+  "environment": {
+    "cuda": "13.0",
+    "device": "NVIDIA GeForce RTX 4080",
+    "kernel": {
+      "adapter_mode": "auto",
+      "api_version": 1,
+      "implementation_mode": "triton",
+      "last_route": null,
+      "package_version": "1.0.0.dev0"
+    },
+    "platform": "Linux-7.0.0-29-generic-x86_64-with-glibc2.39",
+    "python": "3.12.2 | packaged by conda-forge | (main, Feb 16 2024, 20:50:58) [GCC 12.3.0]",
+    "rwkv7_hf": "1.0.0",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.8.0",
+    "triton": "3.6.0"
+  },
+  "expected_route": "optimized",
+  "implementation": "triton",
+  "models": {
+    "0.1B": {
+      "batch_regrouping": {
+        "exact": true,
+        "grouped_batch": 8,
+        "isolated_batch": 1,
+        "logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "passed": true,
+        "prefix_tokens": 17,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        }
+      },
+      "cached_and_greedy": {
+        "final_state_min_cosine": 0.9999991655349731,
+        "greedy_equal": true,
+        "greedy_tokens": 64,
+        "passed": true,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "teacher_forced_logits": {
+          "cosine": 0.9999991059303284,
+          "finite": true,
+          "max_abs": 0.0625
+        }
+      },
+      "cases": [
+        {
+          "batch": 1,
+          "length": 17,
+          "logits": {
+            "cosine": 0.9999986290931702,
+            "finite": true,
+            "max_abs": 0.1171875
+          },
+          "passed": true,
+          "route": {
+            "implementation": "native-triton-rank1-scan-v1",
+            "reason": "FP16 K=V=64 inference request is supported",
+            "requested": "optimized",
+            "selected": "optimized"
+          },
+          "state_max_abs": 0.03964042663574219,
+          "state_min_cosine": 0.999999463558197
+        }
+      ],
+      "config_sha256": "983e4fd48d1c5181864457c2dc745e622eb842fc212ac279b66c7bd16b2d38c1",
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/01b"
+    },
+    "0.4B": {
+      "batch_regrouping": {
+        "exact": true,
+        "grouped_batch": 8,
+        "isolated_batch": 1,
+        "logits": {
+          "cosine": 1.0000001192092896,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "passed": true,
+        "prefix_tokens": 17,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        }
+      },
+      "cached_and_greedy": {
+        "final_state_min_cosine": 0.9999990463256836,
+        "greedy_equal": true,
+        "greedy_tokens": 64,
+        "passed": true,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "teacher_forced_logits": {
+          "cosine": 0.9999986886978149,
+          "finite": true,
+          "max_abs": 0.1171875
+        }
+      },
+      "cases": [
+        {
+          "batch": 1,
+          "length": 17,
+          "logits": {
+            "cosine": 0.9999967813491821,
+            "finite": true,
+            "max_abs": 0.15625
+          },
+          "passed": false,
+          "route": {
+            "implementation": "native-triton-rank1-scan-v1",
+            "reason": "FP16 K=V=64 inference request is supported",
+            "requested": "optimized",
+            "selected": "optimized"
+          },
+          "state_max_abs": 0.013853073120117188,
+          "state_min_cosine": 0.9999985694885254
+        }
+      ],
+      "config_sha256": "ebbcc329fd332479b5f9730543d2c0d5b7412ae93688733536c209072d4eae11",
+      "passed": false,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/04b"
+    },
+    "1.5B": {
+      "batch_regrouping": {
+        "exact": true,
+        "grouped_batch": 8,
+        "isolated_batch": 1,
+        "logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "passed": true,
+        "prefix_tokens": 17,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        }
+      },
+      "cached_and_greedy": {
+        "final_state_min_cosine": 0.9999983906745911,
+        "greedy_equal": true,
+        "greedy_tokens": 64,
+        "passed": true,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "teacher_forced_logits": {
+          "cosine": 0.9999987483024597,
+          "finite": true,
+          "max_abs": 0.0625
+        }
+      },
+      "cases": [
+        {
+          "batch": 1,
+          "length": 17,
+          "logits": {
+            "cosine": 0.9999988675117493,
+            "finite": true,
+            "max_abs": 0.140625
+          },
+          "passed": true,
+          "route": {
+            "implementation": "native-triton-rank1-scan-v1",
+            "reason": "FP16 K=V=64 inference request is supported",
+            "requested": "optimized",
+            "selected": "optimized"
+          },
+          "state_max_abs": 0.12250518798828125,
+          "state_min_cosine": 0.9999991655349731
+        }
+      ],
+      "config_sha256": "b7a9d98f1499f2e66dc14f97c94944a4c1e61b3e4acd2f822f353825ed53f9a8",
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b"
+    }
+  },
+  "operator": [
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 1,
+      "output": {
+        "cosine": 0.9999997615814209,
+        "finite": true,
+        "max_abs": 3.814697265625e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 3.816559910774231e-06
+      }
+    },
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 17,
+      "output": {
+        "cosine": 0.9999997019767761,
+        "finite": true,
+        "max_abs": 4.5299530029296875e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 0.9999998807907104,
+        "finite": true,
+        "max_abs": 7.6089054346084595e-06
+      }
+    },
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 128,
+      "output": {
+        "cosine": 0.9999998807907104,
+        "finite": true,
+        "max_abs": 7.62939453125e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 4.612840712070465e-06
+      }
+    },
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 512,
+      "output": {
+        "cosine": 0.9999998211860657,
+        "finite": true,
+        "max_abs": 7.62939453125e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 3.972090780735016e-06
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 1,
+      "output": {
+        "cosine": 0.9999997615814209,
+        "finite": true,
+        "max_abs": 5.7220458984375e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 7.549300789833069e-06
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 17,
+      "output": {
+        "cosine": 0.9999997615814209,
+        "finite": true,
+        "max_abs": 7.62939453125e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0000001192092896,
+        "finite": true,
+        "max_abs": 6.061047315597534e-06
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 128,
+      "output": {
+        "cosine": 0.9999998211860657,
+        "finite": true,
+        "max_abs": 7.62939453125e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 5.014240741729736e-06
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 512,
+      "output": {
+        "cosine": 0.9999997615814209,
+        "finite": true,
+        "max_abs": 8.106231689453125e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 4.60352748632431e-06
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 1,
+      "output": {
+        "cosine": 0.9999997615814209,
+        "finite": true,
+        "max_abs": 5.7220458984375e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 7.21123069524765e-06
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 17,
+      "output": {
+        "cosine": 0.9999998211860657,
+        "finite": true,
+        "max_abs": 7.62939453125e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 7.057562470436096e-06
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 128,
+      "output": {
+        "cosine": 0.9999997615814209,
+        "finite": true,
+        "max_abs": 1.1444091796875e-05
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 1.0000001192092896,
+        "finite": true,
+        "max_abs": 7.567927241325378e-06
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 512,
+      "output": {
+        "cosine": 0.9999997615814209,
+        "finite": true,
+        "max_abs": 7.62939453125e-06
+      },
+      "passed": true,
+      "route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "state": {
+        "cosine": 0.9999998807907104,
+        "finite": true,
+        "max_abs": 7.407739758491516e-06
+      }
+    }
+  ],
+  "passed": false,
+  "schema": "rwkv7-native-backend-validation-v1",
+  "seed": 42,
+  "training_fallback": {
+    "finite": true,
+    "gradient_max_abs": 0.0,
+    "gradient_min_cosine": 0.9999998807907104,
+    "passed": true,
+    "route": {
+      "implementation": "torch-reference-v1",
+      "reason": "the recurrent-v1 optional kernel protocol is inference-only",
+      "requested": "auto",
+      "selected": "reference"
+    }
+  }
+}

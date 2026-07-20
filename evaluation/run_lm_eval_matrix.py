@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 EXPECTED_LM_EVAL = "0.4.9.1"
+EXPECTED_FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 TASKS = (
     "wikitext",
     "lambada_openai",
@@ -41,8 +42,16 @@ def parse_model(value: str):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run the formal 48-unit lm_eval matrix")
+    parser = argparse.ArgumentParser(
+        description="Run the formal 48-unit lm_eval matrix"
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--lane",
+        choices=("reference", "optimized", "fla"),
+        default="reference",
+        help="Execution lane recorded in provenance; FLA uses prepared wrapper models",
+    )
     parser.add_argument("--model", action="append", default=[])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--max-length", type=int, default=2048)
@@ -67,6 +76,13 @@ def parse_args():
         default=None,
         help="Source revision for rsync deployments without a .git directory",
     )
+    parser.add_argument("--hf-wheel", type=Path)
+    parser.add_argument("--kernel-wheel", type=Path)
+    parser.add_argument(
+        "--fla-source",
+        type=Path,
+        help="Pinned FLA checkout/source tree used by the comparison lane",
+    )
     parser.add_argument(
         "--smoke-limit",
         type=int,
@@ -74,6 +90,15 @@ def parse_args():
         help="PR smoke only; formal runs must omit this option",
     )
     parser.add_argument("--wandb-args", default=None)
+    parser.add_argument(
+        "--optimized-model-impl",
+        choices=("auto", "native"),
+        default="auto",
+        help=(
+            "whole-model policy for the optimized lane; native is the strict "
+            "pre-release backend-v2 diagnostic"
+        ),
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -108,6 +133,43 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def artifact(path: Path | None) -> dict | None:
+    if path is None:
+        return None
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise RuntimeError(f"artifact does not exist: {path}")
+    return {
+        "path": str(path),
+        "bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+
+
+def fla_revision(source: Path | None) -> dict | None:
+    if source is None:
+        return None
+    source = source.expanduser().resolve()
+    marker = source / ".fla-upstream-commit"
+    if marker.is_file():
+        revision = marker.read_text(encoding="utf-8").strip()
+    else:
+        try:
+            revision = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(f"cannot resolve FLA revision in {source}") from exc
+    if revision != EXPECTED_FLA_COMMIT:
+        raise RuntimeError(
+            f"FLA revision mismatch: expected {EXPECTED_FLA_COMMIT}, got {revision}"
+        )
+    return {"path": str(source), "commit": revision}
+
+
 def resolve_model(source: str, revision: str | None) -> dict:
     path = Path(source).expanduser()
     if path.exists():
@@ -124,11 +186,15 @@ def resolve_model(source: str, revision: str | None) -> dict:
             if candidate.is_file()
             and (
                 candidate.name in names
-                or candidate.suffix in {".py", ".safetensors"}
+                or candidate.suffix
+                in {".py", ".safetensors", ".txt", ".model", ".jinja"}
                 or candidate.name.endswith(".safetensors.index.json")
             )
         )
-        hashes = {str(candidate.relative_to(path)): sha256_file(candidate) for candidate in files}
+        hashes = {
+            str(candidate.relative_to(path)): sha256_file(candidate)
+            for candidate in files
+        }
         aggregate = hashlib.sha256()
         for name, digest in hashes.items():
             aggregate.update(name.encode())
@@ -153,7 +219,9 @@ def resolve_model(source: str, revision: str | None) -> dict:
         from huggingface_hub import HfApi
 
         result["resolved_revision"] = HfApi().model_info(source, revision=revision).sha
-    except Exception as error:  # Hub metadata is useful provenance, not an execution gate.
+    except (
+        Exception
+    ) as error:  # Hub metadata is useful provenance, not an execution gate.
         result["resolution_error"] = f"{type(error).__name__}: {error}"
     return result
 
@@ -188,7 +256,9 @@ def environment() -> dict:
                     "index": index,
                     "name": torch.cuda.get_device_name(index),
                     "capability": list(torch.cuda.get_device_capability(index)),
-                    "total_memory": torch.cuda.get_device_properties(index).total_memory,
+                    "total_memory": torch.cuda.get_device_properties(
+                        index
+                    ).total_memory,
                 }
                 for index in range(torch.cuda.device_count())
             ],
@@ -210,12 +280,27 @@ def read_manifest(path: Path) -> dict[str, dict]:
 
 
 def find_result_json(unit_dir: Path) -> Path | None:
-    candidates = [
-        path
-        for path in unit_dir.rglob("*.json")
-        if "samples_" not in path.name and path.name != "manifest.json"
-    ]
-    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+    # lm_eval writes ``results_<timestamp>.json`` below a model-specific
+    # directory.  Optional-kernel runs also write ``kernel-route.json`` after
+    # the subprocess exits, so selecting the newest arbitrary JSON would
+    # silently treat the route trace as the evaluation result.
+    candidates = [path for path in unit_dir.rglob("results_*.json") if path.is_file()]
+    return (
+        max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+    )
+
+
+def dataset_task_config(config: dict) -> dict:
+    """Return the task definition without model/runtime-only metadata.
+
+    ``lm_eval`` injects the model arguments (including the local pretrained
+    path) into ``configs[task].metadata``.  Hashing that field makes identical
+    datasets appear different across reference, optimized, and FLA lanes.
+    The metadata is still retained verbatim in ``task_config`` for audit; it
+    is excluded only from the dataset-input fingerprint.
+    """
+
+    return {key: value for key, value in config.items() if key != "metadata"}
 
 
 def task_provenance(unit_dir: Path, task: str) -> dict:
@@ -264,7 +349,7 @@ def task_provenance(unit_dir: Path, task: str) -> dict:
     # datasets cache fingerprint that can vary across Arrow versions.
     canonical = json.dumps(
         {
-            "task_config": config,
+            "task_config": dataset_task_config(config),
             "sample_count": sample_count,
             "sample_hash_fingerprint": sample_hash_fingerprint,
         },
@@ -290,14 +375,45 @@ def main():
     latest = read_manifest(manifest_path)
     code_sha = source_sha(args.code_sha)
     runtime = environment()
+    runtime["lane"] = args.lane
+    runtime["kernel_policy"] = (
+        {
+            "RWKV7_BACKEND": "optimized",
+            "RWKV7_KERNEL_IMPL": "auto",
+            "RWKV7_MODEL_KERNEL_IMPL": args.optimized_model_impl,
+        }
+        if args.lane == "optimized"
+        else None
+    )
     model_provenance = {
         label: resolve_model(source, revision) for label, source, revision in specs
     }
+    artifacts = {
+        name: row
+        for name, row in (
+            ("rwkv7_hf", artifact(args.hf_wheel)),
+            ("rwkv7_kernels", artifact(args.kernel_wheel)),
+        )
+        if row is not None
+    }
+    pinned_fla = fla_revision(args.fla_source)
+    runtime["artifacts"] = artifacts
+    runtime["fla"] = pinned_fla
     (args.output_dir / "environment.json").write_text(
         json.dumps(runtime, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (args.output_dir / "models.json").write_text(
-        json.dumps(model_provenance, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(model_provenance, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (args.output_dir / "artifacts.json").write_text(
+        json.dumps(
+            {"wheels": artifacts, "fla": pinned_fla},
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
     with manifest_path.open("a", encoding="utf-8") as manifest:
@@ -358,12 +474,50 @@ def main():
                         command += ["--wandb_args", args.wandb_args]
                     stdout_path = unit_dir / "stdout.log"
                     stderr_path = unit_dir / "stderr.log"
+                    route_trace_path = unit_dir / "kernel-route.json"
+                    command_environment = os.environ.copy()
+                    command_environment.pop("RWKV7_KERNEL_TRACE_PATH", None)
+                    command_environment.pop("RWKV7_MODEL_KERNEL_IMPL", None)
+                    if args.lane == "reference":
+                        command_environment["RWKV7_BACKEND"] = "reference"
+                        command_environment["RWKV7_KERNEL_IMPL"] = "auto"
+                        command_environment["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
+                    elif args.lane == "optimized":
+                        command_environment["RWKV7_BACKEND"] = "optimized"
+                        command_environment["RWKV7_KERNEL_IMPL"] = "auto"
+                        command_environment["RWKV7_MODEL_KERNEL_IMPL"] = (
+                            args.optimized_model_impl
+                        )
+                        command_environment["RWKV7_KERNEL_TRACE_PATH"] = str(
+                            route_trace_path.resolve()
+                        )
+                    else:
+                        command_environment.pop("RWKV7_BACKEND", None)
+                        command_environment.pop("RWKV7_KERNEL_IMPL", None)
+                        command_environment.pop("RWKV7_MODEL_KERNEL_IMPL", None)
+                        # TorchInductor's multi-process compile pool can remain
+                        # alive after FLA/lm_eval has written its results on
+                        # some Torch releases.  A single compile worker keeps
+                        # the model semantics unchanged and lets every formal
+                        # unit terminate deterministically.
+                        command_environment.setdefault(
+                            "TORCHINDUCTOR_COMPILE_THREADS", "1"
+                        )
                     started = datetime.now(timezone.utc).isoformat()
-                    with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
-                        result = subprocess.run(command, stdout=stdout, stderr=stderr)
+                    with (
+                        stdout_path.open("w") as stdout,
+                        stderr_path.open("w") as stderr,
+                    ):
+                        result = subprocess.run(
+                            command,
+                            stdout=stdout,
+                            stderr=stderr,
+                            env=command_environment,
+                        )
                     row = {
                         "schema_version": 2,
                         "unit": unit,
+                        "lane": args.lane,
                         "model_label": label,
                         "model": source,
                         "revision": revision,
@@ -374,8 +528,15 @@ def main():
                         "max_length": args.max_length,
                         "seed": args.seed,
                         "lm_eval": version,
+                        "artifacts": artifacts,
+                        "fla": pinned_fla,
                         "formal": args.smoke_limit is None,
                         "limit": args.smoke_limit,
+                        "optimized_model_impl": (
+                            args.optimized_model_impl
+                            if args.lane == "optimized"
+                            else None
+                        ),
                         "started_at": started,
                         "ended_at": datetime.now(timezone.utc).isoformat(),
                         "command": command,
@@ -383,6 +544,10 @@ def main():
                         "stderr": str(stderr_path),
                         "exit_code": result.returncode,
                     }
+                    if route_trace_path.is_file():
+                        row["kernel_route_trace"] = json.loads(
+                            route_trace_path.read_text(encoding="utf-8")
+                        )
                     if result.returncode == 0:
                         row["task_provenance"] = task_provenance(unit_dir, task)
                     manifest.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -400,7 +565,11 @@ def main():
     failures = sum(
         1 for unit in expected_units if latest.get(unit, {}).get("exit_code") != 0
     )
-    print(json.dumps({"units": expected, "failures": failures, "manifest": str(manifest_path)}))
+    print(
+        json.dumps(
+            {"units": expected, "failures": failures, "manifest": str(manifest_path)}
+        )
+    )
     raise SystemExit(1 if failures else 0)
 
 

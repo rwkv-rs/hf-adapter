@@ -161,3 +161,28 @@ def test_gradient_checkpointing_disables_cache(tiny_config):
     output = model(input_ids=ids, labels=ids, use_cache=True)
     assert output.past_key_values is None
     output.loss.backward()
+
+
+def test_checkpoint_recomputation_republishes_training_batch_context(
+    tiny_config,
+    monkeypatch,
+):
+    """Checkpoint replay must select the same optional linear program."""
+
+    import rwkv7_hf.modeling_rwkv7 as modeling
+
+    calls = []
+    original = modeling.set_training_batch_context
+
+    def record_context(mask, *, training):
+        calls.append((bool(mask.all()), bool(training)))
+        original(mask, training=training)
+
+    monkeypatch.setattr(modeling, "set_training_batch_context", record_context)
+    model = RWKV7ForCausalLM(tiny_config).train()
+    model.gradient_checkpointing_enable()
+    ids = torch.tensor([[1, 2, 3, 4]])
+    model(input_ids=ids, labels=ids, use_cache=False).loss.backward()
+
+    assert len(calls) >= tiny_config.num_hidden_layers + 1
+    assert all(call == (True, True) for call in calls)

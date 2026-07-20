@@ -1,0 +1,13 @@
+{
+  "actual_model_calls": {
+    "native-nvidia-prefill-v2[dense_fallback]": 2
+  },
+  "actual_model_phases": {
+    "prefill": 2
+  },
+  "actual_recurrent_calls": {},
+  "process_id": 4016349,
+  "requested_model_policy": "native",
+  "requested_policy": "auto",
+  "schema": "rwkv7-kernel-route-trace-v2"
+}

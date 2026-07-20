@@ -1,0 +1,20 @@
+# Server paths used for this bundle
+SRC=/home/wzu/codex-build/hf-adapter-kernels-v1
+VENV=/home/wzu/codex-run/venvs/rwkv7-kernels-v1-0b26ce24
+ROOT=/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27
+FLA=/home/wzu/codex-build/fla-80e494f6
+
+# Graph and Triton correctness/model/cache/greedy
+$VENV/bin/python $SRC/benchmarks/kernels/validate.py --implementation graph --dtype fp16 --code-sha 83c05b3c --model 0.1B=$ROOT/models/01b --model 0.4B=$ROOT/models/04b --model 1.5B=$ROOT/models/15b --operator-batches 1,4,8 --operator-lengths 1,17,128,512 --model-batches 1 --model-lengths 17 --decode-tokens 64 --output $ROOT/validation/graph-v2
+$VENV/bin/python $SRC/benchmarks/kernels/validate.py --implementation triton --dtype fp16 --code-sha 83c05b3c --model 0.1B=$ROOT/models/01b --model 0.4B=$ROOT/models/04b --model 1.5B=$ROOT/models/15b --operator-batches 1,4,8 --operator-lengths 1,17,128,512 --model-batches 1 --model-lengths 17 --decode-tokens 64 --output $ROOT/validation/triton
+
+# Package-free HF API, generation, reload, and training fallback
+$VENV/bin/python $SRC/benchmarks/kernels/hf_smoke.py --implementation graph --code-sha 7d8df0c1 --model 0.1B=$ROOT/models/01b --model 0.4B=$ROOT/models/04b --model 1.5B=$ROOT/models/15b --reload-dir $ROOT/hf-smoke/reload-01b-graph --output $ROOT/hf-smoke/graph.json
+$VENV/bin/python $SRC/benchmarks/kernels/hf_smoke.py --implementation triton --code-sha 7d8df0c1 --model 0.1B=$ROOT/models/01b --model 0.4B=$ROOT/models/04b --model 1.5B=$ROOT/models/15b --reload-dir $ROOT/hf-smoke/reload-01b-triton --output $ROOT/hf-smoke/triton.json
+
+# Fair eager recurrent operator speed (run once for graph and once for triton)
+$VENV/bin/python $SRC/benchmarks/kernels/operator_speed.py --implementation graph --code-sha 7d8df0c1 --fla-source $FLA --batches 1,4,8 --lengths 1,17,128,512 --warmup 2 --repeats 5 --output $ROOT/speed/operator-graph-vs-fla.json
+$VENV/bin/python $SRC/benchmarks/kernels/operator_speed.py --implementation triton --code-sha 7d8df0c1 --fla-source $FLA --batches 1,4,8 --lengths 1,17,128,512 --warmup 2 --repeats 5 --output $ROOT/speed/operator-triton-vs-fla.json
+
+# Clean reference vs pinned FLA numerical diagnostic
+RWKV7_BACKEND=reference $VENV/bin/python $SRC/benchmarks/fla/compare.py --model $ROOT/models/04b --dtype fp16 --device cuda --batches 1,4 --lengths 1,17,128 --decode-tokens 64 --fla-source $FLA --code-sha 7d8df0c1 --output-dir $ROOT/fla-parity/04b-fp16

@@ -3,13 +3,16 @@
 [English](README.md) | [中文](README_ZH.md)
 
 A readable, pure-PyTorch RWKV-7 implementation for Hugging Face Transformers.
-Version 0.9 makes compatibility and reproducibility the default: the model
+Version 1.0 makes readability and reproducibility the default: the model
 architecture is visible in one `modeling_rwkv7.py`, recurrent math has one
 small boundary in `ops_rwkv7.py`, and each converted model is self-contained.
-Optional CUDA Graph and Triton work remains on
-`perf/optional-native-backend-v0.10`; older CUDA/JIT/quantization and KV-v2
-experiments remain archived on `perf/native-kernels-v0.8`. Neither performance
-branch is part of this reference line.
+The `rwkv7_hf` package contains model code only; conversion and smoke-test
+commands live in the separate `rwkv7_hf_tools` package.
+The optional `rwkv7-kernels` companion distribution contains the complete
+NVIDIA performance implementation behind two versioned operator boundaries.
+Installing it does not replace the readable model, config, cache, tokenizer or
+checkpoint layout. Historical development remains archived on
+`perf/native-kernels-v0.8`; users do not install code from that branch.
 
 ## Install and use a published model
 
@@ -20,7 +23,7 @@ python -m pip install "torch" "transformers>=4.48,<6"
 Install the PyTorch build that matches the GPU before installing the adapter.
 In particular, current default CUDA 13 wheels may omit `sm_70`; V100 users
 should select a compatible CUDA 12.x wheel from the official PyTorch index.
-Once PyTorch is present, `pip install rwkv7-hf==0.9.0` keeps that installation.
+Once PyTorch is present, `pip install rwkv7-hf==1.0.0` keeps that installation.
 
 ```python
 import torch
@@ -44,23 +47,45 @@ The model repository contains its configuration, cache, PyTorch operator,
 modeling code, tokenizer, vocabulary, and safetensors. Loading it does not
 require `rwkv7-hf`, FLA, Triton, a compiler, or a kernel wheel.
 
+## Add the optional NVIDIA backend
+
+After installing the PyTorch build for the target GPU:
+
+```bash
+python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
+```
+
+The equivalent single requirement is
+`python -m pip install "rwkv7-hf[kernels]==1.0.0"`. In both forms the model
+API stays unchanged; uninstalling `rwkv7-kernels` restores package-free
+reference execution.
+
+No model-code change is required. The default `RWKV7_BACKEND=auto` uses only
+device/dtype/shape routes accepted by the release matrix and otherwise runs the
+same reference body. `RWKV7_BACKEND=reference` disables the plugin;
+`RWKV7_BACKEND=optimized` is the strict diagnostic mode and raises instead of
+hiding an unsupported route.
+
+The companion wheel owns recurrent, fused prefill/decode, CUDA Graph/state
+pools, SM70/Ada/Blackwell policies, quantization adapters and training
+autograd. It never adds a hardware field to `RWKV7Config` or a private layout
+to `RWKV7Cache`. Native W8/W4/A8W8, BN/TN, BitsAndBytes, Marlin and TorchAO
+remain explicit quantization choices through `rwkv7_kernels.quantization`.
+
 ## Convert an official checkpoint
 
 ```bash
 python -m pip install "torch"  # choose the wheel for your CUDA/GPU first
-python -m pip install "rwkv7-hf==0.9.0"
+python -m pip install "rwkv7-hf==1.0.0"
 rwkv7-hf convert \
   --input /path/to/model.pth \
   --output ./rwkv7-model-hf \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
   --precision fp16 \
-  --adapter-layout reference \
-  --no-fuse-norm \
   --low-memory
 ```
 
-`reference` is the default. `thin` remains only as a legacy package-backed
-layout for older deployment workflows.
+The converter always writes the complete, self-contained reference layout.
 
 ## Public architecture
 
@@ -71,7 +96,16 @@ layout for older deployment workflows.
 - standard loss, cache, generation, save/reload, gradient checkpointing, PEFT
   and Trainer/TRL surfaces
 
-Historical `NativeRWKV7*` class names are 0.9 compatibility aliases.
+The public API uses only the canonical `RWKV7*` class names.
+
+## Source packages
+
+- `rwkv7_hf/` contains only the HF configuration, cache, operator boundary,
+  modeling, tokenizer, and chat template.
+- `rwkv7_hf_tools/` contains the CLI, checkpoint converter, manifest helpers,
+  and public-model smoke test.
+- `kernels/rwkv7_kernels/` contains only the optional versioned protocol,
+  NVIDIA implementations, graph/state pools, quantizers and training ops.
 
 ## Reproduction
 
@@ -80,6 +114,7 @@ Historical `NativeRWKV7*` class names are 0.9 compatibility aliases.
 - [Evaluation](docs/EVALUATION.md)
 - [LoRA SFT, DPO, and GRPO](docs/FINETUNING.md)
 - [Reproducibility artifacts](docs/REPRODUCIBILITY.md)
+- [NVIDIA migration and capability audit](docs/NVIDIA_MIGRATION_AUDIT.md)
 - [Published models](docs/PUBLISHED_MODELS.md)
 
 ```bash

@@ -1,0 +1,16 @@
+{
+  "actual_linear_calls": {
+    "torch-cuda-rwkv7-flattened-linear-training-v1": 28665
+  },
+  "actual_model_calls": {},
+  "actual_model_phases": {},
+  "actual_recurrent_calls": {
+    "native-nvidia-rwkv7-factorized-recurrent-training-v1": 2184,
+    "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1": 216
+  },
+  "process_id": 4111143,
+  "requested_model_policy": "auto",
+  "requested_policy": "auto",
+  "requested_training_policy": "adaptive",
+  "schema": "rwkv7-kernel-route-trace-v2"
+}

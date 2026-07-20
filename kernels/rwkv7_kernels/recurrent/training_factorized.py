@@ -1,0 +1,196 @@
+"""Factorized CUDA implementation of the RWKV-7 training recurrence.
+
+The Hugging Face model supplies canonical ``[B,T,H,D]`` vectors, positive
+decay, and public ``[B,H,K,V]`` state.  The CUDA leaf consumes dense chunks of
+16 tokens.  This adapter compacts masked samples into one padded batch, adds
+only no-op recurrent updates, and scatters outputs back so left and right
+padding retain the public state semantics. Unsupported dtype, layout or
+autograd requests fail closed.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import torch
+
+
+IMPLEMENTATION = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+TOKEN_CHUNK_LENGTH = 16
+
+
+def _unsupported(reason: str) -> dict[str, Any]:
+    return {
+        "supported": False,
+        "implementation": IMPLEMENTATION,
+        "reason": reason,
+    }
+
+
+def probe_recurrent_training_v1(
+    receptance,
+    decay,
+    key,
+    value,
+    a,
+    b,
+    initial_state,
+    attention_mask,
+) -> dict[str, Any]:
+    tensors = (receptance, decay, key, value, a, b, initial_state)
+    if not torch.cuda.is_available() or not all(item.is_cuda for item in tensors):
+        return _unsupported("the native training kernel requires CUDA tensors")
+    if receptance.ndim != 4 or initial_state.ndim != 4:
+        return _unsupported("rank-four recurrent inputs and state are required")
+    expected = tuple(receptance.shape)
+    if any(tuple(item.shape) != expected for item in (decay, key, value, a, b)):
+        return _unsupported("all recurrent vectors must have identical shapes")
+    batch, tokens, heads, width = expected
+    if width != 64 or tuple(initial_state.shape) != (batch, heads, 64, 64):
+        return _unsupported("the native training kernel requires K=V=64")
+    if tokens <= 0:
+        return _unsupported("the native training kernel requires a non-empty sequence")
+    if receptance.dtype != torch.bfloat16:
+        return _unsupported("the native training kernel requires BF16 r/k/v/a/b")
+    if any(item.dtype != torch.bfloat16 for item in (key, value, a, b)):
+        return _unsupported("the native training kernel requires BF16 r/k/v/a/b")
+    if decay.dtype != torch.float32:
+        return _unsupported("the native training kernel requires translated FP32 decay")
+    if initial_state.dtype != torch.float32:
+        return _unsupported("the public recurrent state must be FP32")
+    if bool(torch.count_nonzero(initial_state).detach().cpu()):
+        return _unsupported("native training requires a zero initial state")
+    if attention_mask is not None:
+        if tuple(attention_mask.shape) != (batch, tokens):
+            return _unsupported("attention_mask must be shaped [B,T]")
+        if not attention_mask.is_cuda:
+            return _unsupported("attention_mask must share the CUDA device")
+    if not any(item.requires_grad for item in tensors):
+        return _unsupported("the native training kernel requires an autograd request")
+
+    capability = torch.cuda.get_device_capability(receptance.device)
+    if capability < (8, 0):
+        return _unsupported("the BF16 training kernel requires sm80 or newer")
+    from ..nvidia.train_temp_cuda import recurrent_training_cuda_available
+
+    # Only the explicit ``factorized`` policy or the dense branch of
+    # ``adaptive`` reaches this probe. Lazy compilation is therefore expected
+    # here; production ``auto`` returns before importing or building a
+    # training extension.
+    if not recurrent_training_cuda_available(build=True):
+        return _unsupported("the native CUDA training extension is not loaded")
+    return {
+        "supported": True,
+        "implementation": IMPLEMENTATION,
+        "reason": "zero-state BF16 CUDA autograd request is supported",
+    }
+
+
+def _run_masked_training(
+    recurrent_inputs,
+    initial_state,
+    attention_mask,
+    *,
+    runner,
+):
+    """Pack one dense CUDA batch while preserving per-sample padding."""
+
+    receptance, decay, key, value, a, b = recurrent_inputs
+    batch, tokens, heads, width = receptance.shape
+    mask = (
+        torch.ones(batch, tokens, dtype=torch.bool, device=receptance.device)
+        if attention_mask is None
+        else attention_mask.to(device=receptance.device, dtype=torch.bool)
+    )
+    if tokens % TOKEN_CHUNK_LENGTH == 0 and bool(mask.all().detach().cpu()):
+        return runner(*recurrent_inputs, initial_state)
+
+    active_by_sample = [
+        torch.nonzero(mask[batch_idx], as_tuple=False).flatten()
+        for batch_idx in range(batch)
+    ]
+    valid_lengths = [int(active.numel()) for active in active_by_sample]
+    longest = max(valid_lengths, default=0)
+    padded_tokens = max(
+        TOKEN_CHUNK_LENGTH,
+        (
+            (longest + TOKEN_CHUNK_LENGTH - 1)
+            // TOKEN_CHUNK_LENGTH
+            * TOKEN_CHUNK_LENGTH
+        ),
+    )
+
+    packed_inputs = []
+    for input_index, item in enumerate(recurrent_inputs):
+        rows = []
+        for batch_idx, active in enumerate(active_by_sample):
+            selected = item[batch_idx : batch_idx + 1].index_select(1, active)
+            pad_tokens = padded_tokens - int(active.numel())
+            if pad_tokens:
+                # A zero r/k/v/a/b update with decay=1 is an exact recurrent
+                # no-op.  The empty selection remains in the graph for an
+                # all-padding sample, so its public input gradient is a tensor
+                # of explicit zeros rather than ``None``.
+                fill = 1.0 if input_index == 1 else 0.0
+                padding = torch.full(
+                    (1, pad_tokens, heads, width),
+                    fill,
+                    device=item.device,
+                    dtype=item.dtype,
+                )
+                selected = torch.cat((selected, padding), dim=1)
+            rows.append(selected)
+        packed_inputs.append(torch.cat(rows, dim=0))
+
+    compact_output, final_state = runner(*packed_inputs, initial_state)
+    restored_rows = []
+    for batch_idx, (active, valid_tokens) in enumerate(
+        zip(active_by_sample, valid_lengths, strict=True)
+    ):
+        restored = torch.zeros_like(value[batch_idx : batch_idx + 1]).index_copy(
+            1,
+            active,
+            compact_output[batch_idx : batch_idx + 1, :valid_tokens],
+        )
+        restored_rows.append(restored)
+    return torch.cat(restored_rows, dim=0), final_state
+
+
+def recurrent_training_v1(
+    receptance,
+    decay,
+    key,
+    value,
+    a,
+    b,
+    initial_state,
+    attention_mask,
+):
+    support = probe_recurrent_training_v1(
+        receptance,
+        decay,
+        key,
+        value,
+        a,
+        b,
+        initial_state,
+        attention_mask,
+    )
+    if not support["supported"]:
+        raise RuntimeError(str(support["reason"]))
+    from ..nvidia.train_temp_cuda import rwkv7_training_recurrent
+
+    return _run_masked_training(
+        (receptance, decay, key, value, a, b),
+        initial_state,
+        attention_mask,
+        runner=rwkv7_training_recurrent,
+    )
+
+
+__all__ = [
+    "IMPLEMENTATION",
+    "TOKEN_CHUNK_LENGTH",
+    "probe_recurrent_training_v1",
+    "recurrent_training_v1",
+]

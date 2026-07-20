@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rwkv7-kernels"
+version = "1.0.0"
+description = "Optional optimized NVIDIA inference, training, and quantization backends for rwkv7-hf"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
+dependencies = [
+  "torch",
+  "numpy",
+  "packaging",
+  "ninja",
+]
+
+[project.urls]
+Repository = "https://github.com/123123213weqw/hf-adapter"
+Issues = "https://github.com/123123213weqw/hf-adapter/issues"
+
+[tool.setuptools.packages.find]
+include = ["rwkv7_kernels*"]
+
+[tool.setuptools.package-data]
+rwkv7_kernels = [
+  "nvidia/CAPABILITY_INVENTORY.json",
+  "nvidia/MIGRATION_MANIFEST.json",
+  "nvidia/RECURRENT_SOURCE_SCOPE.json",
+  "nvidia/SOURCE_SCOPE.json",
+  "nvidia/SELF_CHUNK_LICENSE",
+  "nvidia/csrc/**/*",
+]

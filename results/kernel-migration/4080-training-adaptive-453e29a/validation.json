@@ -1,0 +1,469 @@
+{
+  "status": "passed",
+  "runs": {
+    "sft": {
+      "path": "/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/finetune-formal-bf16-60a5be18edb3/sft",
+      "global_step": 100,
+      "metrics": 102,
+      "changed_parameters": 144,
+      "inventory_files": 42,
+      "adapter_reload_max_abs": 0.0,
+      "backend_routes": [
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "training"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+          "reason": "zero-state BF16 CUDA autograd request is supported"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+          "reason": "flattened CUDA training projection is supported by PyTorch cuBLAS"
+        },
+        {
+          "event": "log",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "training"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+          "reason": "zero-state BF16 CUDA autograd request is supported"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+          "reason": "flattened CUDA training projection is supported by PyTorch cuBLAS"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+          "reason": "adaptive exact route for an unaligned recurrent request; the factorized leaf requires token lengths divisible by 16; exact mixed-precision RWKV-7 matrix recurrence is supported by batched PyTorch CUDA operations"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+          "reason": "adaptive exact route for an unaligned recurrent request; the factorized leaf requires token lengths divisible by 16; exact mixed-precision RWKV-7 matrix recurrence is supported by batched PyTorch CUDA operations"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+        },
+        {
+          "event": "log",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "prefill"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.bfloat16"
+        }
+      ],
+      "kernel_route_trace": {
+        "actual_linear_calls": {
+          "torch-cuda-rwkv7-flattened-linear-training-v1": 28665
+        },
+        "actual_model_calls": {},
+        "actual_model_phases": {},
+        "actual_recurrent_calls": {
+          "native-nvidia-rwkv7-factorized-recurrent-training-v1": 2184,
+          "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1": 216
+        },
+        "process_id": 4111143,
+        "requested_model_policy": "auto",
+        "requested_policy": "auto",
+        "requested_training_policy": "adaptive",
+        "schema": "rwkv7-kernel-route-trace-v2"
+      },
+      "artifacts": {
+        "rwkv7_hf": {
+          "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_hf-1.0.0-py3-none-any.whl",
+          "bytes": 39473,
+          "sha256": "7189c8b5615628c19befc6076bea0e80af83fd5b7c522d64ba82e297353a48f9"
+        },
+        "rwkv7_kernels": {
+          "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl",
+          "bytes": 498657,
+          "sha256": "c814b13f2e82020c6418f7c5fbad8cab5a1310b586b2a256264679f64c84b278"
+        }
+      },
+      "status": "passed",
+      "failures": []
+    },
+    "dpo": {
+      "path": "/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/finetune-formal-bf16-60a5be18edb3/dpo",
+      "global_step": 100,
+      "metrics": 102,
+      "changed_parameters": 144,
+      "inventory_files": 42,
+      "adapter_reload_max_abs": 0.0,
+      "backend_routes": [
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "training"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-v1",
+          "reason": "the matrix training leaf requires an autograd request"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for masked or standalone requests"
+        },
+        {
+          "event": "log",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "training"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-v1",
+          "reason": "the matrix training leaf requires an autograd request"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for masked or standalone requests"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the optimized training linear requires autograd"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the optimized training linear requires autograd"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+        },
+        {
+          "event": "log",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "prefill"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.bfloat16"
+        }
+      ],
+      "kernel_route_trace": {
+        "actual_linear_calls": {
+          "torch-cuda-rwkv7-flattened-linear-training-v1": 6660
+        },
+        "actual_model_calls": {},
+        "actual_model_phases": {},
+        "actual_recurrent_calls": {
+          "native-nvidia-rwkv7-factorized-recurrent-training-v1": 480,
+          "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1": 1920
+        },
+        "process_id": 4111385,
+        "requested_model_policy": "auto",
+        "requested_policy": "auto",
+        "requested_training_policy": "adaptive",
+        "schema": "rwkv7-kernel-route-trace-v2"
+      },
+      "artifacts": {
+        "rwkv7_hf": {
+          "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_hf-1.0.0-py3-none-any.whl",
+          "bytes": 39473,
+          "sha256": "7189c8b5615628c19befc6076bea0e80af83fd5b7c522d64ba82e297353a48f9"
+        },
+        "rwkv7_kernels": {
+          "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl",
+          "bytes": 498657,
+          "sha256": "c814b13f2e82020c6418f7c5fbad8cab5a1310b586b2a256264679f64c84b278"
+        }
+      },
+      "status": "passed",
+      "failures": []
+    },
+    "grpo": {
+      "path": "/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/finetune-formal-bf16-60a5be18edb3/grpo",
+      "global_step": 100,
+      "metrics": 102,
+      "changed_parameters": 144,
+      "inventory_files": 42,
+      "adapter_reload_max_abs": 0.0,
+      "backend_routes": [
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "training"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+          "reason": "adaptive exact route for an unaligned recurrent request; the factorized leaf requires token lengths divisible by 16; exact mixed-precision RWKV-7 matrix recurrence is supported by batched PyTorch CUDA operations"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+        },
+        {
+          "event": "log",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "training"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+          "reason": "adaptive exact route for an unaligned recurrent request; the factorized leaf requires token lengths divisible by 16; exact mixed-precision RWKV-7 matrix recurrence is supported by batched PyTorch CUDA operations"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for token-length-unaligned requests"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+          "reason": "adaptive exact route for a masked recurrent request; exact mixed-precision RWKV-7 matrix recurrence is supported by batched PyTorch CUDA operations"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for masked or standalone requests"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+          "reason": "adaptive exact route for a masked recurrent request; exact mixed-precision RWKV-7 matrix recurrence is supported by batched PyTorch CUDA operations"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-linear-v1",
+          "reason": "the adaptive candidate retains reference linears for masked or standalone requests"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+          "reason": "zero-state BF16 CUDA autograd request is supported"
+        },
+        {
+          "event": "pre_optimizer_step",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+          "reason": "flattened CUDA training projection is supported by PyTorch cuBLAS"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+          "reason": "zero-state BF16 CUDA autograd request is supported"
+        },
+        {
+          "event": "log",
+          "boundary": "linear",
+          "requested": "auto",
+          "selected": "optimized",
+          "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+          "reason": "flattened CUDA training projection is supported by PyTorch cuBLAS"
+        },
+        {
+          "event": "log",
+          "boundary": "model",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-model-v1",
+          "reason": "native prefill requires the causal-LM boundary",
+          "phase": "prefill"
+        },
+        {
+          "event": "log",
+          "boundary": "recurrent",
+          "requested": "auto",
+          "selected": "reference",
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.bfloat16"
+        }
+      ],
+      "kernel_route_trace": {
+        "actual_linear_calls": {
+          "torch-cuda-rwkv7-flattened-linear-training-v1": 2835
+        },
+        "actual_model_calls": {},
+        "actual_model_phases": {},
+        "actual_recurrent_calls": {
+          "native-nvidia-rwkv7-factorized-recurrent-training-v1": 216,
+          "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1": 2184
+        },
+        "process_id": 4112180,
+        "requested_model_policy": "auto",
+        "requested_policy": "auto",
+        "requested_training_policy": "adaptive",
+        "schema": "rwkv7-kernel-route-trace-v2"
+      },
+      "artifacts": {
+        "rwkv7_hf": {
+          "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_hf-1.0.0-py3-none-any.whl",
+          "bytes": 39473,
+          "sha256": "7189c8b5615628c19befc6076bea0e80af83fd5b7c522d64ba82e297353a48f9"
+        },
+        "rwkv7_kernels": {
+          "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl",
+          "bytes": 498657,
+          "sha256": "c814b13f2e82020c6418f7c5fbad8cab5a1310b586b2a256264679f64c84b278"
+        }
+      },
+      "status": "passed",
+      "failures": []
+    }
+  },
+  "ancillary": {
+    "resume": {
+      "passed": true,
+      "requested": "/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/finetune-formal-bf16-60a5be18edb3/sft/checkpoint-100",
+      "prior_global_step": 100,
+      "final_global_step": 101,
+      "advanced": true
+    },
+    "wandb_offline": {
+      "passed": true,
+      "enabled": true,
+      "id": "0b0qvajc",
+      "url": null
+    }
+  }
+}

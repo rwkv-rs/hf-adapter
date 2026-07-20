@@ -9,15 +9,18 @@ from trl import SFTConfig, SFTTrainer
 
 from common import (
     ReproCallback,
+    attach_lora_adapters,
     checkpoint_inventory,
     common_arguments,
     deterministic_subset,
-    lora_config,
+    gradient_checkpointing_kwargs,
+    model_load_kwargs,
     prepare_run,
     report_target,
     run_captured,
     record_wandb,
     snapshot_trainable,
+    trainer_precision_flags,
     validate_adapter_reload,
     validate_parameter_change,
     validate_resume,
@@ -52,8 +55,10 @@ def main():
         args.model, revision=args.model_revision, trust_remote_code=True
     )
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, revision=args.model_revision, trust_remote_code=True
+        args.model,
+        **model_load_kwargs(args),
     )
+    model = attach_lora_adapters(model, args)
     model.config.use_cache = False
     callback = ReproCallback(output)
     config = SFTConfig(
@@ -66,10 +71,12 @@ def main():
         per_device_eval_batch_size=1,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         gradient_checkpointing=True,
+        gradient_checkpointing_kwargs=gradient_checkpointing_kwargs(),
         eval_strategy="no",
         save_steps=25,
         logging_steps=1,
         report_to=report_target(args),
+        **trainer_precision_flags(),
     )
     trainer = SFTTrainer(
         model=model,
@@ -77,7 +84,6 @@ def main():
         train_dataset=train,
         eval_dataset=evaluation,
         processing_class=tokenizer,
-        peft_config=lora_config(),
         callbacks=[callback],
     )
     before = snapshot_trainable(trainer.model)

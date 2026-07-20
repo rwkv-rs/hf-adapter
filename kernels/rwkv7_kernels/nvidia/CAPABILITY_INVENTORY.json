@@ -1,0 +1,535 @@
+{
+  "capabilities": [
+    {
+      "activation": "auto_or_explicit",
+      "category": "recurrent",
+      "devices": [
+        "sm70",
+        "ada",
+        "blackwell"
+      ],
+      "id": "recurrent",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/fused_recurrent_update.py",
+        "rwkv7_kernels/nvidia/native_jit_recurrent.py",
+        "rwkv7_kernels/nvidia/native_wkv_fp16.py",
+        "rwkv7_kernels/nvidia/recurrent_state.py"
+      ],
+      "phases": [
+        "prefill",
+        "decode",
+        "training"
+      ],
+      "policy_flags": [
+        "fused_recurrent_output",
+        "fused_recurrent_raw",
+        "native_graph_triton_fp16_state",
+        "native_graph_fp16_recurrent"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/dispatcher.py",
+        "rwkv7_kernels/recurrent/graph.py",
+        "rwkv7_kernels/recurrent/triton.py",
+        "rwkv7_kernels/model_dispatcher.py"
+      ]
+    },
+    {
+      "activation": "diagnostic_until_release_gate",
+      "category": "decode",
+      "devices": [
+        "sm70",
+        "ada",
+        "blackwell"
+      ],
+      "id": "dense_decode",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/fused_attention_projection.py",
+        "rwkv7_kernels/nvidia/fused_decode_norm_mix.py",
+        "rwkv7_kernels/nvidia/fused_elementwise.py",
+        "rwkv7_kernels/nvidia/fused_ffn.py",
+        "rwkv7_kernels/nvidia/fused_lora.py",
+        "rwkv7_kernels/nvidia/fused_norm_mix.py",
+        "rwkv7_kernels/nvidia/fused_output.py",
+        "rwkv7_kernels/nvidia/fused_projection.py",
+        "rwkv7_kernels/nvidia/fused_time_mix.py",
+        "rwkv7_kernels/nvidia/native_jit_decode.py",
+        "rwkv7_kernels/nvidia/native_jit_dense_step.py",
+        "rwkv7_kernels/nvidia/native_jit_linear.py"
+      ],
+      "phases": [
+        "decode"
+      ],
+      "policy_flags": [
+        "fused_output",
+        "fused_norm_mix",
+        "fused_output_project",
+        "fused_projection",
+        "fused_wag_lora",
+        "fused_wavg_lora",
+        "ada_wagv_lora",
+        "ada_wagv_bmm",
+        "ada_sparse_ffn"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/model/dense.py",
+        "rwkv7_kernels/model/dense_step.py",
+        "rwkv7_kernels/model/packing.py",
+        "rwkv7_kernels/model_dispatcher.py"
+      ]
+    },
+    {
+      "activation": "diagnostic_until_release_gate",
+      "category": "prefill",
+      "devices": [
+        "sm70",
+        "ada",
+        "blackwell"
+      ],
+      "id": "fused_prefill",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/SELF_CHUNK_LICENSE",
+        "rwkv7_kernels/nvidia/dplr_prefill.py",
+        "rwkv7_kernels/nvidia/dplr_prefill_triton.py",
+        "rwkv7_kernels/nvidia/fused_prefill.py",
+        "rwkv7_kernels/nvidia/native_jit_prefill.py",
+        "rwkv7_kernels/nvidia/native_jit_prefill_policy.py",
+        "rwkv7_kernels/nvidia/native_jit_prefill_runtime_policy.py",
+        "rwkv7_kernels/nvidia/self_chunk_A_fwd.py",
+        "rwkv7_kernels/nvidia/self_chunk_cumsum.py",
+        "rwkv7_kernels/nvidia/self_chunk_h_fwd.py",
+        "rwkv7_kernels/nvidia/self_chunk_o_fwd.py",
+        "rwkv7_kernels/nvidia/self_chunk_rwkv7.py",
+        "rwkv7_kernels/nvidia/self_chunk_utils.py",
+        "rwkv7_kernels/nvidia/self_chunk_wy_fwd.py"
+      ],
+      "phases": [
+        "prefill"
+      ],
+      "policy_flags": [
+        "fused_prefill_scan",
+        "fused_prefill_self_chunk",
+        "fused_prefill_shift_mix",
+        "fused_prefill_state_prep",
+        "fused_prefill_state_scan",
+        "fused_prefill_output",
+        "fused_prefill_residual_gemm",
+        "fused_prefill_clampw_scan",
+        "fused_prefill_stacked_rkv",
+        "fused_prefill_sequence_ffn"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/model_dispatcher.py",
+        "rwkv7_kernels/nvidia/prefill_graph_pool.py",
+        "rwkv7_kernels/nvidia/prefill_graph_runtime.py"
+      ]
+    },
+    {
+      "activation": "diagnostic_until_release_gate",
+      "category": "graph_state",
+      "devices": [
+        "sm70",
+        "ada",
+        "blackwell"
+      ],
+      "id": "graph_state_pool",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/kernel_policy.py",
+        "rwkv7_kernels/nvidia/native_graph_runtime.py",
+        "rwkv7_kernels/nvidia/native_jit.py",
+        "rwkv7_kernels/nvidia/native_jit_graph_dispatch.py",
+        "rwkv7_kernels/nvidia/native_jit_packing.py"
+      ],
+      "phases": [
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "prefill_graph",
+        "prefill_graph_cache_size",
+        "native_graph_state_dtype",
+        "native_graph_precompute_embedding"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/nvidia/graph_pool.py",
+        "rwkv7_kernels/nvidia/prefill_graph_pool.py",
+        "rwkv7_kernels/nvidia/prefill_graph_runtime.py",
+        "rwkv7_kernels/model_dispatcher.py"
+      ]
+    },
+    {
+      "activation": "exact_device_policy",
+      "category": "device_policy",
+      "devices": [
+        "v100",
+        "sm70"
+      ],
+      "id": "sm70_policy",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/sm70_linear.py",
+        "rwkv7_kernels/nvidia/sm70_quant.py",
+        "rwkv7_kernels/nvidia/sm70_wagv.py"
+      ],
+      "phases": [
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "sm70_linear",
+        "sm70_wagv_lora",
+        "native_graph_triton_fp16_state"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/nvidia/kernel_policy.py",
+        "rwkv7_kernels/model_dispatcher.py"
+      ]
+    },
+    {
+      "activation": "exact_device_policy",
+      "category": "device_policy",
+      "devices": [
+        "rtx4080",
+        "rtx4090"
+      ],
+      "id": "ada_policy",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/ada_lora.py",
+        "rwkv7_kernels/nvidia/ada_sparse_ffn.py"
+      ],
+      "phases": [
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "ada_linear",
+        "ada_wagv_lora",
+        "ada_wagv_bmm",
+        "ada_sparse_ffn"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/nvidia/kernel_policy.py",
+        "rwkv7_kernels/model_dispatcher.py"
+      ]
+    },
+    {
+      "activation": "exact_device_policy",
+      "category": "device_policy",
+      "devices": [
+        "rtx5090",
+        "blackwell"
+      ],
+      "id": "blackwell_policy",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/blackwell_norm_mix.py",
+        "rwkv7_kernels/nvidia/sm120_compiled_ffn.py",
+        "rwkv7_kernels/nvidia/triton_compat.py"
+      ],
+      "phases": [
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "blackwell_cmix",
+        "native_graph_fp16_recurrent",
+        "prefill_fp16_recurrent",
+        "ada_sparse_ffn",
+        "ada_wagv_lora"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/nvidia/kernel_policy.py",
+        "rwkv7_kernels/model_dispatcher.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_w8",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/native_quant_mm8.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "mm8_fused_max_rows",
+        "mm8_dot_min_rows"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant_mm8.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_w4",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/native_quant_mm4.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "mm4_fused_max_rows",
+        "mm4_dot_min_rows"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant_mm4.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_a8w8",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/native_quant_a8w8.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "a8w8_gemv_max_rows",
+        "a8w8_fused_ffn"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant_a8w8.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_bntn",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/bn_tn_tuning.py",
+        "rwkv7_kernels/nvidia/native_quant_bn_tn.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "marlin_w4_model_profiles"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant_bn_tn.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_bitsandbytes",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/native_jit_bnb8.py",
+        "rwkv7_kernels/nvidia/native_quant_bnb8.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "native_bnb8_direct",
+        "native_bnb8_relu_quant",
+        "native_external_quant_graph",
+        "native_external_quant_prefill_graph"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant_bnb8.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_marlin",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/csrc/marlin/LICENSE",
+        "rwkv7_kernels/nvidia/csrc/marlin/README.md",
+        "rwkv7_kernels/nvidia/csrc/marlin/awq_marlin_repack.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/awq_marlin_repack.cuh",
+        "rwkv7_kernels/nvidia/csrc/marlin/core/registration.h",
+        "rwkv7_kernels/nvidia/csrc/marlin/core/scalar_type.hpp",
+        "rwkv7_kernels/nvidia/csrc/marlin/dequant.h",
+        "rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin.cuh",
+        "rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_bf16.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_repack.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_repack.cuh",
+        "rwkv7_kernels/nvidia/csrc/marlin/kernel.h",
+        "rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_kfe2m1f.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_kfe4m3fn.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku4.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku4b8.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku8b128.cu",
+        "rwkv7_kernels/nvidia/csrc/marlin/marlin.cuh",
+        "rwkv7_kernels/nvidia/csrc/marlin/marlin_dtypes.cuh",
+        "rwkv7_kernels/nvidia/csrc/marlin/marlin_mma.h",
+        "rwkv7_kernels/nvidia/csrc/marlin/marlin_template.h",
+        "rwkv7_kernels/nvidia/csrc/marlin/marlin_torch_bf16.cpp",
+        "rwkv7_kernels/nvidia/marlin_autotune.py",
+        "rwkv7_kernels/nvidia/native_quant_marlin.py",
+        "rwkv7_kernels/nvidia/native_quant_marlin_sources.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "marlin_w4_ffn_shapes",
+        "marlin_w4_model_profiles"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant_marlin.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_torchao",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/native_quant_torchao.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "native_external_quant_graph",
+        "native_external_quant_prefill_graph"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant_torchao.py"
+      ]
+    },
+    {
+      "activation": "explicit_user_opt_in",
+      "category": "quantization",
+      "devices": [
+        "nvidia"
+      ],
+      "id": "quant_runtime",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/extension_build.py",
+        "rwkv7_kernels/nvidia/kernel_package.py",
+        "rwkv7_kernels/nvidia/native_quant.py",
+        "rwkv7_kernels/nvidia/native_quant_policy.py"
+      ],
+      "phases": [
+        "quantize",
+        "prefill",
+        "decode"
+      ],
+      "policy_flags": [
+        "quant_policy",
+        "bnb_skip_policy"
+      ],
+      "runtime_files": [
+        "rwkv7_kernels/quantization.py",
+        "rwkv7_kernels/nvidia/native_quant.py",
+        "rwkv7_kernels/nvidia/native_quant_policy.py"
+      ]
+    },
+    {
+      "activation": "diagnostic_until_release_gate",
+      "category": "training",
+      "devices": [
+        "sm70",
+        "ada",
+        "blackwell"
+      ],
+      "id": "training_autograd",
+      "implementation_status": "migrated",
+      "migration_files": [
+        "rwkv7_kernels/nvidia/csrc/train_temp/LICENSE",
+        "rwkv7_kernels/nvidia/csrc/train_temp/README.md",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_cmix_bf16_v5.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cu",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cu",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cpp",
+        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cu",
+        "rwkv7_kernels/nvidia/train_temp_alignment.py",
+        "rwkv7_kernels/nvidia/train_temp_cuda.py",
+        "rwkv7_kernels/nvidia/train_temp_resume.py"
+      ],
+      "phases": [
+        "training"
+      ],
+      "policy_flags": [],
+      "runtime_files": [
+        "rwkv7_kernels/linear/__init__.py",
+        "rwkv7_kernels/linear/training_flattened.py",
+        "rwkv7_kernels/model_dispatcher.py",
+        "rwkv7_kernels/nvidia/train_temp_cuda.py",
+        "rwkv7_kernels/nvidia/training_runtime.py",
+        "rwkv7_kernels/recurrent/training_factorized.py",
+        "rwkv7_kernels/recurrent/training_matrix.py",
+        "rwkv7_kernels/training_dispatcher.py"
+      ]
+    }
+  ],
+  "kernel_api_version": 2,
+  "ownership": "rwkv7-kernels only; no model, config, tokenizer, or public cache ownership",
+  "production_auto": "disabled until the immutable-wheel release-device gate passes",
+  "schema": "rwkv7-nvidia-capability-inventory-v1",
+  "source_branch": "perf/native-kernels-v0.8"
+}

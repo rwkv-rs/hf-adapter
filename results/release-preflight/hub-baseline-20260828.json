@@ -1,0 +1,607 @@
+{
+  "code_sha": "b0077e3b53510ca1604b1780685496121129e1e5",
+  "command": [
+    "/opt/homebrew/opt/python@3.11/bin/python3.11",
+    "evaluation/audit_hub_release.py",
+    "--code-sha",
+    "b0077e3b53510ca1604b1780685496121129e1e5",
+    "--source-dir",
+    "rwkv7_hf",
+    "--output",
+    "results/release-preflight/hub-baseline-20260828.json",
+    "--repo",
+    "wangyue114514/rwkv7-g1d-0.1b-hf",
+    "--repo",
+    "wangyue114514/rwkv7-g1d-0.4b-hf",
+    "--repo",
+    "wangyue114514/rwkv7-g1g-1.5b-hf",
+    "--repo",
+    "wangyue114514/rwkv7-g1g-2.9b-hf",
+    "--repo",
+    "wangyue114514/rwkv7-g1g-7.2b-hf",
+    "--repo",
+    "wangyue114514/rwkv7-g1g-13.3b-hf"
+  ],
+  "generated_at": "2026-08-27T18:23:20.240698+00:00",
+  "huggingface_hub": "1.24.0",
+  "repositories": [
+    {
+      "code_sha256": {
+        "cache_rwkv7.py": {
+          "actual": "8d2cc30f05d04eca4521026b1cb4683001c6f3e625a39e30451c74df092ba99b",
+          "expected": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76",
+          "match": false
+        },
+        "chat_template.jinja": {
+          "actual": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "expected": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "match": true
+        },
+        "configuration_rwkv7.py": {
+          "actual": "6b1b07047312e1fb9f63e501e9f5939f3d7e1d9ebf9b9ff526e1ac651a169726",
+          "expected": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503",
+          "match": false
+        },
+        "modeling_rwkv7.py": {
+          "actual": "0ec25a30ff686ca2e8e97d83d0e9db8a584cbe2552bfca5cb0b2bdc52e8775cc",
+          "expected": "cb3183fa101141ff329d7f8dc61e46347ac821614c5d804623ebcd2860ff8e3c",
+          "match": false
+        },
+        "ops_rwkv7.py": {
+          "actual": "4045c41a7b64d37218a823ce2d79177c1ff96f349b47a9616f1e8080a25b77fd",
+          "expected": "5fc8bb1cacb2617c11a13bdde56cec36c2bf4c6069263c0c0f36100f224470b6",
+          "match": false
+        },
+        "tokenization_rwkv7.py": {
+          "actual": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "expected": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "match": true
+        }
+      },
+      "failures": [
+        "canonical source differs: cache_rwkv7.py",
+        "canonical source differs: configuration_rwkv7.py",
+        "canonical source differs: modeling_rwkv7.py",
+        "canonical source differs: ops_rwkv7.py"
+      ],
+      "files": [
+        ".gitattributes",
+        "LICENSE",
+        "README.md",
+        "cache_rwkv7.py",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_rwkv7.py",
+        "conversion_manifest.json",
+        "generation_config.json",
+        "model.safetensors",
+        "modeling_rwkv7.py",
+        "ops_rwkv7.py",
+        "rwkv_vocab_v20230424.txt",
+        "special_tokens_map.json",
+        "tokenization_rwkv7.py",
+        "tokenizer_config.json"
+      ],
+      "repo": "wangyue114514/rwkv7-g1d-0.1b-hf",
+      "resolved_revision": "f2e07131973ae9d6f1ee0e84db1b6e346e58d1f0",
+      "revision": "main",
+      "status": "failed",
+      "tags": {
+        "v0.7.0": "1746ffdf0761d65b4a3498ca03e5b2ec21181817",
+        "v0.9.0": "792b7f26798ded5310c59fb66abebb796e3ee1fd",
+        "v0.9.0-preflight-c9120b5": "87ee85162e45f5b158052da0f5e2c3382ff43810"
+      },
+      "weights": {
+        "model.safetensors": {
+          "sha256": "12d208adf2880927615656c2dc3f6fb6a3ea3120a9ed9fdfeeea55c841723d79",
+          "size": 382110672
+        }
+      }
+    },
+    {
+      "code_sha256": {
+        "cache_rwkv7.py": {
+          "actual": "8d2cc30f05d04eca4521026b1cb4683001c6f3e625a39e30451c74df092ba99b",
+          "expected": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76",
+          "match": false
+        },
+        "chat_template.jinja": {
+          "actual": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "expected": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "match": true
+        },
+        "configuration_rwkv7.py": {
+          "actual": "6b1b07047312e1fb9f63e501e9f5939f3d7e1d9ebf9b9ff526e1ac651a169726",
+          "expected": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503",
+          "match": false
+        },
+        "modeling_rwkv7.py": {
+          "actual": "0ec25a30ff686ca2e8e97d83d0e9db8a584cbe2552bfca5cb0b2bdc52e8775cc",
+          "expected": "cb3183fa101141ff329d7f8dc61e46347ac821614c5d804623ebcd2860ff8e3c",
+          "match": false
+        },
+        "ops_rwkv7.py": {
+          "actual": "4045c41a7b64d37218a823ce2d79177c1ff96f349b47a9616f1e8080a25b77fd",
+          "expected": "5fc8bb1cacb2617c11a13bdde56cec36c2bf4c6069263c0c0f36100f224470b6",
+          "match": false
+        },
+        "tokenization_rwkv7.py": {
+          "actual": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "expected": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "match": true
+        }
+      },
+      "failures": [
+        "canonical source differs: cache_rwkv7.py",
+        "canonical source differs: configuration_rwkv7.py",
+        "canonical source differs: modeling_rwkv7.py",
+        "canonical source differs: ops_rwkv7.py"
+      ],
+      "files": [
+        ".gitattributes",
+        "LICENSE",
+        "README.md",
+        "cache_rwkv7.py",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_rwkv7.py",
+        "conversion_manifest.json",
+        "generation_config.json",
+        "model.safetensors",
+        "modeling_rwkv7.py",
+        "ops_rwkv7.py",
+        "rwkv_vocab_v20230424.txt",
+        "special_tokens_map.json",
+        "tokenization_rwkv7.py",
+        "tokenizer_config.json"
+      ],
+      "repo": "wangyue114514/rwkv7-g1d-0.4b-hf",
+      "resolved_revision": "8ac0dc2e0562efac2d2055258069f08ec23c813d",
+      "revision": "main",
+      "status": "failed",
+      "tags": {
+        "v0.7.0": "4bc0ecb2795d77a18d661b610e9b6414d96fa0ac",
+        "v0.9.0": "6fa8563c2dbf95d2df013b84acf3d8f7fde201db",
+        "v0.9.0-preflight-c9120b5": "32ffbc859efea188899d5bf1aa1a1f3f0d819131"
+      },
+      "weights": {
+        "model.safetensors": {
+          "sha256": "8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0",
+          "size": 901619536
+        }
+      }
+    },
+    {
+      "code_sha256": {
+        "cache_rwkv7.py": {
+          "actual": "8d2cc30f05d04eca4521026b1cb4683001c6f3e625a39e30451c74df092ba99b",
+          "expected": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76",
+          "match": false
+        },
+        "chat_template.jinja": {
+          "actual": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "expected": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "match": true
+        },
+        "configuration_rwkv7.py": {
+          "actual": "6b1b07047312e1fb9f63e501e9f5939f3d7e1d9ebf9b9ff526e1ac651a169726",
+          "expected": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503",
+          "match": false
+        },
+        "modeling_rwkv7.py": {
+          "actual": "0ec25a30ff686ca2e8e97d83d0e9db8a584cbe2552bfca5cb0b2bdc52e8775cc",
+          "expected": "cb3183fa101141ff329d7f8dc61e46347ac821614c5d804623ebcd2860ff8e3c",
+          "match": false
+        },
+        "ops_rwkv7.py": {
+          "actual": "4045c41a7b64d37218a823ce2d79177c1ff96f349b47a9616f1e8080a25b77fd",
+          "expected": "5fc8bb1cacb2617c11a13bdde56cec36c2bf4c6069263c0c0f36100f224470b6",
+          "match": false
+        },
+        "tokenization_rwkv7.py": {
+          "actual": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "expected": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "match": true
+        }
+      },
+      "failures": [
+        "canonical source differs: cache_rwkv7.py",
+        "canonical source differs: configuration_rwkv7.py",
+        "canonical source differs: modeling_rwkv7.py",
+        "canonical source differs: ops_rwkv7.py"
+      ],
+      "files": [
+        ".gitattributes",
+        "LICENSE",
+        "README.md",
+        "cache_rwkv7.py",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_rwkv7.py",
+        "conversion_manifest.json",
+        "generation_config.json",
+        "model-00001-of-00006.safetensors",
+        "model-00002-of-00006.safetensors",
+        "model-00003-of-00006.safetensors",
+        "model-00004-of-00006.safetensors",
+        "model-00005-of-00006.safetensors",
+        "model-00006-of-00006.safetensors",
+        "model.safetensors.index.json",
+        "modeling_rwkv7.py",
+        "ops_rwkv7.py",
+        "rwkv_vocab_v20230424.txt",
+        "special_tokens_map.json",
+        "tokenization_rwkv7.py",
+        "tokenizer_config.json"
+      ],
+      "repo": "wangyue114514/rwkv7-g1g-1.5b-hf",
+      "resolved_revision": "d0f3488f9752154aac25811bf45506f36d68f1c0",
+      "revision": "main",
+      "status": "failed",
+      "tags": {
+        "v0.7.0": "8f45c248b64c041a6cb784a45265366c38c3f6f1",
+        "v0.9.0": "5dcf5e73ff1fa30bdbf77993dc21521938a63c15",
+        "v0.9.0-preflight-c9120b5": "b9df249e97d90a11570ad89a682cf9a6f451c90d"
+      },
+      "weights": {
+        "model-00001-of-00006.safetensors": {
+          "sha256": "530dd965276394902d5c58d6a44af9e052de14e8aa22d52a11953a4e1a6be8b9",
+          "size": 536871136
+        },
+        "model-00002-of-00006.safetensors": {
+          "sha256": "73c10bbcdcf9c4a3724a90777e8e2d82344b908809a3d5b7b15a57285a5702bf",
+          "size": 535467904
+        },
+        "model-00003-of-00006.safetensors": {
+          "sha256": "d20b7c7985403c982010051b81975c2c0339770b53dcbcc75b5527a217d0d429",
+          "size": 533087464
+        },
+        "model-00004-of-00006.safetensors": {
+          "sha256": "2fef3af3922d2d6fccdc698c0b89c34c9fe75e1332fc2bb7aa665724d48d8f1e",
+          "size": 533611968
+        },
+        "model-00005-of-00006.safetensors": {
+          "sha256": "7387a29f20bf881f8a6000597fe048accce61011550fdf32d7a16ea9a80d5bb9",
+          "size": 533907568
+        },
+        "model-00006-of-00006.safetensors": {
+          "sha256": "9e9c24811fdfefc970f861337eb823ad4c0d71a08fb87fc0eb9aae8d5890df57",
+          "size": 381946672
+        }
+      }
+    },
+    {
+      "code_sha256": {
+        "cache_rwkv7.py": {
+          "actual": "8d2cc30f05d04eca4521026b1cb4683001c6f3e625a39e30451c74df092ba99b",
+          "expected": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76",
+          "match": false
+        },
+        "chat_template.jinja": {
+          "actual": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "expected": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "match": true
+        },
+        "configuration_rwkv7.py": {
+          "actual": "6b1b07047312e1fb9f63e501e9f5939f3d7e1d9ebf9b9ff526e1ac651a169726",
+          "expected": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503",
+          "match": false
+        },
+        "modeling_rwkv7.py": {
+          "actual": "0ec25a30ff686ca2e8e97d83d0e9db8a584cbe2552bfca5cb0b2bdc52e8775cc",
+          "expected": "cb3183fa101141ff329d7f8dc61e46347ac821614c5d804623ebcd2860ff8e3c",
+          "match": false
+        },
+        "ops_rwkv7.py": {
+          "actual": "4045c41a7b64d37218a823ce2d79177c1ff96f349b47a9616f1e8080a25b77fd",
+          "expected": "5fc8bb1cacb2617c11a13bdde56cec36c2bf4c6069263c0c0f36100f224470b6",
+          "match": false
+        },
+        "tokenization_rwkv7.py": {
+          "actual": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "expected": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "match": true
+        }
+      },
+      "failures": [
+        "canonical source differs: cache_rwkv7.py",
+        "canonical source differs: configuration_rwkv7.py",
+        "canonical source differs: modeling_rwkv7.py",
+        "canonical source differs: ops_rwkv7.py"
+      ],
+      "files": [
+        ".gitattributes",
+        "LICENSE",
+        "README.md",
+        "cache_rwkv7.py",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_rwkv7.py",
+        "conversion_manifest.json",
+        "generation_config.json",
+        "model-00001-of-00013.safetensors",
+        "model-00002-of-00013.safetensors",
+        "model-00003-of-00013.safetensors",
+        "model-00004-of-00013.safetensors",
+        "model-00005-of-00013.safetensors",
+        "model-00006-of-00013.safetensors",
+        "model-00007-of-00013.safetensors",
+        "model-00008-of-00013.safetensors",
+        "model-00009-of-00013.safetensors",
+        "model-00010-of-00013.safetensors",
+        "model-00011-of-00013.safetensors",
+        "model-00012-of-00013.safetensors",
+        "model-00013-of-00013.safetensors",
+        "model.safetensors.index.json",
+        "modeling_rwkv7.py",
+        "ops_rwkv7.py",
+        "rwkv_vocab_v20230424.txt",
+        "special_tokens_map.json",
+        "tokenization_rwkv7.py",
+        "tokenizer_config.json"
+      ],
+      "repo": "wangyue114514/rwkv7-g1g-2.9b-hf",
+      "resolved_revision": "bf64a220cfc9158efdbf3f119ae8b1714eefa146",
+      "revision": "main",
+      "status": "failed",
+      "tags": {
+        "v0.7.0": "daf71566bb769b3f926190aa78d78356df3652d7",
+        "v0.9.0": "a72bbf710fe063ed97ffe52052b7874f3c6da752",
+        "v0.9.0-preflight-c9120b5": "5fce7dc100d6a8c2cf7ebb14a282f7537cc32e4a"
+      },
+      "weights": {
+        "model-00001-of-00013.safetensors": {
+          "sha256": "271974b51c2783ed1ba9ac2aaffee1514ddeda87e66a0950feabd38645ae549b",
+          "size": 335544448
+        },
+        "model-00002-of-00013.safetensors": {
+          "sha256": "283a3e272faf8963c0a78b3d9e3c310e7b3eb2cee1112604415ae2665dbc21d6",
+          "size": 528685696
+        },
+        "model-00003-of-00013.safetensors": {
+          "sha256": "4d2fa4521d54385068ecf6befdc425c07d8c7f90af94af21195388338a9223ba",
+          "size": 517761928
+        },
+        "model-00004-of-00013.safetensors": {
+          "sha256": "7aaee9ff55454c12357797c90614d06abf9dea8a0d1b2e6bade57be496c82c04",
+          "size": 489856280
+        },
+        "model-00005-of-00013.safetensors": {
+          "sha256": "4e81d67ef90f516d153cd439d9137d7ec0021bea58b61ba0037f7455b509fded",
+          "size": 489856280
+        },
+        "model-00006-of-00013.safetensors": {
+          "sha256": "acef40dd5af35792068cb30c95c4e1adc09773885f00b07a02995b34c5d56787",
+          "size": 489856248
+        },
+        "model-00007-of-00013.safetensors": {
+          "sha256": "6b571c72f28478ac9ebef98b2265d6619a9379962251323bf881254dbf8ddf11",
+          "size": 489856280
+        },
+        "model-00008-of-00013.safetensors": {
+          "sha256": "94035f1a1fa15d9c9f539f132792a45fbf5f5677d41f9379df3a5070118ad004",
+          "size": 489856280
+        },
+        "model-00009-of-00013.safetensors": {
+          "sha256": "cce02f18086afd35eec88a5c4cd5d8c1d34592a4ac161bebb4e5764185f7b611",
+          "size": 489856280
+        },
+        "model-00010-of-00013.safetensors": {
+          "sha256": "70177814c7c9a8adb56c5162b93b3b3f8b79b7c19178f2a0cbd6cd71450f8b1b",
+          "size": 489856248
+        },
+        "model-00011-of-00013.safetensors": {
+          "sha256": "c417c96f039acc565374eaa60501d2cfed18d746a368dd862e4d760d91258019",
+          "size": 489856184
+        },
+        "model-00012-of-00013.safetensors": {
+          "sha256": "6e9a590a0635c14d8195002dbb28618801e8d627dc8a66f26202adb6a0726f94",
+          "size": 489856184
+        },
+        "model-00013-of-00013.safetensors": {
+          "sha256": "eb0444f035a9a74e048b8ee75dcb1a2a402bea8e50e8aca2a652684bd4425fd3",
+          "size": 104883912
+        }
+      }
+    },
+    {
+      "code_sha256": {
+        "cache_rwkv7.py": {
+          "actual": "8d2cc30f05d04eca4521026b1cb4683001c6f3e625a39e30451c74df092ba99b",
+          "expected": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76",
+          "match": false
+        },
+        "chat_template.jinja": {
+          "actual": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "expected": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "match": true
+        },
+        "configuration_rwkv7.py": {
+          "actual": "6b1b07047312e1fb9f63e501e9f5939f3d7e1d9ebf9b9ff526e1ac651a169726",
+          "expected": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503",
+          "match": false
+        },
+        "modeling_rwkv7.py": {
+          "actual": "0ec25a30ff686ca2e8e97d83d0e9db8a584cbe2552bfca5cb0b2bdc52e8775cc",
+          "expected": "cb3183fa101141ff329d7f8dc61e46347ac821614c5d804623ebcd2860ff8e3c",
+          "match": false
+        },
+        "ops_rwkv7.py": {
+          "actual": "4045c41a7b64d37218a823ce2d79177c1ff96f349b47a9616f1e8080a25b77fd",
+          "expected": "5fc8bb1cacb2617c11a13bdde56cec36c2bf4c6069263c0c0f36100f224470b6",
+          "match": false
+        },
+        "tokenization_rwkv7.py": {
+          "actual": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "expected": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "match": true
+        }
+      },
+      "failures": [
+        "canonical source differs: cache_rwkv7.py",
+        "canonical source differs: configuration_rwkv7.py",
+        "canonical source differs: modeling_rwkv7.py",
+        "canonical source differs: ops_rwkv7.py"
+      ],
+      "files": [
+        ".gitattributes",
+        "LICENSE",
+        "README.md",
+        "cache_rwkv7.py",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_rwkv7.py",
+        "conversion_manifest.json",
+        "generation_config.json",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "model.safetensors.index.json",
+        "modeling_rwkv7.py",
+        "ops_rwkv7.py",
+        "rwkv_vocab_v20230424.txt",
+        "special_tokens_map.json",
+        "tokenization_rwkv7.py",
+        "tokenizer_config.json"
+      ],
+      "repo": "wangyue114514/rwkv7-g1g-7.2b-hf",
+      "resolved_revision": "4505870e040f6338e34eb8d18684cfa6d65745c8",
+      "revision": "main",
+      "status": "failed",
+      "tags": {
+        "v0.7.0": "885888ed9f1859f57dc8e4135999702c3411c4ec",
+        "v0.9.0": "c94c13290abcafccc9d707b8a5be3e4507698a9d",
+        "v0.9.0-preflight-c9120b5": "d7524386999405b26ea009c3093b05dfc8d785ab"
+      },
+      "weights": {
+        "model-00001-of-00004.safetensors": {
+          "sha256": "1649a14256f4277cf0683363c4939c76c29b1a7f7be99992992f6d381e8a3c90",
+          "size": 3997287800
+        },
+        "model-00002-of-00004.safetensors": {
+          "sha256": "e119188edf706c8c60d6e7413242c16e9b16ca42fcc8a98276416d942f5c4aa2",
+          "size": 3885974712
+        },
+        "model-00003-of-00004.safetensors": {
+          "sha256": "b4e820d09a0e65549d7fe75a1aaefd9c806e80d3d6c0ed7243f2273d37c6b575",
+          "size": 3882212680
+        },
+        "model-00004-of-00004.safetensors": {
+          "sha256": "b0c69dff89d7f04a5fde42f0f59ef1ee98882726e346c3b0c1552061d5a2f399",
+          "size": 2632922272
+        }
+      }
+    },
+    {
+      "code_sha256": {
+        "cache_rwkv7.py": {
+          "actual": "8d2cc30f05d04eca4521026b1cb4683001c6f3e625a39e30451c74df092ba99b",
+          "expected": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76",
+          "match": false
+        },
+        "chat_template.jinja": {
+          "actual": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "expected": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885",
+          "match": true
+        },
+        "configuration_rwkv7.py": {
+          "actual": "6b1b07047312e1fb9f63e501e9f5939f3d7e1d9ebf9b9ff526e1ac651a169726",
+          "expected": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503",
+          "match": false
+        },
+        "modeling_rwkv7.py": {
+          "actual": "0ec25a30ff686ca2e8e97d83d0e9db8a584cbe2552bfca5cb0b2bdc52e8775cc",
+          "expected": "cb3183fa101141ff329d7f8dc61e46347ac821614c5d804623ebcd2860ff8e3c",
+          "match": false
+        },
+        "ops_rwkv7.py": {
+          "actual": "4045c41a7b64d37218a823ce2d79177c1ff96f349b47a9616f1e8080a25b77fd",
+          "expected": "5fc8bb1cacb2617c11a13bdde56cec36c2bf4c6069263c0c0f36100f224470b6",
+          "match": false
+        },
+        "tokenization_rwkv7.py": {
+          "actual": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "expected": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+          "match": true
+        }
+      },
+      "failures": [
+        "canonical source differs: cache_rwkv7.py",
+        "canonical source differs: configuration_rwkv7.py",
+        "canonical source differs: modeling_rwkv7.py",
+        "canonical source differs: ops_rwkv7.py"
+      ],
+      "files": [
+        ".gitattributes",
+        "LICENSE",
+        "README.md",
+        "cache_rwkv7.py",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_rwkv7.py",
+        "conversion_manifest.json",
+        "generation_config.json",
+        "model-00001-of-00007.safetensors",
+        "model-00002-of-00007.safetensors",
+        "model-00003-of-00007.safetensors",
+        "model-00004-of-00007.safetensors",
+        "model-00005-of-00007.safetensors",
+        "model-00006-of-00007.safetensors",
+        "model-00007-of-00007.safetensors",
+        "model.safetensors.index.json",
+        "modeling_rwkv7.py",
+        "ops_rwkv7.py",
+        "rwkv_vocab_v20230424.txt",
+        "special_tokens_map.json",
+        "tokenization_rwkv7.py",
+        "tokenizer_config.json"
+      ],
+      "repo": "wangyue114514/rwkv7-g1g-13.3b-hf",
+      "resolved_revision": "58a171ca3bcf4df0b923a5489c13372818f930d6",
+      "revision": "main",
+      "status": "failed",
+      "tags": {
+        "v0.7.0": "95c7193e8c643ba149e507dab8a2b4d71c77a40c",
+        "v0.9.0": "244c00c87bb7ba9902b11a8f9226362e508fe295",
+        "v0.9.0-preflight-c9120b5": "6723a655e862838959b7c90dc4c905b9d6a2cbda"
+      },
+      "weights": {
+        "model-00001-of-00007.safetensors": {
+          "sha256": "5bfcb7bf42ab597db2c5e266ad1ab19df7453cd092b8b5ba6747bccec94ef176",
+          "size": 3997254400
+        },
+        "model-00002-of-00007.safetensors": {
+          "sha256": "eeae58b5fc1a4e2ad18ab6669b87d497e64f2455ad49a5eb53933f30e8cae0cd",
+          "size": 3903309608
+        },
+        "model-00003-of-00007.safetensors": {
+          "sha256": "f8279880910e1197c3a0245a642a3c0e57111ae4df77fa0e37ebdc20cfcdf242",
+          "size": 3891649880
+        },
+        "model-00004-of-00007.safetensors": {
+          "sha256": "683536b388c23deb196e0dbfb15a71175ef4d99a4c515d332e28f6f17b1a9b22",
+          "size": 3968271248
+        },
+        "model-00005-of-00007.safetensors": {
+          "sha256": "2cc8a4e876380d748a2fbf80487666e898ab7101d365ec16076b05292edca659",
+          "size": 3964085248
+        },
+        "model-00006-of-00007.safetensors": {
+          "sha256": "e4530d7df57b1977331f9d6956043de085cc864644ac121e4a88d0f1d6f91ad0",
+          "size": 3968271248
+        },
+        "model-00007-of-00007.safetensors": {
+          "sha256": "9cd51568b8317b7009b401d7425f04b5c325d04fc25f6166ec09844b80dc59f8",
+          "size": 2845867008
+        }
+      }
+    }
+  ],
+  "required_tag": null,
+  "revision": "main",
+  "schema": "rwkv7-hub-release-audit-v1",
+  "source_dir": "/Users/wangyue/Documents/vllmsp/hf-adapter-kernels-v1/rwkv7_hf",
+  "status": "failed",
+  "weight_baseline": null
+}

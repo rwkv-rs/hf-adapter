@@ -238,9 +238,4 @@ class RWKV7Cache(_HFCache):
         return cls(legacy[0], legacy[1], legacy[2], seen_tokens=seen_tokens)
 
 
-# 0.9 compatibility names.
-NativeRWKV7Cache = RWKV7Cache
-RWKV7StateCache = RWKV7Cache
-
-
-__all__ = ["RWKV7Cache", "RWKV7StateCache", "NativeRWKV7Cache"]
+__all__ = ["RWKV7Cache"]

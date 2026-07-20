@@ -3,8 +3,10 @@
 
 The file intentionally shows the full model structure: token mixing, channel
 mixing, residuals, normalization, layer iteration, cache handling, language
-model loss, and generation integration. The only mathematical operator boundary
-is rwkv7_recurrent in ops_rwkv7.py.
+model loss, and generation integration. Optional acceleration enters through
+three versioned boundaries in ops_rwkv7.py: stateless training linears, the
+recurrence, and one early whole-layer-loop hook. None of these boundaries owns
+model, configuration, cache, parameter, adapter, or optimizer definitions.
 """
 from __future__ import annotations
 
@@ -29,7 +31,12 @@ except ImportError:  # pragma: no cover - older Transformers
 try:
     from .cache_rwkv7 import RWKV7Cache
     from .configuration_rwkv7 import RWKV7Config
-    from .ops_rwkv7 import rwkv7_recurrent
+    from .ops_rwkv7 import (
+        maybe_linear_training,
+        maybe_model_forward,
+        rwkv7_recurrent,
+        set_training_batch_context,
+    )
 except ModuleNotFoundError:
     # Transformers < 5 does not sanitize dots in Hub repository names when it
     # constructs the dynamic-module package. Repositories such as
@@ -53,7 +60,11 @@ except ModuleNotFoundError:
 
     RWKV7Cache = _load_remote_sibling("cache_rwkv7").RWKV7Cache
     RWKV7Config = _load_remote_sibling("configuration_rwkv7").RWKV7Config
-    rwkv7_recurrent = _load_remote_sibling("ops_rwkv7").rwkv7_recurrent
+    _remote_ops = _load_remote_sibling("ops_rwkv7")
+    maybe_linear_training = _remote_ops.maybe_linear_training
+    maybe_model_forward = _remote_ops.maybe_model_forward
+    rwkv7_recurrent = _remote_ops.rwkv7_recurrent
+    set_training_batch_context = _remote_ops.set_training_batch_context
 
 
 # Mathematically equivalent form used by the official NumPy reference.
@@ -127,9 +138,17 @@ def _linear_reference(
 
 
 class RWKV7Linear(nn.Linear):
-    """Checkpoint-compatible linear layer using the reference row contract."""
+    """Checkpoint-compatible linear with a stateless optional training leaf."""
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
+        optimized = maybe_linear_training(
+            value,
+            self.weight,
+            self.bias,
+            training=self.training,
+        )
+        if optimized is not None:
+            return optimized
         return _linear_reference(value, self.weight, self.bias)
 
 
@@ -247,6 +266,29 @@ class RWKV7LowRank(nn.Module):
             value = activation(value)
         return self.lora[2](value)
 
+    def project_without_bias(
+        self, value: torch.Tensor, activation=None
+    ) -> torch.Tensor:
+        """Apply both low-rank matrices while leaving the final bias external.
+
+        RWKV-7 keeps the decay ``w0`` addition and nonlinear transform in
+        FP32.  Exposing the unbiased projection keeps that precision rule
+        explicit for both the readable model and optional recurrent kernels.
+        """
+
+        value = self.lora[0](value)
+        if activation is not None:
+            value = activation(value)
+        optimized = maybe_linear_training(
+            value,
+            self.lora[2].weight,
+            None,
+            training=self.training,
+        )
+        if optimized is not None:
+            return optimized
+        return _linear_reference(value, self.lora[2].weight, bias=None)
+
 
 class RWKV7TimeMix(nn.Module):
     """RWKV-7 TMix, including projections and recurrent state update."""
@@ -342,12 +384,7 @@ class RWKV7TimeMix(nn.Module):
         # the low-rank update in the model dtype, then add the stored bias only
         # after promoting both terms.  This is especially important when a
         # FP16 checkpoint is executed as BF16.
-        decay_rank = torch.tanh(self.w_lora.lora[0](xw))
-        raw_decay = _linear_reference(
-            decay_rank,
-            self.w_lora.lora[2].weight,
-            bias=None,
-        )
+        raw_decay = self.w_lora.project_without_bias(xw, torch.tanh)
         key = self.k_proj(xk)
         value = self.v_proj(xv)
         in_context_learning = torch.sigmoid(self.a_lora.project(xa))
@@ -403,6 +440,7 @@ class RWKV7TimeMix(nn.Module):
             (normalized_key * in_context_learning).view(shape),
             recurrent_state,
             attention_mask,
+            training=self.training,
         )
 
         recurrent_output = recurrent_output.reshape(
@@ -648,6 +686,14 @@ class RWKV7Model(RWKV7PreTrainedModel):
         attention_mask: torch.Tensor,
     ):
         def custom_forward(hidden, state, attn_shift, channel_shift, first_value):
+            # Autograd may recompute a checkpoint on a worker context that
+            # does not inherit Python ContextVars from the outer model call.
+            # Re-publish only the mask semantic here so optional stateless
+            # linears select the same mathematical program in both passes.
+            set_training_batch_context(
+                attention_mask,
+                training=self.training,
+            )
             return layer(
                 hidden,
                 state,
@@ -726,6 +772,7 @@ class RWKV7Model(RWKV7PreTrainedModel):
             int(sequence_length),
             inputs_embeds.device,
         )
+        set_training_batch_context(mask, training=self.training)
         hidden_states = inputs_embeds * mask.unsqueeze(-1).to(
             dtype=inputs_embeds.dtype
         )
@@ -757,6 +804,37 @@ class RWKV7Model(RWKV7PreTrainedModel):
         if cached_batch is not None and cached_batch != int(batch_size):
             raise ValueError(
                 "past_key_values batch size does not match the current input"
+            )
+
+        optimized = maybe_model_forward(
+            self,
+            {
+                "model_kind": "base",
+                "hidden_states": hidden_states,
+                "attention_mask": mask,
+                "past_key_values": working_cache,
+                "training": bool(self.training),
+                "gradient_checkpointing": bool(self.gradient_checkpointing),
+                "grad_enabled": bool(torch.is_grad_enabled()),
+                "use_cache": use_cache,
+                "output_hidden_states": output_hidden_states,
+            },
+        )
+        if optimized is not None:
+            optimized_hidden = optimized["last_hidden_state"]
+            optimized_cache = optimized.get("past_key_values")
+            optimized_history = optimized.get("hidden_states")
+            if not return_dict:
+                values = (
+                    optimized_hidden,
+                    optimized_cache,
+                    optimized_history,
+                )
+                return tuple(value for value in values if value is not None)
+            return BaseModelOutputWithPast(
+                last_hidden_state=optimized_hidden,
+                past_key_values=optimized_cache,
+                hidden_states=optimized_history,
             )
 
         all_hidden_states = (hidden_states,) if output_hidden_states else None
@@ -952,6 +1030,69 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                     )
             logits_to_keep = num_logits_to_keep
 
+        effective_use_cache = (
+            self.config.use_cache if use_cache is None else bool(use_cache)
+        )
+        if self.training or (
+            self.model.gradient_checkpointing and torch.is_grad_enabled()
+        ):
+            effective_use_cache = False
+        effective_hidden_states = (
+            self.config.output_hidden_states
+            if output_hidden_states is None
+            else bool(output_hidden_states)
+        )
+        optimized_cache = (
+            past_key_values
+            if past_key_values is not None
+            else RWKV7Cache(num_layers=len(self.model.layers))
+        )
+        optimized = maybe_model_forward(
+            self,
+            {
+                "model_kind": "causal_lm",
+                "input_ids": input_ids,
+                "inputs_embeds": inputs_embeds,
+                "attention_mask": attention_mask,
+                "past_key_values": optimized_cache,
+                "labels": labels,
+                "training": bool(self.training),
+                "gradient_checkpointing": bool(
+                    self.model.gradient_checkpointing
+                ),
+                "grad_enabled": bool(torch.is_grad_enabled()),
+                "use_cache": effective_use_cache,
+                "output_hidden_states": effective_hidden_states,
+                "output_attentions": output_attentions,
+                "cache_position": cache_position,
+                "logits_to_keep": logits_to_keep,
+            },
+        )
+        if optimized is not None:
+            optimized_loss = optimized.get("loss")
+            optimized_logits = optimized["logits"]
+            optimized_past = optimized.get("past_key_values")
+            optimized_history = optimized.get("hidden_states")
+            return_dict = (
+                self.config.use_return_dict
+                if return_dict is None
+                else bool(return_dict)
+            )
+            if not return_dict:
+                values = (
+                    optimized_loss,
+                    optimized_logits,
+                    optimized_past,
+                    optimized_history,
+                )
+                return tuple(value for value in values if value is not None)
+            return CausalLMOutputWithPast(
+                loss=optimized_loss,
+                logits=optimized_logits,
+                past_key_values=optimized_past,
+                hidden_states=optimized_history,
+            )
+
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1012,11 +1153,6 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
         )
 
 
-# Compatibility aliases for 0.8 callers. New model repositories use RWKV7*.
-NativeRWKV7Model = RWKV7Model
-NativeRWKV7ForCausalLM = RWKV7ForCausalLM
-
-
 try:
     RWKV7Model.register_for_auto_class("AutoModel")
     RWKV7ForCausalLM.register_for_auto_class("AutoModelForCausalLM")
@@ -1031,6 +1167,4 @@ __all__ = [
     "RWKV7PreTrainedModel",
     "RWKV7Model",
     "RWKV7ForCausalLM",
-    "NativeRWKV7Model",
-    "NativeRWKV7ForCausalLM",
 ]

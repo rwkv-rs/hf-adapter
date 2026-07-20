@@ -1,0 +1,60 @@
+{
+  "commands": {
+    "hf_smoke": "python benchmarks/kernels/hf_smoke.py --implementation auto --model 0.1B=... --model 0.4B=... --model 1.5B=...",
+    "lm_eval_smoke": "python evaluation/run_lm_eval_matrix.py --lane {reference,optimized,fla} --model 0.1b=... --task piqa --batch-size 1 --smoke-limit 4",
+    "local_tests": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q",
+    "operator_speed": "python benchmarks/kernels/operator_speed.py --implementation auto --batches 1,4,8 --lengths 1,17,128,512,2048 --heads 2 --warmup 3 --repeats 10 --fla-source <FLA-80e494f6>",
+    "production_speed": "python benchmarks/kernels/production_speed.py --model {0.4B,1.5B}=... --prefill-batches 1,4,8 --prefill-lengths 128,512,2048 --decode-batches 1,4,8 --decode-tokens 256 --warmup 1 --repeats 3 --fla-source <FLA-80e494f6>",
+    "validation": "python benchmarks/kernels/validate.py --implementation auto --dtype {fp16,bf16,fp32} --model 0.1B=... --model 0.4B=... --model 1.5B=... --operator-batches 1,4,8 --operator-lengths 1,17,128,512 --model-batches 1,4,8 --model-lengths 17,128 --decode-tokens 64",
+    "whole_model_speed": "python benchmarks/kernels/speed.py --implementation auto --dtype fp16 --warmup 2 --repeats 5 --decode-tokens 64"
+  },
+  "device": {
+    "driver": "595.84",
+    "gpu": "NVIDIA GeForce RTX 4080"
+  },
+  "fla": {
+    "commit": "80e494f6c588e091fc8316b612870df29375c5b8"
+  },
+  "models": {
+    "0.1B": {
+      "config_sha256": "983e4fd48d1c5181864457c2dc745e622eb842fc212ac279b66c7bd16b2d38c1",
+      "weight_sha256": "12d208adf2880927615656c2dc3f6fb6a3ea3120a9ed9fdfeeea55c841723d79"
+    },
+    "0.4B": {
+      "config_sha256": "ebbcc329fd332479b5f9730543d2c0d5b7412ae93688733536c209072d4eae11",
+      "weight_sha256": "8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0"
+    },
+    "1.5B": {
+      "config_sha256": "b7a9d98f1499f2e66dc14f97c94944a4c1e61b3e4acd2f822f353825ed53f9a8",
+      "weight_sha256": "d580d0c687d4e7e6c86985c61418712fc2904189575ac1b4cf199845497b9c23"
+    }
+  },
+  "packages": {
+    "rwkv7_hf_wheel_sha256": "07b4f6668c3123a3e996e33d4fab8230c468db23bbd7249c3454a93e2f04338f",
+    "rwkv7_kernels_wheel_sha256": "22c3ef0fb0af1743261efed7ed23cfc2185982b8d03ea3c13bf3864b27dc932f"
+  },
+  "schema": "rwkv7-kernel-migration-artifact-v1",
+  "source": {
+    "branch": "perf/optional-kernels-v1",
+    "evidence_label": "worktree-9d3ba79a-final-auto",
+    "files_sha256": {
+      "benchmarks/kernels/hf_smoke.py": "76e48178d389fc055ab72f1631a17ef4e94e25c9b4a5a83081b209f0eeaf1f0b",
+      "benchmarks/kernels/operator_speed.py": "0c9fe4b6f87664eaf0b24b779ad5c91d22bc938793a7fc3dd6d6abcb57da00c6",
+      "benchmarks/kernels/production_speed.py": "af2aea96f624b9d293a539fcd6935c797c91c73e0811a63bb72e5fac2b867e88",
+      "benchmarks/kernels/speed.py": "68370b85352fac6e50aefc896e2a4a7bde4c5ff83c071819e5ad1bedca3a3403",
+      "benchmarks/kernels/validate.py": "7689b5da955df33e4d932c5485bd7b5d6f5a98fc8ce21c84c639ea2195e2821b",
+      "evaluation/prepare_fla_lm_eval_model.py": "78dc5766c1add262a04cf11225def3a1e623431799fb861aeac69f6cdf871908",
+      "evaluation/run_lm_eval_matrix.py": "11910ea710722c01a6c63d3a372a51905dcb65e31a6460e4a35996ff9eed5ebd",
+      "evaluation/validate_lm_eval_three_way.py": "7052d2fa8b2b541c20d38b30436647f2722c63fc8bb21016bf973d8e8f21f3c0",
+      "kernels/rwkv7_kernels/dispatcher.py": "5dae67dd4854b123972c0b871aabd88d271dfac847fe9ca04811712ee820df95",
+      "kernels/rwkv7_kernels/recurrent/graph.py": "75e15e44a466d00bbbee7db2fe3cb77ec133dea616614afec32efad7ad755704",
+      "kernels/rwkv7_kernels/recurrent/triton.py": "8d985f7e52af47b673ac3ab377a5acb8a28d76bb869926677dc915766d0a1bed",
+      "rwkv7_hf/ops_rwkv7.py": "447e7b9890b25ffe325ec0e45a55e54a1c965c17c9f82ea0d73137f250b35430"
+    },
+    "parent_commit": "9d3ba79a"
+  },
+  "tokenizer": {
+    "tokenizer_config_sha256": "0a8bbc94fb5f6644b21e2653aea79407245a9a4b24d25c5f6a84698f5d9c5f27",
+    "vocab_sha256": "e6dee3d4e31b4d5c40ac99508ac6c701ceef4bed681bf2167ce9a908552bca89"
+  }
+}

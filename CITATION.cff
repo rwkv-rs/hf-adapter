@@ -11,8 +11,8 @@ authors:
 repository-code: https://github.com/123123213weqw/hf-adapter
 url: https://github.com/123123213weqw/hf-adapter
 license: MIT
-version: 0.9.0
-date-released: 2026-08-26
+version: 1.0.0
+date-released: 2026-08-27
 keywords:
   - RWKV-7
   - Transformers

@@ -1,0 +1,2 @@
+07b4f6668c3123a3e996e33d4fab8230c468db23bbd7249c3454a93e2f04338f  /home/wzu/codex-build/hf-adapter-kernels-v1/artifacts/rwkv7_hf-1.0.0-py3-none-any.whl
+31c0892a5284a26f89790567dbbdf4f6255b996cf5f7a32c14fa2406c15e24c9  /home/wzu/codex-build/hf-adapter-kernels-v1/artifacts/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl

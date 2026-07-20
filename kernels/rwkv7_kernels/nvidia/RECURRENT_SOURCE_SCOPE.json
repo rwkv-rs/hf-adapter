@@ -1,0 +1,42 @@
+{
+  "counts": {
+    "adapted_protocol": 1,
+    "byte_migrated_nvidia": 2
+  },
+  "entries": [
+    {
+      "disposition": "adapted_protocol",
+      "git_blob": "41dae167c94da6142fd7d58719ebe83ad4f67c28",
+      "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/__init__.py",
+        "rwkv7_kernels/dispatcher.py",
+        "rwkv7_kernels/model_dispatcher.py",
+        "rwkv7_kernels/protocol.py"
+      ],
+      "source": "kernel_wheel/rwkv7_kernels/__init__.py"
+    },
+    {
+      "destination": "rwkv7_kernels/recurrent/graph.py",
+      "destination_sha256": "75e15e44a466d00bbbee7db2fe3cb77ec133dea616614afec32efad7ad755704",
+      "disposition": "byte_migrated_nvidia",
+      "git_blob": "e9675910d85db27a25a1502d5d93ff155ef0e10e",
+      "git_mode": "100644",
+      "source": "kernel_wheel/rwkv7_kernels/recurrent_graph.py"
+    },
+    {
+      "destination": "rwkv7_kernels/recurrent/triton.py",
+      "destination_sha256": "8d985f7e52af47b673ac3ab377a5acb8a28d76bb869926677dc915766d0a1bed",
+      "disposition": "byte_migrated_nvidia",
+      "git_blob": "396f231ead140327a1528953626bca62249a49d9",
+      "git_mode": "100644",
+      "source": "kernel_wheel/rwkv7_kernels/recurrent_triton.py"
+    }
+  ],
+  "schema": "rwkv7-recurrent-source-scope-v1",
+  "scope_rule": "Every Python file in the historical optional recurrent wheel package is classified; both implementation files remain byte-identical.",
+  "source_branch": "perf/optional-native-backend-v0.10",
+  "source_commit": "0c5ea30ac6868974ba9836c4a065fa8b2847af68",
+  "source_subtree": "kernel_wheel/rwkv7_kernels",
+  "source_subtree_git_tree": "7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb"
+}

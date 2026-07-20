@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import importlib.util
 import json
+import os
 import platform
 from pathlib import Path
 
@@ -21,30 +24,100 @@ REQUIRED_CODE = {
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Verify an RWKV-7 HF v0.9 release")
+    parser = argparse.ArgumentParser(description="Verify an RWKV-7 HF release")
     parser.add_argument("--model", required=True)
-    parser.add_argument("--revision", default="v0.9.0")
+    parser.add_argument("--revision", default="v1.0.0")
     parser.add_argument("--metadata-only", action="store_true")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument(
+        "--modules-cache-dir",
+        type=Path,
+        help="fresh Transformers remote-code module cache for this model",
+    )
+    parser.add_argument("--force-download", action="store_true")
+    parser.add_argument(
+        "--require-package-free",
+        action="store_true",
+        help="fail if either rwkv7-hf or rwkv7-kernels is installed",
+    )
+    parser.add_argument(
+        "--require-empty-cache",
+        action="store_true",
+        help="fail unless --cache-dir is absent or empty before the Hub download",
+    )
     return parser.parse_args()
+
+
+def prepare_cache_dir(cache_dir: Path | None, require_empty: bool) -> dict:
+    if require_empty and cache_dir is None:
+        raise ValueError("--require-empty-cache requires --cache-dir")
+    if cache_dir is None:
+        return {"path": None, "was_empty": None}
+    cache_dir = cache_dir.expanduser().resolve()
+    was_empty = not cache_dir.exists() or not any(cache_dir.iterdir())
+    if require_empty and not was_empty:
+        raise ValueError(f"Hub smoke cache is not empty: {cache_dir}")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return {"path": str(cache_dir), "was_empty": was_empty}
+
+
+def installed_rwkv_distributions() -> dict[str, str | None]:
+    result = {}
+    for name in ("rwkv7-hf", "rwkv7-kernels"):
+        try:
+            result[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            result[name] = None
+    return result
+
+
+def local_rwkv_import_origins() -> dict[str, str | None]:
+    result = {}
+    for name in ("rwkv7_hf", "rwkv7_kernels"):
+        spec = importlib.util.find_spec(name)
+        result[name] = None if spec is None else str(spec.origin)
+    return result
 
 
 def main():
     args = parse_args()
+    if args.require_empty_cache and args.modules_cache_dir is None:
+        raise ValueError("--require-empty-cache requires --modules-cache-dir")
+    modules_cache = prepare_cache_dir(
+        args.modules_cache_dir, args.require_empty_cache
+    )
+    if modules_cache["path"] is not None:
+        os.environ["HF_MODULES_CACHE"] = str(modules_cache["path"])
     from huggingface_hub import HfApi, hf_hub_download
 
+    cache = prepare_cache_dir(args.cache_dir, args.require_empty_cache)
+    installed = installed_rwkv_distributions()
+    import_origins = local_rwkv_import_origins()
+    if args.require_package_free and (
+        any(installed.values()) or any(import_origins.values())
+    ):
+        raise SystemExit(
+            "RWKV distributions or local source packages are visible: "
+            f"installed={installed} origins={import_origins}"
+        )
+    download_options = {
+        "cache_dir": cache["path"],
+        "force_download": args.force_download,
+    }
     info = HfApi().model_info(args.model, revision=args.revision, files_metadata=True)
     siblings = {row.rfilename: row for row in info.siblings}
     missing = sorted(REQUIRED_CODE - siblings.keys())
-    weights = sorted(
-        name for name in siblings if name.endswith(".safetensors")
-    )
+    weights = sorted(name for name in siblings if name.endswith(".safetensors"))
     if missing or not weights:
         raise SystemExit(f"missing={missing} weights={weights}")
 
     config_path = hf_hub_download(
-        args.model, "config.json", revision=args.revision
+        args.model,
+        "config.json",
+        revision=args.revision,
+        **download_options,
     )
     config = json.loads(Path(config_path).read_text())
     expected_map = {
@@ -53,9 +126,20 @@ def main():
         "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
     }
     if config.get("model_type") != "rwkv7" or config.get("auto_map") != expected_map:
-        raise SystemExit("config.json is not the v0.9 reference contract")
+        raise SystemExit("config.json is not the canonical RWKV-7 HF contract")
+    forbidden_config = {
+        "attn_mode",
+        "fuse_norm",
+        "kernel_impl",
+        "model_kernel_impl",
+        "rwkv7_backend",
+    }
+    leaked = sorted(forbidden_config & config.keys())
+    if leaked:
+        raise SystemExit(f"hardware/backend policy leaked into config.json: {leaked}")
 
     report = {
+        "schema": "rwkv7-hub-release-smoke-v1",
         "status": "passed",
         "model": args.model,
         "revision": args.revision,
@@ -74,6 +158,20 @@ def main():
             for name in weights
         ],
         "python": platform.python_version(),
+        "download": {
+            "cache_dir": cache["path"],
+            "cache_was_empty": cache["was_empty"],
+            "require_empty_cache": args.require_empty_cache,
+            "force_download": args.force_download,
+            "modules_cache_dir": modules_cache["path"],
+            "modules_cache_was_empty": modules_cache["was_empty"],
+        },
+        "package_free": {
+            "required": args.require_package_free,
+            "installed_distributions": installed,
+            "local_import_origins": import_origins,
+            "passed": not any(installed.values()) and not any(import_origins.values()),
+        },
     }
 
     if not args.metadata_only:
@@ -83,17 +181,23 @@ def main():
         device = torch.device(args.device)
         dtype = torch.float32 if device.type == "cpu" else torch.float16
         tokenizer = AutoTokenizer.from_pretrained(
-            args.model, revision=args.revision, trust_remote_code=True
-        )
-        model = AutoModelForCausalLM.from_pretrained(
             args.model,
             revision=args.revision,
             trust_remote_code=True,
-            torch_dtype=dtype,
-        ).to(device).eval()
-        encoded = tokenizer(
-            "User: Hello! Assistant:", return_tensors="pt"
-        ).to(device)
+            **download_options,
+        )
+        model = (
+            AutoModelForCausalLM.from_pretrained(
+                args.model,
+                revision=args.revision,
+                trust_remote_code=True,
+                torch_dtype=dtype,
+                **download_options,
+            )
+            .to(device)
+            .eval()
+        )
+        encoded = tokenizer("User: Hello! Assistant:", return_tensors="pt").to(device)
         with torch.inference_mode():
             output = model(**encoded, use_cache=True)
             generated = model.generate(**encoded, max_new_tokens=2)

@@ -14,6 +14,11 @@ from transformers import TrainerCallback, set_seed
 
 
 TARGET_MODULES = ["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"]
+TORCH_DTYPES = {
+    "float32": torch.float32,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+}
 
 
 def _output_dir_from_argv() -> Path | None:
@@ -41,9 +46,14 @@ def run_captured(main) -> int:
     stderr_path = output / "stderr.log"
     child_env = dict(os.environ)
     child_env[marker] = "1"
-    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open(
-        "w", encoding="utf-8"
-    ) as stderr:
+    child_env.setdefault(
+        "RWKV7_KERNEL_TRACE_PATH",
+        str(output / "kernel_route_trace.json"),
+    )
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout,
+        stderr_path.open("w", encoding="utf-8") as stderr,
+    ):
         process = subprocess.run(
             [sys.executable, str(Path(sys.argv[0]).resolve()), *sys.argv[1:]],
             env=child_env,
@@ -52,6 +62,7 @@ def run_captured(main) -> int:
             check=False,
             text=True,
         )
+    reconcile_kernel_trace_checks(output)
     status = {
         "returncode": int(process.returncode),
         "stdout": str(stdout_path),
@@ -62,6 +73,49 @@ def run_captured(main) -> int:
     )
     print(json.dumps(status, ensure_ascii=False))
     return int(process.returncode)
+
+
+def reconcile_kernel_trace_checks(output: Path) -> None:
+    """Merge process-wide optional-leaf evidence into training checks.
+
+    Preference trainers may run a differentiable policy pass followed by a
+    no-grad reference pass. The latter is correctly the last ContextVar route,
+    but it must not erase the earlier optimized execution. The optional package
+    writes an actual-call counter at child-process exit; the supervisor merges
+    that immutable evidence after the child has terminated.
+    """
+
+    checks_path = output / "training_checks.json"
+    trace_path = output / "kernel_route_trace.json"
+    if not checks_path.is_file() or not trace_path.is_file():
+        return
+    checks = json.loads(checks_path.read_text(encoding="utf-8"))
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    recurrent = trace.get("actual_recurrent_calls", {})
+    linear = trace.get("actual_linear_calls", {})
+    if not isinstance(recurrent, dict) or not isinstance(linear, dict):
+        raise RuntimeError("kernel route trace contains invalid call counters")
+
+    matrix = "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+    factorized = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+    flattened = "torch-cuda-rwkv7-flattened-linear-training-v1"
+    checks["matrix_recurrent_training"] = bool(
+        checks.get("matrix_recurrent_training") or int(recurrent.get(matrix, 0))
+    )
+    checks["factorized_recurrent_training"] = bool(
+        checks.get("factorized_recurrent_training")
+        or int(recurrent.get(factorized, 0))
+    )
+    checks["flattened_linear_training"] = bool(
+        checks.get("flattened_linear_training") or int(linear.get(flattened, 0))
+    )
+    checks["kernel_trace_schema"] = trace.get("schema")
+    checks["kernel_trace_actual_recurrent_calls"] = recurrent
+    checks["kernel_trace_actual_linear_calls"] = linear
+    checks_path.write_text(
+        json.dumps(checks, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def sha256(path: Path) -> str:
@@ -93,6 +147,19 @@ def package_version(name: str) -> str | None:
         return None
 
 
+def optional_artifact(path: str | None) -> dict | None:
+    if not path:
+        return None
+    artifact = Path(path).expanduser().resolve()
+    if not artifact.is_file():
+        raise RuntimeError(f"artifact does not exist: {artifact}")
+    return {
+        "path": str(artifact),
+        "bytes": artifact.stat().st_size,
+        "sha256": sha256(artifact),
+    }
+
+
 def model_provenance(model: str, requested_revision: str) -> dict:
     path = Path(model).expanduser()
     if path.exists():
@@ -101,12 +168,14 @@ def model_provenance(model: str, requested_revision: str) -> dict:
             for candidate in path.rglob("*")
             if candidate.is_file()
             and (
-                candidate.name in {"config.json", "tokenizer_config.json"}
-                or candidate.suffix in {".py", ".safetensors"}
+                candidate.suffix
+                in {".json", ".jinja", ".model", ".py", ".safetensors", ".txt"}
                 or candidate.name.endswith(".safetensors.index.json")
             )
         )
-        hashes = {str(candidate.relative_to(path)): sha256(candidate) for candidate in files}
+        hashes = {
+            str(candidate.relative_to(path)): sha256(candidate) for candidate in files
+        }
         aggregate = hashlib.sha256()
         for name, digest in hashes.items():
             aggregate.update(f"{name}\0{digest}\n".encode())
@@ -126,12 +195,70 @@ def model_provenance(model: str, requested_revision: str) -> dict:
     try:
         from huggingface_hub import HfApi
 
-        result["resolved_revision"] = HfApi().model_info(
-            model, revision=requested_revision
-        ).sha
+        result["resolved_revision"] = (
+            HfApi().model_info(model, revision=requested_revision).sha
+        )
     except Exception as error:
         result["resolution_error"] = f"{type(error).__name__}: {error}"
     return result
+
+
+def model_load_kwargs(args) -> dict:
+    """Return explicit, reproducible Hugging Face model-loading arguments."""
+
+    kwargs = {
+        "revision": args.model_revision,
+        "trust_remote_code": True,
+    }
+    if args.torch_dtype != "auto":
+        # The model is loaded directly in the requested execution dtype.
+        # Trainer AMP remains disabled so CUDA autocast cannot silently promote
+        # LayerNorm outputs and break the optional leaf's BF16 contract.
+        kwargs["dtype"] = TORCH_DTYPES[args.torch_dtype]
+    return kwargs
+
+
+def trainer_precision_flags() -> dict[str, bool]:
+    """Disable a second AMP layer after explicit model-dtype selection.
+
+    TRL configuration defaults vary by release and accelerator. The examples
+    load the model directly in ``--torch-dtype``, so an additional autocast
+    context would change LayerNorm outputs back to FP32 and silently select a
+    different optional training route.
+    """
+
+    return {"bf16": False, "fp16": False}
+
+
+def gradient_checkpointing_kwargs() -> dict[str, bool]:
+    """Keep checkpoint recomputation in the ordinary autograd context.
+
+    The non-reentrant PyTorch implementation records the forward autograd
+    graph while still discarding saved activations. This lets an optional leaf
+    inspect the real differentiable request instead of the no-grad probe pass
+    used by legacy reentrant checkpointing.
+    """
+
+    return {"use_reentrant": False}
+
+
+def attach_lora_adapters(model, args):
+    """Attach LoRA once, with an explicit and reproducible adapter dtype.
+
+    PEFT normally promotes FP16/BF16 adapters to FP32. That stability-first
+    default is retained unless ``--lora-dtype model`` is requested. Matching
+    the model dtype keeps projection outputs in the BF16 contract required by
+    the optional factorized training leaf; the readable HF layer loop and
+    ordinary PEFT parameter ownership remain unchanged.
+    """
+
+    from peft import get_peft_model
+
+    return get_peft_model(
+        model,
+        lora_config(),
+        autocast_adapter_dtype=args.lora_dtype == "float32",
+    )
 
 
 def prepare_run(args, dataset_name: str, dataset_revision: str) -> Path:
@@ -164,8 +291,17 @@ def prepare_run(args, dataset_name: str, dataset_revision: str) -> Path:
         "datasets": package_version("datasets"),
         "wandb": package_version("wandb"),
     }
-    (output / "environment.json").write_text(
-        json.dumps(environment, indent=2) + "\n"
+    (output / "environment.json").write_text(json.dumps(environment, indent=2) + "\n")
+    artifacts = {
+        name: row
+        for name, row in (
+            ("rwkv7_hf", optional_artifact(args.hf_wheel)),
+            ("rwkv7_kernels", optional_artifact(args.kernel_wheel)),
+        )
+        if row is not None
+    }
+    (output / "artifact_provenance.json").write_text(
+        json.dumps(artifacts, indent=2) + "\n", encoding="utf-8"
     )
     (output / "model_provenance.json").write_text(
         json.dumps(
@@ -185,9 +321,7 @@ def deterministic_subset(dataset, count: int, seed: int, output: Path, name: str
     random.Random(seed).shuffle(indices)
     selected = sorted(indices[:count])
     selected_dataset = dataset.select(selected)
-    (output / f"{name}_indices.json").write_text(
-        json.dumps(selected) + "\n"
-    )
+    (output / f"{name}_indices.json").write_text(json.dumps(selected) + "\n")
     fingerprint_path = output / "dataset_fingerprints.json"
     fingerprints = (
         json.loads(fingerprint_path.read_text(encoding="utf-8"))
@@ -214,7 +348,9 @@ def validate_resume(resume_from_checkpoint: str | None, global_step: int, output
     if resume_from_checkpoint:
         state_path = Path(resume_from_checkpoint) / "trainer_state.json"
         if not state_path.is_file():
-            raise RuntimeError(f"resume checkpoint has no trainer_state.json: {state_path}")
+            raise RuntimeError(
+                f"resume checkpoint has no trainer_state.json: {state_path}"
+            )
         prior = int(json.loads(state_path.read_text())["global_step"])
         result["prior_global_step"] = prior
         result["advanced"] = int(global_step) > prior
@@ -239,9 +375,7 @@ def checkpoint_inventory(output: Path) -> list[dict]:
                     "sha256": sha256(path),
                 }
             )
-    (output / "checkpoint_inventory.json").write_text(
-        json.dumps(rows, indent=2) + "\n"
-    )
+    (output / "checkpoint_inventory.json").write_text(json.dumps(rows, indent=2) + "\n")
     return rows
 
 
@@ -265,6 +399,22 @@ def validate_parameter_change(model, before: dict[str, torch.Tensor], output: Pa
         raise RuntimeError("no trainable parameter changed")
 
 
+def lora_parameter_dtype(model) -> torch.dtype:
+    """Return the single dtype used by the active LoRA matrices."""
+
+    dtypes = {
+        parameter.dtype
+        for name, parameter in model.named_parameters()
+        if {"lora_A", "lora_B"}.intersection(name.split("."))
+    }
+    if not dtypes:
+        raise RuntimeError("adapter validation found no LoRA parameters")
+    if len(dtypes) != 1:
+        names = ", ".join(sorted(str(dtype) for dtype in dtypes))
+        raise RuntimeError(f"LoRA parameters use mixed dtypes: {names}")
+    return next(iter(dtypes))
+
+
 def validate_adapter_reload(
     trained_model,
     *,
@@ -285,21 +435,30 @@ def validate_adapter_reload(
     trained_model.eval()
     with torch.inference_mode():
         expected = trained_model(input_ids=sample, use_cache=False).logits.float().cpu()
+    trained_adapter_dtype = lora_parameter_dtype(trained_model)
     base = AutoModelForCausalLM.from_pretrained(
-        model_id, revision=model_revision, trust_remote_code=True
+        model_id,
+        revision=model_revision,
+        trust_remote_code=True,
+        dtype=next(trained_model.parameters()).dtype,
     ).to(device)
-    reloaded = PeftModel.from_pretrained(base, adapter_dir).eval()
+    reloaded = PeftModel.from_pretrained(
+        base,
+        adapter_dir,
+        # PEFT promotes adapter matrices to FP32 while restoring a Trainer
+        # checkpoint. Match the actual trained runtime instead of forcing the
+        # fresh-run dtype and then comparing two different GEMM programs.
+        autocast_adapter_dtype=trained_adapter_dtype == torch.float32,
+    ).eval()
     reloaded.gradient_checkpointing_disable()
     reloaded.config.use_cache = trained_model.config.use_cache
     reloaded.config.bos_token_id = trained_model.config.bos_token_id
     with torch.inference_mode():
         actual = reloaded(input_ids=sample, use_cache=False).logits.float().cpu()
-        expected_repeat = trained_model(
-            input_ids=sample, use_cache=False
-        ).logits.float().cpu()
-        actual_repeat = reloaded(
-            input_ids=sample, use_cache=False
-        ).logits.float().cpu()
+        expected_repeat = (
+            trained_model(input_ids=sample, use_cache=False).logits.float().cpu()
+        )
+        actual_repeat = reloaded(input_ids=sample, use_cache=False).logits.float().cpu()
     max_abs = float((expected - actual).abs().max())
     expected_parameters = dict(trained_model.named_parameters())
     parameter_differences = []
@@ -313,9 +472,14 @@ def validate_adapter_reload(
             .abs()
             .max()
         )
-        if difference:
+        if difference or reference.dtype != parameter.dtype:
             parameter_differences.append(
-                {"name": name, "max_abs": difference}
+                {
+                    "name": name,
+                    "max_abs": difference,
+                    "trained_dtype": str(reference.dtype),
+                    "reloaded_dtype": str(parameter.dtype),
+                }
             )
     expected_buffers = dict(trained_model.named_buffers())
     buffer_differences = []
@@ -331,16 +495,21 @@ def validate_adapter_reload(
             if hasattr(module, "lora_A") and hasattr(module, "scaling"):
                 return {
                     "active_adapters": list(getattr(module, "active_adapters", [])),
-                    "disable_adapters": bool(getattr(module, "disable_adapters", False)),
+                    "disable_adapters": bool(
+                        getattr(module, "disable_adapters", False)
+                    ),
                     "merged": bool(getattr(module, "merged", False)),
                     "scaling": dict(getattr(module, "scaling", {})),
                 }
         return {}
+
     result = {
         "max_abs": max_abs,
         "close": bool(torch.allclose(expected, actual, rtol=1e-5, atol=1e-5)),
         "trained_dtype": str(next(trained_model.parameters()).dtype),
         "reloaded_dtype": str(next(reloaded.parameters()).dtype),
+        "trained_adapter_dtype": str(trained_adapter_dtype),
+        "reloaded_adapter_dtype": str(lora_parameter_dtype(reloaded)),
         "parameter_differences": parameter_differences[:50],
         "buffer_differences": buffer_differences[:50],
         "trained_adapter_runtime": adapter_runtime(trained_model),
@@ -348,24 +517,26 @@ def validate_adapter_reload(
         "trained_repeat_max_abs": float((expected - expected_repeat).abs().max()),
         "reloaded_repeat_max_abs": float((actual - actual_repeat).abs().max()),
         "trained_gradient_checkpointing": bool(
-            getattr(trained_model.base_model.model.model, "gradient_checkpointing", False)
+            getattr(
+                trained_model.base_model.model.model, "gradient_checkpointing", False
+            )
         ),
         "reloaded_gradient_checkpointing": bool(
             getattr(reloaded.base_model.model.model, "gradient_checkpointing", False)
         ),
         "config_differences": {
-            key: [trained_model.config.to_dict().get(key), reloaded.config.to_dict().get(key)]
+            key: [
+                trained_model.config.to_dict().get(key),
+                reloaded.config.to_dict().get(key),
+            ]
             for key in sorted(
-                trained_model.config.to_dict().keys()
-                | reloaded.config.to_dict().keys()
+                trained_model.config.to_dict().keys() | reloaded.config.to_dict().keys()
             )
             if trained_model.config.to_dict().get(key)
             != reloaded.config.to_dict().get(key)
         },
     }
-    (output / "adapter_reload.json").write_text(
-        json.dumps(result, indent=2) + "\n"
-    )
+    (output / "adapter_reload.json").write_text(json.dumps(result, indent=2) + "\n")
     if not result["close"]:
         raise RuntimeError(f"adapter reload changed logits: {result}")
 
@@ -376,8 +547,59 @@ class ReproCallback(TrainerCallback):
         self.metrics = output / "metrics.jsonl"
         self.saw_finite_loss = False
         self.saw_nonzero_gradient = False
+        self.backend_routes = []
+
+    @staticmethod
+    def _last_backend_routes(model=None):
+        # A local/Hub model loaded through AutoModel uses Transformers' remote
+        # module namespace, so its ops module owns a different ContextVar from
+        # the installed package module. Resolve both public route accessors
+        # from the actual model class first; retain the installed package for
+        # direct imports.
+        routes = {}
+        if model is not None:
+            get_base_model = getattr(model, "get_base_model", None)
+            base_model = get_base_model() if callable(get_base_model) else model
+            modeling_module = sys.modules.get(type(base_model).__module__)
+            maybe_forward = getattr(modeling_module, "maybe_model_forward", None)
+            ops_module = sys.modules.get(getattr(maybe_forward, "__module__", ""))
+            for boundary, name in (
+                ("model", "get_last_model_route"),
+                ("recurrent", "get_last_recurrent_route"),
+                ("linear", "get_last_linear_route"),
+            ):
+                getter = getattr(ops_module, name, None)
+                if callable(getter):
+                    route = getter()
+                    if isinstance(route, dict):
+                        routes[boundary] = route
+        try:
+            from rwkv7_hf.ops_rwkv7 import (
+                get_last_linear_route,
+                get_last_model_route,
+                get_last_recurrent_route,
+            )
+
+            for boundary, getter in (
+                ("model", get_last_model_route),
+                ("recurrent", get_last_recurrent_route),
+                ("linear", get_last_linear_route),
+            ):
+                route = getter()
+                if boundary not in routes and isinstance(route, dict):
+                    routes[boundary] = route
+        except Exception:
+            pass
+        return routes
+
+    def _capture_backend_route(self, event: str, model=None):
+        for boundary, route in self._last_backend_routes(model).items():
+            row = {"event": event, "boundary": boundary, **route}
+            if row not in self.backend_routes:
+                self.backend_routes.append(row)
 
     def on_log(self, args, state, control, logs=None, **kwargs):
+        self._capture_backend_route("log", kwargs.get("model"))
         logs = dict(logs or {})
         loss = logs.get("loss")
         if loss is not None and torch.isfinite(torch.tensor(float(loss))):
@@ -387,20 +609,86 @@ class ReproCallback(TrainerCallback):
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def on_pre_optimizer_step(self, args, state, control, model=None, **kwargs):
+        self._capture_backend_route("pre_optimizer_step", model)
         if model is None:
             return
         for parameter in model.parameters():
             if parameter.requires_grad and parameter.grad is not None:
-                if torch.isfinite(parameter.grad).all() and float(parameter.grad.abs().sum()) > 0:
+                if (
+                    torch.isfinite(parameter.grad).all()
+                    and float(parameter.grad.abs().sum()) > 0
+                ):
                     self.saw_nonzero_gradient = True
                     break
 
     def write_status(self, global_step: int):
+        adapter_fallback = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "model"
+            and route.get("selected") == "reference"
+            and route.get("phase") == "training"
+            and route.get("implementation") == "torch-reference-model-v1"
+            and (
+                "adapter" in str(route.get("reason", "")).lower()
+                or "causal-lm boundary"
+                in str(route.get("reason", "")).lower()
+            )
+            for route in self.backend_routes
+        )
+        native_training = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "model"
+            and route.get("selected") == "optimized"
+            and route.get("phase") == "training"
+            and route.get("implementation") == "native-nvidia-train-temp-autograd-v2"
+            for route in self.backend_routes
+        )
+        model_reference_training = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "model"
+            and route.get("selected") == "reference"
+            and route.get("phase") == "training"
+            and route.get("implementation") == "torch-reference-model-v1"
+            for route in self.backend_routes
+        )
+        matrix_recurrent_training = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "recurrent"
+            and route.get("selected") == "optimized"
+            and route.get("implementation")
+            == "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+            for route in self.backend_routes
+        )
+        factorized_recurrent_training = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "recurrent"
+            and route.get("selected") == "optimized"
+            and route.get("implementation")
+            == "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+            for route in self.backend_routes
+        )
+        flattened_linear_training = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "linear"
+            and route.get("selected") == "optimized"
+            and route.get("implementation")
+            == "torch-cuda-rwkv7-flattened-linear-training-v1"
+            for route in self.backend_routes
+        )
         status = {
             "finite_loss": self.saw_finite_loss,
             "nonzero_gradient": self.saw_nonzero_gradient,
             "global_step": int(global_step),
+            "adapter_reference_fallback": adapter_fallback,
+            "native_training": native_training,
+            "model_reference_training": model_reference_training,
+            "matrix_recurrent_training": matrix_recurrent_training,
+            "factorized_recurrent_training": factorized_recurrent_training,
+            "flattened_linear_training": flattened_linear_training,
         }
+        (self.output / "backend_routes.json").write_text(
+            json.dumps(self.backend_routes, indent=2) + "\n", encoding="utf-8"
+        )
         (self.output / "training_checks.json").write_text(
             json.dumps(status, indent=2) + "\n"
         )
@@ -422,14 +710,40 @@ def lora_config():
 
 
 def common_arguments(parser):
-    parser.add_argument(
-        "--model", default="wangyue114514/rwkv7-g1d-0.1b-hf"
-    )
+    parser.add_argument("--model", default="wangyue114514/rwkv7-g1d-0.1b-hf")
     parser.add_argument("--model-revision", default="v0.9.0")
+    parser.add_argument(
+        "--torch-dtype",
+        choices=("auto", *TORCH_DTYPES),
+        default="auto",
+        help=(
+            "model and Trainer precision; bfloat16 selects the optional "
+            "factorized training leaf on supported NVIDIA GPUs"
+        ),
+    )
+    parser.add_argument(
+        "--lora-dtype",
+        choices=("float32", "model"),
+        default="float32",
+        help=(
+            "LoRA parameter dtype: float32 is PEFT's stability default; model "
+            "retains the selected model dtype for optimized BF16 training"
+        ),
+    )
     parser.add_argument(
         "--code-sha",
         default=None,
         help="Source revision for rsync deployments without a .git directory",
+    )
+    parser.add_argument(
+        "--hf-wheel",
+        default=None,
+        help="Exact rwkv7-hf wheel whose SHA256 should be recorded",
+    )
+    parser.add_argument(
+        "--kernel-wheel",
+        default=None,
+        help="Exact rwkv7-kernels wheel whose SHA256 should be recorded",
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--seed", type=int, default=42)
@@ -444,9 +758,7 @@ def common_arguments(parser):
         help="Keep the readable reference examples bounded; increase for a larger effective batch",
     )
     parser.add_argument("--resume-from-checkpoint", default=None)
-    parser.add_argument(
-        "--report-to", choices=("none", "wandb"), default="none"
-    )
+    parser.add_argument("--report-to", choices=("none", "wandb"), default="none")
 
 
 def report_target(args) -> str:
