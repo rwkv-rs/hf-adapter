@@ -1,0 +1,186 @@
+{
+  "affected_only_retry_history": [
+    {
+      "path": "/home/wzu/codex-run/results/rwkv7-v1.0.0-4bbe5f9e/4080/training-formal-v2",
+      "reason": "Transformers 4.56 environment exhausted compile-worker/CUDA memory after recurrent passed",
+      "status": "failed"
+    },
+    {
+      "path": "/home/wzu/codex-run/results/rwkv7-v1.0.0-4bbe5f9e/4080/model-training-formal-v3",
+      "reason": "Transformers 4.56 environment failed cublasCreate after extended matrix; retained unchanged",
+      "status": "failed"
+    },
+    {
+      "path": "/home/wzu/codex-run/results/rwkv7-v1.0.0-4bbe5f9e/4080/model-training-formal-v4",
+      "reason": "Matched canonical Transformers 5.8 environment and two measured iterations; only affected model matrix rerun",
+      "status": "passed"
+    }
+  ],
+  "created_at": "2026-08-29T11:56:18.745673+00:00",
+  "device": "NVIDIA GeForce RTX 4080",
+  "environment": {
+    "cuda": "13.0",
+    "driver": "595.84",
+    "python": "3.12.2",
+    "rwkv7_hf": "1.0.0",
+    "rwkv7_kernels": "1.0.0",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.8.0",
+    "triton": "3.6.0"
+  },
+  "final_release_evidence": false,
+  "model": {
+    "actual_linear_implementations": {
+      "torch-cuda-rwkv7-flattened-linear-training-v1": 4,
+      "torch-reference-linear-v1": 32
+    },
+    "actual_model_implementations": {
+      "torch-reference-model-v1": 36
+    },
+    "actual_recurrent_implementations": {
+      "native-nvidia-rwkv7-factorized-recurrent-training-v1": 8,
+      "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1": 28
+    },
+    "case_count": 36,
+    "failure_count": 0,
+    "fla_unmasked_noncheckpointed_speed": [
+      {
+        "candidate_milliseconds": 36.2193603515625,
+        "candidate_speedup_over_fla": 0.9916632331678513,
+        "case": "b1-t16-padding-none-checkpointing-false",
+        "fla_milliseconds": 35.91740798950195
+      },
+      {
+        "candidate_milliseconds": 109.90118408203125,
+        "candidate_speedup_over_fla": 0.33473344057411303,
+        "case": "b1-t17-padding-none-checkpointing-false",
+        "fla_milliseconds": 36.787601470947266
+      },
+      {
+        "candidate_milliseconds": 27.021519660949707,
+        "candidate_speedup_over_fla": 1.3684542207544355,
+        "case": "b1-t128-padding-none-checkpointing-false",
+        "fla_milliseconds": 36.977712631225586
+      },
+      {
+        "candidate_milliseconds": 37.17318344116211,
+        "candidate_speedup_over_fla": 0.9999909694750813,
+        "case": "b4-t16-padding-none-checkpointing-false",
+        "fla_milliseconds": 37.172847747802734
+      },
+      {
+        "candidate_milliseconds": 118.22753524780273,
+        "candidate_speedup_over_fla": 0.3129256756741496,
+        "case": "b4-t17-padding-none-checkpointing-false",
+        "fla_milliseconds": 36.99643135070801
+      },
+      {
+        "candidate_milliseconds": 30.725248336791992,
+        "candidate_speedup_over_fla": 1.1999762367077187,
+        "case": "b4-t128-padding-none-checkpointing-false",
+        "fla_milliseconds": 36.86956787109375
+      }
+    ],
+    "max_loss_absolute_difference": 0.007084846496582031,
+    "maximum_global_gradient_relative_l2": 0.02352801641864556,
+    "minimum_global_gradient_cosine": 0.9997274352481638,
+    "minimum_logits_cosine": 0.9999625259567129,
+    "remote_report": "/home/wzu/codex-run/results/rwkv7-v1.0.0-4bbe5f9e/4080/model-training-formal-v4/model-adaptive-formal.json",
+    "report_sha256": "c84068beef64f3ad2496141782a694a2ca8eb9985d9b4f9941931ae1e2cd8a59",
+    "settings": {
+      "batches": [
+        1,
+        4
+      ],
+      "candidate": "adaptive",
+      "checkpointing": [
+        false,
+        true
+      ],
+      "cuda_linear_min_flattened_rows": 128,
+      "dtype": "bf16",
+      "iterations": 2,
+      "padding": [
+        "none",
+        "left",
+        "right"
+      ],
+      "release_thresholds": {
+        "global_gradient_cosine_min": 0.9995,
+        "global_gradient_relative_l2_max": 0.025,
+        "logits_cosine_min": 0.9999,
+        "loss_max_abs": 0.01
+      },
+      "seed": 42,
+      "tokens": [
+        16,
+        17,
+        128
+      ],
+      "warmup": 1
+    },
+    "status": "passed"
+  },
+  "note": "This validates the stable-version candidate. Final release bytes are rebuilt only after both RTX 4080 and RTX 4090 gates close.",
+  "recurrent": {
+    "actual_implementations": {
+      "native-nvidia-rwkv7-factorized-recurrent-training-v1": 4,
+      "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1": 14
+    },
+    "case_count": 18,
+    "failure_count": 0,
+    "remote_report": "/home/wzu/codex-run/results/rwkv7-v1.0.0-4bbe5f9e/4080/training-formal-v2/recurrent-adaptive-formal.json",
+    "report_sha256": "0c89479f8444a49c6fb54a972376d1c6ae4b20d2545f2c176bccbdcfec0625a6",
+    "settings": {
+      "batches": [
+        1,
+        4
+      ],
+      "head_size": 64,
+      "heads": 2,
+      "iterations": 3,
+      "padding": [
+        "none",
+        "left",
+        "right"
+      ],
+      "seed": 42,
+      "tokens": [
+        16,
+        17,
+        128
+      ],
+      "warmup": 1
+    },
+    "status": "passed"
+  },
+  "schema": "rwkv7-hf.stable-training-candidate.v1",
+  "source_sha": "4bbe5f9e76c69dfb28caa8e871878169b9745319",
+  "status": "passed",
+  "toolchain": {
+    "cuda_home": "/home/wzu/codex-run/toolchains/cuda-13.0-rwkv7-4bbe5f9e",
+    "nvcc": "/home/wzu/codex-run/toolchains/cuda-13.0-rwkv7-4bbe5f9e/bin/nvcc",
+    "nvcc_version": [
+      "nvcc: NVIDIA (R) Cuda compiler driver",
+      "Copyright (c) 2005-2025 NVIDIA Corporation",
+      "Built on Wed_Aug_20_01:58:59_PM_PDT_2025",
+      "Cuda compilation tools, release 13.0, V13.0.88",
+      "Build cuda_13.0.r13.0/compiler.36424714_0"
+    ],
+    "provenance": {
+      "path": "/home/wzu/codex-run/toolchains/cuda-13.0-rwkv7-4bbe5f9e/PROVENANCE.txt",
+      "sha256": "b1fc8e4c3be81401627679dcb7db318bd132e51af3ff2dbdfd2029b2160e626e"
+    },
+    "torch_extensions_dir": "/home/wzu/.cache/torch_extensions/rwkv7-v1.0.0-4bbe5f9e-sm89"
+  },
+  "wheels": {
+    "rwkv7_hf": {
+      "path": "/home/wzu/codex-run/artifacts/rwkv7-v1.0.0-4bbe5f9e/rwkv7_hf-1.0.0-py3-none-any.whl",
+      "sha256": "cddc9f16f16a7fcf62ef607b98b06f26f57406d1de9a55e63bf1cb39a6cc2cd0"
+    },
+    "rwkv7_kernels": {
+      "path": "/home/wzu/codex-run/artifacts/rwkv7-v1.0.0-4bbe5f9e/rwkv7_kernels-1.0.0-py3-none-any.whl",
+      "sha256": "617aa2ab4834bd53cf4a9380cb6d5e5d2dd28d1e6fa63d0084a265a38e4aa84c"
+    }
+  }
+}

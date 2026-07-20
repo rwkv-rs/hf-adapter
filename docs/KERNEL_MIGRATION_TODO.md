@@ -2390,3 +2390,34 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   Python bytecode compilation, and `git diff --check` also pass. Repository-wide
   Ruff is not used as a release gate because historical vendored and preserved
   native-source files are intentionally outside the project lint scope.
+
+### 2026-08-29 — stable-version RTX 4080 training candidate passed
+
+- Built and audited the stable-version package pair from `4bbe5f9e`:
+  `rwkv7-hf==1.0.0` SHA256
+  `cddc9f16f16a7fcf62ef607b98b06f26f57406d1de9a55e63bf1cb39a6cc2cd0`
+  and `rwkv7-kernels==1.0.0` SHA256
+  `617aa2ab4834bd53cf4a9380cb6d5e5d2dd28d1e6fa63d0084a265a38e4aa84c`.
+  Both wheels were force-installed without source-checkout imports into the
+  canonical Transformers 5.8 RTX 4080 environment.
+- The unchanged recurrent report passes **18/18** cases. The affected-only
+  full-model rerun passes **36/36** cases over batch 1/4, token lengths
+  16/17/128, no/left/right padding, and checkpointing off/on. Its actual route
+  counts are eight factorized recurrent rows, twenty-eight exact matrix
+  recurrent rows, four flattened linear rows, and thirty-two reference linear
+  rows; the readable reference model loop remains active in all 36 rows.
+- Full-model numerical extrema remain within the declared gate: maximum loss
+  delta `0.007085`, minimum logits cosine `0.9999625`, minimum complete-gradient
+  cosine `0.9997274`, and maximum complete-gradient relative L2 `0.023528`.
+  The model report is SHA256
+  `c84068beef64f3ad2496141782a694a2ca8eb9985d9b4f9941931ae1e2cd8a59`.
+- Two earlier affected-only model attempts remain preserved as failures. They
+  used a Transformers 4.56 environment and either exhausted compiler/CUDA
+  memory or failed `cublasCreate`. The successful rerun changed only the
+  environment to the previously accepted Transformers 5.8 stack and restored
+  the canonical two measured iterations; the wheel bytes did not change and
+  the already-passing recurrent matrix was not rerun.
+- Compact evidence is committed under
+  `results/kernel-migration/4080-training-stable-4bbe5f9e`. It is explicitly
+  labeled a stable-version candidate, not immutable final-release evidence;
+  final archives are built only after the RTX 4080 and RTX 4090 gates close.
