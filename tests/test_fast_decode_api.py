@@ -183,9 +183,18 @@ def main() -> int:
 
     old_layout = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT")
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     try:
         for backend in args.fast_token_backends:
             os.environ["RWKV7_FAST_TOKEN_BACKEND"] = backend
+            if backend in {"auto", "native_jit", "native_graph"}:
+                # NativeRWKV7ForCausalLM routes its FLA-free model core through
+                # the native backend selector; the legacy FAST selector remains
+                # necessary for wrapper checkpoints.  Set both so this public
+                # contract exercises the requested backend on either model.
+                os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = backend
+            else:
+                os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
             for layout in args.fast_token_layouts:
                 os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = layout
                 for bsz in args.batch_sizes:
@@ -235,6 +244,10 @@ def main() -> int:
             os.environ.pop("RWKV7_FAST_TOKEN_BACKEND", None)
         else:
             os.environ["RWKV7_FAST_TOKEN_BACKEND"] = old_backend
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
     print("PASS")
     return 0
 
