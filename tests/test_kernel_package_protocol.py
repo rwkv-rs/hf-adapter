@@ -40,6 +40,7 @@ def test_public_kernel_surface_is_versioned_and_small():
     kernels = importlib.import_module("rwkv7_kernels")
     assert kernels.RWKV7_KERNEL_API_VERSION == 2
     assert kernels.__all__ == [
+        "__version__",
         "RWKV7_KERNEL_API_VERSION",
         "linear_training_v1",
         "model_forward_v1",
