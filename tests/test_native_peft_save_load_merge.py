@@ -9,9 +9,12 @@ workflow that usually follows training:
 2. update adapter weights,
 3. ``save_pretrained`` the adapter,
 4. reload the adapter on a fresh native base model,
-5. ``merge_and_unload`` and verify logits stay aligned.
+5. ``merge_and_unload`` into an FP32 base and verify logits stay aligned.
 
-Gate: adapter reload and merged model both reproduce the trained adapter logits.
+Gate: same-dtype adapter reload is exact; FP16 in-place merge drift stays
+bounded; and the production FP32 merge reproduces its unmerged adapter logits
+and greedy trajectory. FP16 merge is inherently rounded and is not advertised
+as bitwise equivalent.
 
   python tests/test_native_peft_save_load_merge.py --model <hf_dir>
 """
@@ -242,12 +245,30 @@ def main() -> int:
 
         reloaded_tail = generate_tail(reloaded, tok, "User: Hello.\n\nAssistant:")
 
-        merged = reloaded.merge_and_unload()
+        del fresh, reloaded
+        release_cuda()
+
+        # Destructive merge is performed on an FP32 base when training used an
+        # FP16 base. Adding FP32 LoRA deltas directly into FP16 weights rounds
+        # every touched base tensor and can flip a later greedy token even when
+        # cosine is >0.999999. Merge in FP32, validate, then cast or quantize
+        # the merged checkpoint for deployment.
+        merge_dtype = torch.float32 if args.dtype == "fp16" else dtype
+        merge_dtype_name = "fp32" if merge_dtype is torch.float32 else args.dtype
+        merge_base = load_native(args.model, merge_dtype, args.device)
+        merge_adapter = PeftModel.from_pretrained(merge_base, adapter_dir)
+        merge_reference_logits = logits_for(
+            merge_adapter, tok, "User: Hello.\n\nAssistant:"
+        )
+        merge_reference_tail = generate_tail(
+            merge_adapter, tok, "User: Hello.\n\nAssistant:"
+        )
+        merged = merge_adapter.merge_and_unload(safe_merge=True)
         merge_logits = logits_for(merged, tok, "User: Hello.\n\nAssistant:")
-        merge_metrics = logit_metrics(ref_logits, merge_logits)
+        merge_metrics = logit_metrics(merge_reference_logits, merge_logits)
         merged_tail = generate_tail(merged, tok, "User: Hello.\n\nAssistant:")
 
-        del fresh, reloaded, merged
+        del merge_base, merge_adapter, merged
         release_cuda()
 
         # Exercise GenerationMixin in a second fresh process-style load before
@@ -257,7 +278,8 @@ def main() -> int:
         ).eval()
         generated_tail = generate_tail(reloaded_for_generate, tok, "User: Hello.\n\nAssistant:")
 
-    greedy_match = trained_tail == reloaded_tail == generated_tail == merged_tail
+    greedy_match = trained_tail == reloaded_tail == generated_tail
+    safe_merge_greedy_match = merge_reference_tail == merged_tail
     # Merging FP32 LoRA deltas into FP16 base weights necessarily rounds the
     # base tensor, and merge->unmerge cannot be bitwise reversible. Gate that
     # production path by bounded error, direction, and exact per-position
@@ -271,13 +293,23 @@ def main() -> int:
             fp16_max_mean_abs=args.fp16_merge_max_mean_abs,
             fp16_min_cosine=args.fp16_merge_min_cosine,
         )
-        for metrics in (merged_inplace_metrics, unmerge_metrics, merge_metrics)
+        for metrics in (merged_inplace_metrics, unmerge_metrics)
+    )
+    safe_merge_pass = merged_logits_pass(
+        merge_metrics,
+        dtype=merge_dtype_name,
+        strict_max_abs=args.max_logit_diff,
+        fp16_max_abs=args.fp16_merge_max_abs,
+        fp16_max_mean_abs=args.fp16_merge_max_mean_abs,
+        fp16_min_cosine=args.fp16_merge_min_cosine,
     )
     ok = (
         trained_vs_base_diff > 0.0
         and reload_metrics["max_abs"] <= args.max_logit_diff
         and bounded_merge
+        and safe_merge_pass
         and greedy_match
+        and safe_merge_greedy_match
     )
     row = {
         "axis": "adapter_roundtrip",
@@ -297,6 +329,7 @@ def main() -> int:
         "merge_inplace_logits": merged_inplace_metrics,
         "unmerge_logits": unmerge_metrics,
         "merge_logits": merge_metrics,
+        "merge_dtype": merge_dtype_name,
         # Stable aliases retained for existing result consumers.
         "reload_logits_max_abs": reload_metrics["max_abs"],
         "merge_inplace_logits_max_abs": merged_inplace_metrics["max_abs"],
@@ -313,8 +346,10 @@ def main() -> int:
         "reloaded_tail": reloaded_tail,
         "generated_tail": generated_tail,
         "merged_tail": merged_tail,
+        "merge_reference_tail": merge_reference_tail,
         "generated_tokens": len(generated_tail),
         "greedy_token_match": greedy_match,
+        "safe_merge_greedy_token_match": safe_merge_greedy_match,
         **runtime_metadata(parameter_device),
     }
     if args.results:
