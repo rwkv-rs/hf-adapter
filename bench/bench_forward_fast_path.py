@@ -46,7 +46,10 @@ def peak_mb(device: str) -> float | None:
 @contextmanager
 def fast_forward_env(enabled: bool):
     old = os.environ.get("RWKV7_FAST_FORWARD")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     os.environ["RWKV7_FAST_FORWARD"] = "1" if enabled else "0"
+    if not enabled:
+        os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "eager"
     try:
         yield
     finally:
@@ -54,6 +57,10 @@ def fast_forward_env(enabled: bool):
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
 
 
 def set_attn_mode(model, attn_mode: str) -> None:

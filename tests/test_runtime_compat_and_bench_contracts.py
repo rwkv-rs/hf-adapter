@@ -63,6 +63,23 @@ def test_native_benchmarks_set_both_backend_selectors() -> None:
         assert "RWKV7_NATIVE_MODEL_BACKEND" in source, name
 
 
+def test_native_reference_benchmarks_force_eager_backend() -> None:
+    benches = (
+        "bench_speed.py",
+        "bench_batch_sweep.py",
+        "bench_dynamic_batch.py",
+        "bench_decode_micro.py",
+        "bench_decode_breakdown.py",
+        "bench_forward_fast_path.py",
+        "bench_generate_fast_path.py",
+        "bench_quantization.py",
+        "profile_decode.py",
+    )
+    for name in benches:
+        source = (ROOT / "bench" / name).read_text(encoding="utf-8")
+        assert 'RWKV7_NATIVE_MODEL_BACKEND"] = "eager"' in source, name
+
+
 def test_pytorch26_triton33_disables_worker_compile(monkeypatch) -> None:
     original_compile = object()
     fake_torch = types.SimpleNamespace(__version__="2.6.0", compile=original_compile)

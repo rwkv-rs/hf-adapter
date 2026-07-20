@@ -169,7 +169,12 @@ def last_fast_token_backend(model):
 @contextmanager
 def reference_forward_env():
     old = os.environ.get("RWKV7_FAST_FORWARD")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     os.environ["RWKV7_FAST_FORWARD"] = "0"
+    # NativeRWKV7Model dispatch is independent of the legacy wrapper switch.
+    # Pin the reference path to eager so this benchmark measures the optimized
+    # native backend against a real unfused recurrent baseline.
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "eager"
     try:
         yield
     finally:
@@ -177,6 +182,10 @@ def reference_forward_env():
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
 
 
 def encode(tok, prompt_tokens: int, bsz: int, device: str) -> torch.Tensor:
