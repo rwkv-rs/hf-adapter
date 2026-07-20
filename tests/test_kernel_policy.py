@@ -77,6 +77,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.ada_sparse_ffn_max_rows == 4
     assert v100.ada_sparse_ffn_inplace
     assert not v100.ada_sparse_ffn_up
+    assert v100.ada_sparse_ffn_low_memory_pack
     assert not v100.fused_projection
     assert not v100.fused_output_project
 

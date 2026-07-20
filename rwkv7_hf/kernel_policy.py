@@ -591,9 +591,15 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_sparse_ffn_max_rows=4,
             ada_sparse_ffn_inplace=True,
             ada_sparse_ffn_up=False,
+            # The sparse FFN kernel consumes the down projection transposed.
+            # Reuse the original parameter storage instead of retaining one
+            # additional full FFN-down copy per layer (about 4 GiB on 7.2B).
+            # Exact-card V100 acceptance measured both lower peak VRAM and a
+            # non-negative prefill/decode speed change with this layout.
+            ada_sparse_ffn_low_memory_pack=True,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 production path: graph capture is automatic through 32 layers and falls back to native_jit for larger checkpoints; four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
+            notes="V100 production path: graph capture is automatic through 32 layers and falls back to native_jit for larger checkpoints; four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, low-memory sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
         )
     if family == "turing":
         is_tesla_t4 = is_tesla_t4_name(profile.name)
