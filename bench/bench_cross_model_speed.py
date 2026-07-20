@@ -389,6 +389,17 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype, model_path: str | N
     except ImportError as exc:
         raise RuntimeError("installed Transformers does not provide Qwen3_5ForCausalLM") from exc
     model = Qwen3_5ForCausalLM.from_pretrained(args.model, **kwargs).eval()
+    if (
+        args.qwen_backend == "fla"
+        and str(args.device).startswith("cuda")
+        and torch.cuda.get_device_capability(cuda_device_index(args.device)) == (7, 0)
+    ):
+        try:
+            from bench.qwen35_sm70_fla import bind_qwen35_sm70_fla
+        except ModuleNotFoundError:
+            from qwen35_sm70_fla import bind_qwen35_sm70_fla
+
+        bind_qwen35_sm70_fla(model)
     if getattr(args, "qwen_conv_backend", "auto") == "fla_triton":
         try:
             from bench.qwen35_fla_triton_conv import bind_qwen35_fla_triton_conv
@@ -421,6 +432,11 @@ _QWEN35_FLA_TRITON_CONV_PREFIXES = (
     "bench.qwen35_fla_triton_conv",
     "qwen35_fla_triton_conv",
 )
+_QWEN35_SM70_FLA_PREFIXES = (
+    "bench.qwen35_sm70_fla",
+    "qwen35_sm70_fla",
+)
+_QWEN35_FLA_CORE_PREFIXES = ("fla",) + _QWEN35_SM70_FLA_PREFIXES
 _QWEN35_ACCELERATED_CONV_PREFIXES = ("causal_conv1d",) + _QWEN35_FLA_TRITON_CONV_PREFIXES
 
 
@@ -461,7 +477,10 @@ def qwen_fla_operator_contract(model) -> dict[str, Any]:
     norm_origins = sorted({_operator_origin(layer.norm) for _, layer in layers if hasattr(layer, "norm")})
 
     prefill_fla_layers = sum(
-        _origin_is(_operator_origin(getattr(layer, "chunk_gated_delta_rule", None)), ("fla",))
+        _origin_is(
+            _operator_origin(getattr(layer, "chunk_gated_delta_rule", None)),
+            _QWEN35_FLA_CORE_PREFIXES,
+        )
         for _, layer in layers
     )
     decode_fla_layers = sum(
@@ -527,6 +546,13 @@ def qwen_fla_operator_contract(model) -> dict[str, Any]:
         "qwen_norm_operator_origins": norm_origins,
         "qwen_fla_core_contract_missing": core_missing,
         "qwen_fla_core_contract_pass": not core_missing,
+        "qwen_sm70_recurrent_prefill_layers": sum(
+            _origin_is(
+                _operator_origin(getattr(layer, "chunk_gated_delta_rule", None)),
+                _QWEN35_SM70_FLA_PREFIXES,
+            )
+            for _, layer in layers
+        ),
         "qwen_causal_conv1d_contract_missing": conv_missing,
         "qwen_causal_conv1d_contract_pass": not conv_missing,
         "qwen_conv_backend_effective": conv_backend,
@@ -560,6 +586,8 @@ def qwen_effective_backend(args: argparse.Namespace, contract: dict[str, Any]) -
     if contract.get("qwen_operator_contract_pass"):
         if contract.get("qwen_causal_conv1d_contract_pass"):
             if contract.get("qwen_conv_backend_effective") == "fla_triton":
+                if contract.get("qwen_sm70_recurrent_prefill_layers"):
+                    return "qwen_fla_recurrent_prefill_sm70_fla_triton_conv"
                 return "qwen_fla_gated_delta_rule_fla_triton_conv"
             return "qwen_fla_gated_delta_rule"
         return "qwen_fla_gated_delta_rule_torch_conv"
@@ -1009,7 +1037,11 @@ def effective_quantization_metadata(model, args: argparse.Namespace) -> dict[str
 _QWEN35_FAST_BINDING_PREFIXES = {
     "causal_conv1d_fn": ("causal_conv1d.", "bench.qwen35_fla_triton_conv", "qwen35_fla_triton_conv"),
     "causal_conv1d_update": ("causal_conv1d.", "bench.qwen35_fla_triton_conv", "qwen35_fla_triton_conv"),
-    "chunk_gated_delta_rule": ("fla.",),
+    "chunk_gated_delta_rule": (
+        "fla.",
+        "bench.qwen35_sm70_fla",
+        "qwen35_sm70_fla",
+    ),
     "recurrent_gated_delta_rule": ("fla.",),
 }
 
