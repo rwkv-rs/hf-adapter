@@ -2108,7 +2108,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return False
         if self.training or torch.is_grad_enabled() or not _native_graph_available():
             return False
-        if self._native_model_requires_eager_decode():
+        if self._native_model_has_adapter_layers():
+            return False
+        if self._native_model_quantized() and not self._native_model_native_quant_graph_safe():
             return False
         if token_ids is None or token_ids.dim() != 2 or int(token_ids.shape[1]) != 1:
             return False
@@ -2153,6 +2155,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             len(packs),
             int(packs[0][1]),
             int(packs[0][2]),
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+            int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
             _native_graph_runtime_signature(),
             int(batch_size),
         )
@@ -2412,6 +2416,31 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return any(type(module).__name__ in quantized_names for module in self.model.layers.modules())
         except Exception:
             return False
+
+    def _native_model_native_quant_graph_safe(self) -> bool:
+        """Whether all quantized layer operands are graph-safe native modules.
+
+        ``native_jit.extract_graph`` retains MM8/MM4 modules as callables and
+        the graph runtime uses their preallocated-output hooks. Generic BnB or
+        other external wrappers remain fail-closed.
+        """
+
+        native_names = {"MM8Linear", "MM4Linear"}
+        external_names = {"Linear4bit", "Linear8bit", "Linear8bitLt"}
+        seen_native = False
+        try:
+            modules = self.model.layers.modules()
+        except Exception:
+            return False
+        for module in modules:
+            name = type(module).__name__
+            if name in external_names:
+                return False
+            if name in native_names:
+                seen_native = True
+                if not callable(getattr(module, "rwkv7_forward_into", None)):
+                    return False
+        return seen_native
 
     def _native_model_has_adapter_layers(self) -> bool:
         """True when PEFT-style adapter wrappers sit inside native layers."""

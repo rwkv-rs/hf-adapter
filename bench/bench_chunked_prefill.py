@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,21 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 512
+
+
+def model_metadata(hf_dir: str, model) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(hf_dir).name.lower())
+    return {
+        "model_name": Path(hf_dir).name,
+        "model_size_label": match.group(1) if match else None,
+        "hf_model_dir": hf_dir,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 def cuda_sync(device: str) -> None:
@@ -37,6 +53,34 @@ def peak_mb(device: str) -> float | None:
     if not device.startswith("cuda"):
         return None
     return round(torch.cuda.max_memory_allocated() / 1024**2, 1)
+
+
+def minimum_row_cosine(reference: torch.Tensor, candidate: torch.Tensor) -> float:
+    """Return the minimum fp32 cosine similarity across batch rows."""
+
+    ref = reference.float().reshape(reference.shape[0], -1)
+    cand = candidate.float().reshape(candidate.shape[0], -1)
+    denominator = ref.norm(dim=-1) * cand.norm(dim=-1)
+    cosine = (ref * cand).sum(dim=-1) / denominator.clamp_min(torch.finfo(torch.float32).tiny)
+    return float(cosine.min().detach().cpu())
+
+
+def alignment_passes(
+    max_abs_diff: float,
+    min_cosine: float,
+    greedy_match: bool,
+    max_diff_limit: float,
+    min_cosine_limit: float,
+) -> bool:
+    """Accept exact-ish absolute agreement or scale-robust cosine agreement.
+
+    Greedy equality remains mandatory in both cases.  This avoids treating a
+    model-size-dependent fp16 logit scale as a correctness failure while still
+    rejecting a changed output decision or direction.
+    """
+
+    numeric_match = max_abs_diff <= max_diff_limit or min_cosine >= min_cosine_limit
+    return bool(numeric_match and greedy_match)
 
 
 def set_attn_mode(model, attn_mode: str) -> None:
@@ -82,6 +126,7 @@ def main() -> int:
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--max-diff", type=float, default=0.15)
+    ap.add_argument("--min-cosine", type=float, default=0.9999)
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
 
@@ -119,6 +164,7 @@ def main() -> int:
         {
             "axis": "chunked_prefill",
             "backend": "hf_adapter",
+            **model_metadata(args.hf_dir, model),
             "prefill_mode": "full",
             "dtype": args.dtype,
             "device": device_name(args.device),
@@ -136,7 +182,16 @@ def main() -> int:
 
     full_seq_length = full_out.past_key_values.get_seq_length()
     next_token = full_out.logits[:, -1:].argmax(dim=-1)
-    full_next = model(next_token, past_key_values=full_out.past_key_values, use_cache=True, logits_to_keep=1)
+    # ``timed`` returns inference tensors. Reusing their cache in a grad-enabled
+    # call makes TorchScript try to save inference tensors for backward on the
+    # fully native model. Keep correctness decode in inference mode as well.
+    with torch.inference_mode():
+        full_next = model(
+            next_token,
+            past_key_values=full_out.past_key_values,
+            use_cache=True,
+            logits_to_keep=1,
+        )
     for chunk_size in args.chunk_sizes:
         def chunked_prefill():
             return model.rwkv7_prefill_chunks(ids, chunk_size=chunk_size, logits_to_keep=1)
@@ -145,13 +200,26 @@ def main() -> int:
         dt, out = timed(chunked_prefill, args.warmup, args.runs, args.device)
         peak = peak_mb(args.device)
         diff = float((full_out.logits.float() - out.logits.float()).abs().max().detach().cpu())
+        min_cosine = minimum_row_cosine(full_out.logits, out.logits)
+        greedy_match = bool(torch.equal(full_out.logits.argmax(dim=-1), out.logits.argmax(dim=-1)))
         chunk_seq_length = out.past_key_values.get_seq_length()
         seq_match = full_seq_length == chunk_seq_length
-        chunk_next = model(next_token, past_key_values=out.past_key_values, use_cache=True, logits_to_keep=1)
+        with torch.inference_mode():
+            chunk_next = model(
+                next_token,
+                past_key_values=out.past_key_values,
+                use_cache=True,
+                logits_to_keep=1,
+            )
         decode_diff = float((full_next.logits.float() - chunk_next.logits.float()).abs().max().detach().cpu())
+        decode_min_cosine = minimum_row_cosine(full_next.logits, chunk_next.logits)
+        decode_greedy_match = bool(
+            torch.equal(full_next.logits.argmax(dim=-1), chunk_next.logits.argmax(dim=-1))
+        )
         row = {
             "axis": "chunked_prefill",
             "backend": "hf_adapter",
+            **model_metadata(args.hf_dir, model),
             "prefill_mode": "chunked",
             "dtype": args.dtype,
             "device": device_name(args.device),
@@ -167,12 +235,24 @@ def main() -> int:
             "peak_vram_mb": peak,
             "peak_vram_ratio_vs_full": round(peak / full_peak, 4) if peak is not None and full_peak else None,
             "max_abs_diff": round(diff, 6),
+            "min_cosine": round(min_cosine, 8),
+            "greedy_match": greedy_match,
             "decode_max_abs_diff": round(decode_diff, 6),
+            "decode_min_cosine": round(decode_min_cosine, 8),
+            "decode_greedy_match": decode_greedy_match,
             "seq_length_match": bool(seq_match),
             "seq_length": chunk_seq_length,
         }
         rows.append(row)
-        if diff > args.max_diff or decode_diff > args.max_diff or not seq_match:
+        prefill_ok = alignment_passes(diff, min_cosine, greedy_match, args.max_diff, args.min_cosine)
+        decode_ok = alignment_passes(
+            decode_diff,
+            decode_min_cosine,
+            decode_greedy_match,
+            args.max_diff,
+            args.min_cosine,
+        )
+        if not prefill_ok or not decode_ok or not seq_match:
             raise AssertionError(f"chunk_size={chunk_size} failed: {row}")
 
     for row in rows:

@@ -10,7 +10,7 @@ boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
 | Path | Purpose | Current status |
 |---|---|---|
 | bitsandbytes 8-bit / 4-bit | Standard HF compatibility and memory reduction | Functional across tested CUDA cards; not generally faster than native fp16 |
-| Native MM8/MM4 `speed` policy | Preserve dense block speed and quantize selected expensive projections | Promoted on measured V100/4080/4090/5090 lanes |
+| Native MM8/MM4 `speed` policy | Preserve dense block speed and quantize selected expensive projections | Promoted on measured V100/Tesla-T4/4080/4090/5090 lanes |
 | Native MM8/MM4 `memory` policy | Quantize many eligible Linear modules for larger footprint reduction | Functional and memory-saving; universal fp16-or-faster speed is open |
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
@@ -41,6 +41,24 @@ prefill cells at `1.0006x-1.0603x`. Group128 and group256 remain
 explicit opt-ins and do not change non-V100 defaults. Copyable configuration
 is in [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md); raw evidence is in
 [`../bench/v100_sm70_mm4_bntn_20260716/`](../bench/v100_sm70_mm4_bntn_20260716/README.md).
+
+## Tesla T4 exact-card DP4A lanes
+
+The measured Tesla T4 route reuses the Volta/Turing DP4A extension but is
+enabled only for a token-exact T4 device name. RTX 2080, NVIDIA T400 and other
+`sm_75` devices remain on their prior fallback until separately validated.
+
+The head-only speed lane passes all 26 W8/W4 decode cells across 0.1B–2.9B at
+minimum `1.0207x` fp16. W8/W4 footprint is `0.8686x–0.9716x` /
+`0.8043x–0.9578x`, final-logit cosine is at least `0.9999345` / `0.9996467`,
+and greedy equality is 26/26.
+
+The full-model lane reduces footprint much further to `0.5291x–0.6331x` W8
+and `0.3004x–0.4542x` W4. It wins all B1 decode rows and preserves greedy
+tokens 26/26, but prefill is `0.1272x–0.6984x` and small-model B4/B8 decode
+can remain below fp16. It is therefore a memory/B1-decode lane, not universal
+quantized-speed promotion. Evidence:
+[`../bench/t4_production_close_20260720/`](../bench/t4_production_close_20260720/README.md).
 
 ## RTX 5090 production BN/TN BF16/W4 model matrix
 

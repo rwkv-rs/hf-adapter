@@ -107,8 +107,13 @@ def set_attn_mode(model, attn_mode: str) -> None:
 def timed(fn, device: str, runs: int) -> float:
     cuda_sync(device)
     t0 = time.time()
-    for _ in range(runs):
-        fn()
+    # Prefill is an inference benchmark.  Keep the measured calls in the same
+    # no-grad mode as warmup; otherwise the adapter correctly rejects its
+    # inference-only native prefill route and the row silently measures a
+    # different, much slower training-capable path.
+    with torch.inference_mode():
+        for _ in range(runs):
+            fn()
     cuda_sync(device)
     return (time.time() - t0) / runs
 

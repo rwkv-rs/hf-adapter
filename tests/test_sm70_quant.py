@@ -5,9 +5,11 @@ import torch
 import torch.nn.functional as F
 
 from rwkv7_hf.sm70_quant import (
+    _sm7x_quant_device_supported,
+    _w8_threads_for_profile,
     SM70_W4_BN_TN_CHOICES,
     build_error,
-    is_sm70,
+    is_sm7x_quant_device,
     quantize_w4_groupwise,
     quantize_w4_row,
     quantize_w8_row,
@@ -19,6 +21,31 @@ from rwkv7_hf.sm70_quant import (
     w4_linear,
     w8_linear,
 )
+
+
+def test_sm7x_quant_device_policy_is_exact_card_fail_closed() -> None:
+    assert _sm7x_quant_device_supported(7, 0, "Tesla V100-SXM2-32GB")
+    assert _sm7x_quant_device_supported(7, 5, "Tesla T4")
+    assert _sm7x_quant_device_supported(7, 5, "NVIDIA T4")
+    assert _sm7x_quant_device_supported(7, 5, "NVIDIA Tesla T4-PCIE-16GB")
+    assert not _sm7x_quant_device_supported(7, 5, "NVIDIA T400")
+    assert not _sm7x_quant_device_supported(7, 5, "GeForce RTX 2080 Ti")
+    assert not _sm7x_quant_device_supported(8, 0, "NVIDIA A100")
+
+
+def test_t4_w8_threads_use_the_measured_batch_policy() -> None:
+    assert [_w8_threads_for_profile(b, is_t4=True) for b in (1, 2, 4, 8)] == [
+        64,
+        128,
+        64,
+        64,
+    ]
+    assert [_w8_threads_for_profile(b, is_t4=False) for b in (1, 2, 4, 8)] == [
+        256,
+        128,
+        128,
+        128,
+    ]
 
 
 def test_row_quantized_layout_and_cpu_fallback() -> None:
@@ -101,8 +128,8 @@ def test_groupwise_w4_rejects_unsupported_layouts() -> None:
 
 
 @pytest.mark.skipif(
-    not torch.cuda.is_available() or torch.cuda.get_device_capability() != (7, 0),
-    reason="exact sm_70 CUDA device required",
+    not torch.cuda.is_available() or not is_sm7x_quant_device(),
+    reason="measured sm_70 or exact Tesla T4 CUDA device required",
 )
 def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
     torch.manual_seed(71)
@@ -121,13 +148,18 @@ def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
     relu2 = w4_linear_relu2(x, q4, s4, 4096, inputs)
     added = w4_linear_add(x, q4, s4, residual, 4096, inputs)
     torch.cuda.synchronize()
-    assert is_sm70(x.device) and build_error() is None
+    assert is_sm7x_quant_device(x.device) and build_error() is None
     assert returned8.data_ptr() == out8.data_ptr()
     assert returned4.data_ptr() == out4.data_ptr()
     torch.testing.assert_close(relu2, torch.relu(out4) ** 2, rtol=0.0, atol=0.0)
     torch.testing.assert_close(added, expected_add, rtol=0.0, atol=0.0)
     torch.testing.assert_close(residual, residual_before, rtol=0.0, atol=0.0)
     assert F.cosine_similarity(out8.float(), ref, dim=-1).min() >= 0.999
+    prefill_x = torch.randn(17, 768, device="cuda", dtype=torch.float16) * 0.1
+    prefill8 = w8_linear(prefill_x, q8, s8)
+    prefill8_ref = F.linear(prefill_x, weight).float()
+    assert prefill8.shape == (17, 4096)
+    assert F.cosine_similarity(prefill8.float(), prefill8_ref, dim=-1).min() >= 0.999
     lo = (q4 & 15).to(x.dtype) - 8
     hi = (q4 >> 4).to(x.dtype) - 8
     dequant4 = torch.empty_like(weight)
@@ -146,8 +178,8 @@ def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
 
 
 @pytest.mark.skipif(
-    not torch.cuda.is_available() or torch.cuda.get_device_capability() != (7, 0),
-    reason="exact sm_70 CUDA device required",
+    not torch.cuda.is_available() or not is_sm7x_quant_device(),
+    reason="measured sm_70 or exact Tesla T4 CUDA device required",
 )
 @pytest.mark.parametrize("group_size", (128, 256))
 def test_sm70_groupwise_w4_matches_dequantized_oracle(group_size: int) -> None:

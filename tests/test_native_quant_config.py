@@ -59,6 +59,7 @@ def assert_quantized_roundtrip(quantization: str, class_name: str) -> None:
     assert replaced == count
     assert count >= 1
     assert reloaded._native_model_quantized()
+    assert reloaded._native_model_native_quant_graph_safe()
 
     input_ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
     with torch.no_grad():

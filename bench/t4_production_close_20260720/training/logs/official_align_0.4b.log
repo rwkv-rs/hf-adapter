@@ -1,0 +1,48 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  28%|██▊       | 225/795 [00:00<00:00, 2188.03it/s]Loading weights:  56%|█████▌    | 444/795 [00:00<00:00, 2128.47it/s]Loading weights:  83%|████████▎ | 657/795 [00:00<00:00, 2108.13it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2104.92it/s]
+
+### RWKV-7 "Goose" enabled ###
+
+Loading /opt/models/raw/rwkv7-g1d-0.4b-20260210-ctx8192 (cpu fp32)
+
+'The quick brown fox jumps over the lazy dog.'     top5=1.00 argmax=1 cos=0.999997 max=0.0454 mean=0.01134
+'Once upon a time, in a faraway land,'             top5=1.00 argmax=1 cos=0.999997 max=0.0391 mean=0.00609
+'User: Hello!\n\nAssistant:'                       top5=1.00 argmax=1 cos=0.999997 max=0.0662 mean=0.01709
+'import torch\nx = torch.randn('                   top5=1.00 argmax=1 cos=0.999998 max=0.0734 mean=0.02279
+'The capital of France is'                         top5=1.00 argmax=1 cos=0.999997 max=0.0322 mean=0.00645
+
+=== summary ===
+{
+  "axis": "official_alignment",
+  "backend": "hf_adapter",
+  "status": "pass",
+  "ts": 1784535929,
+  "hf_dir": "/opt/models/rwkv7-g1d-0.4b-hf",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/opt/models/rwkv7-g1d-0.4b-hf",
+  "pth": "/opt/models/raw/rwkv7-g1d-0.4b-20260210-ctx8192.pth",
+  "dtype": "fp16",
+  "device": "Tesla T4",
+  "official_strategy": "cpu fp32",
+  "fuse_norm": false,
+  "n_prompts": 5,
+  "top5_match": 1.0,
+  "argmax_match": 1.0,
+  "cosine": 0.9999974727630615,
+  "max_abs_diff": 0.07336807250976562,
+  "mean_abs_diff": 0.012753262184560299,
+  "greedy_window": {
+    "requested": 64,
+    "matched": 64,
+    "mismatches": []
+  },
+  "targets": {
+    "top5_match": 0.9,
+    "cosine": 0.9999,
+    "max_abs_diff": 0.15,
+    "greedy_matched": 64
+  }
+}
+appended -> /opt/rwkv7-hf-adapter-t4-final2-20260720/bench/t4_production_close_20260720/training/results_official_alignment.jsonl
+PASS

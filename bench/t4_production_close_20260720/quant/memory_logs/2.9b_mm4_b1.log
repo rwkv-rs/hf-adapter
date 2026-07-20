@@ -1,0 +1,96 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:   5%|▌         | 55/1059 [00:00<00:01, 547.90it/s]Loading weights:  12%|█▏        | 128/1059 [00:00<00:01, 569.00it/s]Loading weights:  20%|█▉        | 207/1059 [00:00<00:01, 662.10it/s]Loading weights:  26%|██▌       | 274/1059 [00:00<00:01, 664.26it/s]Loading weights:  32%|███▏      | 344/1059 [00:00<00:01, 671.53it/s]Loading weights:  39%|███▉      | 414/1059 [00:00<00:00, 680.21it/s]Loading weights:  46%|████▌     | 485/1059 [00:00<00:00, 687.97it/s]Loading weights:  53%|█████▎    | 558/1059 [00:00<00:00, 677.41it/s]Loading weights:  59%|█████▉    | 626/1059 [00:00<00:00, 656.07it/s]Loading weights:  66%|██████▌   | 699/1059 [00:01<00:00, 676.47it/s]Loading weights:  73%|███████▎  | 769/1059 [00:01<00:00, 682.46it/s]Loading weights:  79%|███████▉  | 838/1059 [00:01<00:00, 678.90it/s]Loading weights:  86%|████████▌ | 912/1059 [00:01<00:00, 696.33it/s]Loading weights:  93%|█████████▎| 986/1059 [00:01<00:00, 685.23it/s]Loading weights: 100%|█████████▉| 1055/1059 [00:01<00:00, 664.49it/s]Loading weights: 100%|██████████| 1059/1059 [00:01<00:00, 670.06it/s]
+{
+  "axis": "native_quant_e2e_decode",
+  "backend": "hf_adapter",
+  "code_source": "repo",
+  "effective_hf_dir": "/opt/models/rwkv7_native_quant_repo_code_ailtn9n6",
+  "status": "pass",
+  "quantization": "mm4",
+  "native_mm4_group_size": 128,
+  "native_mm4_group_policy": "all",
+  "sm70_w4_tuning_policy": null,
+  "sm70_w4_fused_epilogue": null,
+  "sm70_w4_block_n": null,
+  "sm70_w4_thread_n": null,
+  "sm70_w4_group_block_n": null,
+  "sm70_w4_group_thread_n": null,
+  "dtype": "fp16",
+  "device": "Tesla T4",
+  "model_name": "rwkv7-g1g-2.9b-hf",
+  "model_size_label": "2.9b",
+  "hf_model_dir": "/opt/models/rwkv7-g1g-2.9b-hf",
+  "hidden_size": 2560,
+  "intermediate_size": 10240,
+  "num_hidden_layers": 32,
+  "head_dim": 64,
+  "num_heads": 40,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "batch_size": 1,
+  "prompt_tokens": 64,
+  "decode_tokens": 32,
+  "min_params": 1,
+  "quant_group_size": 128,
+  "quantized_head": false,
+  "marlin_skip_last_layers": 0,
+  "native_mm_policy": "memory",
+  "paired_baseline": true,
+  "quantize_before_device": false,
+  "replaced_modules": 447,
+  "module_counts": {
+    "linear_dense": 0,
+    "mm8": 0,
+    "mm4": 447,
+    "a8w8": 0,
+    "marlin_w4": 0,
+    "torchao_w8": 0,
+    "torchao_w4": 0
+  },
+  "native_mm_kernel": "sm7x_dp4a_w4_group128",
+  "fused_relu2_ffn_modules": 0,
+  "model_footprint_mb": 1689.1,
+  "baseline_prefill_tokps_total": 927.8,
+  "baseline_decode_tokps_total": 34.1,
+  "baseline_model_footprint_mb": 5622.4,
+  "footprint_ratio_vs_fp16": 0.3004,
+  "prefill_speed_ratio_vs_fp16": 0.3011,
+  "decode_speed_ratio_vs_fp16": 1.4868,
+  "prompt_logits_cos_vs_fp16": 0.99888802,
+  "final_logits_cos_vs_fp16": 0.99856472,
+  "same_next_token_as_fp16": true,
+  "same_greedy_tokens_as_fp16": true,
+  "first_greedy_mismatch_flat_index": null,
+  "peak_vram_mb": 1789.0,
+  "prefill_sec": 0.22907686233520508,
+  "prefill_tokps_total": 279.4,
+  "decode_sec": 0.630544900894165,
+  "decode_tokps_total": 50.7,
+  "decode_tokps_per_seq": 50.7,
+  "decode_ms_per_step": 19.705,
+  "next_token": 47,
+  "fast_token_backend_effective": "native_graph",
+  "native_model_decode_backend_effective": "native_graph",
+  "native_model_prefill_backend_effective": "native_prefill",
+  "cache_type": "NativeRWKV7Cache",
+  "timing_repeats": 3,
+  "prefill_tokps_samples": [
+    282.5,
+    279.4,
+    279.3
+  ],
+  "decode_tokps_samples": [
+    50.6,
+    50.7,
+    50.8
+  ],
+  "greedy_tokens_sha256": "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7",
+  "greedy_repeat_sha256": [
+    "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7",
+    "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7",
+    "c8acad3f89848ca3f42e630b597a19a5e7c7e2571fa135fb10121cb94c55cfb7"
+  ],
+  "greedy_repeat_deterministic": true
+}
+appended 1 row -> /opt/rwkv7-hf-adapter-t4-final2-20260720/bench/t4_production_close_20260720/quant/results_quant_full_model.jsonl

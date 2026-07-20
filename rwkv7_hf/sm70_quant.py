@@ -1,10 +1,12 @@
 # coding=utf-8
-"""Exact-sm70 W8/W4 projection kernels for graph-captured RWKV decode.
+"""Measured sm7x W8/W4 kernels for graph-captured RWKV decode.
 
 B1 uses a single weight-only warp kernel. B2/B4/B8 dynamically quantize each
 activation row and use DP4A while loading every quantized weight row once and
-accumulating all batch rows in registers. The extension is lazy, graph-safe,
-and has CPU/non-sm70 fallbacks.
+accumulating all batch rows in registers. The CUDA implementation is shared by
+the measured sm7x profiles; exact-card name gating remains centralized in
+``kernel_policy`` rather than capability-wide. The extension is lazy,
+graph-safe, and has CPU/unsupported-device fallbacks.
 """
 from __future__ import annotations
 import os
@@ -18,6 +20,11 @@ try:
 except Exception:
     torch = None
     F = None
+
+try:
+    from .kernel_policy import is_tesla_t4_name
+except Exception:  # pragma: no cover - standalone remote-code fallback
+    is_tesla_t4_name = lambda _name: False  # type: ignore[assignment]
 
 
 _CPP = r"""
@@ -35,6 +42,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){m.def("w8",&rwkv7_sm70_w8_cuda);m.def("w
 _CUDA = r"""
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDABlas.h>
 #include <c10/cuda/CUDAException.h>
 #include <cuda_fp16.h>
 namespace {
@@ -55,13 +63,17 @@ __global__ void w8_a16_single(int K,int N,const half* x,const signed char* q,con
  acc=warp_sum(acc);if(lane==0)y[n]=__float2half_rn(acc*__half2float(ws[n]));
 }
 __global__ void w8_dp4a(int M,int K,int N,const signed char* x,const half* xs,const signed char* q,const half* ws,half* y){
- int lane=threadIdx.x&31,warp=threadIdx.x>>5,warps=blockDim.x>>5,n=blockIdx.x*warps+warp;if(n>=N)return;
+ int lane=threadIdx.x&31,warp=threadIdx.x>>5,warps=blockDim.x>>5,n=blockIdx.x*warps+warp,mb=blockIdx.y*8;if(n>=N)return;
  const int* wr=(const int*)(q+(int64_t)n*K);int acc[8]={0,0,0,0,0,0,0,0};
  for(int k4=lane;k4<(K>>2);k4+=32){int w=wr[k4];
   #pragma unroll
-  for(int m=0;m<8;m++)if(m<M)acc[m]=__dp4a(((const int*)(x+(int64_t)m*K))[k4],w,acc[m]);}
+  for(int m=0;m<8;m++)if(mb+m<M)acc[m]=__dp4a(((const int*)(x+(int64_t)(mb+m)*K))[k4],w,acc[m]);}
  #pragma unroll
- for(int m=0;m<8;m++)if(m<M){int v=acc[m];for(int d=16;d;d>>=1)v+=__shfl_down_sync(0xffffffff,v,d);if(lane==0)y[(int64_t)m*N+n]=__float2half_rn(float(v)*__half2float(xs[m])*__half2float(ws[n]));}
+ for(int m=0;m<8;m++)if(mb+m<M){int v=acc[m];for(int d=16;d;d>>=1)v+=__shfl_down_sync(0xffffffff,v,d);if(lane==0)y[(int64_t)(mb+m)*N+n]=__float2half_rn(float(v)*__half2float(xs[mb+m])*__half2float(ws[n]));}
+}
+__global__ void w8_i32_dequant(int M,int N,const int* acc,const half* xs,const half* ws,half* y){
+ int idx=blockIdx.x*blockDim.x+threadIdx.x,total=M*N;if(idx>=total)return;int m=idx/N,n=idx-m*N;
+ y[idx]=__float2half_rn(float(acc[idx])*__half2float(xs[m])*__half2float(ws[n]));
 }
 __device__ inline int pack4(int a,int b,int c,int d){return (a&255)|((b&255)<<8)|((c&255)<<16)|((d&255)<<24);}
 template<int BN,int TN,int MODE>
@@ -135,7 +147,7 @@ __global__ void w4g_dp4a_bn_tn(int M,int K,int N,int KH,int G,const signed char*
  }}
 }
 void check(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int N){TORCH_CHECK(x.is_cuda()&&q.is_cuda()&&s.is_cuda()&&y.is_cuda(),"CUDA required");TORCH_CHECK(x.scalar_type()==at::kHalf&&s.scalar_type()==at::kHalf&&y.scalar_type()==at::kHalf,"fp16 activation/scales/output required");TORCH_CHECK(x.dim()==2&&x.is_contiguous()&&q.is_contiguous()&&s.is_contiguous()&&y.is_contiguous(),"contiguous rank-2 activation required");TORCH_CHECK(x.size(1)%8==0&&x.size(0)>0,"K multiple of 8 and non-empty M required");TORCH_CHECK(y.size(0)==x.size(0)&&y.size(1)==N,"output shape mismatch");}
-torch::Tensor run8(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int th){int M=x.size(0),K=x.size(1),N=q.size(0);check(x,q,s,y,N);TORCH_CHECK(M<=8,"sm70 W8 decode kernel requires M<=8");TORCH_CHECK(q.scalar_type()==at::kChar&&q.size(1)==K,"int8 weight shape mismatch");auto st=at::cuda::getCurrentCUDAStream();if(M==1){w8_a16_single<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(K,N,(half*)x.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{auto qa=torch::empty({M,K},q.options());auto as=torch::empty({M},s.options());quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());w8_dp4a<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(M,K,N,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
+torch::Tensor run8(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int th){int M=x.size(0),K=x.size(1),N=q.size(0);check(x,q,s,y,N);TORCH_CHECK(q.scalar_type()==at::kChar&&q.size(1)==K,"int8 weight shape mismatch");auto st=at::cuda::getCurrentCUDAStream();if(M==1){w8_a16_single<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(K,N,(half*)x.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{auto qa=torch::empty({M,K},q.options());auto as=torch::empty({M},s.options());quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());if(M>=16){auto acc=torch::empty({M,N},q.options().dtype(torch::kInt32));int alpha=1,beta=0;auto handle=at::cuda::getCurrentCUDABlasHandle();auto status=cublasGemmEx(handle,CUBLAS_OP_T,CUBLAS_OP_N,N,M,K,&alpha,q.data_ptr<int8_t>(),CUDA_R_8I,K,qa.data_ptr<int8_t>(),CUDA_R_8I,K,&beta,acc.data_ptr<int>(),CUDA_R_32I,N,CUBLAS_COMPUTE_32I,CUBLAS_GEMM_DEFAULT_TENSOR_OP);TORCH_CHECK(status==CUBLAS_STATUS_SUCCESS,"sm75 W8 cublasGemmEx failed with status ",int(status));int total=M*N;w8_i32_dequant<<<(total+255)/256,256,0,st>>>(M,N,acc.data_ptr<int>(),(half*)as.data_ptr<at::Half>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{w8_dp4a<<<dim3((N+(th/32)-1)/(th/32),(M+7)/8),th,0,st>>>(M,K,N,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}}C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
 template<int MODE>
 torch::Tensor run4(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor residual,torch::Tensor y,int N,int bn,int tn){int M=x.size(0),K=x.size(1),KH=q.size(1);check(x,q,s,y,N);TORCH_CHECK(q.scalar_type()==at::kByte&&KH*2>=K,"uint8 weight shape mismatch");if constexpr(MODE==2){TORCH_CHECK(residual.is_cuda()&&residual.scalar_type()==at::kHalf&&residual.is_contiguous()&&residual.sizes()==y.sizes(),"fp16 contiguous residual shape mismatch");}const half* rp=MODE==2?(half*)residual.data_ptr<at::Half>():nullptr;auto st=at::cuda::getCurrentCUDAStream();bool launched=false;auto qa=M==1?torch::Tensor():torch::empty({M,K},torch::TensorOptions().device(x.device()).dtype(torch::kInt8));auto as=M==1?torch::Tensor():torch::empty({M},s.options());if(M>1)quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());
 #define LAUNCH4(BN_,TN_) if(bn==BN_&&tn==TN_){constexpr int TH=(BN_/TN_)*32;if(M==1)w4_a16_bn_tn<BN_,TN_,MODE><<<dim3((N+BN_-1)/BN_),TH,0,st>>>(K,N,KH,(half*)x.data_ptr<at::Half>(),(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),rp,(half*)y.data_ptr<at::Half>());else w4_dp4a_bn_tn<BN_,TN_,MODE><<<dim3((N+BN_-1)/BN_,(M+7)/8),TH,0,st>>>(M,K,N,KH,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),rp,(half*)y.data_ptr<at::Half>());launched=true;}
@@ -250,7 +262,21 @@ SM70_W4_GROUP256_AUTO_BN_TN = {
 }
 
 
+def _sm7x_quant_device_supported(major: int, minor: int, name: str) -> bool:
+    """Return whether this exact device has measured DP4A quant evidence."""
+
+    return bool(
+        (int(major), int(minor)) == (7, 0)
+        or (
+            (int(major), int(minor)) == (7, 5)
+            and is_tesla_t4_name(name)
+        )
+    )
+
+
 def is_sm70(device=None):
+    """Backward-compatible exact-sm70 predicate."""
+
     if torch is None or not torch.cuda.is_available():
         return False
     d = torch.device("cuda" if device is None else device)
@@ -258,6 +284,46 @@ def is_sm70(device=None):
         return False
     i = torch.cuda.current_device() if d.index is None else d.index
     return tuple(torch.cuda.get_device_capability(i)) == (7, 0)
+
+
+def is_sm7x_quant_device(device=None):
+    """Whether a measured sm7x DP4A quant profile may run."""
+
+    if torch is None or not torch.cuda.is_available():
+        return False
+    d = torch.device("cuda" if device is None else device)
+    if d.type != "cuda":
+        return False
+    i = torch.cuda.current_device() if d.index is None else d.index
+    major, minor = torch.cuda.get_device_capability(i)
+    try:
+        name = str(torch.cuda.get_device_name(i))
+    except Exception:
+        name = ""
+    return _sm7x_quant_device_supported(major, minor, name)
+
+
+def _w8_threads_for_profile(rows: int, *, is_t4: bool) -> int:
+    """Measured W8 launch width for the supported sm7x profiles."""
+
+    rows = int(rows)
+    if is_t4:
+        # The measured sm75 profile selects 64 threads except at B2.
+        return 128 if rows == 2 else 64
+    return 256 if rows == 1 else 128
+
+
+def sm7x_w8_threads(rows: int, device=None) -> int:
+    """Return the exact-card W8 launch width, honoring an env override."""
+
+    raw = os.environ.get("RWKV7_SM70_W8_THREADS")
+    if raw is not None:
+        return int(raw)
+    d = torch.device("cuda" if device is None else device)
+    return _w8_threads_for_profile(
+        rows,
+        is_t4=is_sm7x_quant_device(d) and not is_sm70(d),
+    )
 
 
 def sm70_w4_bn_tn_config(
@@ -317,7 +383,7 @@ def _load():
     global _EXT, _ERR
     if _EXT is not None:
         return _EXT
-    if _ERR is not None or not is_sm70():
+    if _ERR is not None or not is_sm7x_quant_device():
         return None
     with _LOCK:
         try:
@@ -326,7 +392,20 @@ def _load():
             nv = Path(pb) / "nvcc"
             if nv.exists():
                 os.environ.setdefault("CUDA_HOME", str(nv.parent.parent))
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.0")
+            # ``python /path/to/venv/bin/python`` does not necessarily put the
+            # venv's scripts directory on PATH.  PyTorch's extension loader
+            # still shells out to its colocated ``ninja`` binary, so make that
+            # invocation robust without requiring shell activation.
+            python_bin = Path(sys.executable).resolve().parent
+            if (python_bin / "ninja").exists():
+                path_parts = os.environ.get("PATH", "").split(os.pathsep)
+                if str(python_bin) not in path_parts:
+                    os.environ["PATH"] = os.pathsep.join(
+                        [str(python_bin), *path_parts]
+                    )
+            # Build a portable sm7x fatbin by default.  An explicit deployment
+            # value still wins, which keeps packaged/offline builds in control.
+            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.0;7.5")
             rt = (
                 Path(sys.prefix)
                 / "lib"
@@ -340,7 +419,7 @@ def _load():
             from torch.utils.cpp_extension import load_inline
 
             _EXT = load_inline(
-                name="rwkv7_sm70_quant_v19",
+                name="rwkv7_sm7x_quant_v22",
                 cpp_sources=_CPP,
                 cuda_sources=_CUDA,
                 functions=None,
@@ -403,19 +482,14 @@ def quantize_w4_groupwise(weight, group_size=128):
 def w8_linear(x, q, s, out=None):
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
-    e = _load() if x2.is_cuda and is_sm70(x2.device) else None
+    e = _load() if x2.is_cuda and is_sm7x_quant_device(x2.device) else None
     if e is None:
         result = F.linear(x, q.to(x.dtype) * s[:, None])
         if out is not None:
             out.copy_(result)
             return out
         return result
-    raw_threads = os.environ.get("RWKV7_SM70_W8_THREADS")
-    o = (
-        int(raw_threads)
-        if raw_threads is not None
-        else (256 if int(x2.shape[0]) == 1 else 128)
-    )
+    o = sm7x_w8_threads(int(x2.shape[0]), x2.device)
     y = (
         e.w8(x2.contiguous(), q, s, o)
         if out is None
@@ -427,7 +501,7 @@ def w8_linear(x, q, s, out=None):
 def w4_linear(x, q, s, out_features, in_features, out=None):
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
-    e = _load() if x2.is_cuda and is_sm70(x2.device) else None
+    e = _load() if x2.is_cuda and is_sm7x_quant_device(x2.device) else None
     if e is None:
         lo = (q & 15).to(x.dtype) - 8
         hi = (q >> 4).to(x.dtype) - 8
@@ -477,7 +551,7 @@ def w4_groupwise_linear(
         )
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
-    e = _load() if x2.is_cuda and is_sm70(x2.device) else None
+    e = _load() if x2.is_cuda and is_sm7x_quant_device(x2.device) else None
     if e is None:
         lo = (q & 15).to(x.dtype) - 8
         hi = (q >> 4).to(x.dtype) - 8
@@ -526,7 +600,7 @@ def w4_linear_relu2(x, q, s, out_features, in_features):
 
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
-    e = _load() if x2.is_cuda and is_sm70(x2.device) else None
+    e = _load() if x2.is_cuda and is_sm7x_quant_device(x2.device) else None
     if e is None:
         return torch.relu(w4_linear(x, q, s, out_features, in_features)) ** 2
     bn, tn = sm70_w4_bn_tn_config(
@@ -542,7 +616,7 @@ def w4_linear_add(x, q, s, residual, out_features, in_features):
     scalar = x.dim() == 1
     x2 = x.reshape(-1, x.shape[-1])
     residual2 = residual.reshape(-1, int(out_features)).contiguous()
-    e = _load() if x2.is_cuda and is_sm70(x2.device) else None
+    e = _load() if x2.is_cuda and is_sm7x_quant_device(x2.device) else None
     if e is None:
         return w4_linear(x, q, s, out_features, in_features) + residual
     bn, tn = sm70_w4_bn_tn_config(
