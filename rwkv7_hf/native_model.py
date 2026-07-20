@@ -862,6 +862,17 @@ def _step_token_batched_with_hidden(model, x, state, xpa, xpf, v_first):
 
     layer_hiddens = []
     for i, layer in enumerate(model.model.layers):
+        layer_device = layer.attn_norm.weight.device
+        if x.device != layer_device:
+            x = x.to(layer_device)
+        if state[i].device != layer_device:
+            state[i] = state[i].to(layer_device)
+        if xpa[i].device != layer_device:
+            xpa[i] = xpa[i].to(layer_device)
+        if xpf[i].device != layer_device:
+            xpf[i] = xpf[i].to(layer_device)
+        if v_first.device != layer_device:
+            v_first = v_first.to(layer_device)
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)
@@ -1970,6 +1981,35 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
 
         return self.rwkv7_native_model_last_prefill_backend()
 
+    def _rwkv7_has_multi_cuda_device_map(self) -> bool:
+        """Return whether Accelerate split this native model across CUDA GPUs."""
+
+        devices: set[tuple[str, int | None]] = set()
+        device_map = getattr(self, "hf_device_map", None)
+        if isinstance(device_map, dict) and device_map:
+            for value in device_map.values():
+                if isinstance(value, int):
+                    devices.add(("cuda", int(value)))
+                    continue
+                dev = (
+                    torch.device(value)
+                    if isinstance(value, str) and value != "disk"
+                    else None
+                )
+                if dev is not None and dev.type == "cuda":
+                    devices.add(("cuda", dev.index))
+            # ``hf_device_map`` is Accelerate's authoritative final placement.
+            # Returning here also keeps this predicate O(number of map entries)
+            # rather than walking every parameter on each decode token.
+            return len(devices) > 1
+
+        param_devices = {
+            (param.device.type, param.device.index)
+            for param in self.parameters()
+            if param.device.type == "cuda"
+        }
+        return len(param_devices) > 1
+
     def _native_prefill_can_run(
         self,
         input_ids: torch.Tensor | None,
@@ -1980,6 +2020,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         logits_to_keep,
     ) -> bool:
         if _native_model_backend_requested() == "eager":
+            return False
+        if self._rwkv7_has_multi_cuda_device_map():
             return False
         if self.training or torch.is_grad_enabled() or _native_jit_prefill is None:
             return False
@@ -2141,6 +2183,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         attention_mask: torch.Tensor | None,
         output_hidden_states: bool,
     ) -> bool:
+        if self._rwkv7_has_multi_cuda_device_map():
+            return False
         requested = _native_model_backend_requested()
         if requested not in {"auto", "native_graph"}:
             return False
@@ -2590,7 +2634,14 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         batch_size = int(inputs_embeds.shape[0] if inputs_embeds is not None else token_ids.shape[0])
         base = self.model
         x = None
-        packs = self._native_jit_packs() if use_jit and not output_hidden_states and attention_mask is None else None
+        packs = (
+            self._native_jit_packs()
+            if use_jit
+            and not self._rwkv7_has_multi_cuda_device_map()
+            and not output_hidden_states
+            and attention_mask is None
+            else None
+        )
         backend = "native_jit" if packs is not None else "eager"
         all_logits = [] if collect_all else None
         all_hidden = [] if collect_all or output_hidden_states else None

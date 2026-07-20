@@ -150,6 +150,25 @@ def _init_state_batched(model, batch_size: int, device, dtype):
 
 def _step_token_batched(model, x, state, xpa, xpf, v_first):
     for i, layer in enumerate(model.model.layers):
+        # Accelerate's pipeline ``device_map`` attaches placement hooks to a
+        # whole RWKV block.  The native recurrent loop intentionally calls the
+        # attention and FFN children directly, so the parent hook does not get
+        # a chance to move the hidden and recurrent tensors.  Follow the
+        # block's norm parameter here.  On ordinary single-device and ZeRO
+        # runs this is a no-op; on PP it performs exactly one transition at a
+        # device boundary and keeps every layer's recurrent cache colocated
+        # with that layer.
+        layer_device = layer.attn_norm.weight.device
+        if x.device != layer_device:
+            x = x.to(layer_device)
+        if state[i].device != layer_device:
+            state[i] = state[i].to(layer_device)
+        if xpa[i].device != layer_device:
+            xpa[i] = xpa[i].to(layer_device)
+        if xpf[i].device != layer_device:
+            xpf[i] = xpf[i].to(layer_device)
+        if v_first.device != layer_device:
+            v_first = v_first.to(layer_device)
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)
