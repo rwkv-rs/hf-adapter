@@ -118,7 +118,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
     Trainer = ds.single_group_trainer_cls(Trainer, torch)
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    dataset = ds.TokenDataset(tok, args.max_length, repeats=args.dataset_repeats)
+    effective_max_length = ds.stage_max_length(args, stage)
+    dataset = ds.TokenDataset(tok, effective_max_length, repeats=args.dataset_repeats)
     collator = ds.CausalCollator(tok)
 
     out_dir = shared_out_dir(args, stage)
@@ -212,7 +213,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         "first_steps": args.first_steps,
         "resume_steps": args.resume_steps,
         "dataset_repeats": args.dataset_repeats,
-        "max_length": args.max_length,
+        "requested_max_length": args.max_length,
+        "max_length": effective_max_length,
         "deepspeed_config": str(config_path),
         "checkpoint": Path(ckpt).name,
         "first_loss": first_loss,
@@ -245,6 +247,18 @@ def main() -> int:
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=16)
+    ap.add_argument(
+        "--zero2-max-length",
+        type=int,
+        default=0,
+        help="Explicit ZeRO-2 effective sequence length; 0 inherits --max-length",
+    )
+    ap.add_argument(
+        "--zero3-max-length",
+        type=int,
+        default=0,
+        help="Explicit ZeRO-3 effective sequence length; 0 inherits --max-length",
+    )
     ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--first-steps", type=int, default=1)
     ap.add_argument("--resume-steps", type=int, default=2)

@@ -268,6 +268,22 @@ def zero_config_path(config_dir: Path, stage: int) -> Path:
     return path
 
 
+def stage_max_length(args: argparse.Namespace, stage: int) -> int:
+    """Return the capacity profile length selected for a ZeRO stage.
+
+    ZeRO-3 gathers partitioned modules around every forward call.  The native
+    recurrent graph therefore has a different V100 smoke-test capacity curve
+    from ZeRO-2.  Keep ``--max-length`` as the requested/common length, while
+    allowing an acceptance matrix to declare an explicit per-stage effective
+    length instead of silently lowering it after an OOM.
+    """
+    value = int(getattr(args, f"zero{stage}_max_length", 0) or 0)
+    effective = value if value > 0 else int(args.max_length)
+    if effective <= 0:
+        raise ValueError(f"ZeRO-{stage} max length must be positive, got {effective}")
+    return effective
+
+
 def skip_row(args: argparse.Namespace, stage: int, reason: str) -> dict[str, Any]:
     return {
         "axis": "deepspeed_training_smoke",
@@ -283,6 +299,8 @@ def skip_row(args: argparse.Namespace, stage: int, reason: str) -> dict[str, Any
         "cuda_device_count": cuda_device_count(),
         "distributed_world_size": int(os.environ.get("WORLD_SIZE", "1")),
         "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
+        "requested_max_length": args.max_length,
+        "max_length": stage_max_length(args, stage),
     }
 
 
@@ -308,7 +326,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
     Trainer = single_group_trainer_cls(Trainer, torch)
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     model = load_lora_model(args.model, args.attn_mode, args.train_dtype)
-    dataset = TokenDataset(tok, args.max_length, repeats=args.dataset_repeats)
+    effective_max_length = stage_max_length(args, stage)
+    dataset = TokenDataset(tok, effective_max_length, repeats=args.dataset_repeats)
     collator = CausalCollator(tok)
     before = trainable_snapshot(model)
     assert before, "expected LoRA/trainable parameters"
@@ -364,7 +383,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
         "max_steps": args.max_steps,
         "dataset_repeats": args.dataset_repeats,
-        "max_length": args.max_length,
+        "requested_max_length": args.max_length,
+        "max_length": effective_max_length,
         "deepspeed_config": str(config_path),
         "train_loss": loss,
         "train_runtime_s": metric(metrics, "train_runtime"),
@@ -383,6 +403,18 @@ def main() -> int:
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)
+    ap.add_argument(
+        "--zero2-max-length",
+        type=int,
+        default=0,
+        help="Explicit ZeRO-2 effective sequence length; 0 inherits --max-length",
+    )
+    ap.add_argument(
+        "--zero3-max-length",
+        type=int,
+        default=0,
+        help="Explicit ZeRO-3 effective sequence length; 0 inherits --max-length",
+    )
     ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--max-steps", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=1)
