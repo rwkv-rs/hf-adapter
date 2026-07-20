@@ -183,6 +183,7 @@ run_larger_smoke() {
     --device "${DEVICE}" \
     --fuse-norm false \
     --batch-sizes 1 2 4 \
+    --fast-token-backends auto \
     --decode-steps 32 \
     --max-diff 0.2
 

@@ -157,7 +157,7 @@ def main() -> int:
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4])
     ap.add_argument("--fast-token-layouts", nargs="+", default=["3d"], choices=["3d", "2d"],
                     help="Fast-token tensor layouts to validate; 3d is the current production baseline")
-    ap.add_argument("--fast-token-backends", nargs="+", default=["fla"], choices=["auto", "fla", "native_jit", "native_graph"],
+    ap.add_argument("--fast-token-backends", nargs="+", default=["auto"], choices=["auto", "fla", "native_jit", "native_graph"],
                     help="Fast-token backends to validate; auto picks native_graph/native_jit/fla in that order when available")
     args = ap.parse_args()
 
