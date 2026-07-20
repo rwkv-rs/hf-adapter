@@ -257,8 +257,12 @@ def metric(metrics: dict[str, Any], key: str) -> float | None:
     return float(value) if value is not None else None
 
 
-def zero_config_path(config_dir: Path, stage: int) -> Path:
-    path = config_dir / f"zero{stage}.json"
+def zero_config_path(config_dir: Path, stage: int, override: str = "") -> Path:
+    if override:
+        requested = Path(override)
+        path = requested if requested.is_absolute() else config_dir / requested
+    else:
+        path = config_dir / f"zero{stage}.json"
     if not path.exists():
         raise FileNotFoundError(f"DeepSpeed config not found: {path}")
     cfg = json.loads(path.read_text(encoding="utf-8"))
@@ -305,7 +309,11 @@ def skip_row(args: argparse.Namespace, stage: int, reason: str) -> dict[str, Any
 
 
 def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
-    config_path = zero_config_path(Path(args.config_dir), stage)
+    config_path = zero_config_path(
+        Path(args.config_dir),
+        stage,
+        getattr(args, f"zero{stage}_config", ""),
+    )
     ensure_single_process_distributed_env()
     if importlib.util.find_spec("deepspeed") is None:
         if args.optional:
@@ -401,6 +409,8 @@ def main() -> int:
     ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--config-dir", default="configs/deepspeed")
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
+    ap.add_argument("--zero2-config", default="", help="Optional ZeRO-2 config path, relative to --config-dir")
+    ap.add_argument("--zero3-config", default="", help="Optional ZeRO-3 config path, relative to --config-dir")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)
     ap.add_argument(

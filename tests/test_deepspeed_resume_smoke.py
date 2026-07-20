@@ -109,7 +109,11 @@ def make_args(TrainingArguments: Any, out_dir: str, max_steps: int, batch_size: 
 
 
 def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
-    config_path = ds.zero_config_path(Path(args.config_dir), stage)
+    config_path = ds.zero_config_path(
+        Path(args.config_dir),
+        stage,
+        getattr(args, f"zero{stage}_config", ""),
+    )
     ds.ensure_single_process_distributed_env()
     ds_error = ds.deepspeed_import_error()
     if ds_error:
@@ -245,6 +249,8 @@ def main() -> int:
     ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--config-dir", default="configs/deepspeed")
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
+    ap.add_argument("--zero2-config", default="", help="Optional ZeRO-2 config path, relative to --config-dir")
+    ap.add_argument("--zero3-config", default="", help="Optional ZeRO-3 config path, relative to --config-dir")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=16)
     ap.add_argument(
