@@ -6,7 +6,10 @@ import torch.nn.functional as F
 import pytest
 
 import rwkv7_hf.ada_sparse_ffn as sparse_ffn_module
-from rwkv7_hf.native_jit import _native_graph_relayout_ffn_value_weight
+from rwkv7_hf.native_jit import (
+    _native_graph_maybe_relayout_ffn_value_weight,
+    _native_graph_relayout_ffn_value_weight,
+)
 from rwkv7_hf.ada_sparse_ffn import (
     ada_ffn_up,
     ada_ffn_up_should_use,
@@ -159,3 +162,12 @@ def test_low_memory_ffn_relayout_reuses_transposed_storage() -> None:
     torch.testing.assert_close(F.linear(inputs, weight), expected)
     assert list(linear.state_dict()) == ["weight"]
     assert _native_graph_relayout_ffn_value_weight(linear) is weight
+
+
+def test_low_memory_ffn_relayout_skips_packed_quant_module() -> None:
+    # MM8/MM4/BnB modules intentionally have no dense ``.weight`` API. Use a
+    # minimal packed-module stand-in so this regression stays CPU-only.
+    packed = torch.nn.Module()
+
+    assert not hasattr(packed, "weight")
+    assert _native_graph_maybe_relayout_ffn_value_weight(packed) is False
