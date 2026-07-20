@@ -957,16 +957,16 @@
       "source": "rwkv7_hf/native_jit_bnb8.py"
     },
     {
+      "adaptation": "adapted native decode W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path",
       "destination": "rwkv7_kernels/nvidia/native_jit_decode.py",
       "destination_sha256": "1a8969c19eea1ea790a2866fb44ead4da1736f85dc93e1c7aca663f342886e13",
       "disposition": "adapted_protocol",
       "git_blob": "9f253f5d205f5abd303ce718cf9f125eafeecb36",
       "git_mode": "100644",
-      "source": "rwkv7_hf/native_jit_decode.py",
-      "adaptation": "adapted native decode W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path",
       "replacements": [
         "rwkv7_kernels/nvidia/native_jit_decode.py"
-      ]
+      ],
+      "source": "rwkv7_hf/native_jit_decode.py"
     },
     {
       "destination": "rwkv7_kernels/nvidia/native_jit_dense_step.py",
@@ -1009,16 +1009,16 @@
       "source": "rwkv7_hf/native_jit_packing.py"
     },
     {
+      "adaptation": "adapted native prefill W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path; fixed-row projections and row-serialized B>1 recurrent scans preserve batch-invariant HF evaluation semantics",
       "destination": "rwkv7_kernels/nvidia/native_jit_prefill.py",
       "destination_sha256": "7be6540147f30d68112de42b0856757e1d1c519c143f82083d2b81892f94353f",
       "disposition": "adapted_protocol",
       "git_blob": "bb8f3141b60922a50b4caec363068f8670390e96",
       "git_mode": "100644",
-      "source": "rwkv7_hf/native_jit_prefill.py",
-      "adaptation": "adapted native prefill W-LoRA packing and routing to preserve the clean FP32 decay-bias addition; incompatible same-dtype fused raw-decay lanes fall back to the canonical decay path; fixed-row projections and row-serialized B>1 recurrent scans preserve batch-invariant HF evaluation semantics",
       "replacements": [
         "rwkv7_kernels/nvidia/native_jit_prefill.py"
-      ]
+      ],
+      "source": "rwkv7_hf/native_jit_prefill.py"
     },
     {
       "destination": "rwkv7_kernels/nvidia/native_jit_prefill_policy.py",
@@ -1274,9 +1274,9 @@
       "source": "rwkv7_hf/train_temp_alignment.py"
     },
     {
-      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF value/a/key/GroupNorm/direct/gate math around the fused recurrence, compile the recurrent operator independently without FMA contraction, use the native CUDA backward for standard detached-state training, and replay canonical recurrence only for returned-state and initial-state gradient contributions",
+      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF value/a/key/GroupNorm/direct/gate math around the fused recurrence, compile the recurrent operator independently without FMA contraction, use the native CUDA backward for standard detached-state training, and replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers",
       "destination": "rwkv7_kernels/nvidia/train_temp_cuda.py",
-      "destination_sha256": "de326f0563adb9671e75e03d17bd961da69dc0bd366f1d6144e872eb8b29aebd",
+      "destination_sha256": "5792874959100ebfc524a9615331c70dce6f1e788bc5dca108e38302eddc6ce8",
       "disposition": "adapted_protocol",
       "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
       "git_mode": "100644",

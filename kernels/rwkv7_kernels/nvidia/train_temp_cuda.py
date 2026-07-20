@@ -109,20 +109,23 @@ def _source_root() -> Path:
 def _cuda_include_paths(
     cuda_home: str | os.PathLike[str], *, include_target: bool = False
 ) -> list[str]:
-    """Resolve both conventional and pip-split CUDA development headers."""
+    """Resolve conventional and pip-split CUDA development headers.
+
+    A reproducible compiler overlay may intentionally contain only the CUDA
+    compiler and core runtime headers.  PyTorch's pip CUDA packages then own
+    library-specific headers such as ``cusparse.h``.  Keep the overlay first,
+    but always append the installed ``nvidia/*/include`` directories so a
+    partial overlay cannot hide the complementary development packages.
+    """
 
     home = Path(cuda_home)
     candidates = [home / "include"]
     if include_target:
         candidates.append(home / "targets" / "x86_64-linux" / "include")
-    toolkit_headers = any(
-        (candidate / "cuda_runtime.h").is_file() for candidate in candidates
-    )
-    if not toolkit_headers:
-        site_packages = Path(torch.__file__).resolve().parent.parent
-        nvidia_packages = site_packages / "nvidia"
-        if nvidia_packages.is_dir():
-            candidates.extend(sorted(nvidia_packages.glob("*/include")))
+    site_packages = Path(torch.__file__).resolve().parent.parent
+    nvidia_packages = site_packages / "nvidia"
+    if nvidia_packages.is_dir():
+        candidates.extend(sorted(nvidia_packages.glob("*/include")))
     resolved: list[str] = []
     for candidate in candidates:
         value = str(candidate)

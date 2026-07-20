@@ -469,6 +469,31 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
     assert "train_temp._CMix.apply(" not in source
 
 
+def test_train_temp_include_paths_merge_partial_overlay_and_pip_headers(
+    tmp_path, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    overlay = tmp_path / "cuda"
+    overlay_include = overlay / "include"
+    overlay_include.mkdir(parents=True)
+    (overlay_include / "cuda_runtime.h").write_text("// core CUDA header\n")
+
+    site_packages = tmp_path / "site-packages"
+    torch_root = site_packages / "torch"
+    torch_root.mkdir(parents=True)
+    torch_init = torch_root / "__init__.py"
+    torch_init.write_text("# synthetic torch package root\n")
+    cusparse_include = site_packages / "nvidia" / "cusparse" / "include"
+    cusparse_include.mkdir(parents=True)
+    (cusparse_include / "cusparse.h").write_text("// split CUDA header\n")
+    monkeypatch.setattr(train_temp.torch, "__file__", str(torch_init))
+
+    include_paths = train_temp._cuda_include_paths(overlay)
+
+    assert include_paths == [str(overlay_include), str(cusparse_include)]
+
+
 def test_train_temp_decay_operand_privately_adds_fp32_public_bias(
     tiny_config, monkeypatch
 ):
