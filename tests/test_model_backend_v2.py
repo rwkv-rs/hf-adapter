@@ -419,19 +419,7 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
         output, _state, _shift, v_first = module(hidden, state, shift, v_first, mask)
         return output, v_first
 
-    class FakeCMix:
-        @staticmethod
-        def apply(hidden, x_k, key_weight, value_weight):
-            shifted = torch.cat(
-                (torch.zeros_like(hidden[:, :1]), hidden[:, :-1]), dim=1
-            )
-            mixed = hidden + (shifted - hidden) * x_k.view(1, 1, -1)
-            return F.linear(
-                torch.relu(F.linear(mixed, key_weight)).square(), value_weight
-            )
-
     monkeypatch.setattr(train_temp, "_train_temp_attention_forward", attention_forward)
-    monkeypatch.setattr(train_temp, "_CMix", FakeCMix)
 
     torch.manual_seed(113)
     reference = RWKV7ForCausalLM(tiny_config).train()
@@ -465,8 +453,50 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
         reference.model.layers[0].attn.r_proj.weight.grad,
     )
     source = Path(runtime.__file__).read_text()
-    assert "ffn_output, _ = layer.ffn(" in source
+    assert "ffn_output = channel_mix(layer.ffn, ffn_input)" in source
+    assert "full_logits = module_linear(owner.lm_head, hidden_states)" in source
+    assert "layer.ffn(" not in source
     assert "train_temp._CMix.apply(" not in source
+
+
+def test_native_training_math_matches_clean_fixed_row_contract(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    training_math = importlib.import_module("rwkv7_kernels.nvidia.training_math")
+
+    torch.manual_seed(127)
+    model = RWKV7ForCausalLM(tiny_config).train()
+    value = torch.randn(3, 17, tiny_config.hidden_size)
+    projection = model.model.layers[0].attn.r_proj
+
+    expected = projection(value)
+    actual = training_math.module_linear(projection, value)
+    repeated = training_math.module_linear(projection, value.repeat(3, 1, 1))
+
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(actual, repeated[:3], rtol=0, atol=0)
+
+
+def test_native_training_channel_mix_does_not_reenter_linear_dispatch(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    training_math = importlib.import_module("rwkv7_kernels.nvidia.training_math")
+
+    torch.manual_seed(131)
+    channel = RWKV7ForCausalLM(tiny_config).train().model.layers[0].ffn
+    value = torch.randn(2, 9, tiny_config.hidden_size)
+    mask = torch.ones(2, 9, dtype=torch.bool)
+    shift = torch.zeros(2, tiny_config.hidden_size)
+    expected, _ = channel(value, shift, mask)
+
+    def reject_nested_dispatch(*_args, **_kwargs):
+        raise AssertionError("native training recursively called RWKV7Linear.forward")
+
+    monkeypatch.setattr(RWKV7Linear, "forward", reject_nested_dispatch)
+    actual = training_math.channel_mix(channel, value)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
 def test_train_temp_include_paths_merge_partial_overlay_and_pip_headers(
@@ -521,9 +551,9 @@ def test_train_temp_decay_operand_privately_adds_fp32_public_bias(
     assert '"--fmad=false"' in source
     assert "torch.ops.rwkv7_clampw_v3.backward" in source
     assert "_recurrent_decay_reference(" in source
-    assert "a = torch.sigmoid(self.a_lora.project(xa))" in source
+    assert "a = torch.sigmoid(low_rank_projection(self.a_lora, xa))" in source
     assert "normalized_key = F.normalize(" in source
-    assert "value_mix = torch.sigmoid(self.v_lora.project(xv))" in source
+    assert "value_mix = torch.sigmoid(low_rank_projection(self.v_lora, xv))" in source
 
 
 def test_recurrent_training_replay_matches_reference_full_gradient(monkeypatch):

@@ -2421,3 +2421,28 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `results/kernel-migration/4080-training-stable-4bbe5f9e`. It is explicitly
   labeled a stable-version candidate, not immutable final-release evidence;
   final archives are built only after the RTX 4080 and RTX 4090 gates close.
+
+### 2026-08-29 — native training nested-dispatch correction
+
+- Stable candidate `8397dec0` proved that the reproducible CUDA overlay now
+  compiles every train_temp extension, then retained a second strict-runtime
+  failure: the native whole-model path called `RWKV7Linear.forward` for its
+  internal projections. Small LoRA/projection shapes correctly decline the
+  independent flattened-linear leaf, but global strict mode promoted that
+  deliberate leaf fallback into a failure of the otherwise supported native
+  request. The failed artifact remains at
+  `/home/wzu/codex-run/results/rwkv7-v1.0.0-8397dec0/4080/train-temp-diagnostic`.
+- Added the private, structurally typed
+  `rwkv7_kernels.nvidia.training_math` helpers. The whole-model runtime now
+  evaluates TMix projections, low-rank gates, ChannelMix, and the LM head with
+  the same fixed-128-row canonical PyTorch contract without importing model
+  classes, mutating environment state, monkeypatching forwards, or recursively
+  entering an optional leaf dispatcher. Parameters and their autograd edges
+  remain owned by the clean HF model.
+- Naming and comments describe mathematical ownership rather than a device or
+  model duplicate. Focused tests prove byte-exact agreement with the clean
+  fixed-row linear/ChannelMix contract and explicitly fail on any nested
+  `RWKV7Linear.forward` call. The complete local gate passes **209 tests** with
+  289 expected TorchScript deprecation warnings; targeted Ruff and
+  `git diff --check` pass. RTX 4080 strict train_temp confirmation is pending a
+  rebuilt immutable wheel; the `8397dec0` wheel must not be promoted.

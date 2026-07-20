@@ -18,6 +18,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from .training_math import low_rank_projection, module_linear
+
 
 TRAIN_TEMP_SOURCE_COMMIT = "e6f74b63a06e08606d130043599d218209628bad"
 TRAIN_TEMP_HEAD_SIZE = 64
@@ -763,13 +765,22 @@ def _train_temp_attention_forward(
         self.x_a.reshape(-1),
         self.x_g.reshape(-1),
     )
-    r = self.r_proj(xr)
+    # This private whole-model runtime owns the complete TMix calculation.
+    # Calling RWKV7Linear.forward here would recursively enter the optional
+    # training-leaf dispatcher, where small LoRA projections are intentionally
+    # unsupported even though the enclosing native request is valid.
+    r = module_linear(self.r_proj, xr)
     if native_lora_math:
         decay_projection = self.w_lora.lora[2]
         # The clean HF model deliberately keeps the official w0 bias and decay
         # transform in FP32. The adapted private kernel accepts that FP32 decay
         # directly, preserving the public parameter and its autograd edge.
-        raw_decay = self.w_lora.project_without_bias(xw, torch.tanh)
+        raw_decay = low_rank_projection(
+            self.w_lora,
+            xw,
+            activation=torch.tanh,
+            include_bias=False,
+        )
         decay_bias = decay_projection.bias
         decay_logits = (
             raw_decay.float()
@@ -778,26 +789,26 @@ def _train_temp_attention_forward(
         )
         decay = torch.exp(-0.6065306597 * torch.sigmoid(decay_logits))
     else:
-        decay_logits = self.w_lora(xw).float()
+        decay_logits = low_rank_projection(self.w_lora, xw).float()
         decay = torch.exp(-0.6065306597 * torch.sigmoid(decay_logits))
-    k = self.k_proj(xk)
-    v = self.v_proj(xv)
+    k = module_linear(self.k_proj, xk)
+    v = module_linear(self.v_proj, xv)
     if self.layer_idx == 0:
         v_first = v
     else:
         # Keep the small value-residual gate in canonical HF math. The
         # historical fused gate changes the BF16 rounding point before the
         # sigmoid, and the difference compounds across layers during training.
-        value_mix = torch.sigmoid(self.v_lora.project(xv))
+        value_mix = torch.sigmoid(low_rank_projection(self.v_lora, xv))
         v = v + (v_first - v) * value_mix
     # The preparation gates are a tiny fraction of layer time but sit on every
     # recurrent update. Preserve their canonical BF16 rounding points instead
     # of compounding the historical fused-gate approximation over all layers.
-    a = torch.sigmoid(self.a_lora.project(xa))
+    a = torch.sigmoid(low_rank_projection(self.a_lora, xa))
     g = (
-        self.g_lora.lora[2](torch.sigmoid(self.g_lora.lora[0](xg)))
+        low_rank_projection(self.g_lora, xg, activation=torch.sigmoid)
         if native_lora_math
-        else self.g_lora(xg)
+        else low_rank_projection(self.g_lora, xg)
     )
     batch, tokens, _ = r.shape
     heads = int(self.num_heads)
@@ -851,7 +862,7 @@ def _train_temp_attention_forward(
         batch, tokens, heads, head_dim
     )
     values = (normalized + direct).reshape(batch, tokens, -1) * g
-    return self.o_proj(values), v_first
+    return module_linear(self.o_proj, values), v_first
 
 
 

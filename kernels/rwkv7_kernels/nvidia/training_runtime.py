@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 
 from . import train_temp_cuda as train_temp
+from .training_math import channel_mix, module_linear
 
 
 IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
@@ -45,16 +46,9 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
         )
         hidden = residual + attention_output
         ffn_input = layer.ffn_norm(hidden)
-        # Preserve the canonical fixed-row HF linear contract for ChannelMix.
-        # The historical CMix leaf performs a differently shaped GEMM; its
-        # small BF16 rounding difference compounds over the complete model.
-        ffn_output, _ = layer.ffn(
-            ffn_input,
-            ffn_input.new_zeros(ffn_input.shape[0], ffn_input.shape[-1]),
-            torch.ones(
-                ffn_input.shape[:2], dtype=torch.bool, device=ffn_input.device
-            ),
-        )
+        # Preserve the canonical fixed-row HF ChannelMix contract without
+        # recursively entering the optional stateless-linear dispatcher.
+        ffn_output = channel_mix(layer.ffn, ffn_input)
         return hidden + ffn_output, first_value
 
     checkpointing = bool(request.get("gradient_checkpointing"))
@@ -71,7 +65,7 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
             hidden_states, v_first = run_layer(layer, hidden_states, v_first)
 
     hidden_states = owner.model.norm(hidden_states)
-    full_logits = owner.lm_head(hidden_states)
+    full_logits = module_linear(owner.lm_head, hidden_states)
     labels = request.get("labels")
     loss = None
     if labels is not None:

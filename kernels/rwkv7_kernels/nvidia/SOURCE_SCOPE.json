@@ -1274,9 +1274,9 @@
       "source": "rwkv7_hf/train_temp_alignment.py"
     },
     {
-      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF value/a/key/GroupNorm/direct/gate math around the fused recurrence, compile the recurrent operator independently without FMA contraction, use the native CUDA backward for standard detached-state training, and replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers",
+      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF fixed-row projection/value/a/key/GroupNorm/direct/gate math around the fused recurrence without recursively entering leaf dispatch, compile the recurrent operator independently without FMA contraction, use the native CUDA backward for standard detached-state training, replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers",
       "destination": "rwkv7_kernels/nvidia/train_temp_cuda.py",
-      "destination_sha256": "5792874959100ebfc524a9615331c70dce6f1e788bc5dca108e38302eddc6ce8",
+      "destination_sha256": "316b17906959560dc2cd4ce2e8e0fec2ce71e45037c1355cf60d7a69e434528f",
       "disposition": "adapted_protocol",
       "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
       "git_mode": "100644",
