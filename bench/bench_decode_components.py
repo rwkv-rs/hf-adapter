@@ -22,7 +22,6 @@ os.environ.setdefault("RWKV_V7_ON", "1")
 
 import torch
 import torch.nn.functional as F
-from fla.ops.rwkv7.fused_recurrent import fused_mul_recurrent_rwkv7
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
@@ -156,23 +155,40 @@ def attn_one_components(attn, hidden_states: torch.Tensor, state: dict[str, Any]
         )
         k = k.addcmul(k * (a - 1), attn.k_a)
         r, w, k, a = (t.view(batch_size, seq_len, num_heads, head_dim) for t in (r, w, k, a))
-        v = v.view(batch_size, seq_len, num_heads, attn.head_v_dim)
+        # The wrapper model exposes ``head_v_dim``/``value_dim`` while the
+        # fully-native HF model names the same width ``attention_hidden_size``.
+        # Derive it from the projection output so this diagnostic follows both
+        # model layouts without adding benchmark-only aliases to production.
+        head_v_dim = int(v.shape[-1]) // num_heads
+        v = v.view(batch_size, seq_len, num_heads, head_v_dim)
 
     with timer.section(f"{prefix}.attn_recurrent"):
-        o, recurrent_state = fused_mul_recurrent_rwkv7(
-            r=r,
-            w=w,
-            k=k,
-            v=v,
-            kk=kk,
-            a=a,
-            scale=1.0,
-            initial_state=state.get("recurrent_state"),
-            output_final_state=True,
+        # One-token official RWKV-7 DPLR recurrence.  Keep this benchmark
+        # FLA-free: it measures the native eager components and must remain
+        # runnable in the base ``rwkv7-hf-adapter`` installation where FLA is
+        # an optional reference dependency.
+        r_one, w_one, k_one, v_one, kk_one, a_one = (
+            tensor[:, 0] for tensor in (r, w, k, v, kk, a)
         )
+        recurrent_state = state.get("recurrent_state")
+        if recurrent_state is None:
+            recurrent_state = torch.zeros(
+                batch_size,
+                num_heads,
+                head_v_dim,
+                head_dim,
+                device=hidden_states.device,
+                dtype=torch.float32,
+            )
+        decay = torch.exp(w_one.float()).view(batch_size, num_heads, 1, head_dim)
+        vk = v_one.unsqueeze(-1) @ k_one.unsqueeze(-2)
+        ab = (-kk_one).unsqueeze(-1) @ (kk_one * a_one).unsqueeze(-2)
+        recurrent_state = recurrent_state * decay + recurrent_state @ ab.float() + vk.float()
+        o = (recurrent_state.to(r_one.dtype) @ r_one.unsqueeze(-1)).squeeze(-1).unsqueeze(1)
 
     with timer.section(f"{prefix}.attn_norm_out_proj"):
-        o = attn.g_norm(o.reshape(batch_size * seq_len, attn.value_dim)).view(batch_size, seq_len, attn.value_dim)
+        value_dim = int(o.shape[-2] * o.shape[-1])
+        o = attn.g_norm(o.reshape(batch_size * seq_len, value_dim)).view(batch_size, seq_len, value_dim)
         correction = ((r * k * attn.r_k.view(1, 1, num_heads, head_dim)).sum(-1, keepdim=True) * v).reshape(o.shape)
         o = attn.o_proj((o + correction) * g)
     return o, recurrent_state, hidden_states[:, -1], v_first
@@ -194,6 +210,41 @@ def ffn_one_components(ffn, hidden_states: torch.Tensor, state: dict[str, Any], 
     return out, hidden_states[:, -1]
 
 
+def cache_layer_state(past_key_values, layer_idx: int) -> tuple[dict[str, Any], bool]:
+    """Return a mutable layer view for wrapper and fully-native caches.
+
+    ``RWKV7StateCache`` stores dictionaries and exposes ``_ensure_layer``.
+    ``NativeRWKV7Cache`` intentionally stores four compact parallel values:
+    recurrent states, attention shift states, FFN shift states, and v_first.
+    This benchmark decomposes the eager math, so it adapts that compact layout
+    locally instead of requiring a legacy private method in production code.
+    """
+
+    ensure_layer = getattr(past_key_values, "_ensure_layer", None)
+    if callable(ensure_layer):
+        return ensure_layer(layer_idx), False
+    recurrent = getattr(past_key_values, "_state", None)
+    attn_shift = getattr(past_key_values, "_xpa", None)
+    ffn_shift = getattr(past_key_values, "_xpf", None)
+    if recurrent is None or attn_shift is None or ffn_shift is None:
+        raise TypeError(
+            f"Unsupported recurrent cache type {type(past_key_values).__name__}: "
+            "expected RWKV7StateCache or NativeRWKV7Cache layout"
+        )
+    return {
+        "recurrent_state": recurrent[layer_idx],
+        "attn_state": None,
+        "conv_state": attn_shift[layer_idx],
+        "ffn_state": ffn_shift[layer_idx],
+    }, True
+
+
+def store_native_cache_layer(past_key_values, layer_idx: int, state: dict[str, Any]) -> None:
+    past_key_values._state[layer_idx] = state["recurrent_state"]
+    past_key_values._xpa[layer_idx] = state["conv_state"]
+    past_key_values._xpf[layer_idx] = state["ffn_state"]
+
+
 def instrumented_forward_token(model, input_ids: torch.Tensor, past_key_values, timer: SectionTimer):
     if input_ids.dim() == 1:
         token = input_ids
@@ -204,11 +255,16 @@ def instrumented_forward_token(model, input_ids: torch.Tensor, past_key_values, 
 
     with timer.section("embedding"):
         x = model.model.embeddings(token.view(-1, 1))
+    native_layout = not callable(getattr(past_key_values, "_ensure_layer", None))
+    if native_layout:
+        invalidate = getattr(past_key_values, "_invalidate_native_graph_binding", None)
+        if callable(invalidate):
+            invalidate()
     v_first = None
     for layer_idx, layer in enumerate(model.model.layers):
         prefix = f"layer_{layer_idx:02d}"
         with timer.section(f"{prefix}.total"):
-            state = past_key_values._ensure_layer(layer_idx)
+            state, native_layer = cache_layer_state(past_key_values, layer_idx)
             with timer.section(f"{prefix}.pre_attn_norm"):
                 residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
                 attn_input = layer.attn_norm(residual)
@@ -225,9 +281,13 @@ def instrumented_forward_token(model, input_ids: torch.Tensor, past_key_values, 
                 state["conv_state"] = conv_state
                 state["ffn_state"] = ffn_state
                 state["attn_state"] = None
+                if native_layer:
+                    store_native_cache_layer(past_key_values, layer_idx, state)
     with timer.section("final_norm_lm_head"):
         hidden_states = model.model.norm(x)
         logits = model.lm_head(hidden_states)
+    if native_layout:
+        past_key_values._v_first = v_first
     past_key_values._seen_tokens += 1
     return logits, past_key_values
 
