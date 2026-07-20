@@ -139,6 +139,15 @@ def peak_mb(device: str) -> float | None:
     return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
 
 
+def benchmark_identity(hf_dir: str, model_size_label: str | None) -> dict[str, str | None]:
+    """Stable model identity fields required by cross-run acceptance gates."""
+
+    return {
+        "hf_model_dir": str(Path(hf_dir).expanduser().resolve()),
+        "model_size_label": model_size_label,
+    }
+
+
 def summarize_iteration_times(times_ms: list[float], batch_size: int) -> dict[str, float]:
     if not times_ms:
         raise ValueError("at least one iteration time is required")
@@ -250,6 +259,7 @@ def run_backend(args, model, ids: torch.Tensor, *, backend: str) -> dict[str, An
     }
     row = {
         "axis": "native_model_decode",
+        **benchmark_identity(args.hf_dir, args.model_size_label),
         "backend": "hf_native_model",
         "decode_backend": backend,
         "effective_decode_backend": first_backend,
@@ -284,6 +294,11 @@ def run_backend(args, model, ids: torch.Tensor, *, backend: str) -> dict[str, An
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument(
+        "--model-size-label",
+        default=None,
+        help="Stable model label written to JSONL for multi-checkpoint gates.",
+    )
     ap.add_argument("--dtype", default="fp32", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--prompt-tokens", type=int, default=32)

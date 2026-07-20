@@ -3,6 +3,7 @@ import os
 import torch
 
 from bench.bench_native_model_decode import (
+    benchmark_identity,
     greedy_trace_sha256,
     requested_extension_status,
     summarize_iteration_times,
@@ -127,3 +128,15 @@ def test_greedy_trace_hash_is_canonical_and_batch_sensitive() -> None:
     first = greedy_trace_sha256([[1, 2], [1, 2]])
     assert first == greedy_trace_sha256([[1, 2], [1, 2]])
     assert first != greedy_trace_sha256([[1, 2], [1, 3]])
+
+
+def test_native_decode_rows_include_stable_model_identity(tmp_path) -> None:
+    model_dir = tmp_path / "rwkv7-g1g-2.9b-hf"
+    model_dir.mkdir()
+
+    identity = benchmark_identity(str(model_dir), "2.9b")
+
+    assert identity == {
+        "hf_model_dir": str(model_dir.resolve()),
+        "model_size_label": "2.9b",
+    }
