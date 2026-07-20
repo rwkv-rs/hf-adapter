@@ -33,6 +33,7 @@ from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import AutoTokenizer
 
 from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+from rwkv7_hf.training_precision import merged_logits_pass
 
 
 def device_map_for(device: str):
@@ -131,6 +132,20 @@ def logits_for(model, tokenizer, text: str) -> torch.Tensor:
     return logits
 
 
+def logit_metrics(reference: torch.Tensor, candidate: torch.Tensor) -> dict[str, float]:
+    diff = (reference - candidate).abs()
+    lhs = reference.reshape(-1).double()
+    rhs = candidate.reshape(-1).double()
+    cosine = float(F.cosine_similarity(lhs.unsqueeze(0), rhs.unsqueeze(0)).item())
+    top1 = reference.argmax(dim=-1) == candidate.argmax(dim=-1)
+    return {
+        "max_abs": float(diff.max().item()),
+        "mean_abs": float(diff.mean().item()),
+        "cosine": cosine,
+        "top1_match_rate": float(top1.float().mean().item()),
+    }
+
+
 def generate_tail(model, tokenizer, text: str, tokens: int = 2) -> list[int]:
     model.eval()
     dev = first_param_device(model)
@@ -175,6 +190,9 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=2)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--max-logit-diff", type=float, default=1e-4)
+    ap.add_argument("--fp16-merge-max-abs", type=float, default=0.5)
+    ap.add_argument("--fp16-merge-max-mean-abs", type=float, default=0.05)
+    ap.add_argument("--fp16-merge-min-cosine", type=float, default=0.9999)
     ap.add_argument("--results", default="")
     args = ap.parse_args()
 
@@ -210,23 +228,24 @@ def main() -> int:
         fresh = load_native(args.model, dtype, args.device)
         reloaded = PeftModel.from_pretrained(fresh, adapter_dir)
         reload_logits = logits_for(reloaded, tok, "User: Hello.\n\nAssistant:")
-        reload_diff = float((ref_logits - reload_logits).abs().max().item())
+        reload_metrics = logit_metrics(ref_logits, reload_logits)
 
         # Exercise reversible in-place merge before the destructive
         # merge_and_unload path. Both directions must preserve the trained
         # adapter function within the declared tolerance.
         reloaded.merge_adapter()
         merged_inplace_logits = logits_for(reloaded, tok, "User: Hello.\n\nAssistant:")
-        merged_inplace_diff = float((ref_logits - merged_inplace_logits).abs().max().item())
+        merged_inplace_metrics = logit_metrics(ref_logits, merged_inplace_logits)
         reloaded.unmerge_adapter()
         unmerged_logits = logits_for(reloaded, tok, "User: Hello.\n\nAssistant:")
-        unmerge_diff = float((ref_logits - unmerged_logits).abs().max().item())
+        unmerge_metrics = logit_metrics(ref_logits, unmerged_logits)
 
         reloaded_tail = generate_tail(reloaded, tok, "User: Hello.\n\nAssistant:")
 
         merged = reloaded.merge_and_unload()
         merge_logits = logits_for(merged, tok, "User: Hello.\n\nAssistant:")
-        merge_diff = float((ref_logits - merge_logits).abs().max().item())
+        merge_metrics = logit_metrics(ref_logits, merge_logits)
+        merged_tail = generate_tail(merged, tok, "User: Hello.\n\nAssistant:")
 
         del fresh, reloaded, merged
         release_cuda()
@@ -238,13 +257,26 @@ def main() -> int:
         ).eval()
         generated_tail = generate_tail(reloaded_for_generate, tok, "User: Hello.\n\nAssistant:")
 
-    greedy_match = trained_tail == reloaded_tail == generated_tail
+    greedy_match = trained_tail == reloaded_tail == generated_tail == merged_tail
+    # Merging FP32 LoRA deltas into FP16 base weights necessarily rounds the
+    # base tensor, and merge->unmerge cannot be bitwise reversible. Gate that
+    # production path by bounded error, direction, and exact per-position
+    # argmax rather than applying the FP32 serialization threshold to it.
+    bounded_merge = all(
+        merged_logits_pass(
+            metrics,
+            dtype=args.dtype,
+            strict_max_abs=args.max_logit_diff,
+            fp16_max_abs=args.fp16_merge_max_abs,
+            fp16_max_mean_abs=args.fp16_merge_max_mean_abs,
+            fp16_min_cosine=args.fp16_merge_min_cosine,
+        )
+        for metrics in (merged_inplace_metrics, unmerge_metrics, merge_metrics)
+    )
     ok = (
         trained_vs_base_diff > 0.0
-        and reload_diff <= args.max_logit_diff
-        and merged_inplace_diff <= args.max_logit_diff
-        and unmerge_diff <= args.max_logit_diff
-        and merge_diff <= args.max_logit_diff
+        and reload_metrics["max_abs"] <= args.max_logit_diff
+        and bounded_merge
         and greedy_match
     )
     row = {
@@ -261,14 +293,26 @@ def main() -> int:
         "train_loss": loss,
         "trainable_parameters": trainable,
         "trained_vs_base_logits_max_abs": trained_vs_base_diff,
-        "reload_logits_max_abs": reload_diff,
-        "merge_inplace_logits_max_abs": merged_inplace_diff,
-        "unmerge_logits_max_abs": unmerge_diff,
-        "merge_logits_max_abs": merge_diff,
+        "reload_logits": reload_metrics,
+        "merge_inplace_logits": merged_inplace_metrics,
+        "unmerge_logits": unmerge_metrics,
+        "merge_logits": merge_metrics,
+        # Stable aliases retained for existing result consumers.
+        "reload_logits_max_abs": reload_metrics["max_abs"],
+        "merge_inplace_logits_max_abs": merged_inplace_metrics["max_abs"],
+        "unmerge_logits_max_abs": unmerge_metrics["max_abs"],
+        "merge_logits_max_abs": merge_metrics["max_abs"],
         "max_logit_diff": args.max_logit_diff,
+        "fp16_merge_thresholds": {
+            "max_abs": args.fp16_merge_max_abs,
+            "max_mean_abs": args.fp16_merge_max_mean_abs,
+            "min_cosine": args.fp16_merge_min_cosine,
+            "top1_match_rate": 1.0,
+        },
         "trained_tail": trained_tail,
         "reloaded_tail": reloaded_tail,
         "generated_tail": generated_tail,
+        "merged_tail": merged_tail,
         "generated_tokens": len(generated_tail),
         "greedy_token_match": greedy_match,
         **runtime_metadata(parameter_device),
@@ -281,8 +325,8 @@ def main() -> int:
     print(json.dumps(row, ensure_ascii=False))
     print(
         f"[native-peft-save-load-merge] train_loss={loss:.4f}, "
-        f"trainable={trainable}, reload_diff={reload_diff:.8f}, "
-        f"merge_diff={merge_diff:.8f}, generated_tail={generated_tail}"
+        f"trainable={trainable}, reload_diff={reload_metrics['max_abs']:.8f}, "
+        f"merge_diff={merge_metrics['max_abs']:.8f}, generated_tail={generated_tail}"
     )
     print("NATIVE PEFT SAVE/LOAD/MERGE PASS" if ok else "NATIVE PEFT SAVE/LOAD/MERGE FAIL")
     return 0 if ok else 1

@@ -25,6 +25,7 @@ from peft import LoraConfig
 from transformers import AutoTokenizer
 
 from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+from rwkv7_hf.training_precision import peft_trainer_precision_kwargs
 
 try:  # Keep this smoke independent of a partially-installed DeepSpeed package.
     import accelerate.utils.other as _accelerate_other
@@ -78,6 +79,7 @@ def main() -> int:
         task_type="CAUSAL_LM", r=4, lora_alpha=8, lora_dropout=0.0,
         target_modules=["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"],
     )
+    precision_kwargs = peft_trainer_precision_kwargs(args.dtype)
 
     from trl import DPOConfig, DPOTrainer
 
@@ -99,8 +101,7 @@ def main() -> int:
             logging_steps=1,
             save_strategy="no",
             report_to=[],
-            fp16=(args.dtype == "fp16"),
-            bf16=(args.dtype == "bf16"),
+            **precision_kwargs,
             gradient_checkpointing=False,
             optim="adamw_torch",
             remove_unused_columns=False,

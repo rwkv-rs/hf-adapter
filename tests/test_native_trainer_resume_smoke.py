@@ -24,6 +24,7 @@ from peft import LoraConfig, get_peft_model
 from transformers import AutoTokenizer, Trainer, TrainingArguments
 
 from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+from rwkv7_hf.training_precision import peft_trainer_precision_kwargs
 
 try:  # Keep this smoke independent of a partially-installed DeepSpeed package.
     import accelerate.utils.other as _accelerate_other
@@ -101,6 +102,7 @@ def latest_checkpoint(out_dir: str) -> str:
 
 
 def make_args(out_dir: str, max_steps: int, batch_size: int, dtype: str) -> TrainingArguments:
+    precision_kwargs = peft_trainer_precision_kwargs(dtype)
     return TrainingArguments(
         output_dir=out_dir,
         max_steps=max_steps,
@@ -118,8 +120,7 @@ def make_args(out_dir: str, max_steps: int, batch_size: int, dtype: str) -> Trai
         save_only_model=True,
         report_to=[],
         remove_unused_columns=False,
-        fp16=(dtype == "fp16"),
-        bf16=(dtype == "bf16"),
+        **precision_kwargs,
         dataloader_num_workers=0,
         gradient_checkpointing=False,
         optim="adamw_torch",

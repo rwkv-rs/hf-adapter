@@ -23,6 +23,7 @@ from peft import LoraConfig, get_peft_model
 from transformers import AutoTokenizer, Trainer, TrainingArguments
 
 from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+from rwkv7_hf.training_precision import peft_trainer_precision_kwargs
 
 try:  # Keep this smoke independent of a partially-installed DeepSpeed package.
     import accelerate.utils.other as _accelerate_other
@@ -81,6 +82,7 @@ def main() -> int:
         rows.append({"input_ids": torch.tensor(ids, dtype=torch.long)})
 
     before = {n: p.detach().clone() for n, p in model.named_parameters() if p.requires_grad}
+    precision_kwargs = peft_trainer_precision_kwargs(args.dtype)
 
     targs = TrainingArguments(
         output_dir=tempfile.mkdtemp(prefix="native_trainer_"),
@@ -92,8 +94,7 @@ def main() -> int:
         save_strategy="no",
         report_to=[],
         remove_unused_columns=False,
-        fp16=(args.dtype == "fp16"),
-        bf16=(args.dtype == "bf16"),
+        **precision_kwargs,
     )
     trainer = Trainer(
         model=model, args=targs, train_dataset=rows, data_collator=FixedLenCollator()
