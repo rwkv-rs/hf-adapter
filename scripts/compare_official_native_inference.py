@@ -187,13 +187,43 @@ def verify_official_source(
     manifest_path: str | Path | None,
 ) -> dict[str, Any]:
     source_dir = Path(path)
-    if (source_dir / ".git").is_dir():
+    # ``official_dir`` commonly points at an engine subdirectory inside the
+    # pinned Albatross checkout. Ask Git whether the directory belongs to a
+    # worktree instead of requiring a physically nested ``.git`` directory.
+    try:
+        root_result = subprocess.run(
+            ["git", "-C", str(source_dir), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        git_root: Path | None = Path(root_result.stdout.strip()).resolve()
+    except (OSError, subprocess.CalledProcessError):
+        git_root = None
+    if git_root is not None:
         revision = git_revision(source_dir)
         if revision != expected_commit:
             raise RuntimeError(
                 f"official checkout is not pinned: expected {expected_commit}, got {revision}"
             )
-        return {"method": "git", "commit": revision, "files": {}}
+        relative = source_dir.resolve().relative_to(git_root)
+        pathspec = str(relative) if str(relative) != "." else "."
+        for command in (
+            ["git", "-C", str(git_root), "diff", "--quiet", "HEAD", "--", pathspec],
+            ["git", "-C", str(git_root), "diff", "--cached", "--quiet", "HEAD", "--", pathspec],
+        ):
+            result = subprocess.run(command, check=False)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"official checkout has modified tracked files under {pathspec}"
+                )
+        return {
+            "method": "git",
+            "commit": revision,
+            "root": str(git_root),
+            "subdirectory": pathspec,
+            "files": {},
+        }
     if not manifest_path:
         raise RuntimeError(
             "official source has no .git directory; --official-source-manifest is required"
@@ -228,7 +258,7 @@ def zero_native_cache(model: Any, batch_size: int, device: str):
     hidden = int(config.hidden_size)
     attention_hidden = int(getattr(config, "attention_hidden_size", heads * head_dim))
     state = [
-        torch.zeros(batch_size, heads, head_dim, head_dim, device=device, dtype=torch.float16)
+        torch.zeros(batch_size, heads, head_dim, head_dim, device=device, dtype=torch.float32)
         for _ in range(layers)
     ]
     xpa = [
@@ -244,15 +274,17 @@ def zero_native_cache(model: Any, batch_size: int, device: str):
 
 
 def snapshot_native(model: Any, cache: Any) -> dict[str, torch.Tensor]:
-    runners = getattr(model, "_rwkv7_native_graph_runner_cache", {})
-    bound = cache._native_graph_bound_runner() if hasattr(cache, "_native_graph_bound_runner") else None
-    if bound is None and runners:
-        bound = next(reversed(runners.values()))
-    if bound is None:
-        raise RuntimeError("native capture requires an active NativeGraphRunner")
+    if cache._state is None or cache._xpa is None or cache._xpf is None:
+        raise RuntimeError("native capture requires an initialized NativeRWKV7Cache")
+    batch_size = int(cache.get_batch_size())
     heads = int(model.config.num_heads)
-    elapsed = bound.elapsed.view(1, bound.batch_size, 1).expand(
-        int(model.config.num_hidden_layers), bound.batch_size, heads
+    # FP32 recurrent state intentionally has no FP16 dithering tensor. The
+    # public cache still records the exact logical position and is available
+    # for both native_graph and the >32-layer native_jit route.
+    elapsed = torch.full(
+        (int(model.config.num_hidden_layers), batch_size, heads),
+        int(cache.get_seq_length()),
+        dtype=torch.int32,
     )
     return {
         "state": torch.stack([item.detach().cpu() for item in cache._state]),
@@ -348,7 +380,7 @@ def capture_native(args: argparse.Namespace) -> dict[str, Any]:
             for key, value in sorted(os.environ.items())
             if key.startswith(("RWKV7_NATIVE_GRAPH_", "RWKV7_FUSED_"))
         },
-        "precision": "fp16_state_fp16_io",
+        "precision": "fp32_state_fp16_io",
         "prompt": args.prompt,
         "prompt_tokens": int(ids.shape[1]),
         "prompt_ids": ids.cpu(),
@@ -369,7 +401,7 @@ def load_official(args: argparse.Namespace):
     sys.path.insert(0, args.official_dir)
     module = importlib.import_module(args.official_module)
     module.MODEL_PATH = args.official_model
-    module.WKV_MODE = "fp16"
+    module.WKV_MODE = args.official_wkv
     official_emb = getattr(args, "official_emb", "gpu")
     official_batched_rkv = getattr(args, "official_batched_rkv", "off")
     official_cmix_sparse = getattr(args, "official_cmix_sparse", "no-fc")
@@ -419,7 +451,7 @@ def capture_official(args: argparse.Namespace) -> dict[str, Any]:
         "source_revision": revision,
         "source_verification": source_verification,
         "runtime": {
-            "wkv": "fp16",
+            "wkv": args.official_wkv,
             "emb": args.official_emb,
             "batched_rkv": args.official_batched_rkv,
             "cmix_sparse": args.official_cmix_sparse,
@@ -430,7 +462,11 @@ def capture_official(args: argparse.Namespace) -> dict[str, Any]:
                 if value.strip() and value.strip() != "none"
             ),
         },
-        "precision": "fp16_state_fp16_io",
+        "precision": (
+            "fp32_state_fp16_io"
+            if args.official_wkv == "fp32io16"
+            else "fp16_state_fp16_io"
+        ),
         "prompt": args.prompt,
         "prompt_tokens": int(ids.shape[1]),
         "prompt_ids": ids.cpu(),
@@ -584,6 +620,9 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument("--official-module", default="rwkv7_fast_v3a")
         capture.add_argument("--official-commit", default="")
         capture.add_argument("--official-source-manifest", default="")
+        capture.add_argument(
+            "--official-wkv", choices=("fp16", "fp32io16"), default="fp32io16"
+        )
         capture.add_argument("--official-emb", choices=("gpu", "cpu"), default="gpu")
         capture.add_argument(
             "--official-batched-rkv", choices=("auto", "on", "off"), default="off"

@@ -7,6 +7,7 @@ from scripts.compare_official_native_inference import (
     compare_captures,
     metrics_pass,
     metrics_pass_official_envelope,
+    snapshot_native,
     tensor_metrics,
     verify_official_source,
 )
@@ -42,6 +43,7 @@ def test_official_capture_exposes_low_memory_runtime_options() -> None:
         ]
     )
     assert args.official_emb == "cpu"
+    assert args.official_wkv == "fp32io16"
     assert args.official_lowrank_weight == "transpose"
     assert args.official_orig_linear_groups == "none"
 
@@ -376,3 +378,71 @@ def test_official_source_manifest_is_fail_closed(tmp_path) -> None:
         assert "hash mismatch" in str(exc)
     else:
         raise AssertionError("modified official source must fail verification")
+
+
+def test_official_source_accepts_a_clean_git_subdirectory(tmp_path) -> None:
+    import subprocess
+
+    root = tmp_path / "official"
+    source = root / "engine"
+    source.mkdir(parents=True)
+    (source / "kernel.cu").write_text("official", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "engine/kernel.cu"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    revision = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    verified = verify_official_source(
+        source,
+        expected_commit=revision,
+        manifest_path=None,
+    )
+
+    assert verified["method"] == "git"
+    assert verified["subdirectory"] == "engine"
+
+
+def test_native_snapshot_uses_cache_position_without_a_graph_runner() -> None:
+    class Config:
+        num_heads = 2
+        num_hidden_layers = 3
+
+    class Model:
+        config = Config()
+
+    class Cache:
+        _state = [torch.zeros(1, 2, 2, 2) for _ in range(3)]
+        _xpa = [torch.zeros(1, 4) for _ in range(3)]
+        _xpf = [torch.zeros(1, 4) for _ in range(3)]
+
+        def get_batch_size(self):
+            return 1
+
+        def get_seq_length(self):
+            return 17
+
+    snapshot = snapshot_native(Model(), Cache())
+    assert snapshot["elapsed"].shape == (3, 1, 2)
+    assert torch.equal(
+        snapshot["elapsed"],
+        torch.full((3, 1, 2), 17, dtype=torch.int32),
+    )
