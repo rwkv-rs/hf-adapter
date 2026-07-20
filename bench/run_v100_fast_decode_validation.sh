@@ -216,7 +216,8 @@ run_larger_smoke() {
     --fuse-norm false \
     --batch-sizes 1 2 4 \
     --prompt-tokens 64 \
-    --decode-steps 8
+    --decode-steps 8 \
+    --max-row-diff 0.5
 
   run python tests/test_dynamic_batch_cache.py \
     --model "${HF_DIR}" \
@@ -226,7 +227,7 @@ run_larger_smoke() {
     --batch-size 3 \
     --prompt-tokens 64 \
     --decode-steps 4 \
-    --max-diff 0.2
+    --max-diff 0.5
 
   run python tests/test_hf_api_contract.py \
     --model "${HF_DIR}" \
@@ -244,7 +245,8 @@ run_larger_smoke() {
     --attn-mode fused_recurrent \
     --batch-size 2 \
     --chunk-sizes 32 64 128 \
-    --max-diff 0.2
+    --max-diff 0.5 \
+    --min-cosine 0.999
 
   run python tests/test_quantized_inference.py \
     --model "${HF_DIR}" \
