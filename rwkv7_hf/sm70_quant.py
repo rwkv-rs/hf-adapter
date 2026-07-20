@@ -48,11 +48,11 @@ _CUDA = r"""
 namespace {
 __device__ inline float warp_max(float v){for(int d=16;d;d>>=1)v=fmaxf(v,__shfl_down_sync(0xffffffff,v,d));return v;}
 __global__ void quant_a8(int M,int K,const half* x,signed char* q,half* scales){
- int m=blockIdx.x,tid=threadIdx.x; const half* xr=x+(int64_t)m*K; signed char* qr=q+(int64_t)m*K; float mx=0;
- for(int k=tid;k<K;k+=blockDim.x)mx=fmaxf(mx,fabsf(__half2float(xr[k])));
+ int m=blockIdx.x,tid=threadIdx.x,K2=K>>1; const half2* xr=(const half2*)(x+(int64_t)m*K); char2* qr=(char2*)(q+(int64_t)m*K); float mx=0;
+ for(int k2=tid;k2<K2;k2+=blockDim.x){float2 v=__half22float2(xr[k2]);mx=fmaxf(mx,fmaxf(fabsf(v.x),fabsf(v.y)));}
  mx=warp_max(mx); __shared__ float sm[8]; if((tid&31)==0)sm[tid>>5]=mx; __syncthreads();
  if(tid<32){float v=tid<(blockDim.x>>5)?sm[tid]:0.f;v=warp_max(v);if(tid==0){sm[0]=fmaxf(v/127.f,1e-6f);scales[m]=__float2half_rn(sm[0]);}} __syncthreads();
- float inv=1.f/sm[0]; for(int k=tid;k<K;k+=blockDim.x){int v=__float2int_rn(__half2float(xr[k])*inv);qr[k]=(signed char)max(-127,min(127,v));}
+ float inv=1.f/sm[0]; for(int k2=tid;k2<K2;k2+=blockDim.x){float2 v=__half22float2(xr[k2]);int a=__float2int_rn(v.x*inv),b=__float2int_rn(v.y*inv);qr[k2]=make_char2((signed char)max(-127,min(127,a)),(signed char)max(-127,min(127,b)));}
 }
 __device__ inline float warp_sum(float v){for(int d=16;d;d>>=1)v+=__shfl_down_sync(0xffffffff,v,d);return v;}
 __device__ inline float half_warp_sum(float v){unsigned mask=__activemask();for(int d=8;d;d>>=1)v+=__shfl_down_sync(mask,v,d,16);return v;}
@@ -419,7 +419,7 @@ def _load():
             from torch.utils.cpp_extension import load_inline
 
             _EXT = load_inline(
-                name="rwkv7_sm7x_quant_v22",
+                name="rwkv7_sm7x_quant_v23",
                 cpp_sources=_CPP,
                 cuda_sources=_CUDA,
                 functions=None,

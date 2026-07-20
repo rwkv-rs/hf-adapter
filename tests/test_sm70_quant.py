@@ -4,6 +4,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+import rwkv7_hf.sm70_quant as sm70_quant_module
+
 from rwkv7_hf.sm70_quant import (
     _sm7x_quant_device_supported,
     _w8_threads_for_profile,
@@ -46,6 +48,15 @@ def test_t4_w8_threads_use_the_measured_batch_policy() -> None:
         128,
         128,
     ]
+
+
+def test_sm7x_activation_quantizer_uses_vectorized_pairs() -> None:
+    # Every supported sm7x weight kernel requires K divisible by eight, so the
+    # shared activation quantizer can safely load/store aligned half2/char2
+    # pairs. Keep the source contract visible to CPU-only CI.
+    assert "const half2* xr" in sm70_quant_module._CUDA
+    assert "char2* qr" in sm70_quant_module._CUDA
+    assert "make_char2" in sm70_quant_module._CUDA
 
 
 def test_row_quantized_layout_and_cpu_fallback() -> None:
