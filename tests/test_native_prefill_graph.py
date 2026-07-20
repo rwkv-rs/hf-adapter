@@ -92,6 +92,29 @@ def test_native_prefill_graph_policy_layer_ceiling_is_auto_only(monkeypatch) -> 
     assert native_model._native_prefill_graph_enabled(1, 128, 4096, 61)
 
 
+def test_native_prefill_graph_external_quant_is_fail_closed(monkeypatch) -> None:
+    owner = SimpleNamespace(
+        config=SimpleNamespace(hidden_size=768, num_hidden_layers=12),
+        _native_model_external_quantized=lambda: True,
+    )
+    can_run = native_model.NativeRWKV7ForCausalLM._native_prefill_graph_can_run
+    monkeypatch.setattr(native_model, "_native_prefill_graph_enabled", lambda *_args: True)
+    monkeypatch.setattr(
+        native_model,
+        "_native_prefill_external_quant_graph_enabled",
+        lambda: False,
+    )
+
+    assert not can_run(owner, 1, 128)
+
+    monkeypatch.setattr(
+        native_model,
+        "_native_prefill_external_quant_graph_enabled",
+        lambda: True,
+    )
+    assert can_run(owner, 1, 128)
+
+
 def test_native_prefill_graph_cache_size_uses_policy_and_env_override(monkeypatch) -> None:
     policy = SimpleNamespace(prefill_graph_cache_size=4)
     monkeypatch.setattr(native_model, "current_kernel_policy", lambda **_kwargs: policy)

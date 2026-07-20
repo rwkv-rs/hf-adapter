@@ -745,6 +745,16 @@ def _native_prefill_graph_cache_size() -> int:
     return max(1, min(value, 16))
 
 
+def _native_prefill_external_quant_graph_enabled() -> bool:
+    """Whether external-quant sequence prefill may enter CUDA capture."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH")
+    if raw is not None:
+        return raw not in _FALSE_VALUES
+    policy = current_kernel_policy(torch_module=torch)
+    return bool(getattr(policy, "native_external_quant_prefill_graph", False))
+
+
 def _native_prefill_graph_signature() -> tuple[tuple[str, str], ...]:
     """Return every explicit prefill setting that changes a captured graph."""
 
@@ -1587,6 +1597,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             delattr(self, "_rwkv7_native_graph_pack_cache")
         if hasattr(self, "_rwkv7_native_adapter_layers_present"):
             delattr(self, "_rwkv7_native_adapter_layers_present")
+        if hasattr(self, "_rwkv7_native_external_quantized"):
+            delattr(self, "_rwkv7_native_external_quantized")
         self.rwkv7_clear_native_graph_cache()
         self.rwkv7_clear_native_prefill_graph_cache()
 
@@ -1978,6 +1990,23 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return False
         return True
 
+    def _native_prefill_graph_can_run(self, batch_size: int, prompt_tokens: int) -> bool:
+        # Generic bitsandbytes/external quantized operators may synchronize or
+        # allocate while executing and therefore fail CUDA stream capture.
+        # Keep their native sequence prefill eager unless an exact-card policy
+        # or explicit environment override has validated graph safety.
+        if (
+            self._native_model_external_quantized()
+            and not _native_prefill_external_quant_graph_enabled()
+        ):
+            return False
+        return _native_prefill_graph_enabled(
+            int(batch_size),
+            int(prompt_tokens),
+            int(self.config.hidden_size),
+            int(self.config.num_hidden_layers),
+        )
+
     def _native_prefill(
         self,
         input_ids: torch.LongTensor,
@@ -1988,11 +2017,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ):
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
-        if initial_cache is None and _native_prefill_graph_enabled(
+        if initial_cache is None and self._native_prefill_graph_can_run(
             batch_size,
             prompt_tokens,
-            int(self.config.hidden_size),
-            int(self.config.num_hidden_layers),
         ):
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
@@ -2428,6 +2455,23 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return any(type(module).__name__ in quantized_names for module in self.model.layers.modules())
         except Exception:
             return False
+
+    def _native_model_external_quantized(self) -> bool:
+        """True when layer projections use non-native quantized wrappers."""
+
+        cached = getattr(self, "_rwkv7_native_external_quantized", None)
+        if isinstance(cached, bool):
+            return cached
+        external_names = {"Linear4bit", "Linear8bit", "Linear8bitLt"}
+        try:
+            detected = any(
+                type(module).__name__ in external_names
+                for module in self.model.layers.modules()
+            )
+        except Exception:
+            return False
+        self._rwkv7_native_external_quantized = bool(detected)
+        return bool(detected)
 
     def _native_model_native_quant_graph_safe(self) -> bool:
         """Whether all quantized layer operands are graph-safe native modules.
