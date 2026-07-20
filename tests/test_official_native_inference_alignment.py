@@ -6,6 +6,7 @@ from scripts.compare_official_native_inference import (
     build_parser,
     compare_captures,
     metrics_pass,
+    metrics_pass_fp16_trajectory,
     metrics_pass_official_envelope,
     snapshot_native,
     tensor_metrics,
@@ -144,6 +145,23 @@ def test_fp16_ulp_tail_gate_is_explicit_and_bounded() -> None:
     assert metrics["max_abs"] == 0.1875
     assert metrics["max_abs_ulps_at_max"] == 3.0
     assert metrics_pass(metrics, "logits") is True
+
+
+def test_fp16_trajectory_gate_has_independent_mean_cosine_and_max_bounds() -> None:
+    official = torch.full((4096,), 32.0, dtype=torch.float16)
+    native = official.clone()
+    native[:128] += 0.25
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+
+    assert metrics_pass(metrics, "logits") is False
+    assert metrics_pass_fp16_trajectory(metrics, "logits") is True
+
+    native[0] = 34.0
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+    assert metrics_pass_fp16_trajectory(metrics, "logits") is False
+
+    fp32_metrics = tensor_metrics(native.float(), official.float(), absolute_threshold=0.125)
+    assert metrics_pass_fp16_trajectory(fp32_metrics, "logits") is False
 
 
 def test_prefill_first_decode_reuses_the_bounded_decode_tail_gate() -> None:
@@ -331,6 +349,42 @@ def test_compare_captures_enforces_numeric_thresholds_even_when_top1_matches() -
     )
     assert report["rows"][0]["logits"]["top1_match_rate"] == 1.0
     assert report["rows"][0]["logits"]["threshold_pass"] is False
+    assert report["status"] == "fail"
+
+
+def test_compare_captures_accepts_bounded_fp16_drift_only_with_exact_trajectory() -> None:
+    native = make_capture("native_hf", "native")
+    official = make_capture("official_v3a", OFFICIAL_COMMIT)
+    for capture in (native, official):
+        capture["captures"]["1"]["logits"] = capture["captures"]["1"][
+            "logits"
+        ].repeat(1, 1, 64).half()
+        for phase in ("prefill", "final"):
+            capture["captures"]["1"][phase]["xpa"] = capture["captures"]["1"][
+                phase
+            ]["xpa"].half()
+            capture["captures"]["1"][phase]["xpf"] = capture["captures"]["1"][
+                phase
+            ]["xpf"].half()
+    native["captures"]["1"]["logits"][0, 0, 0] = 0.1875
+
+    report = compare_captures(
+        native,
+        official,
+        expected_official_commit=OFFICIAL_COMMIT,
+    )
+
+    assert report["rows"][0]["standard_quality_pass"] is False
+    assert report["rows"][0]["fp16_trajectory_quality_pass"] is True
+    assert report["status"] == "pass"
+
+    native["captures"]["1"]["greedy_tokens"][0, 0] = 0
+    report = compare_captures(
+        native,
+        official,
+        expected_official_commit=OFFICIAL_COMMIT,
+    )
+    assert report["rows"][0]["fp16_trajectory_quality_pass"] is True
     assert report["status"] == "fail"
 
 
