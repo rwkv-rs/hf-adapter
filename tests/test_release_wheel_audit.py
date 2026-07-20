@@ -46,7 +46,7 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["source_scope"]["dispositions"]["adapted_protocol"] == 21
     assert report["recurrent_source_scope"]["historical_files"] == 3
     assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
-    assert report["dependencies"] == ["numpy", "packaging", "torch"]
+    assert report["dependencies"] == ["ninja", "numpy", "packaging", "torch"]
 
 
 def test_kernel_wheel_audit_rejects_incomplete_direct_dependencies(tmp_path: Path):

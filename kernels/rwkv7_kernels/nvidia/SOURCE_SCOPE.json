@@ -1274,9 +1274,9 @@
       "source": "rwkv7_hf/train_temp_alignment.py"
     },
     {
-      "adaptation": "adapted to expose leaf autograd operators only, keep whole-model dispatch in training_runtime.py without monkeypatching model forwards, preserve canonical FP32 decay and HF value/a/key/GroupNorm/direct/gate math around the fused recurrent forward, compile the recurrence without FMA contraction for exact BF16 parity, and replay canonical token-mix and recurrent autograd for strict full-gradient parity",
+      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF value/a/key/GroupNorm/direct/gate math around the fused recurrence, compile the recurrent operator independently without FMA contraction, use the native CUDA backward for standard detached-state training, and replay canonical recurrence only for returned-state and initial-state gradient contributions",
       "destination": "rwkv7_kernels/nvidia/train_temp_cuda.py",
-      "destination_sha256": "e6ffe866189800b1848d0cb42aafd06cc38ee84e0a11e1f9878610b0eec69158",
+      "destination_sha256": "de326f0563adb9671e75e03d17bd961da69dc0bd366f1d6144e872eb8b29aebd",
       "disposition": "adapted_protocol",
       "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
       "git_mode": "100644",

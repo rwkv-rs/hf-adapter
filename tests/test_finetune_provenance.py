@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import types
+from types import SimpleNamespace
 
 import torch
 
@@ -35,6 +36,8 @@ def test_optional_artifact_and_adapter_route_provenance(tmp_path, monkeypatch):
         "phase": "training",
     }
     monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_model_route", lambda: dict(route))
+    monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_recurrent_route", lambda: None)
+    monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_linear_route", lambda: None)
     model = torch.nn.Linear(2, 2)
     for parameter in model.parameters():
         parameter.grad = torch.ones_like(parameter)
@@ -45,9 +48,15 @@ def test_optional_artifact_and_adapter_route_provenance(tmp_path, monkeypatch):
 
     routes = json.loads((tmp_path / "backend_routes.json").read_text())
     checks = json.loads((tmp_path / "training_checks.json").read_text())
-    assert routes == [{"event": "pre_optimizer_step", **route}]
+    assert routes == [
+        {"event": "pre_optimizer_step", "boundary": "model", **route}
+    ]
     assert checks["adapter_reference_fallback"] is True
     assert checks["native_training"] is False
+    assert checks["model_reference_training"] is True
+    assert checks["matrix_recurrent_training"] is False
+    assert checks["factorized_recurrent_training"] is False
+    assert checks["flattened_linear_training"] is False
     assert checks["nonzero_gradient"] is True
 
 
@@ -62,6 +71,18 @@ def test_remote_model_namespace_route_is_resolved(tmp_path, monkeypatch):
         "reason": "native prefill requires the causal-LM boundary",
         "phase": "training",
     }
+    recurrent_route = {
+        "requested": "auto",
+        "selected": "optimized",
+        "implementation": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+        "reason": "dense zero-state BF16 CUDA autograd request is supported",
+    }
+    linear_route = {
+        "requested": "optimized",
+        "selected": "optimized",
+        "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+        "reason": "contiguous CUDA training projection is supported by PyTorch cuBLAS",
+    }
     modeling_module = types.ModuleType(modeling_name)
     ops_module = types.ModuleType(ops_name)
 
@@ -71,6 +92,8 @@ def test_remote_model_namespace_route_is_resolved(tmp_path, monkeypatch):
     maybe_model_forward.__module__ = ops_name
     modeling_module.maybe_model_forward = maybe_model_forward
     ops_module.get_last_model_route = lambda: dict(route)
+    ops_module.get_last_recurrent_route = lambda: dict(recurrent_route)
+    ops_module.get_last_linear_route = lambda: dict(linear_route)
     monkeypatch.setitem(sys.modules, modeling_name, modeling_module)
     monkeypatch.setitem(sys.modules, ops_name, ops_module)
 
@@ -83,5 +106,87 @@ def test_remote_model_namespace_route_is_resolved(tmp_path, monkeypatch):
     callback.write_status(1)
     routes = json.loads((tmp_path / "backend_routes.json").read_text())
     checks = json.loads((tmp_path / "training_checks.json").read_text())
-    assert routes == [{"event": "pre_optimizer_step", **route}]
+    assert routes == [
+        {"event": "pre_optimizer_step", "boundary": "model", **route},
+        {
+            "event": "pre_optimizer_step",
+            "boundary": "recurrent",
+            **recurrent_route,
+        },
+        {
+            "event": "pre_optimizer_step",
+            "boundary": "linear",
+            **linear_route,
+        },
+    ]
     assert checks["adapter_reference_fallback"] is True
+    assert checks["model_reference_training"] is True
+    assert checks["matrix_recurrent_training"] is False
+    assert checks["factorized_recurrent_training"] is True
+    assert checks["flattened_linear_training"] is True
+
+
+def test_finetune_precision_arguments_are_explicit_and_standard():
+    common = load_finetune_common()
+    args = SimpleNamespace(
+        model_revision="local-test-revision",
+        torch_dtype="bfloat16",
+    )
+
+    assert common.model_load_kwargs(args) == {
+        "revision": "local-test-revision",
+        "trust_remote_code": True,
+        "dtype": torch.bfloat16,
+    }
+    assert common.trainer_precision_flags() == {"bf16": False, "fp16": False}
+    assert common.gradient_checkpointing_kwargs() == {"use_reentrant": False}
+
+    args.torch_dtype = "auto"
+    assert common.model_load_kwargs(args) == {
+        "revision": "local-test-revision",
+        "trust_remote_code": True,
+    }
+
+
+def test_process_trace_reconciles_preference_training_routes(tmp_path):
+    common = load_finetune_common()
+    checks = {
+        "matrix_recurrent_training": False,
+        "factorized_recurrent_training": False,
+        "flattened_linear_training": False,
+    }
+    trace = {
+        "schema": "rwkv7-kernel-route-trace-v2",
+        "actual_recurrent_calls": {
+            "native-nvidia-rwkv7-factorized-recurrent-training-v1": 24
+        },
+        "actual_linear_calls": {
+            "torch-cuda-rwkv7-flattened-linear-training-v1": 333
+        },
+    }
+    (tmp_path / "training_checks.json").write_text(json.dumps(checks))
+    (tmp_path / "kernel_route_trace.json").write_text(json.dumps(trace))
+
+    common.reconcile_kernel_trace_checks(tmp_path)
+
+    merged = json.loads((tmp_path / "training_checks.json").read_text())
+    assert merged["matrix_recurrent_training"] is False
+    assert merged["factorized_recurrent_training"] is True
+    assert merged["flattened_linear_training"] is True
+    assert merged["kernel_trace_schema"] == "rwkv7-kernel-route-trace-v2"
+
+
+def test_lora_parameter_dtype_requires_one_explicit_dtype():
+    common = load_finetune_common()
+
+    class Adapter(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lora_A = torch.nn.ModuleDict(
+                {"default": torch.nn.Linear(2, 1, bias=False, dtype=torch.bfloat16)}
+            )
+            self.lora_B = torch.nn.ModuleDict(
+                {"default": torch.nn.Linear(1, 2, bias=False, dtype=torch.bfloat16)}
+            )
+
+    assert common.lora_parameter_dtype(Adapter()) == torch.bfloat16

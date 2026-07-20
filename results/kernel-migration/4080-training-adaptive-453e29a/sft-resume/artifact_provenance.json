@@ -1,0 +1,12 @@
+{
+  "rwkv7_hf": {
+    "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_hf-1.0.0-py3-none-any.whl",
+    "bytes": 39473,
+    "sha256": "7189c8b5615628c19befc6076bea0e80af83fd5b7c522d64ba82e297353a48f9"
+  },
+  "rwkv7_kernels": {
+    "path": "/home/wzu/codex-run/artifacts/rwkv7-training-adaptive-453e29a29e1a/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl",
+    "bytes": 498657,
+    "sha256": "c814b13f2e82020c6418f7c5fbad8cab5a1310b586b2a256264679f64c84b278"
+  }
+}

@@ -16,19 +16,22 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import import_utils as trl_import_utils
 
 trl_import_utils._vllm_available = False
-from trl import GRPOConfig, GRPOTrainer
+from trl import GRPOConfig, GRPOTrainer  # noqa: E402
 
-from common import (
+from common import (  # noqa: E402
     ReproCallback,
+    attach_lora_adapters,
     checkpoint_inventory,
     common_arguments,
     deterministic_subset,
-    lora_config,
+    gradient_checkpointing_kwargs,
+    model_load_kwargs,
     prepare_run,
     report_target,
     run_captured,
     record_wandb,
     snapshot_trainable,
+    trainer_precision_flags,
     validate_adapter_reload,
     validate_parameter_change,
     validate_resume,
@@ -134,8 +137,10 @@ def main():
     train = train.map(truncate_prompt)
     evaluation = evaluation.map(truncate_prompt)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, revision=args.model_revision, trust_remote_code=True
+        args.model,
+        **model_load_kwargs(args),
     )
+    model = attach_lora_adapters(model, args)
     model.config.use_cache = False
     callback = ReproCallback(output)
     config = GRPOConfig(
@@ -151,9 +156,11 @@ def main():
         # gradient-checkpointed policy-loss forward/backward below.
         generation_kwargs={"use_cache": True},
         gradient_checkpointing=True,
+        gradient_checkpointing_kwargs=gradient_checkpointing_kwargs(),
         save_steps=25,
         logging_steps=1,
         report_to=report_target(args),
+        **trainer_precision_flags(),
     )
     trainer = GRPOTrainer(
         model=model,
@@ -162,7 +169,6 @@ def main():
         train_dataset=train,
         eval_dataset=evaluation,
         processing_class=tokenizer,
-        peft_config=lora_config(),
         callbacks=[callback],
     )
     before = snapshot_trainable(trainer.model)

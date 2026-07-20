@@ -1,0 +1,33 @@
+{
+  "max_abs": 0.0,
+  "close": true,
+  "trained_dtype": "torch.bfloat16",
+  "reloaded_dtype": "torch.bfloat16",
+  "parameter_differences": [],
+  "buffer_differences": [],
+  "trained_adapter_runtime": {
+    "active_adapters": [
+      "default"
+    ],
+    "disable_adapters": false,
+    "merged": false,
+    "scaling": {
+      "default": 2.0
+    }
+  },
+  "reloaded_adapter_runtime": {
+    "active_adapters": [
+      "default"
+    ],
+    "disable_adapters": false,
+    "merged": false,
+    "scaling": {
+      "default": 2.0
+    }
+  },
+  "trained_repeat_max_abs": 0.0,
+  "reloaded_repeat_max_abs": 0.0,
+  "trained_gradient_checkpointing": false,
+  "reloaded_gradient_checkpointing": false,
+  "config_differences": {}
+}

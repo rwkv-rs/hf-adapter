@@ -482,6 +482,7 @@
       "activation": "diagnostic_until_release_gate",
       "category": "training",
       "devices": [
+        "sm70",
         "ada",
         "blackwell"
       ],
@@ -515,15 +516,20 @@
       ],
       "policy_flags": [],
       "runtime_files": [
+        "rwkv7_kernels/linear/__init__.py",
+        "rwkv7_kernels/linear/training_flattened.py",
         "rwkv7_kernels/model_dispatcher.py",
+        "rwkv7_kernels/nvidia/train_temp_cuda.py",
         "rwkv7_kernels/nvidia/training_runtime.py",
-        "rwkv7_kernels/nvidia/train_temp_cuda.py"
+        "rwkv7_kernels/recurrent/training_factorized.py",
+        "rwkv7_kernels/recurrent/training_matrix.py",
+        "rwkv7_kernels/training_dispatcher.py"
       ]
     }
   ],
   "kernel_api_version": 2,
   "ownership": "rwkv7-kernels only; no model, config, tokenizer, or public cache ownership",
-  "production_auto": "disabled until the immutable-wheel three-device release gate passes",
+  "production_auto": "disabled until the immutable-wheel release-device gate passes",
   "schema": "rwkv7-nvidia-capability-inventory-v1",
   "source_branch": "perf/native-kernels-v0.8"
 }

@@ -137,7 +137,7 @@ T = 1 / 17 / 128 / 512 / 2048
 - [x] Reference vs optimized recurrent vs FLA fused recurrent.
 - [x] Reference vs optimized prefill vs FLA chunk where semantically matched.
 - [x] Forward latency and tokens/s.
-- [ ] Forward+backward latency for training-capable routes.
+- [x] Forward+backward latency for training-capable routes.
 - [x] Peak VRAM, warmup count, measured iterations, median and p95.
 
 ### Whole-model table
@@ -209,10 +209,13 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 
 - [x] Port the existing versioned forward/backward autograd operators behind
       `model_forward_v1`; do not create a separate model class or cache.
-- [ ] Compare outputs, states and all gradients against reference and FLA.
+- [x] Add clean recurrent and stateless-linear training leaf protocols so the
+      readable HF layer loop can use CUDA without the historical whole-model
+      training wrapper.
+- [x] Compare outputs, states and all gradients against reference and FLA.
 - [ ] Run Trainer/Accelerate/PEFT/TRL SFT, DPO and GRPO.
-- [ ] Distinguish optimized training from reference fallback in every report.
-- [ ] Benchmark forward+backward only after numerical gates pass.
+- [x] Distinguish optimized training from reference fallback in every report.
+- [x] Benchmark forward+backward only after numerical gates pass.
 
 ## Release gate
 
@@ -1928,3 +1931,462 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   local suite passes **187 tests**.  The next formal comparison must regenerate
   all three manifests with this corrected harness and the same final wheel;
   old Graph or mixed-SHA results must not be promoted.
+
+### 2026-08-29 — canonical leaf-level CUDA training boundary
+
+- Added an additive recurrent-training protocol without changing the readable
+  `modeling_rwkv7.py` layer structure.  The public names are
+  `probe_recurrent_training_v1` and `recurrent_training_v1`; the implementation
+  route is `native-nvidia-rwkv7-recurrent-training-v1` and the implementation
+  module is `recurrent/training_cuda.py`.  FLA remains an evaluation dependency
+  only and no project or contributor nickname appears in the runtime API.
+- `RWKV7_TRAINING_KERNEL_IMPL=auto|cuda` is independent from inference policy.
+  Production `auto` stays on reference autograd until the full-gradient release
+  gate passes; explicit `cuda` is the only way to compile and exercise the
+  candidate.  Unsupported dtype, device, mask, state or sequence shape fails
+  closed through the normal HF fallback boundary.
+- The migrated CUDA recurrence now returns the canonical final state together
+  with the output.  Standard detached-state training uses the native CUDA
+  forward and backward.  If a caller consumes the returned state or requests
+  the zero initial-state gradient, custom autograd adds only those state
+  contributions through the canonical recurrence.  The initial candidate is
+  intentionally restricted to dense, zero-state BF16, T divisible by 16, head
+  size 64, and sm80+.
+- Runtime comments describe only tensor layout, dtype ownership, autograd and
+  fallback contracts.  Historical `train_temp` naming remains private to the
+  vendored source adapter.  Migration hashes, capability inventory and wheel
+  audit requirements were updated.  Ruff passes for every modified first-party
+  file, `git diff --check` passes, and the complete local suite passes **191
+  tests**.
+- Next gate: build a fresh candidate on RTX 4080 and compare reference, pinned
+  FLA and the explicit CUDA training route with
+  `evaluation/validate_recurrent_training.py`.  The gate covers output, final
+  state, all six vector gradients at every shape, the initial-state gradient at
+  the shortest sequence for each batch, warmed ordinary-training
+  forward+backward time, peak memory and actual route.  Auto must remain
+  reference if any numerical gate fails.
+
+### 2026-08-29 — recurrent training acceptance and clean linear leaf
+
+- The first explicit recurrent candidate (`a79d6ff468b2`) passed the RTX 4080
+  leaf matrix for B=`1/4`, T=`16/128`, H=`2`: output, final canonical state,
+  all six recurrent-vector gradients and the selected initial-state gradients
+  passed.  Its native forward+backward route was `1.53x`–`2.11x` the pinned
+  FLA recurrent route.  The actual 0.1B model shape B4/T128/H12 also passed all
+  recurrent gradients and measured `0.7184 ms` native versus `1.1776 ms` FLA
+  (`1.639x`).  Evidence remains outside Git under
+  `/home/wzu/codex-run/results/rwkv7-training-a79d6ff468b2/`.
+- Full-model BF16 training with the readable HF layer loop and only the CUDA
+  recurrent leaf passed 8/8 B=`1/4`, T=`16/128`, checkpointing off/on under
+  the declared optimizer-update-vector gate.  CUDA was numerically closer to
+  reference than FLA in every case: minimum logits cosine `0.9999625`, maximum
+  loss delta `0.00708`, minimum global-gradient cosine `0.9997274`, and maximum
+  global-gradient relative L2 `0.02353`.  All 399 named gradient rows remain in
+  the report.  The separate strict per-parameter diagnostic is intentionally
+  retained as failed for both CUDA and FLA; it is not hidden or relabeled.
+- The full-model timing localized the remaining B4/T128 slowdown outside the
+  recurrence: CUDA recurrence is faster than FLA, but the clean reference
+  model splits every projection into fixed 128-row GEMMs.  On RTX 4080 a
+  flattened PyTorch/cuBLAS projection was `2.17x`–`4.46x` faster for the model's
+  representative matrix shapes.  This justifies a second **stateless leaf**;
+  it does not justify copying a fused model or parameter ownership into the
+  kernel package.
+- Added public `probe_linear_training_v1` / `linear_training_v1`, implementation
+  `native-nvidia-cublas-linear-training-v1`, and route tracing at the existing
+  `RWKV7_TRAINING_KERNEL_IMPL=auto|cuda` policy.  `RWKV7Linear` remains the
+  visible checkpoint-compatible layer; the optional leaf only flattens
+  `[B,T,C]` and calls PyTorch `F.linear`, so PyTorch/PEFT still owns autograd,
+  adapters, parameters and optimizer state.  Production `auto` remains
+  reference until the new whole-model gate passes.
+- Recurrent training now accepts arbitrary sequence lengths and left/right or
+  unequal padding.  Each sample is compacted in token order, padded only with
+  no-op recurrent updates to the CUDA chunk size, and scattered back.  An
+  all-padding sample preserves explicit zero gradients for every public
+  recurrent operand rather than returning `None` gradients.
+- Finetune provenance now records three separate boundaries (`model`,
+  `recurrent`, `linear`) and requires the readable model route plus both CUDA
+  leaf routes for the high-performance training claim.  Runtime names and
+  comments use only RWKV7/recurrent/linear/training/CUDA terminology; FLA is
+  confined to evaluator and documentation text.
+- Local quality gate passes: Ruff on every changed first-party file,
+  `git diff --check`, and
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q` -> **197 passed** with
+  253 expected TorchScript deprecation warnings.  Candidate source identity is
+  `7f5d0b1f679a`; locally built immutable diagnostic wheels are
+  `rwkv7_hf-1.0.0` SHA256
+  `01cdaaf4412e269bf91564d41d0e50c38e860b6cf7d08c21b901b486a65682d1`
+  and `rwkv7_kernels-1.0.0.dev0` SHA256
+  `0db18a8ac77226433ed42697077d35bb6ca95ce26cd20401517fedcafe3384f0`.
+- RTX 4080 was confirmed idle before deployment.  The V100 jump route then
+  became unreachable on both ports 9022 and 9023, so the new candidate has not
+  yet produced GPU evidence.  This is a transport blocker only: no local GPU
+  fallback was used and no old wheel result is being attributed to the new
+  source.  Once connectivity returns, run masked recurrence first, then the
+  three-way full-model matrix and decide whether the linear leaf can remain in
+  explicit CUDA mode without loosening the published numerical thresholds.
+
+### 2026-08-29 — standardized training API and exact wheel candidate
+
+- Public training terminology is now limited to RWKV7, recurrent, linear,
+  training and CUDA.  The two leaf APIs, their probes and their actual route
+  strings are documented in `kernels/README.md`; the pinned FLA name appears
+  only in evaluator/documentation comparison text.  The readable model remains
+  the only owner of modules, parameters, adapters, cache, loss and checkpoints.
+- `docs/EVALUATION.md` now contains the exact leaf and full-model three-way
+  commands.  Full-model acceptance requires the readable
+  `torch-reference-model-v1` loop plus actual recurrent and linear CUDA routes;
+  requested environment variables are not accepted as evidence.
+- Re-ran the complete local quality gate after the masked evaluator and
+  documentation changes: Ruff, both evaluator syntax checks and
+  `git diff --check` pass; `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
+  -q` remains **197 passed** with 253 expected TorchScript deprecation
+  warnings.
+- Built a fresh exact candidate from content identity `ac4437cc3c2a` and
+  verified every changed runtime member in each wheel is byte-identical to its
+  source.  `rwkv7_hf-1.0.0` SHA256 is
+  `94abbadc244953906ad46f6863181aba6521b3d8d0bdb11ef5cefa61efc6ef91`;
+  `rwkv7_kernels-1.0.0.dev0` SHA256 is
+  `49bd9c5c487b6541f94d1d3407e524052175beeeb4e710f5c5021a6b0f52126f`.
+  A clean local wheel-only environment imports API v2, exposes all four
+  versioned training functions and confirms CPU/`auto` fails closed to
+  `torch-reference-linear-v1` with ordinary gradients.  The compact source
+  archive SHA256 is
+  `0bb3ede722737701624f5edcd73b040eb164c71cbdd3e15b7cd97c92064eb49a`.
+- RTX 4080 deployment is still blocked by transport: both V100 jump ports,
+  direct 4080 Tailscale and the independent RTX 4090 endpoint timed out in the
+  same inspection window.  No GPU result is attributed to this candidate and
+  no old formal job was restarted.  Once either jump route returns, transfer
+  the exact archive and wheels above, confirm the GPU is idle, then run the
+  masked recurrent smoke before the full-model matrix.
+
+### 2026-08-29 — RTX 4080 masked-training audit and reference-boundary decision
+
+- Restored the RTX 4080 route through the V100 jump host, confirmed the GPU was
+  idle, and deployed the exact `03940da37c89` source candidate.  Wheel SHA256
+  values are `0590975d1d12464d4478e76cf1c7f9ea4d168f4564c19a2b15642a48f7839fc2`
+  for `rwkv7_hf-1.0.0` and
+  `c606eec3139f68ee507408ee8ee6eb031f249bb7dd1efe083d0d82373e94aba4`
+  for `rwkv7_kernels-1.0.0.dev0`.  All seven HF runtime files and 128 kernel
+  runtime/source files were byte-compared against the built wheels before
+  deployment.
+- Recurrent mask compaction now packs all samples into one no-op-padded CUDA
+  batch rather than launching the leaf once per sample.  The B4/T17/H12
+  left/right leaf audit passed output, final state, all vector gradients,
+  route and auto-fallback gates.  Native forward+backward measured `2.635x`
+  and `2.625x` the pinned FLA recurrent lane (`17.15x` and `17.07x` the
+  readable recurrence).  Evidence:
+  `/home/wzu/codex-run/results/rwkv7-training-03940da37c89/4080/recurrent-masked-formal.json`.
+- The full-model FLA comparison no longer passes a mask that the pinned FLA
+  RWKV-7 model ignores.  Its evaluator-only lane now compacts each sample in
+  token order and scatters logits back before applying the shared causal loss.
+  Runtime packages still do not import FLA.  This repaired the misleading
+  masked FLA logits cosine from roughly `0.85`–`0.89` to at least `0.99992` and
+  makes its slower per-sample masked timing explicit as
+  `per-sample-compact-scatter` in JSON.
+- The exact-wheel masked model matrix passed 3/4 cases.  Both ordinary
+  left/right runs and the right-padding checkpointed run passed actual route,
+  logits, loss and complete optimizer-vector gates.  Native was `2.24x` and
+  `2.20x` faster than the semantically correct masked FLA lane.  The
+  left-padding checkpointed seed remained failed without threshold changes:
+  logits cosine `0.999961`, loss delta `0.00866`, gradient cosine `0.999511`,
+  and gradient relative L2 `0.03135` versus the fixed `0.025` ceiling.
+  Evidence:
+  `/home/wzu/codex-run/results/rwkv7-training-03940da37c89/4080/model-masked-formal.json`.
+- A four-token FP32 checkpoint experiment reduced that gradient relative L2
+  only from `0.03135` to `0.03130`, so the extra recurrent-state memory was
+  rejected and the source was restored.  A separate diagnostic using the
+  factorized CUDA recurrence as the *public* reference passed (`0.01856`
+  gradient relative L2), confirming that the residual is the already-known
+  BF16 association difference between the established readable
+  `state @ (a @ b)` contract and the historical factorized CUDA leaf.  That
+  diagnostic is not accepted: the earlier candidate-wheel audit already
+  proved that redefining the public recurrence regresses the established
+  inference boundary and 144-unit baseline.
+- Decision: keep the clean HF recurrence unchanged, keep production `auto` on
+  reference autograd, and do not promote the recurrent CUDA training leaf yet.
+  The stateless flattened cuBLAS linear leaf remains mathematically exact and
+  independently useful, but it is not sufficient by itself to define a useful
+  whole-model training backend.
+- A follow-up linear-only diagnostic used the reference recurrence with the
+  native linear leaf on B4/T128.  It passed both ordinary cases and the
+  unpadded checkpoint case, but the left-padded checkpoint case remained over
+  the fixed full-gradient ceiling (`0.025242` relative L2 versus `0.025`).  Its
+  ordinary end-to-end speed was only `0.992x` without padding and `1.012x` with
+  left padding because the readable recurrence still dominates.  The
+  temporary public `linear` policy was therefore removed rather than adding a
+  slow near-duplicate route.  Diagnostic evidence is retained at
+  `/home/wzu/codex-run/results/rwkv7-training-a75becf53f99/4080/model-linear-only-smoke.json`.
+- The next admissible implementation step is an exact matrix-order CUDA
+  recurrence matching the unchanged public `state @ (a @ b)` mixed-precision
+  contract.  Until that exists and passes the unchanged model gate, both CUDA
+  leaves remain explicit diagnostics and no failed result may be relabelled as
+  a release pass.
+
+### 2026-08-29 — exact batched-matrix training source diagnostic
+
+- Added `recurrent/training_matrix.py` as a separate, exact training leaf.  It
+  preserves the public mixed-precision program: model-dtype outer products,
+  FP32 canonical `[B,H,K,V]` state, and the unchanged `state @ (a @ b)`
+  multiplication order.  It batches independent samples and heads into each
+  PyTorch CUDA matrix multiplication and leaves ordinary autograd, parameters,
+  adapters, cache and optimizer state under PyTorch/HF ownership.
+- Standardized the explicit selector as
+  `RWKV7_TRAINING_KERNEL_IMPL=matrix`; its final actual route name is
+  `torch-cuda-rwkv7-batched-matrix-recurrent-training-v1`.  The earlier
+  factorized custom-CUDA diagnostic is now named
+  `native-nvidia-rwkv7-factorized-recurrent-training-v1`, and its optional
+  flattened projection is
+  `torch-cuda-rwkv7-flattened-linear-training-v1`.  Production `auto` remains
+  reference until immutable-wheel acceptance completes.
+- An RTX 4080 source diagnostic passed ordinary and checkpointed B4/T17 left
+  padding.  Candidate/reference logits and loss were exact; the complete
+  gradient cosine/relative-L2 pairs were `0.9999906/0.004358` and
+  `0.9999883/0.004843`.  The ordinary run was `3.006x` faster than the readable
+  reference model and `1.097x` faster than the semantically matched pinned-FLA
+  lane.  FLA gradient relative L2 was `0.04127` ordinary and `0.11760` with
+  checkpointing.  Evidence:
+  `/home/wzu/codex-run/results/rwkv7-training-matrix-3f092defb25c/4080/model-matrix-masked-smoke.json`
+  (`sha256=d2c81222b25ae16264b0f9978cf7b651ae19776cf51be9a6d3d5d6aae9ed8219`).
+- That file is intentionally **source diagnostic only**: it records the
+  pre-standardization route string
+  `torch-cuda-rwkv7-batched-matrix-training-v1`.  It cannot be cited as final
+  wheel evidence.  The next gate is a clean dev-wheel build followed by the
+  complete recurrent and full-model matrix on RTX 4080, with the standardized
+  actual route verified from JSON before any `auto` promotion.
+- Local gate after adding the exact candidate and wheel membership audit:
+  targeted Ruff, evaluator bytecode compilation, JSON parsing and
+  `git diff --check` pass; the complete suite is **200 passed** with 253
+  expected TorchScript deprecation warnings.
+
+### 2026-08-29 — exact matrix immutable-wheel acceptance and speed limit
+
+- Built and installed the exact dev-wheel pair identified by content
+  `625fc202ba7f`.  HF wheel SHA256 is
+  `98f9da614a87a84c95031e66a7b74ea962d2d84ffa33653a9e761a1afccea8e6`;
+  kernel wheel SHA256 is
+  `948030b439d80d9d8ad34281f6de0d5136e67caf4ef2b13ce98d63374b1c0828`.
+  The clean RTX 4080 environment imported both packages from `site-packages`
+  and reported the standardized actual matrix route from the installed kernel
+  wheel.
+- Recurrent formal passed **18/18** B=`1/4`, T=`16/17/128`, H=`12`, padding
+  `none/left/right` cases plus the production-auto reference fallback.  Output
+  and final-state max-abs were exactly zero versus the readable reference;
+  minimum named-gradient cosine was `0.9999999973`, maximum relative L2 was
+  `7.37e-05`, and maximum gradient max-abs was `3.73e-09`.  JSON:
+  `/home/wzu/codex-run/results/rwkv7-training-matrix-625fc202ba7f/4080/recurrent-matrix-formal.json`
+  (`sha256=2ef263db37855d000d2ba4f96804c965a7c1ca969e6728af61905438a6f0c4a3`,
+  exit `0`).
+- Full 0.1B readable-model formal passed **36/36** B=`1/4`,
+  T=`16/17/128`, padding `none/left/right`, checkpointing `off/on` cases.
+  Candidate/reference logits and causal loss were exact in every case;
+  minimum complete-gradient cosine was `0.9999467` and maximum relative L2 was
+  `0.012453`, below the unchanged `0.025` gate.  The actual routes were exact
+  matrix recurrent, reference linear and readable reference-model loop.  JSON:
+  `/home/wzu/codex-run/results/rwkv7-training-matrix-625fc202ba7f/4080/model-matrix-formal.json`
+  (`sha256=4fb0fcea01de842a8f0444e82e22095121e2d2d5cc43b9cf303e44b9e607ea87`,
+  exit `0`).
+- The exact route is a successful compatibility accelerator, not yet the final
+  dense-training performance route.  Recurrent speedup versus the readable
+  reference was median `2.809x` and up to `4.297x` at B4, but only
+  `0.0197x`–`0.6409x` versus pinned FLA.  Whole-model speedup versus reference
+  was median `1.981x` and up to `3.871x`; versus FLA it was median `0.304x`,
+  with only short B4 padded cases reaching `1.073x`–`1.131x`.  These slower
+  rows remain first-class evidence and must not be described as an FLA speed
+  win.
+- Decision: do not promote matrix to production `auto`.  The next performance
+  candidate must keep this exact route as the safe masked/stateful fallback
+  while using a separately reported fused/factorized route only where its
+  unchanged full-gradient gate passes, or replace it with a new exact fused
+  implementation.  No threshold or public recurrence change is permitted.
+
+### 2026-08-29 — adaptive training route and RTX 4080 dense rerun
+
+- Standardized the public selector to `auto|adaptive|matrix|factorized` and
+  removed the temporary compatibility names. `adaptive` selects
+  `native-nvidia-rwkv7-factorized-recurrent-training-v1` only for fully active
+  zero-state BF16 CUDA batches; masked or unsupported requests use the exact
+  `torch-cuda-rwkv7-batched-matrix-recurrent-training-v1` leaf. The flattened
+  linear leaf is selected only for fully active projections with at least 128
+  rows. The readable HF model remains the sole owner of layers, parameters,
+  loss, cache, padding semantics and gradient checkpointing.
+- Renamed the first-party leaf modules to
+  `recurrent/training_factorized.py` and `linear/training_flattened.py` so file,
+  protocol and route names describe the actual mathematics. The upstream
+  `nvidia/train_temp_cuda.py` name remains private because it identifies the
+  pinned vendored implementation. Comments now distinguish the explicit
+  factorized/adaptive request from production `auto`.
+- Built and deployed immutable candidate `08c2bf82a012`. HF wheel SHA256 is
+  `59af7bc10aa5e8d261ca2669685f919734ce2fb54dfcbac207db9a78621593d0`;
+  kernel wheel SHA256 is
+  `00793e20eaae99e9df82537acb0b80799607cdd382d479d421bae1e8b01fd66b`.
+  The complete local gate is **202 passed**, with targeted Ruff and
+  `git diff --check` clean.
+- The first recurrent formal retained 12/12 exact masked cases but failed its
+  six dense route assertions because the clean RTX 4080 environment had no
+  discoverable CUDA toolkit or Ninja, so `adaptive` correctly failed closed to
+  the matrix leaf. This is preserved as failed infrastructure evidence at
+  `/home/wzu/codex-run/results/rwkv7-training-adaptive-08c2bf82a012/4080/recurrent-adaptive-formal.json`;
+  it is not reported as factorized-kernel evidence.
+- Assembled an isolated CUDA 13.0 development prefix from the server's cached
+  NVIDIA packages, exposed Ninja, and built only the requested recurrent
+  extension. The affected dense rerun passed **6/6** with the actual
+  factorized route. Minimum named-gradient cosine was `0.9999947`, maximum
+  relative L2 was `0.003265`, and maximum gradient max-abs was `5.96e-08`.
+  Recurrent speedup was `6.59x`–`321.66x` versus the readable loop and
+  `0.622x`–`2.181x` versus pinned FLA (median `1.517x`). Evidence:
+  `/home/wzu/codex-run/results/rwkv7-training-adaptive-08c2bf82a012/4080/recurrent-adaptive-dense-rerun.json`
+  (`sha256=e0b829b3d571130ca4578b83451fcc594315d8d4a5510bf94a12ea245b50cd3f`,
+  exit `0`).
+- The `08c2bf82a012` full-model run reached the last dense checkpointed shape,
+  B4/T128, then preserved a real `torch.utils.checkpoint.CheckpointError`
+  instead of generating a partial pass bundle. Its first forward used the
+  512-row flattened linear program, while autograd checkpoint replay ran in a
+  context that did not inherit the outer Python `ContextVar` and returned to
+  128-row reference chunks. The different saved-tensor metadata made the
+  failure deterministic; it was a route-replay bug, not a tolerance issue.
+- The clean model now republishes only the already-normalized mask semantic
+  inside `RWKV7Model._checkpointed_layer` before every layer execution. This
+  makes forward and recomputation select the same stateless linear program
+  without passing hardware policy, parameters, cache, or optimizer state into
+  `modeling_rwkv7.py`. A CPU regression test verifies that every checkpoint
+  replay republishes the same mask. The kernel distribution also declares
+  Ninja as a direct runtime dependency; factorized JIT still requires an
+  explicit matching `nvcc` toolkit and fails closed when it is absent.
+- Local acceptance is now **203 passed** with 253 expected TorchScript
+  deprecation warnings. Targeted Ruff and `git diff --check` pass. Rebuilt
+  candidate `2916f29a8e8f`: HF wheel SHA256 is
+  `e27fd675aed636fdbb5681d987b45e23986674cc4276d8e7157d5bdb937cbcef`;
+  kernel wheel SHA256 is
+  `45330e966a066100a1a25c5d51ab6d5cb1e24964860621f982aca845091d9348`.
+  Runtime members were byte-compared with source, and the kernel metadata
+  contains `torch`, `numpy`, `packaging`, and `ninja`. This new pair, not
+  `08c2bf82a012`, must pass the complete recurrent/model/finetune gate before
+  any production `auto` promotion.
+
+### 2026-08-29 — unaligned adaptive fallback correction
+
+- Candidate `2916f29a8e8f` passed the checkpoint route-replay smoke and the
+  complete recurrent matrix. The recurrent report passed **18/18** with six
+  dense factorized routes and twelve masked exact-matrix routes. Minimum
+  named-gradient cosine was `0.9999947` and maximum relative L2 was
+  `0.003265`. Evidence:
+  `/home/wzu/codex-run/results/rwkv7-training-adaptive-2916f29a8e8f/4080/recurrent-adaptive-formal.json`
+  (`sha256=00a791465eeae2a78b40be7475f006acc32afd1062b2e5b4006a2575495b6457`,
+  exit `0`).
+- Its full-model report was intentionally retained as **failed 35/36**. The
+  sole failure was the fully active B1/T17 checkpointed case: logits cosine
+  `0.9999625`, complete-gradient cosine `0.9997805`, and gradient relative L2
+  `0.021196` passed, but causal-loss delta `0.014821` exceeded the unchanged
+  `0.01` gate. No tolerance was changed. The factorized implementation is a
+  16-token-chunk program, so padding T17 to T32 changed BF16 association even
+  though it preserved the recurrent equation.
+- Adaptive policy now states that contract directly: only fully active token
+  lengths divisible by 16 use the factorized recurrence. Masked, unaligned,
+  stateful, or unsupported requests use the exact batched-matrix recurrence.
+  The optional flattened linear observes the same fully-active and
+  token-alignment context, so a model forward cannot mix an exact recurrent
+  fallback with the flattened accumulation program. Explicit `factorized`
+  remains an isolation/diagnostic selector; production `auto` remains the
+  readable reference path.
+- Renamed the HF boundary helper from `set_training_mask_context` to
+  `set_training_batch_context`, without a compatibility alias. The name now
+  matches the only data it publishes: mask activity and protocol chunk
+  alignment. Gradient-checkpoint replay republishes the same context before
+  every layer. Unit coverage includes fully active unaligned recurrent and
+  linear requests.
+- The corrected source passes the complete local gate: **203 passed**, with
+  253 expected TorchScript deprecation warnings; targeted Ruff and
+  `git diff --check` also pass. Corrected immutable candidate
+  `453e29a29e1a` has HF wheel SHA256
+  `7189c8b5615628c19befc6076bea0e80af83fd5b7c522d64ba82e297353a48f9`
+  and kernel wheel SHA256
+  `c814b13f2e82020c6418f7c5fbad8cab5a1310b586b2a256264679f64c84b278`.
+  It must pass the affected T17 smoke, complete recurrent/model matrices, and
+  SFT/DPO/GRPO validation before any promotion.
+- The affected B1/T17 checkpoint smoke now passes exactly through the intended
+  exact fallback: matrix recurrent, reference linear, readable model loop,
+  zero logits/loss/full-gradient difference versus reference. Evidence:
+  `/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/model-adaptive-t17-smoke.json`
+  (`sha256=800e861f56a7cbb08776da73671495c827f6d35af3368dcb2ade6571c17e9f77`,
+  exit `0`).
+- Corrected recurrent formal passes **18/18**. Actual routing is four aligned
+  factorized rows and fourteen masked/unaligned exact-matrix rows; no requested
+  policy name is counted as execution evidence. JSON:
+  `/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/recurrent-adaptive-formal.json`
+  (`sha256=a47ebf365ef441153f0ab4adfbdd0f27ab9b8bfca361c5c35d9cc8312ab9de1a`,
+  exit `0`).
+- Corrected full-model formal passes **36/36**. Actual recurrent routes are
+  eight aligned factorized and twenty-eight exact matrix; actual linear routes
+  are four flattened and thirty-two reference. Maximum loss delta is
+  `0.007085`, minimum complete-gradient cosine `0.9997274`, and maximum
+  complete-gradient relative L2 `0.023528`, all within unchanged gates. The
+  four non-checkpointed aligned performance rows are `1.008x`, `1.365x`,
+  `1.007x`, and `1.216x` versus pinned FLA; exact fallback rows are retained
+  even when slower. JSON:
+  `/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/model-adaptive-formal.json`
+  (`sha256=1227108af5b805c6a90c6981fdac85197e5b73b84cae296324f27cd20cd3b806`).
+  SFT/DPO/GRPO remains pending until the formal process has exited naturally;
+  no running validation process is terminated for scheduling convenience.
+
+### 2026-08-29 — BF16 LoRA route-proof smoke on RTX 4080
+
+- The direct TRL examples now load the requested model dtype explicitly,
+  disable a second Trainer AMP context, and use non-reentrant gradient
+  checkpointing. This keeps LayerNorm/projection tensors in the declared BF16
+  contract and lets the optional probe observe the real autograd request.
+- Route evidence now combines the last optimizer-boundary ContextVar with the
+  optional package's process-wide actual-call counter. This is necessary for
+  DPO because its differentiable policy forward is followed by a no-grad
+  reference forward; the latter must not erase the earlier optimized call.
+- Harness `27b21bf41b73` ran one-step SFT, DPO and GRPO with the unchanged
+  runtime wheel pair `453e29a29e1a`. All three exited `0`, produced finite
+  loss and nonzero gradients, changed LoRA parameters, and reloaded adapters
+  with `max_abs=0`. SFT and DPO each recorded 24 actual factorized recurrent
+  calls plus 315/333 flattened-linear calls. GRPO's sampled length was not
+  16-token aligned, so adaptive correctly recorded 24 exact-matrix recurrent
+  calls and retained reference linears. No NaN, Inf, traceback, or CUDA error
+  occurred. This is route-proof smoke only; the canonical 100-step bundle,
+  resume check and W&B-offline check remain pending.
+
+- The first formal resume attempt was retained as failed: PEFT promoted LoRA
+  matrices from BF16 to FP32 while restoring `checkpoint-100`, but the reload
+  checker forced the fresh-run BF16 adapter dtype. Parameters were numerically
+  identical after conversion, yet the two different GEMM dtypes produced a
+  `0.625` logits max-abs difference. The checker now discovers the actual LoRA
+  dtype from the trained model, recreates that runtime explicitly, and reports
+  adapter dtypes as part of the artifact. Only the affected resume unit is to
+  be rerun; the three completed formal methods remain immutable.
+
+### 2026-08-29 — canonical RTX 4080 adaptive finetune gate passed
+
+- Canonical BF16 LoRA SFT, DPO and GRPO each completed 100 optimizer steps
+  with seed 42, length 512, 1024/128 deterministic train/eval samples, the
+  pinned dataset revisions, and the immutable runtime wheel pair
+  `453e29a29e1a`. Every method exited `0`, logged 102 metric records, changed
+  all 144 trainable adapter parameters, produced finite loss and nonzero
+  gradients, and reloaded the saved adapter with logits `max_abs=0`.
+- Actual process-wide leaf counts prove adaptive execution rather than a
+  requested environment name. SFT recorded 2,184 factorized and 216 exact
+  matrix recurrent calls plus 28,665 flattened linears. DPO recorded 480
+  factorized and 1,920 exact matrix recurrent calls plus 6,660 flattened
+  linears. GRPO recorded 216 factorized and 2,184 exact matrix recurrent calls
+  plus 2,835 flattened linears. Masked and unaligned requests retained the
+  exact matrix/reference-linear pair; all three kept the readable HF model
+  loop because LoRA owns target projections.
+- The original failed resume artifact remains at
+  `sft-resume-failed-60a5be18edb3`. Only that unit was corrected with harness
+  `cf65bfdf7d21`: checkpoint 100 resumed to global step 101, the trained and
+  reloaded LoRA matrices were both FP32, and reload logits matched exactly.
+  W&B offline also exited `0` with local run id `0b0qvajc`.
+- Final validation status is `passed`; JSON SHA256 is
+  `c856730cc2e908b6fc23353dcf5387a9b1298844580a29b009cffff4905d61e9`.
+  The three canonical methods use harness `60a5be18edb3`; the transparent
+  affected-only resume correction uses `cf65bfdf7d21`. Runtime wheel hashes
+  remain HF `7189c8b5615628c19befc6076bea0e80af83fd5b7c522d64ba82e297353a48f9`
+  and kernels
+  `c814b13f2e82020c6418f7c5fbad8cab5a1310b586b2a256264679f64c84b278`.
+- The post-validation source gate passes **206 tests** with 253 expected
+  TorchScript deprecation warnings. Targeted Ruff, byte-manifest verification,
+  Python bytecode compilation, and `git diff --check` also pass. Repository-wide
+  Ruff is not used as a release gate because historical vendored and preserved
+  native-source files are intentionally outside the project lint scope.

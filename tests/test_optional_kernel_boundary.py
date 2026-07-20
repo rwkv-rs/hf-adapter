@@ -8,8 +8,10 @@ import torch
 
 from rwkv7_hf import ops_rwkv7
 from rwkv7_hf.ops_rwkv7 import (
+    get_last_linear_route,
     get_last_model_route,
     get_last_recurrent_route,
+    maybe_linear_training,
     maybe_model_forward,
     rwkv7_recurrent,
     rwkv7_recurrent_reference,
@@ -23,9 +25,7 @@ def recurrent_inputs(*, requires_grad: bool = False):
         torch.randn(shape, dtype=torch.float64, requires_grad=requires_grad)
         for _ in range(6)
     ]
-    state = torch.randn(
-        2, 2, 4, 4, dtype=torch.float64, requires_grad=requires_grad
-    )
+    state = torch.randn(2, 2, 4, 4, dtype=torch.float64, requires_grad=requires_grad)
     mask = torch.tensor([[True, True, True], [False, True, True]])
     return (*values, state, mask)
 
@@ -89,9 +89,7 @@ def test_auto_without_kernel_package_uses_reference(monkeypatch):
 
     monkeypatch.setattr(ops_rwkv7.importlib, "import_module", missing)
     inputs = recurrent_inputs()
-    assert_reference_equal(
-        rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs)
-    )
+    assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
     route = get_last_recurrent_route()
     assert route is not None
     assert route["requested"] == "auto"
@@ -111,9 +109,7 @@ def test_forced_optimized_without_package_fails_clearly(monkeypatch):
 def test_supported_kernel_is_selected_and_records_actual_route(monkeypatch):
     calls = install_fake_kernel(monkeypatch)
     inputs = recurrent_inputs()
-    assert_reference_equal(
-        rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs)
-    )
+    assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
     assert calls == {"probe": 1, "run": 1}
     assert get_last_recurrent_route() == {
         "requested": "auto",
@@ -126,9 +122,7 @@ def test_supported_kernel_is_selected_and_records_actual_route(monkeypatch):
 def test_auto_falls_back_on_unsupported_and_optimized_surfaces(monkeypatch):
     calls = install_fake_kernel(monkeypatch, supported=False)
     inputs = recurrent_inputs()
-    assert_reference_equal(
-        rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs)
-    )
+    assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
     assert calls == {"probe": 1, "run": 0}
     assert get_last_recurrent_route()["reason"] == "unsupported by fake"
 
@@ -144,9 +138,7 @@ def test_broken_kernel_is_contained_in_auto_and_surfaced_in_optimized(
     kwargs = {f"{failure_stage}_error": error}
     install_fake_kernel(monkeypatch, **kwargs)
     inputs = recurrent_inputs()
-    assert_reference_equal(
-        rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs)
-    )
+    assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
     assert "optional kernel failure" in get_last_recurrent_route()["reason"]
 
     with pytest.raises(RuntimeError, match=f"broken {failure_stage}"):
@@ -156,9 +148,7 @@ def test_broken_kernel_is_contained_in_auto_and_surfaced_in_optimized(
 def test_api_version_mismatch_falls_back_or_fails_by_mode(monkeypatch):
     install_fake_kernel(monkeypatch, api_version=999)
     inputs = recurrent_inputs()
-    assert_reference_equal(
-        rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs)
-    )
+    assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
     assert "kernel API mismatch" in get_last_recurrent_route()["reason"]
 
     ops_rwkv7._reset_kernel_discovery_for_tests()
@@ -166,7 +156,9 @@ def test_api_version_mismatch_falls_back_or_fails_by_mode(monkeypatch):
         rwkv7_recurrent(*inputs, backend="optimized")
 
 
-def test_training_semantics_never_enter_inference_only_kernel(monkeypatch):
+def test_training_falls_back_when_optional_package_has_no_training_protocol(
+    monkeypatch,
+):
     calls = install_fake_kernel(monkeypatch)
     inputs = recurrent_inputs(requires_grad=True)
     assert_reference_equal(
@@ -176,8 +168,156 @@ def test_training_semantics_never_enter_inference_only_kernel(monkeypatch):
     assert calls == {"probe": 0, "run": 0}
     assert get_last_recurrent_route()["selected"] == "reference"
 
-    with pytest.raises(RuntimeError, match="inference-only"):
+    assert "recurrent-training-v1" in get_last_recurrent_route()["reason"]
+
+    with pytest.raises(RuntimeError, match="recurrent-training-v1"):
         rwkv7_recurrent(*inputs, training=True, backend="optimized")
+
+
+def test_training_uses_separate_leaf_autograd_protocol(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"probe": 0, "run": 0}
+
+    def probe(*_args):
+        calls["probe"] += 1
+        return {
+            "supported": True,
+            "implementation": "fake-cuda-training-v1",
+            "reason": "fake training leaf",
+        }
+
+    def run(*args):
+        calls["run"] += 1
+        return rwkv7_recurrent_reference(*args)
+
+    module.probe_recurrent_training_v1 = probe
+    module.recurrent_training_v1 = run
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    inputs = recurrent_inputs(requires_grad=True)
+    output, state = rwkv7_recurrent(*inputs, training=True)
+    loss = output.square().mean() + state.square().mean()
+    loss.backward()
+
+    assert calls == {"probe": 1, "run": 1}
+    assert all(value.grad is not None for value in inputs[:-1])
+    assert get_last_recurrent_route() == {
+        "requested": "auto",
+        "selected": "optimized",
+        "implementation": "fake-cuda-training-v1",
+        "reason": "fake training leaf",
+    }
+
+
+def test_training_linear_uses_stateless_optional_protocol(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"probe": 0, "run": 0}
+
+    def probe(value, weight, bias, *, fully_active, token_aligned):
+        calls["probe"] += 1
+        assert bias is None
+        assert fully_active is None
+        assert token_aligned is None
+        return {
+            "supported": True,
+            "implementation": "fake-cuda-linear-training-v1",
+            "reason": "fake stateless linear leaf",
+        }
+
+    def run(value, weight, bias, *, fully_active, token_aligned):
+        calls["run"] += 1
+        assert fully_active is None
+        assert token_aligned is None
+        return torch.nn.functional.linear(value, weight, bias)
+
+    module.probe_linear_training_v1 = probe
+    module.linear_training_v1 = run
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    value = torch.randn(2, 3, 4, dtype=torch.float64, requires_grad=True)
+    weight = torch.randn(5, 4, dtype=torch.float64, requires_grad=True)
+    output = maybe_linear_training(value, weight, None, training=True)
+    assert output is not None
+    output.square().mean().backward()
+
+    assert calls == {"probe": 1, "run": 1}
+    assert value.grad is not None and weight.grad is not None
+    assert get_last_linear_route() == {
+        "requested": "auto",
+        "selected": "optimized",
+        "implementation": "fake-cuda-linear-training-v1",
+        "reason": "fake stateless linear leaf",
+    }
+
+
+def test_training_linear_auto_falls_back_and_optimized_is_strict(monkeypatch):
+    install_fake_kernel(monkeypatch)
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    weight = torch.randn(5, 4, requires_grad=True)
+
+    assert maybe_linear_training(value, weight, None, training=True) is None
+    assert get_last_linear_route()["selected"] == "reference"
+    assert "linear-training-v1" in get_last_linear_route()["reason"]
+    with pytest.raises(RuntimeError, match="linear-training-v1"):
+        maybe_linear_training(
+            value,
+            weight,
+            None,
+            training=True,
+            backend="optimized",
+        )
+
+
+def test_training_model_keeps_readable_loop_and_selects_both_leafs(
+    monkeypatch, tiny_config
+):
+    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    module.probe_model_forward_v1 = lambda _owner, _request: {
+        "supported": False,
+        "implementation": "fake-model-training-v1",
+        "reason": "model structure stays in modeling_rwkv7.py",
+        "phase": "training",
+    }
+    module.model_forward_v1 = lambda *_args: None
+    module.probe_recurrent_training_v1 = lambda *_args: {
+        "supported": True,
+        "implementation": "fake-cuda-recurrent-training-v1",
+        "reason": "fake recurrent leaf",
+    }
+    module.recurrent_training_v1 = lambda *args: rwkv7_recurrent_reference(*args)
+    module.probe_linear_training_v1 = lambda *_args, **_kwargs: {
+        "supported": True,
+        "implementation": "fake-cuda-linear-training-v1",
+        "reason": "fake linear leaf",
+    }
+    module.linear_training_v1 = lambda value, weight, bias, **_kwargs: (
+        torch.nn.functional.linear(value, weight, bias)
+    )
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    model = RWKV7ForCausalLM(tiny_config).train()
+    output = model(
+        input_ids=torch.tensor([[1, 2, 3]]),
+        labels=torch.tensor([[1, 2, 3]]),
+        use_cache=False,
+    )
+    output.loss.backward()
+
+    assert get_last_model_route()["selected"] == "reference"
+    assert get_last_recurrent_route()["implementation"] == (
+        "fake-cuda-recurrent-training-v1"
+    )
+    assert get_last_linear_route()["implementation"] == (
+        "fake-cuda-linear-training-v1"
+    )
 
 
 def test_invalid_backend_mode_is_rejected():

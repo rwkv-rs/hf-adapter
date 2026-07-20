@@ -23,13 +23,14 @@ def source_kernel_package(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / "kernels"))
     monkeypatch.delenv("RWKV7_KERNEL_IMPL", raising=False)
     monkeypatch.delenv("RWKV7_MODEL_KERNEL_IMPL", raising=False)
+    monkeypatch.delenv("RWKV7_TRAINING_KERNEL_IMPL", raising=False)
     unload_kernel_package()
     yield
     unload_kernel_package()
 
 
-def cpu_inputs():
-    shape = (1, 2, 1, 64)
+def cpu_inputs(tokens: int = 2):
+    shape = (1, tokens, 1, 64)
     values = [torch.randn(shape, dtype=torch.float16) for _ in range(6)]
     state = torch.randn(1, 1, 64, 64, dtype=torch.float32)
     return (*values, state, None)
@@ -40,10 +41,14 @@ def test_public_kernel_surface_is_versioned_and_small():
     assert kernels.RWKV7_KERNEL_API_VERSION == 2
     assert kernels.__all__ == [
         "RWKV7_KERNEL_API_VERSION",
+        "linear_training_v1",
         "model_forward_v1",
+        "probe_linear_training_v1",
         "probe_model_forward_v1",
         "probe_recurrent_v1",
+        "probe_recurrent_training_v1",
         "recurrent_v1",
+        "recurrent_training_v1",
     ]
 
 
@@ -286,6 +291,238 @@ def test_default_auto_prefill_reports_graph_implementation_on_cpu():
     assert "CUDA" in support["reason"]
 
 
+def test_training_auto_is_fail_closed_and_factorized_checks_capability(
+    monkeypatch,
+):
+    kernels = importlib.import_module("rwkv7_kernels")
+    inputs = list(cpu_inputs())
+    for value in inputs[:-2]:
+        value.requires_grad_(True)
+
+    support = kernels.probe_recurrent_training_v1(*inputs)
+    assert not support["supported"]
+    assert support["implementation"] == "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+    assert "full-model release gate" in support["reason"]
+
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "factorized")
+    support = kernels.probe_recurrent_training_v1(*inputs)
+    assert not support["supported"]
+    assert support["implementation"] == "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+    assert "CUDA" in support["reason"]
+
+
+def test_training_matrix_policy_is_exact_and_requires_cuda(monkeypatch):
+    kernels = importlib.import_module("rwkv7_kernels")
+    inputs = list(cpu_inputs())
+    for value in inputs[:-2]:
+        value.requires_grad_(True)
+
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "matrix")
+    support = kernels.probe_recurrent_training_v1(*inputs)
+    assert not support["supported"]
+    assert support["implementation"] == "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+    assert "CUDA" in support["reason"]
+
+
+def test_training_adaptive_policy_reports_the_actual_recurrent_leaf(monkeypatch):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    inputs = list(cpu_inputs(tokens=16))
+    for value in inputs[:-2]:
+        value.requires_grad_(True)
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_factorized",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "implementation": (
+                "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+            ),
+            "reason": "dense test request",
+        },
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_matrix",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "implementation": (
+                "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+            ),
+            "reason": "exact test request",
+        },
+    )
+
+    dense = dispatcher.probe_recurrent_training_v1(*inputs)
+    assert dense["implementation"] == (
+        "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+    )
+
+    inputs[-1] = torch.tensor([[False, *([True] * 15)]])
+    masked = dispatcher.probe_recurrent_training_v1(*inputs)
+    assert masked["implementation"] == (
+        "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+    )
+    assert "masked recurrent request" in masked["reason"]
+
+    unaligned_inputs = list(cpu_inputs(tokens=17))
+    for value in unaligned_inputs[:-2]:
+        value.requires_grad_(True)
+    unaligned = dispatcher.probe_recurrent_training_v1(*unaligned_inputs)
+    assert unaligned["implementation"] == (
+        "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+    )
+    assert "unaligned recurrent request" in unaligned["reason"]
+
+
+def test_training_adaptive_policy_keeps_masked_linears_on_reference(monkeypatch):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
+    value = torch.randn(2, 64, 4, requires_grad=True)
+    weight = torch.randn(5, 4, requires_grad=True)
+
+    masked = dispatcher.probe_linear_training_v1(
+        value,
+        weight,
+        None,
+        fully_active=False,
+        token_aligned=True,
+    )
+    assert not masked["supported"]
+    assert masked["implementation"] == "torch-reference-linear-v1"
+
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_flattened",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+            "reason": "dense test request",
+        },
+    )
+    dense = dispatcher.probe_linear_training_v1(
+        value,
+        weight,
+        None,
+        fully_active=True,
+        token_aligned=True,
+    )
+    assert dense["supported"]
+    assert dense["implementation"] == (
+        "torch-cuda-rwkv7-flattened-linear-training-v1"
+    )
+
+    unaligned = dispatcher.probe_linear_training_v1(
+        value,
+        weight,
+        None,
+        fully_active=True,
+        token_aligned=False,
+    )
+    assert not unaligned["supported"]
+    assert unaligned["implementation"] == "torch-reference-linear-v1"
+    assert "token-length-unaligned" in unaligned["reason"]
+
+
+def test_training_matrix_math_matches_reference_outputs_and_full_gradient():
+    matrix = importlib.import_module("rwkv7_kernels.recurrent.training_matrix")
+    from rwkv7_hf.ops_rwkv7 import rwkv7_recurrent_reference
+
+    torch.manual_seed(307)
+    shape = (4, 7, 3, 8)
+    base = [(torch.randn(shape) * 0.1) for _ in range(6)]
+    base[1] = torch.sigmoid(base[1].float())
+    state = torch.randn(4, 3, 8, 8, dtype=torch.float32) * 0.01
+    mask = torch.tensor(
+        [
+            [True, True, True, True, True, True, True],
+            [False, True, True, True, True, True, True],
+            [True, True, True, True, True, False, False],
+            [False, False, False, False, False, False, False],
+        ]
+    )
+
+    def collect(function):
+        values = [item.detach().clone().requires_grad_() for item in base]
+        initial_state = state.detach().clone().requires_grad_()
+        output, final_state = function(*values, initial_state, mask)
+        loss = output.square().mean() + final_state.square().mean()
+        gradients = torch.autograd.grad(loss, (*values, initial_state))
+        return output, final_state, gradients
+
+    reference = collect(rwkv7_recurrent_reference)
+    candidate = collect(matrix._batched_matrix_recurrence)
+    for actual, expected in zip(candidate[:2], reference[:2], strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    for actual, expected in zip(candidate[2], reference[2], strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def test_training_linear_auto_is_fail_closed_and_factorized_requires_cuda(
+    monkeypatch,
+):
+    kernels = importlib.import_module("rwkv7_kernels")
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    weight = torch.randn(5, 4, requires_grad=True)
+
+    support = kernels.probe_linear_training_v1(value, weight, None)
+    assert not support["supported"]
+    assert support["implementation"] == "torch-cuda-rwkv7-flattened-linear-training-v1"
+    assert "full-model precision" in support["reason"]
+
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "factorized")
+    support = kernels.probe_linear_training_v1(value, weight, None)
+    assert not support["supported"]
+    assert support["implementation"] == "torch-cuda-rwkv7-flattened-linear-training-v1"
+    assert "CUDA" in support["reason"]
+
+
+def test_training_linear_trace_records_actual_flattened_leaf(monkeypatch, tmp_path):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    trace_path = tmp_path / "training-route.json"
+    monkeypatch.setenv("RWKV7_KERNEL_TRACE_PATH", str(trace_path))
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "factorized")
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_flattened",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+            "reason": "test",
+        },
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "_run_flattened",
+        lambda value, weight, bias, **_kwargs: torch.nn.functional.linear(
+            value, weight, bias
+        ),
+    )
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    weight = torch.randn(5, 4, requires_grad=True)
+    output = dispatcher.linear_training_v1(value, weight, None)
+    assert tuple(output.shape) == (2, 3, 5)
+
+    importlib.import_module("rwkv7_kernels.trace").write_trace()
+    payload = json.loads(trace_path.read_text())
+    assert payload["requested_training_policy"] == "factorized"
+    assert payload["actual_linear_calls"] == {
+        "torch-cuda-rwkv7-flattened-linear-training-v1": 1
+    }
+
+
+def test_training_flattened_linear_declares_small_row_numerical_gate():
+    source = (
+        ROOT
+        / "kernels"
+        / "rwkv7_kernels"
+        / "linear"
+        / "training_flattened.py"
+    ).read_text()
+    assert "_MIN_FLATTENED_ROWS = 128" in source
+    assert "smaller projections retain" in source
+
+
 def test_explicit_triton_lane_reports_real_implementation_on_cpu(monkeypatch):
     monkeypatch.setenv("RWKV7_KERNEL_IMPL", "triton")
     kernels = importlib.import_module("rwkv7_kernels")
@@ -413,8 +650,7 @@ def test_graph_reference_math_is_batch_regrouping_invariant():
     torch.manual_seed(41)
     batch, time, heads, width = 8, 3, 1, 8
     tensors = [
-        torch.randn(batch, time, heads, width, dtype=torch.float16)
-        for _ in range(6)
+        torch.randn(batch, time, heads, width, dtype=torch.float16) for _ in range(6)
     ]
     state = torch.randn(batch, heads, width, width, dtype=torch.float32)
     mask = torch.ones(batch, time, dtype=torch.bool)

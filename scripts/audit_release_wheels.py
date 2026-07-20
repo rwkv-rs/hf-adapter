@@ -45,6 +45,8 @@ HF_FORBIDDEN = {
 KERNEL_REQUIRED = {
     "rwkv7_kernels/__init__.py",
     "rwkv7_kernels/dispatcher.py",
+    "rwkv7_kernels/linear/__init__.py",
+    "rwkv7_kernels/linear/training_flattened.py",
     "rwkv7_kernels/model/dense.py",
     "rwkv7_kernels/model/dense_step.py",
     "rwkv7_kernels/model/packing.py",
@@ -56,8 +58,11 @@ KERNEL_REQUIRED = {
     "rwkv7_kernels/protocol.py",
     "rwkv7_kernels/quantization.py",
     "rwkv7_kernels/recurrent/graph.py",
+    "rwkv7_kernels/recurrent/training_factorized.py",
+    "rwkv7_kernels/recurrent/training_matrix.py",
     "rwkv7_kernels/recurrent/triton.py",
     "rwkv7_kernels/trace.py",
+    "rwkv7_kernels/training_dispatcher.py",
 }
 KERNEL_FORBIDDEN = {
     "cache_rwkv7.py",
@@ -94,7 +99,7 @@ REQUIRED_CAPABILITIES = {
     "quant_runtime",
     "training_autograd",
 }
-KERNEL_REQUIRED_DEPENDENCIES = {"torch", "numpy", "packaging"}
+KERNEL_REQUIRED_DEPENDENCIES = {"torch", "numpy", "packaging", "ninja"}
 ALLOWED_PHASES = {"prefill", "decode", "training", "quantize"}
 ALLOWED_ACTIVATION = {
     "auto_or_explicit",

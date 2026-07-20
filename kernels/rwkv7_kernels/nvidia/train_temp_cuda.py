@@ -1,8 +1,10 @@
 """Opt-in RWKV-LM train_temp CUDA training backend for HF RWKV-7 models.
 
 The kernels under ``csrc/train_temp`` are vendored from RWKV-LM at the exact
-commit recorded in that directory.  This module keeps them lazy and isolated:
-normal HF inference and training do not compile or route through these ops.
+commit recorded in that directory. This module keeps them lazy and isolated:
+reference inference, reference training and production ``auto`` do not compile
+or route through these ops. Only an explicit factorized/adaptive training leaf
+may request the recurrent extension.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ TRAIN_TEMP_CHUNK_LEN = 16
 _LOAD_LOCK = threading.Lock()
 _LOADED = False
 _LOAD_ERROR: BaseException | None = None
+_RECURRENT_LOADED = False
+_RECURRENT_LOAD_ERROR: BaseException | None = None
 _L2WRAP_EXTENSION: Any | None = None
 
 _COMMON_CUDA_FLAGS = [
@@ -164,10 +168,89 @@ def _resolve_cuda_home(cpp_extension: Any) -> Path | None:
     return None
 
 
+def _build_verbose(verbose: bool | None) -> bool:
+    if verbose is not None:
+        return bool(verbose)
+    return os.environ.get("RWKV7_TRAIN_TEMP_VERBOSE", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _build_recurrent_operator(
+    cpp_extension: Any, cuda_home: Path, *, verbose: bool
+) -> None:
+    if _op_registered("rwkv7_clampw_v3"):
+        return
+    root = _source_root()
+    cpp_extension.load(
+        name="rwkv7_kernels_clampw_v3",
+        sources=[
+            str(root / "rwkv7_clampw_v3_for_h100.cu"),
+            str(root / "rwkv7_clampw_v3.cpp"),
+        ],
+        extra_cflags=["-O3"],
+        extra_cuda_cflags=[
+            *_RECURRENT_CUDA_FLAGS,
+            f"-D_N_={TRAIN_TEMP_HEAD_SIZE}",
+            f"-D_CHUNK_LEN_={TRAIN_TEMP_CHUNK_LEN}",
+        ],
+        extra_include_paths=_cuda_include_paths(cuda_home, include_target=True),
+        is_python_module=False,
+        verbose=verbose,
+    )
+
+
+def load_recurrent_training_cuda_extension(
+    *, verbose: bool | None = None
+) -> None:
+    """Build only the canonical recurrent training operator once."""
+
+    global _RECURRENT_LOADED, _RECURRENT_LOAD_ERROR
+    _validate_runtime()
+    if _RECURRENT_LOADED or _op_registered("rwkv7_clampw_v3"):
+        _RECURRENT_LOADED = True
+        return
+    if _RECURRENT_LOAD_ERROR is not None:
+        raise RuntimeError(
+            "recurrent training CUDA extension previously failed to load"
+        ) from _RECURRENT_LOAD_ERROR
+    with _LOAD_LOCK:
+        if _RECURRENT_LOADED or _op_registered("rwkv7_clampw_v3"):
+            _RECURRENT_LOADED = True
+            return
+        try:
+            from torch.utils import cpp_extension
+
+            cuda_home = _resolve_cuda_home(cpp_extension)
+            if cuda_home is None:
+                raise RuntimeError(
+                    "recurrent training CUDA JIT requires a local CUDA toolkit; "
+                    "set CUDA_HOME to the toolkit matching the PyTorch CUDA build"
+                )
+            _build_recurrent_operator(
+                cpp_extension,
+                cuda_home,
+                verbose=_build_verbose(verbose),
+            )
+            if not _op_registered("rwkv7_clampw_v3"):
+                raise RuntimeError(
+                    "recurrent training extension did not register rwkv7_clampw_v3"
+                )
+            _RECURRENT_LOADED = True
+        except BaseException as exc:
+            _RECURRENT_LOAD_ERROR = exc
+            raise RuntimeError(
+                f"recurrent training CUDA extension failed to load: {exc}"
+            ) from exc
+
+
 def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
     """Build and load the vendored train_temp operators once."""
 
-    global _L2WRAP_EXTENSION, _LOADED, _LOAD_ERROR
+    global _L2WRAP_EXTENSION, _LOADED, _LOAD_ERROR, _RECURRENT_LOADED
     _validate_runtime()
     if _LOADED:
         return
@@ -187,16 +270,9 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                     "train_temp CUDA JIT requires a local CUDA toolkit; set CUDA_HOME "
                     "to the toolkit matching the PyTorch CUDA build"
                 )
-            if verbose is None:
-                verbose = os.environ.get("RWKV7_TRAIN_TEMP_VERBOSE", "0").lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }
+            verbose = _build_verbose(verbose)
             root = _source_root()
             include_paths = _cuda_include_paths(cuda_home)
-            cuda_cpp_include_paths = _cuda_include_paths(cuda_home, include_target=True)
             for namespace, filenames in _OP_SOURCES.items():
                 if _op_registered(namespace):
                     continue
@@ -207,25 +283,10 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                     extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
                     extra_include_paths=include_paths,
                     is_python_module=False,
-                    verbose=bool(verbose),
+                    verbose=verbose,
                 )
-            if not _op_registered("rwkv7_clampw_v3"):
-                cpp_extension.load(
-                    name="rwkv7_kernels_clampw_v3",
-                    sources=[
-                        str(root / "rwkv7_clampw_v3_for_h100.cu"),
-                        str(root / "rwkv7_clampw_v3.cpp"),
-                    ],
-                    extra_cflags=["-O3"],
-                    extra_cuda_cflags=[
-                        *_RECURRENT_CUDA_FLAGS,
-                        f"-D_N_={TRAIN_TEMP_HEAD_SIZE}",
-                        f"-D_CHUNK_LEN_={TRAIN_TEMP_CHUNK_LEN}",
-                    ],
-                    extra_include_paths=cuda_cpp_include_paths,
-                    is_python_module=False,
-                    verbose=bool(verbose),
-                )
+            _build_recurrent_operator(cpp_extension, cuda_home, verbose=verbose)
+            _RECURRENT_LOADED = True
             _L2WRAP_EXTENSION = cpp_extension.load(
                 name="rwkv7_kernels_l2wrap_ce_bf16_v2",
                 sources=[
@@ -234,8 +295,10 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                 ],
                 extra_cflags=["-O3"],
                 extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
-                extra_include_paths=cuda_cpp_include_paths,
-                verbose=bool(verbose),
+                extra_include_paths=_cuda_include_paths(
+                    cuda_home, include_target=True
+                ),
+                verbose=verbose,
             )
             missing = [
                 namespace for namespace in _OP_SOURCES if not _op_registered(namespace)
@@ -261,6 +324,18 @@ def train_temp_cuda_available(*, build: bool = False) -> bool:
         _validate_runtime()
         if build:
             load_train_temp_cuda_extension()
+    except Exception:
+        return False
+    return True
+
+
+def recurrent_training_cuda_available(*, build: bool = False) -> bool:
+    """Return support, optionally compiling only the recurrent operator."""
+
+    try:
+        _validate_runtime()
+        if build:
+            load_recurrent_training_cuda_extension()
     except Exception:
         return False
     return True
@@ -387,20 +462,14 @@ class _VResGate(torch.autograd.Function):
         )
 
 
-def _recurrent_decay_reference(r, decay, k, v, a, b):
-    """Replay the accepted rank-one recurrence for exact autograd gradients."""
+def _recurrent_decay_reference(r, decay, k, v, a, b, initial_state):
+    """Replay the canonical rank-one recurrence for autograd."""
 
     batch, tokens, heads, head_size = r.shape
     sample_outputs = []
+    final_states = []
     for batch_idx in range(batch):
-        state = torch.zeros(
-            1,
-            heads,
-            head_size,
-            head_size,
-            dtype=torch.float32,
-            device=r.device,
-        )
+        state = initial_state[batch_idx : batch_idx + 1]
         token_outputs = []
         for token_idx in range(tokens):
             r_t = r[batch_idx : batch_idx + 1, token_idx]
@@ -434,12 +503,13 @@ def _recurrent_decay_reference(r, decay, k, v, a, b):
                 )
             token_outputs.append(output_fp32.to(dtype=v.dtype))
         sample_outputs.append(torch.stack(token_outputs, dim=1))
-    return torch.cat(sample_outputs, dim=0)
+        final_states.append(state)
+    return torch.cat(sample_outputs, dim=0), torch.cat(final_states, dim=0)
 
 
 class _ClampW(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, r, decay, k, v, a, b):
+    def forward(ctx, r, decay, k, v, a, b, initial_state):
         batch, tokens, heads, head_size = r.shape
         if head_size != TRAIN_TEMP_HEAD_SIZE or tokens % TRAIN_TEMP_CHUNK_LEN:
             raise ValueError(
@@ -448,7 +518,9 @@ class _ClampW(torch.autograd.Function):
             )
         if decay.dtype != torch.float32:
             raise TypeError(f"train_temp decay must be FP32, got {decay.dtype}")
-        inputs = tuple(value.contiguous() for value in (r, decay, k, v, a, b))
+        recurrent_inputs = tuple(
+            value.contiguous() for value in (r, decay, k, v, a, b)
+        )
         output = torch.empty_like(v)
         state = torch.empty(
             batch,
@@ -462,26 +534,110 @@ class _ClampW(torch.autograd.Function):
         state_aux = torch.empty(
             batch, tokens, heads, head_size, dtype=torch.float32, device=decay.device
         )
-        torch.ops.rwkv7_clampw_v3.forward(*inputs, output, state, state_aux)
-        ctx.save_for_backward(*inputs)
-        return output
+        torch.ops.rwkv7_clampw_v3.forward(
+            *recurrent_inputs, output, state, state_aux
+        )
+        ctx.set_materialize_grads(False)
+        ctx.save_for_backward(
+            *recurrent_inputs, state, state_aux, initial_state
+        )
+        # The last CUDA checkpoint is the canonical [B,H,K,V] final state.
+        # Returning it preserves the public recurrent operator contract.
+        return output, state[:, :, -1]
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, grad_output, grad_final_state):
         create_graph = torch.is_grad_enabled()
-        with torch.enable_grad():
-            inputs = [
-                value.detach().requires_grad_(True) for value in ctx.saved_tensors
+        r, decay, k, v, a, b, state, state_aux, initial_state = ctx.saved_tensors
+        if grad_output is None:
+            grad_output = torch.zeros_like(v)
+        recurrent_inputs = (r, decay, k, v, a, b)
+        recurrent_grads = [torch.empty_like(value) for value in recurrent_inputs]
+        torch.ops.rwkv7_clampw_v3.backward(
+            *recurrent_inputs,
+            grad_output.contiguous(),
+            state,
+            state_aux,
+            *recurrent_grads,
+        )
+
+        initial_state_grad = None
+        if grad_final_state is not None:
+            # The CUDA kernel computes the standard output-loss gradient.  A
+            # caller that consumes the returned state adds only that state's
+            # contribution through the canonical recurrence.
+            with torch.enable_grad():
+                replay_inputs = [
+                    value.detach().requires_grad_(True)
+                    for value in recurrent_inputs
+                ]
+                replay_state = initial_state.detach().requires_grad_(True)
+                _, replay_final_state = _recurrent_decay_reference(
+                    *replay_inputs, replay_state
+                )
+                state_grads = torch.autograd.grad(
+                    replay_final_state,
+                    (*replay_inputs, replay_state),
+                    grad_final_state.contiguous(),
+                    create_graph=create_graph,
+                    allow_unused=True,
+                )
+                state_grads = tuple(
+                    torch.zeros_like(value) if gradient is None else gradient
+                    for value, gradient in zip(
+                        (*replay_inputs, replay_state), state_grads, strict=True
+                    )
+                )
+            recurrent_grads = [
+                native + state_contribution
+                for native, state_contribution in zip(
+                    recurrent_grads, state_grads[:-1], strict=True
+                )
             ]
-            output = _recurrent_decay_reference(*inputs)
-            return tuple(
-                torch.autograd.grad(
-                    output,
-                    inputs,
+            initial_state_grad = state_grads[-1]
+
+        if ctx.needs_input_grad[-1]:
+            # Training normally starts from a detached zero state.  Stateful
+            # callers still receive the exact output-to-state derivative.
+            with torch.enable_grad():
+                replay_state = initial_state.detach().requires_grad_(True)
+                replay_output, _ = _recurrent_decay_reference(
+                    *(value.detach() for value in recurrent_inputs), replay_state
+                )
+                output_state_grad = torch.autograd.grad(
+                    replay_output,
+                    replay_state,
                     grad_output.contiguous(),
                     create_graph=create_graph,
-                )
+                )[0]
+            initial_state_grad = (
+                output_state_grad
+                if initial_state_grad is None
+                else initial_state_grad + output_state_grad
             )
+
+        return (*recurrent_grads, initial_state_grad)
+
+
+def rwkv7_training_recurrent(
+    r: torch.Tensor,
+    decay: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    initial_state: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Execute the native training recurrence with zero initial state.
+
+    The public HF adapter owns decay translation, cache layout and masking.
+    This function owns only the dense BF16 recurrence and its autograd edge.
+    Capability checks live in ``recurrent.training_factorized`` so a direct call
+    never silently falls back to another implementation.
+    """
+
+    load_recurrent_training_cuda_extension()
+    return _ClampW.apply(r, decay, k, v, a, b, initial_state)
 
 
 class _CMix(torch.autograd.Function):
@@ -655,14 +811,24 @@ def _train_temp_attention_forward(
     k = k * (1 + (a - 1) * self.k_a.view(1, 1, -1))
     neg_kk = -normalized_key
     kka = normalized_key * a
-    values = _ClampW.apply(
+    initial_state = torch.zeros(
+        batch,
+        heads,
+        TRAIN_TEMP_HEAD_SIZE,
+        TRAIN_TEMP_HEAD_SIZE,
+        dtype=torch.float32,
+        device=r.device,
+    )
+    values, _final_state = _ClampW.apply(
         r.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         decay.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         k.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         v.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         neg_kk.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         kka.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
-    ).reshape(batch, tokens, -1)
+        initial_state,
+    )
+    values = values.reshape(batch, tokens, -1)
     # The fused LNX leaf remains available for throughput experiments, but its
     # BF16 reduction order compounds across deep training graphs. Keep the
     # accepted training route on the exact HF GroupNorm/direct/gate expression
@@ -695,7 +861,10 @@ __all__ = [
     "TRAIN_TEMP_CHUNK_LEN",
     "TRAIN_TEMP_HEAD_SIZE",
     "TRAIN_TEMP_SOURCE_COMMIT",
+    "load_recurrent_training_cuda_extension",
     "load_train_temp_cuda_extension",
+    "recurrent_training_cuda_available",
+    "rwkv7_training_recurrent",
     "train_temp_causal_cross_entropy",
     "train_temp_cuda_available",
     "train_temp_fused_cross_entropy",

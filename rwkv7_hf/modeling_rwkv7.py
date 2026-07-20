@@ -4,8 +4,9 @@
 The file intentionally shows the full model structure: token mixing, channel
 mixing, residuals, normalization, layer iteration, cache handling, language
 model loss, and generation integration. Optional acceleration enters through
-the two versioned boundaries in ops_rwkv7.py: the recurrence and one early
-whole-layer-loop hook. Neither boundary owns model/config/cache definitions.
+three versioned boundaries in ops_rwkv7.py: stateless training linears, the
+recurrence, and one early whole-layer-loop hook. None of these boundaries owns
+model, configuration, cache, parameter, adapter, or optimizer definitions.
 """
 from __future__ import annotations
 
@@ -30,7 +31,12 @@ except ImportError:  # pragma: no cover - older Transformers
 try:
     from .cache_rwkv7 import RWKV7Cache
     from .configuration_rwkv7 import RWKV7Config
-    from .ops_rwkv7 import maybe_model_forward, rwkv7_recurrent
+    from .ops_rwkv7 import (
+        maybe_linear_training,
+        maybe_model_forward,
+        rwkv7_recurrent,
+        set_training_batch_context,
+    )
 except ModuleNotFoundError:
     # Transformers < 5 does not sanitize dots in Hub repository names when it
     # constructs the dynamic-module package. Repositories such as
@@ -55,8 +61,10 @@ except ModuleNotFoundError:
     RWKV7Cache = _load_remote_sibling("cache_rwkv7").RWKV7Cache
     RWKV7Config = _load_remote_sibling("configuration_rwkv7").RWKV7Config
     _remote_ops = _load_remote_sibling("ops_rwkv7")
+    maybe_linear_training = _remote_ops.maybe_linear_training
     maybe_model_forward = _remote_ops.maybe_model_forward
     rwkv7_recurrent = _remote_ops.rwkv7_recurrent
+    set_training_batch_context = _remote_ops.set_training_batch_context
 
 
 # Mathematically equivalent form used by the official NumPy reference.
@@ -130,9 +138,17 @@ def _linear_reference(
 
 
 class RWKV7Linear(nn.Linear):
-    """Checkpoint-compatible linear layer using the reference row contract."""
+    """Checkpoint-compatible linear with a stateless optional training leaf."""
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
+        optimized = maybe_linear_training(
+            value,
+            self.weight,
+            self.bias,
+            training=self.training,
+        )
+        if optimized is not None:
+            return optimized
         return _linear_reference(value, self.weight, self.bias)
 
 
@@ -263,6 +279,14 @@ class RWKV7LowRank(nn.Module):
         value = self.lora[0](value)
         if activation is not None:
             value = activation(value)
+        optimized = maybe_linear_training(
+            value,
+            self.lora[2].weight,
+            None,
+            training=self.training,
+        )
+        if optimized is not None:
+            return optimized
         return _linear_reference(value, self.lora[2].weight, bias=None)
 
 
@@ -662,6 +686,14 @@ class RWKV7Model(RWKV7PreTrainedModel):
         attention_mask: torch.Tensor,
     ):
         def custom_forward(hidden, state, attn_shift, channel_shift, first_value):
+            # Autograd may recompute a checkpoint on a worker context that
+            # does not inherit Python ContextVars from the outer model call.
+            # Re-publish only the mask semantic here so optional stateless
+            # linears select the same mathematical program in both passes.
+            set_training_batch_context(
+                attention_mask,
+                training=self.training,
+            )
             return layer(
                 hidden,
                 state,
@@ -740,6 +772,7 @@ class RWKV7Model(RWKV7PreTrainedModel):
             int(sequence_length),
             inputs_embeds.device,
         )
+        set_training_batch_context(mask, training=self.training)
         hidden_states = inputs_embeds * mask.unsqueeze(-1).to(
             dtype=inputs_embeds.dtype
         )

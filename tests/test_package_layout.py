@@ -77,7 +77,7 @@ def test_kernel_distribution_declares_direct_runtime_dependencies():
         .lower()
         for dependency in project["project"]["dependencies"]
     }
-    assert dependencies == {"torch", "numpy", "packaging"}
+    assert dependencies == {"torch", "numpy", "packaging", "ninja"}
 
 
 def test_one_console_entrypoint_dispatches_all_tools():

@@ -150,6 +150,7 @@ def environment() -> dict:
                 "RWKV7_BACKEND",
                 "RWKV7_KERNEL_IMPL",
                 "RWKV7_MODEL_KERNEL_IMPL",
+                "RWKV7_TRAINING_KERNEL_IMPL",
             )
         },
         "cuda_toolkit": cuda_toolkit_provenance(),

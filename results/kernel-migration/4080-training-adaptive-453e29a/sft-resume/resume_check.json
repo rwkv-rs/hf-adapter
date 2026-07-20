@@ -1,0 +1,6 @@
+{
+  "requested": "/home/wzu/codex-run/results/rwkv7-training-adaptive-453e29a29e1a/4080/finetune-formal-bf16-60a5be18edb3/sft/checkpoint-100",
+  "prior_global_step": 100,
+  "final_global_step": 101,
+  "advanced": true
+}

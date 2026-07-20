@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from rwkv7_hf.cache_rwkv7 import RWKV7Cache
 from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM, RWKV7Linear, RWKV7Model
+from rwkv7_hf.ops_rwkv7 import rwkv7_recurrent_reference
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,9 +190,7 @@ def test_migrated_dense_model_math_cache_padding_and_hidden_states(
                 "model_kind": "base",
                 "hidden_states": hidden,
                 "attention_mask": mask,
-                "past_key_values": RWKV7Cache(
-                    num_layers=tiny_config.num_hidden_layers
-                ),
+                "past_key_values": RWKV7Cache(num_layers=tiny_config.num_hidden_layers),
                 "training": False,
                 "use_cache": True,
                 "output_hidden_states": True,
@@ -235,9 +234,7 @@ def test_migrated_native_prefill_and_cached_decode_preserve_canonical_cache(
             {
                 "model_kind": "causal_lm",
                 "input_ids": prompt,
-                "past_key_values": RWKV7Cache(
-                    num_layers=tiny_config.num_hidden_layers
-                ),
+                "past_key_values": RWKV7Cache(num_layers=tiny_config.num_hidden_layers),
                 "training": False,
                 "grad_enabled": False,
                 "use_cache": True,
@@ -309,9 +306,7 @@ def test_native_model_runtime_compacts_left_right_padding_without_state_updates(
                 "model_kind": "causal_lm",
                 "input_ids": prompt,
                 "attention_mask": mask,
-                "past_key_values": RWKV7Cache(
-                    num_layers=tiny_config.num_hidden_layers
-                ),
+                "past_key_values": RWKV7Cache(num_layers=tiny_config.num_hidden_layers),
                 "training": False,
                 "grad_enabled": False,
                 "use_cache": True,
@@ -359,6 +354,7 @@ def test_native_model_runtime_compacts_left_right_padding_without_state_updates(
         expected_decode.past_key_values.recurrent_state,
     ):
         torch.testing.assert_close(migrated, reference, rtol=2e-5, atol=2e-6)
+
 
 def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
     _load_dense_backend(monkeypatch)
@@ -420,9 +416,7 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
             batch, module.hidden_size, dtype=hidden.dtype, device=hidden.device
         )
         mask = torch.ones(batch, tokens, dtype=torch.bool, device=hidden.device)
-        output, _state, _shift, v_first = module(
-            hidden, state, shift, v_first, mask
-        )
+        output, _state, _shift, v_first = module(hidden, state, shift, v_first, mask)
         return output, v_first
 
     class FakeCMix:
@@ -432,7 +426,9 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
                 (torch.zeros_like(hidden[:, :1]), hidden[:, :-1]), dim=1
             )
             mixed = hidden + (shifted - hidden) * x_k.view(1, 1, -1)
-            return F.linear(torch.relu(F.linear(mixed, key_weight)).square(), value_weight)
+            return F.linear(
+                torch.relu(F.linear(mixed, key_weight)).square(), value_weight
+            )
 
     monkeypatch.setattr(train_temp, "_train_temp_attention_forward", attention_forward)
     monkeypatch.setattr(train_temp, "_CMix", FakeCMix)
@@ -473,7 +469,10 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
     assert "train_temp._CMix.apply(" not in source
 
 
-def test_train_temp_decay_operand_privately_adds_fp32_public_bias(tiny_config):
+def test_train_temp_decay_operand_privately_adds_fp32_public_bias(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
     train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
     attention = RWKV7ForCausalLM(tiny_config).model.layers[0].attn.bfloat16()
     projection = attention.w_lora.lora[2]
@@ -482,8 +481,7 @@ def test_train_temp_decay_operand_privately_adds_fp32_public_bias(tiny_config):
 
     raw_decay = attention.w_lora.project_without_bias(xw, torch.tanh)
     actual = torch.exp(
-        -0.6065306597
-        * torch.sigmoid(raw_decay.float() + projection.bias.float())
+        -0.6065306597 * torch.sigmoid(raw_decay.float() + projection.bias.float())
     )
 
     assert actual.dtype == torch.float32
@@ -496,10 +494,89 @@ def test_train_temp_decay_operand_privately_adds_fp32_public_bias(tiny_config):
     assert "raw_decay.float() + decay_bias.float()" in source
     assert "decay.dtype != torch.float32" in source
     assert '"--fmad=false"' in source
-    assert "_recurrent_decay_reference(*inputs)" in source
+    assert "torch.ops.rwkv7_clampw_v3.backward" in source
+    assert "_recurrent_decay_reference(" in source
     assert "a = torch.sigmoid(self.a_lora.project(xa))" in source
     assert "normalized_key = F.normalize(" in source
     assert "value_mix = torch.sigmoid(self.v_lora.project(xv))" in source
+
+
+def test_recurrent_training_replay_matches_reference_full_gradient(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    torch.manual_seed(73)
+    shape = (2, 3, 2, 4)
+    recurrent_inputs = [(torch.randn(shape) * 0.1).requires_grad_() for _ in range(6)]
+    recurrent_inputs[1] = torch.rand(shape).requires_grad_()
+    initial_state = (torch.randn(2, 2, 4, 4) * 0.01).requires_grad_()
+
+    reference = rwkv7_recurrent_reference(*recurrent_inputs, initial_state)
+    replay = train_temp._recurrent_decay_reference(*recurrent_inputs, initial_state)
+    for candidate, expected in zip(replay, reference, strict=True):
+        torch.testing.assert_close(candidate, expected)
+
+    reference_loss = sum(value.square().mean() for value in reference)
+    reference_gradients = torch.autograd.grad(
+        reference_loss,
+        (*recurrent_inputs, initial_state),
+        retain_graph=True,
+    )
+    replay_loss = sum(value.square().mean() for value in replay)
+    replay_gradients = torch.autograd.grad(
+        replay_loss, (*recurrent_inputs, initial_state)
+    )
+    for candidate, expected in zip(replay_gradients, reference_gradients, strict=True):
+        torch.testing.assert_close(candidate, expected)
+
+
+def test_recurrent_training_mask_compaction_preserves_padding_and_gradients(
+    monkeypatch,
+):
+    _load_dense_backend(monkeypatch)
+    training = importlib.import_module(
+        "rwkv7_kernels.recurrent.training_factorized"
+    )
+    torch.manual_seed(79)
+    shape = (2, 5, 2, 4)
+    base = [torch.randn(shape, dtype=torch.float64) * 0.1 for _ in range(6)]
+    base[1] = torch.rand(shape, dtype=torch.float64)
+    state = torch.zeros(2, 2, 4, 4, dtype=torch.float64)
+    mask = torch.tensor(
+        [[False, False, True, True, True], [False, False, False, False, False]]
+    )
+    runner_calls = []
+
+    def packed_reference(*args):
+        runner_calls.append(tuple(args[0].shape))
+        return rwkv7_recurrent_reference(*args)
+
+    def collect(compacted: bool):
+        values = [value.detach().clone().requires_grad_() for value in base]
+        initial_state = state.detach().clone().requires_grad_()
+        if compacted:
+            output, final_state = training._run_masked_training(
+                values,
+                initial_state,
+                mask,
+                runner=packed_reference,
+            )
+        else:
+            output, final_state = rwkv7_recurrent_reference(
+                *values,
+                initial_state,
+                mask,
+            )
+        loss = output.square().mean() + final_state.square().mean()
+        gradients = torch.autograd.grad(loss, (*values, initial_state))
+        return output, final_state, gradients
+
+    compacted = collect(True)
+    reference = collect(False)
+    for candidate, expected in zip(compacted[:2], reference[:2], strict=True):
+        torch.testing.assert_close(candidate, expected)
+    for candidate, expected in zip(compacted[2], reference[2], strict=True):
+        torch.testing.assert_close(candidate, expected)
+    assert runner_calls == [(2, 16, 2, 4)]
 
 
 def test_train_temp_mix6_backward_matches_canonical_token_mix():

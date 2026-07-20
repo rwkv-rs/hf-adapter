@@ -172,3 +172,77 @@ rejects symlinks, oversized evidence, known token forms and output directories
 inside the raw result tree. `BUNDLE.json` records the filtering policy and
 builder SHA; `MANIFEST.sha256` covers every other bundled file and is verified
 before the directory is published.
+
+## Optional training comparison
+
+Training comparison never substitutes a second model class. The reference and
+candidate lanes load the same `RWKV7ForCausalLM`; the candidate keeps the
+readable layer loop and replaces only canonical mathematical leaves.  The
+`adaptive` candidate uses the factorized recurrent and flattened linear leaves
+for fully active batches whose token length is divisible by 16. It selects the
+exact matrix recurrence and reference linears for masked or unaligned batches.
+`matrix` and `factorized` remain explicit isolation modes. FLA is loaded from
+the pinned checkout as an independent comparison lane.
+
+The factorized rows require a CUDA development toolkit matching
+`torch.version.cuda`. The kernel wheel installs Ninja, but it deliberately does
+not install or guess a system toolkit. Point `CUDA_HOME` at a prefix containing
+`bin/nvcc`, and record both values before running the immutable-wheel gate:
+
+```bash
+export CUDA_HOME=/opt/cuda
+export PATH="$CUDA_HOME/bin:$PATH"
+"$CUDA_HOME/bin/nvcc" --version
+python -c 'import torch; print(torch.__version__, torch.version.cuda)'
+```
+
+If that toolchain is absent, `adaptive` records the reason and uses the exact
+matrix leaf; such a row is valid fallback evidence but cannot be counted as a
+factorized speed result. `matrix` never requires a compiler.
+
+Leaf-level output, state and gradient comparison:
+
+```bash
+RWKV7_BACKEND=auto \
+RWKV7_TRAINING_KERNEL_IMPL=adaptive \
+python evaluation/validate_recurrent_training.py \
+  --candidate adaptive \
+  --fla-source /sources/fla-80e494f6 \
+  --output results/training/recurrent.json \
+  --batch 1 --batch 4 \
+  --tokens 16 --tokens 17 --tokens 128 \
+  --padding none --padding left --padding right \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
+```
+
+Full-model logits, causal loss, complete gradient vector, checkpointing and
+forward/backward throughput comparison:
+
+```bash
+python evaluation/validate_model_training.py \
+  --candidate adaptive \
+  --model /models/rwkv7-0.1b-hf \
+  --fla-source /sources/fla-80e494f6 \
+  --output results/training/model.json \
+  --batch 1 --batch 4 \
+  --tokens 16 --tokens 17 --tokens 128 \
+  --padding none --padding left --padding right \
+  --checkpointing off --checkpointing on \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
+```
+
+For the exact rows of `--candidate adaptive` (or `--candidate matrix`), the
+full-model gate requires actual recurrent route
+`torch-cuda-rwkv7-batched-matrix-recurrent-training-v1`, reference linear route
+`torch-reference-linear-v1`, and readable model route
+`torch-reference-model-v1`. For fully active, 16-token-aligned adaptive rows
+(or explicit `--candidate factorized` rows), the expected recurrent route is
+`native-nvidia-rwkv7-factorized-recurrent-training-v1`; the flattened linear
+route is required only when `batch * tokens >= 128`. The gate rejects
+non-finite tensors, missing gradients, loss/logit/optimizer-vector threshold
+failures, or a candidate result numerically worse than the pinned FLA lane. Named
+per-parameter diagnostics remain in JSON even when the aggregate
+optimizer-vector gate passes. Speed is reported only after correctness is
+evaluated and never changes the correctness result.

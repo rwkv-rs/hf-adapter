@@ -109,6 +109,7 @@ def write_valid_kernel_wheel(
         b"Requires-Dist: torch\n"
         b"Requires-Dist: numpy\n"
         b"Requires-Dist: packaging\n"
+        b"Requires-Dist: ninja\n"
     )
     members.update(extra or {})
     if omit is not None:

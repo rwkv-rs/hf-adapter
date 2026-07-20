@@ -60,6 +60,16 @@ environment, JSONL metrics, final metrics, checkpoint hashes and W&B metadata.
 The small parent launcher also records `stdout.log`, `stderr.log`, and
 `exit_status.json`, including failed runs.
 
+The examples select one explicit model dtype and disable a second Trainer AMP
+layer. Gradient checkpointing uses PyTorch's non-reentrant implementation so
+the recomputation forward remains an ordinary differentiable request. These
+settings prevent autocast or a legacy no-grad checkpoint probe from silently
+changing the optional training route. PEFT keeps adapters in FP32 by default;
+pass `--torch-dtype bfloat16 --lora-dtype model` only when validating the
+optional BF16 training leaves. PEFT may promote restored adapter matrices to
+FP32 while loading a Trainer checkpoint; the reload check detects the actual
+trained adapter dtype and recreates that same runtime before comparing logits.
+
 W&B is off by default. Enable it with `--report-to wandb`; local artifacts
 remain authoritative and no token is written to disk.
 
@@ -71,15 +81,16 @@ are recorded with the dataset/model revisions:
 
 ```bash
 export RWKV7_BACKEND=auto
-export RWKV7_MODEL_KERNEL_IMPL=native
-export RWKV7_KERNEL_IMPL=auto
+export RWKV7_TRAINING_KERNEL_IMPL=adaptive
 
 python examples/finetune/sft_lora.py \
   --model /models/rwkv7-0.1b-hf \
   --output-dir results/backend-v2/finetune/sft \
   --code-sha "$(git rev-parse HEAD)" \
   --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
-  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl \
+  --torch-dtype bfloat16 \
+  --lora-dtype model
 ```
 
 Run DPO and GRPO with the same artifact arguments, then validate all canonical
@@ -88,13 +99,20 @@ runs with:
 ```bash
 python evaluation/validate_finetune_runs.py \
   --result-dir results/backend-v2/finetune \
-  --require-backend-v2-routes
+  --require-backend-v2-routes \
+  --require-training-candidate adaptive
 ```
 
-The callback records actual routes at optimizer-bearing forwards. Dense BF16
-training has a separate native-autograd gate. The canonical LoRA target set
+The callback records last routes at optimizer-bearing forwards, while a
+versioned process-wide counter preserves every optional leaf that actually
+executed. The latter matters for DPO, whose differentiable policy pass is
+followed by a no-grad reference pass. Dense BF16 training has a separate
+leaf-autograd gate. The canonical LoRA target set
 wraps the ChannelMix `key`/`value` modules, so the whole-model training probe
 must report the adapter-aware reference autograd fallback; this is intentional
 and prevents a fused implementation from silently ignoring trainable adapter
-weights. Finite loss/gradients, changed parameters and adapter save/reload are
-still mandatory.
+weights. The readable HF model loop therefore remains active while aligned,
+fully active BF16 batches may use the factorized recurrent and flattened
+linear leaves; masked or unaligned batches use the exact matrix recurrent and
+reference linears. Finite loss/gradients, changed parameters and adapter
+save/reload are still mandatory.

@@ -1,0 +1,69 @@
+[
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "model",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-model-v1",
+    "reason": "native prefill requires the causal-LM boundary",
+    "phase": "training"
+  },
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "recurrent",
+    "requested": "auto",
+    "selected": "optimized",
+    "implementation": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+    "reason": "zero-state BF16 CUDA autograd request is supported"
+  },
+  {
+    "event": "pre_optimizer_step",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "optimized",
+    "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+    "reason": "flattened CUDA training projection is supported by PyTorch cuBLAS"
+  },
+  {
+    "event": "log",
+    "boundary": "model",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-model-v1",
+    "reason": "native prefill requires the causal-LM boundary",
+    "phase": "training"
+  },
+  {
+    "event": "log",
+    "boundary": "recurrent",
+    "requested": "auto",
+    "selected": "optimized",
+    "implementation": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+    "reason": "zero-state BF16 CUDA autograd request is supported"
+  },
+  {
+    "event": "log",
+    "boundary": "linear",
+    "requested": "auto",
+    "selected": "optimized",
+    "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+    "reason": "flattened CUDA training projection is supported by PyTorch cuBLAS"
+  },
+  {
+    "event": "log",
+    "boundary": "model",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-model-v1",
+    "reason": "native prefill requires the causal-LM boundary",
+    "phase": "prefill"
+  },
+  {
+    "event": "log",
+    "boundary": "recurrent",
+    "requested": "auto",
+    "selected": "reference",
+    "implementation": "torch-reference-v1",
+    "reason": "unsupported input dtype torch.bfloat16"
+  }
+]

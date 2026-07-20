@@ -1,0 +1,11 @@
+{
+  "python": "3.12.2",
+  "platform": "Linux-7.0.0-29-generic-x86_64-with-glibc2.39",
+  "torch": "2.11.0+cu130",
+  "cuda": "13.0",
+  "transformers": "4.56.2",
+  "trl": "0.20.0",
+  "peft": "0.19.1",
+  "datasets": "5.0.1",
+  "wandb": "0.28.2"
+}
