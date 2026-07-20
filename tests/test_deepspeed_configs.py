@@ -24,6 +24,11 @@ def validate(path: Path, expected_stage: int) -> None:
     assert cfg["train_micro_batch_size_per_gpu"] == "auto", cfg
     assert cfg["gradient_accumulation_steps"] == "auto", cfg
     assert cfg["fp16"]["enabled"] == "auto", cfg
+    # Native RWKV's recurrent FP16 activation-gradient path can overflow the
+    # generic 2**16 initial loss scale before a short ZeRO job gets a useful
+    # optimizer step. Start dynamic scaling at the validated 2**8 value; it
+    # still backs off automatically if a larger checkpoint needs it.
+    assert int(cfg["fp16"]["initial_scale_power"]) <= 8, cfg
     assert cfg["bf16"]["enabled"] == "auto", cfg
     assert zero.get("contiguous_gradients") is True, zero
     if expected_stage == 2:

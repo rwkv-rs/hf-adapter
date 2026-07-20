@@ -216,6 +216,17 @@ def max_trainable_delta(before: dict[str, Any], model) -> float:
     return max_delta
 
 
+def distributed_max(torch: Any, value: float) -> float:
+    """Reduce a sharded ZeRO metric without requiring every rank to own it."""
+
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return float(value)
+    device = torch.device("cuda", int(os.environ.get("LOCAL_RANK", "0")))
+    tensor = torch.tensor(float(value), device=device, dtype=torch.float64)
+    torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.MAX)
+    return float(tensor.cpu().item())
+
+
 def load_lora_model(model_path: str, attn_mode: str, train_dtype: str):
     torch, LoraConfig, get_peft_model, AutoModelForCausalLM, _, _, _ = require_training_deps()
     model = AutoModelForCausalLM.from_pretrained(
@@ -330,7 +341,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
 
     loss = float(result.training_loss)
     assert math.isfinite(loss), result.training_loss
-    delta = max_trainable_delta(before, model)
+    local_delta = max_trainable_delta(before, model)
+    delta = distributed_max(torch, local_delta)
     assert delta > 0.0, "DeepSpeed LoRA/trainable parameters did not update"
     metrics = dict(getattr(result, "metrics", {}) or {})
     return {
@@ -359,6 +371,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         "train_samples_per_second": metric(metrics, "train_samples_per_second"),
         "train_steps_per_second": metric(metrics, "train_steps_per_second"),
         "max_trainable_delta": delta,
+        "local_max_trainable_delta": local_delta,
     }
 
 
