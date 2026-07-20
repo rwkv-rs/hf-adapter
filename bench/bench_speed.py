@@ -73,6 +73,11 @@ def configure_fast_token_env(args) -> None:
     if args.fast_token_layout != "auto":
         os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    # Native HF checkpoints dispatch through NativeRWKV7ForCausalLM and read
+    # the native selector; wrapper checkpoints retain the legacy fast-token
+    # selector. Set both so a requested A/B backend is the backend measured,
+    # rather than silently falling back to the card's auto policy.
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
 
 
 def last_fast_token_backend(model):
