@@ -126,6 +126,7 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_graph"
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "native_graph"
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = str(args.native_graph_cache_size)
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,

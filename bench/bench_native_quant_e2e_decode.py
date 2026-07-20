@@ -327,6 +327,7 @@ def count_modules(model) -> dict[str, int]:
 
 def load_model(args, dtype, *, load_on_cpu: bool = False):
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     load_kwargs = {

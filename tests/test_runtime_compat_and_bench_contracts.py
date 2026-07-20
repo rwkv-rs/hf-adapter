@@ -43,6 +43,26 @@ def test_batch_sweep_times_prefill_inside_inference_mode() -> None:
     assert guarded
 
 
+def test_native_benchmarks_set_both_backend_selectors() -> None:
+    benches = (
+        "bench_speed.py",
+        "bench_batch_sweep.py",
+        "bench_dynamic_batch.py",
+        "bench_decode_micro.py",
+        "bench_forward_fast_path.py",
+        "bench_generate_fast_path.py",
+        "bench_fast_token_warmup.py",
+        "bench_larger_model_smoke.py",
+        "bench_native_graph_overhead.py",
+        "bench_native_quant_e2e_decode.py",
+        "run_qwen35_speed_matrix.py",
+    )
+    for name in benches:
+        source = (ROOT / "bench" / name).read_text(encoding="utf-8")
+        assert "RWKV7_FAST_TOKEN_BACKEND" in source, name
+        assert "RWKV7_NATIVE_MODEL_BACKEND" in source, name
+
+
 def test_pytorch26_triton33_disables_worker_compile(monkeypatch) -> None:
     original_compile = object()
     fake_torch = types.SimpleNamespace(__version__="2.6.0", compile=original_compile)

@@ -349,6 +349,7 @@ def build_run_environment(args: argparse.Namespace, base: dict[str, str] | None 
     env.setdefault("RWKV_V7_ON", "1")
     env.setdefault("RWKV7_FAST_CACHE", "1")
     env["RWKV7_FAST_TOKEN_BACKEND"] = args.rwkv_fast_token_backend
+    env["RWKV7_NATIVE_MODEL_BACKEND"] = args.rwkv_fast_token_backend
     # Cross-model acceptance measures the production HF wrapper. The pure
     # PyTorch native model remains an explicitly separate experimental lane.
     env["RWKV7_NATIVE_MODEL"] = "0"

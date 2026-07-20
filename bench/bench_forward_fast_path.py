@@ -95,6 +95,7 @@ def configure_env(args: argparse.Namespace) -> None:
     if args.fast_token_layout != "auto":
         os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
 
 
 def encode(tok, prompt_tokens: int, device: str) -> torch.Tensor:
