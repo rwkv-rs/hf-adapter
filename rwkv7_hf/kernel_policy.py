@@ -34,6 +34,16 @@ def is_tesla_t4_name(name: str) -> bool:
     return "t4" in normalized.split()
 
 
+def is_v100_name(name: str) -> bool:
+    """Match the exact V100 product token without promoting every sm_70 GPU."""
+
+    normalized = "".join(
+        character if character.isalnum() else " "
+        for character in str(name).lower()
+    )
+    return "v100" in normalized.split()
+
+
 @dataclass(frozen=True)
 class GPUProfile:
     """Normalized hardware identity used by the kernel policy."""
@@ -564,6 +574,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="compatibility-first: keep experimental Triton/native_graph fusions off; Pascal uses native/no-FLA fallback unless overridden",
         )
     if family == "volta":
+        is_v100 = is_v100_name(profile.name)
         return KernelPolicy(
             profile=profile,
             fast_prefill=True,
@@ -573,14 +584,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_scan=True,
             prefill_graph=True,
             prefill_graph_cache_size=4,
-            prefill_graph_max_layers=32,
+            prefill_graph_max_layers=32 if is_v100 else None,
             fused_prefill_shift_mix=True,
             fused_prefill_state_prep=True,
             fused_prefill_state_scan=True,
             fused_prefill_state_scan_max_batch=1,
             fused_prefill_output=True,
             fused_norm_mix=True,
-            native_graph_max_layers=32,
+            native_graph_max_layers=32 if is_v100 else None,
             fused_wavg_lora=True,
             wavg_lora_bsz1_max_hidden=4096,
             wavg_lora_blocks=(32, 64, 256),
@@ -596,10 +607,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             # additional full FFN-down copy per layer (about 4 GiB on 7.2B).
             # Exact-card V100 acceptance measured both lower peak VRAM and a
             # non-negative prefill/decode speed change with this layout.
-            ada_sparse_ffn_low_memory_pack=True,
+            ada_sparse_ffn_low_memory_pack=is_v100,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 production path: graph capture is automatic through 32 layers and falls back to native_jit for larger checkpoints; four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, low-memory sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
+            notes=(
+                "V100 production path: graph capture is automatic through 32 layers and falls back to native_jit for larger checkpoints; four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, low-memory sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in"
+                if is_v100
+                else "Unmeasured Volta card: preserve the pre-existing sm70 fused defaults, but do not inherit V100-only graph ceilings or destructive low-memory packing"
+            ),
         )
     if family == "turing":
         is_tesla_t4 = is_tesla_t4_name(profile.name)

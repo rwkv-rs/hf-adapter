@@ -22,21 +22,22 @@ except Exception:
     F = None
 
 try:
-    from .kernel_policy import is_tesla_t4_name
+    from .kernel_policy import is_tesla_t4_name, is_v100_name
 except Exception:  # pragma: no cover - standalone remote-code fallback
     is_tesla_t4_name = lambda _name: False  # type: ignore[assignment]
+    is_v100_name = lambda _name: False  # type: ignore[assignment]
 
 
 _CPP = r"""
 #include <torch/extension.h>
-torch::Tensor rwkv7_sm70_w8_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t);
-torch::Tensor rwkv7_sm70_w8_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t);
-torch::Tensor rwkv7_sm70_w4_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
-torch::Tensor rwkv7_sm70_w4_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
-torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
-torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
-torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
-torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w8_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w8_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w4_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w4_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t,int64_t);
+torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t,int64_t);
 PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){m.def("w8",&rwkv7_sm70_w8_cuda);m.def("w8_out",&rwkv7_sm70_w8_out_cuda);m.def("w4",&rwkv7_sm70_w4_cuda);m.def("w4_out",&rwkv7_sm70_w4_out_cuda);m.def("w4_relu2",&rwkv7_sm70_w4_relu2_cuda);m.def("w4_add",&rwkv7_sm70_w4_add_cuda);m.def("w4_group",&rwkv7_sm70_w4_group_cuda);m.def("w4_group_out",&rwkv7_sm70_w4_group_out_cuda);}
 """
 _CUDA = r"""
@@ -47,7 +48,14 @@ _CUDA = r"""
 #include <cuda_fp16.h>
 namespace {
 __device__ inline float warp_max(float v){for(int d=16;d;d>>=1)v=fmaxf(v,__shfl_down_sync(0xffffffff,v,d));return v;}
-__global__ void quant_a8(int M,int K,const half* x,signed char* q,half* scales){
+__global__ void quant_a8_scalar(int M,int K,const half* x,signed char* q,half* scales){
+ int m=blockIdx.x,tid=threadIdx.x; const half* xr=x+(int64_t)m*K; signed char* qr=q+(int64_t)m*K; float mx=0;
+ for(int k=tid;k<K;k+=blockDim.x)mx=fmaxf(mx,fabsf(__half2float(xr[k])));
+ mx=warp_max(mx); __shared__ float sm[8]; if((tid&31)==0)sm[tid>>5]=mx; __syncthreads();
+ if(tid<32){float v=tid<(blockDim.x>>5)?sm[tid]:0.f;v=warp_max(v);if(tid==0){sm[0]=fmaxf(v/127.f,1e-6f);scales[m]=__float2half_rn(sm[0]);}} __syncthreads();
+ float inv=1.f/sm[0]; for(int k=tid;k<K;k+=blockDim.x){int v=__float2int_rn(__half2float(xr[k])*inv);qr[k]=(signed char)max(-127,min(127,v));}
+}
+__global__ void quant_a8_half2(int M,int K,const half* x,signed char* q,half* scales){
  int m=blockIdx.x,tid=threadIdx.x,K2=K>>1; const half2* xr=(const half2*)(x+(int64_t)m*K); char2* qr=(char2*)(q+(int64_t)m*K); float mx=0;
  for(int k2=tid;k2<K2;k2+=blockDim.x){float2 v=__half22float2(xr[k2]);mx=fmaxf(mx,fmaxf(fabsf(v.x),fabsf(v.y)));}
  mx=warp_max(mx); __shared__ float sm[8]; if((tid&31)==0)sm[tid>>5]=mx; __syncthreads();
@@ -147,14 +155,14 @@ __global__ void w4g_dp4a_bn_tn(int M,int K,int N,int KH,int G,const signed char*
  }}
 }
 void check(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int N){TORCH_CHECK(x.is_cuda()&&q.is_cuda()&&s.is_cuda()&&y.is_cuda(),"CUDA required");TORCH_CHECK(x.scalar_type()==at::kHalf&&s.scalar_type()==at::kHalf&&y.scalar_type()==at::kHalf,"fp16 activation/scales/output required");TORCH_CHECK(x.dim()==2&&x.is_contiguous()&&q.is_contiguous()&&s.is_contiguous()&&y.is_contiguous(),"contiguous rank-2 activation required");TORCH_CHECK(x.size(1)%8==0&&x.size(0)>0,"K multiple of 8 and non-empty M required");TORCH_CHECK(y.size(0)==x.size(0)&&y.size(1)==N,"output shape mismatch");}
-torch::Tensor run8(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int th){int M=x.size(0),K=x.size(1),N=q.size(0);check(x,q,s,y,N);TORCH_CHECK(q.scalar_type()==at::kChar&&q.size(1)==K,"int8 weight shape mismatch");auto st=at::cuda::getCurrentCUDAStream();if(M==1){w8_a16_single<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(K,N,(half*)x.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{auto qa=torch::empty({M,K},q.options());auto as=torch::empty({M},s.options());quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());if(M>=16){auto acc=torch::empty({M,N},q.options().dtype(torch::kInt32));int alpha=1,beta=0;auto handle=at::cuda::getCurrentCUDABlasHandle();auto status=cublasGemmEx(handle,CUBLAS_OP_T,CUBLAS_OP_N,N,M,K,&alpha,q.data_ptr<int8_t>(),CUDA_R_8I,K,qa.data_ptr<int8_t>(),CUDA_R_8I,K,&beta,acc.data_ptr<int>(),CUDA_R_32I,N,CUBLAS_COMPUTE_32I,CUBLAS_GEMM_DEFAULT_TENSOR_OP);TORCH_CHECK(status==CUBLAS_STATUS_SUCCESS,"sm75 W8 cublasGemmEx failed with status ",int(status));int total=M*N;w8_i32_dequant<<<(total+255)/256,256,0,st>>>(M,N,acc.data_ptr<int>(),(half*)as.data_ptr<at::Half>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{w8_dp4a<<<dim3((N+(th/32)-1)/(th/32),(M+7)/8),th,0,st>>>(M,K,N,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}}C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
+torch::Tensor run8(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int th,bool vector_a8){int M=x.size(0),K=x.size(1),N=q.size(0);check(x,q,s,y,N);TORCH_CHECK(q.scalar_type()==at::kChar&&q.size(1)==K,"int8 weight shape mismatch");auto st=at::cuda::getCurrentCUDAStream();if(M==1){w8_a16_single<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(K,N,(half*)x.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{auto qa=torch::empty({M,K},q.options());auto as=torch::empty({M},s.options());if(vector_a8)quant_a8_half2<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());else quant_a8_scalar<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());if(M>=16){auto acc=torch::empty({M,N},q.options().dtype(torch::kInt32));int alpha=1,beta=0;auto handle=at::cuda::getCurrentCUDABlasHandle();auto status=cublasGemmEx(handle,CUBLAS_OP_T,CUBLAS_OP_N,N,M,K,&alpha,q.data_ptr<int8_t>(),CUDA_R_8I,K,qa.data_ptr<int8_t>(),CUDA_R_8I,K,&beta,acc.data_ptr<int>(),CUDA_R_32I,N,CUBLAS_COMPUTE_32I,CUBLAS_GEMM_DEFAULT_TENSOR_OP);TORCH_CHECK(status==CUBLAS_STATUS_SUCCESS,"sm75 W8 cublasGemmEx failed with status ",int(status));int total=M*N;w8_i32_dequant<<<(total+255)/256,256,0,st>>>(M,N,acc.data_ptr<int>(),(half*)as.data_ptr<at::Half>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{w8_dp4a<<<dim3((N+(th/32)-1)/(th/32),(M+7)/8),th,0,st>>>(M,K,N,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}}C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
 template<int MODE>
-torch::Tensor run4(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor residual,torch::Tensor y,int N,int bn,int tn){int M=x.size(0),K=x.size(1),KH=q.size(1);check(x,q,s,y,N);TORCH_CHECK(q.scalar_type()==at::kByte&&KH*2>=K,"uint8 weight shape mismatch");if constexpr(MODE==2){TORCH_CHECK(residual.is_cuda()&&residual.scalar_type()==at::kHalf&&residual.is_contiguous()&&residual.sizes()==y.sizes(),"fp16 contiguous residual shape mismatch");}const half* rp=MODE==2?(half*)residual.data_ptr<at::Half>():nullptr;auto st=at::cuda::getCurrentCUDAStream();bool launched=false;auto qa=M==1?torch::Tensor():torch::empty({M,K},torch::TensorOptions().device(x.device()).dtype(torch::kInt8));auto as=M==1?torch::Tensor():torch::empty({M},s.options());if(M>1)quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());
+torch::Tensor run4(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor residual,torch::Tensor y,int N,int bn,int tn,bool vector_a8){int M=x.size(0),K=x.size(1),KH=q.size(1);check(x,q,s,y,N);TORCH_CHECK(q.scalar_type()==at::kByte&&KH*2>=K,"uint8 weight shape mismatch");if constexpr(MODE==2){TORCH_CHECK(residual.is_cuda()&&residual.scalar_type()==at::kHalf&&residual.is_contiguous()&&residual.sizes()==y.sizes(),"fp16 contiguous residual shape mismatch");}const half* rp=MODE==2?(half*)residual.data_ptr<at::Half>():nullptr;auto st=at::cuda::getCurrentCUDAStream();bool launched=false;auto qa=M==1?torch::Tensor():torch::empty({M,K},torch::TensorOptions().device(x.device()).dtype(torch::kInt8));auto as=M==1?torch::Tensor():torch::empty({M},s.options());if(M>1){if(vector_a8)quant_a8_half2<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());else quant_a8_scalar<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());}
 #define LAUNCH4(BN_,TN_) if(bn==BN_&&tn==TN_){constexpr int TH=(BN_/TN_)*32;if(M==1)w4_a16_bn_tn<BN_,TN_,MODE><<<dim3((N+BN_-1)/BN_),TH,0,st>>>(K,N,KH,(half*)x.data_ptr<at::Half>(),(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),rp,(half*)y.data_ptr<at::Half>());else w4_dp4a_bn_tn<BN_,TN_,MODE><<<dim3((N+BN_-1)/BN_,(M+7)/8),TH,0,st>>>(M,K,N,KH,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),rp,(half*)y.data_ptr<at::Half>());launched=true;}
  if(!launched){LAUNCH4(1,1) LAUNCH4(2,1) LAUNCH4(4,1) LAUNCH4(4,2) LAUNCH4(4,4) LAUNCH4(8,1) LAUNCH4(8,2) LAUNCH4(8,4) LAUNCH4(16,1) LAUNCH4(16,2) LAUNCH4(16,4) LAUNCH4(32,1) LAUNCH4(32,2)}
 #undef LAUNCH4
  TORCH_CHECK(launched,"unsupported sm70 W4 BN/TN pair");C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
-torch::Tensor run4g(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int N,int gs,int bn,int tn){int M=x.size(0),K=x.size(1),KH=q.size(1);check(x,q,s,y,N);TORCH_CHECK((gs==128||gs==256)&&K%gs==0,"sm70 groupwise W4 requires group_size=128/256 and divisible K");int G=K/gs;TORCH_CHECK(q.scalar_type()==at::kByte&&KH*2==K,"uint8 groupwise weight shape mismatch");TORCH_CHECK(s.dim()==2&&s.size(0)==N&&s.size(1)==G,"groupwise scale shape mismatch");auto st=at::cuda::getCurrentCUDAStream();bool launched=false;auto qa=M==1?torch::Tensor():torch::empty({M,K},torch::TensorOptions().device(x.device()).dtype(torch::kInt8));auto as=M==1?torch::Tensor():torch::empty({M},s.options());if(M>1)quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());
+torch::Tensor run4g(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int N,int gs,int bn,int tn,bool vector_a8){int M=x.size(0),K=x.size(1),KH=q.size(1);check(x,q,s,y,N);TORCH_CHECK((gs==128||gs==256)&&K%gs==0,"sm70 groupwise W4 requires group_size=128/256 and divisible K");int G=K/gs;TORCH_CHECK(q.scalar_type()==at::kByte&&KH*2==K,"uint8 groupwise weight shape mismatch");TORCH_CHECK(s.dim()==2&&s.size(0)==N&&s.size(1)==G,"groupwise scale shape mismatch");auto st=at::cuda::getCurrentCUDAStream();bool launched=false;auto qa=M==1?torch::Tensor():torch::empty({M,K},torch::TensorOptions().device(x.device()).dtype(torch::kInt8));auto as=M==1?torch::Tensor():torch::empty({M},s.options());if(M>1){if(vector_a8)quant_a8_half2<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());else quant_a8_scalar<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());}
 #define LAUNCH4G(BN_,TN_,GS_) if(!launched&&gs==GS_&&bn==BN_&&tn==TN_){constexpr int TH=(BN_/TN_)*16;if(M==1)w4g_a16_bn_tn<BN_,TN_,GS_><<<dim3((N+BN_-1)/BN_),TH,0,st>>>(K,N,KH,G,(half*)x.data_ptr<at::Half>(),(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());else w4g_dp4a_bn_tn<BN_,TN_,GS_><<<dim3((N+BN_-1)/BN_,(M+7)/8),TH,0,st>>>(M,K,N,KH,G,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());launched=true;}
 #define LAUNCH4G_SET(GS_) LAUNCH4G(1,1,GS_) LAUNCH4G(2,1,GS_) LAUNCH4G(4,1,GS_) LAUNCH4G(4,2,GS_) LAUNCH4G(4,4,GS_) LAUNCH4G(8,1,GS_) LAUNCH4G(8,2,GS_) LAUNCH4G(8,4,GS_) LAUNCH4G(16,1,GS_) LAUNCH4G(16,2,GS_) LAUNCH4G(16,4,GS_) LAUNCH4G(32,1,GS_) LAUNCH4G(32,2,GS_)
   LAUNCH4G_SET(128) LAUNCH4G_SET(256)
@@ -162,18 +170,19 @@ torch::Tensor run4g(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tenso
 #undef LAUNCH4G
  TORCH_CHECK(launched,"unsupported sm70 groupwise W4 BN/TN pair");C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
 }
-torch::Tensor rwkv7_sm70_w8_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t th){auto y=torch::empty({x.size(0),q.size(0)},x.options());return run8(x,q,s,y,th);}
-torch::Tensor rwkv7_sm70_w8_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t th){return run8(x,q,s,y,th);}
-torch::Tensor rwkv7_sm70_w4_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t bn,int64_t tn){auto y=torch::empty({x.size(0),N},x.options());return run4<0>(x,q,s,torch::Tensor(),y,N,bn,tn);}
-torch::Tensor rwkv7_sm70_w4_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t N,int64_t bn,int64_t tn){return run4<0>(x,q,s,torch::Tensor(),y,N,bn,tn);}
-torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t bn,int64_t tn){auto y=torch::empty({x.size(0),N},x.options());return run4<1>(x,q,s,torch::Tensor(),y,N,bn,tn);}
-torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor residual,int64_t N,int64_t bn,int64_t tn){auto y=torch::empty_like(residual);return run4<2>(x,q,s,residual,y,N,bn,tn);}
-torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t gs,int64_t bn,int64_t tn){auto y=torch::empty({x.size(0),N},x.options());return run4g(x,q,s,y,N,gs,bn,tn);}
-torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t N,int64_t gs,int64_t bn,int64_t tn){return run4g(x,q,s,y,N,gs,bn,tn);}
+torch::Tensor rwkv7_sm70_w8_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t th,int64_t va){auto y=torch::empty({x.size(0),q.size(0)},x.options());return run8(x,q,s,y,th,va!=0);}
+torch::Tensor rwkv7_sm70_w8_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t th,int64_t va){return run8(x,q,s,y,th,va!=0);}
+torch::Tensor rwkv7_sm70_w4_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t bn,int64_t tn,int64_t va){auto y=torch::empty({x.size(0),N},x.options());return run4<0>(x,q,s,torch::Tensor(),y,N,bn,tn,va!=0);}
+torch::Tensor rwkv7_sm70_w4_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t N,int64_t bn,int64_t tn,int64_t va){return run4<0>(x,q,s,torch::Tensor(),y,N,bn,tn,va!=0);}
+torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t bn,int64_t tn,int64_t va){auto y=torch::empty({x.size(0),N},x.options());return run4<1>(x,q,s,torch::Tensor(),y,N,bn,tn,va!=0);}
+torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor residual,int64_t N,int64_t bn,int64_t tn,int64_t va){auto y=torch::empty_like(residual);return run4<2>(x,q,s,residual,y,N,bn,tn,va!=0);}
+torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t gs,int64_t bn,int64_t tn,int64_t va){auto y=torch::empty({x.size(0),N},x.options());return run4g(x,q,s,y,N,gs,bn,tn,va!=0);}
+torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t N,int64_t gs,int64_t bn,int64_t tn,int64_t va){return run4g(x,q,s,y,N,gs,bn,tn,va!=0);}
 """
 
 _EXT = None
 _ERR = None
+_ACTIVATION_QUANT_VECTOR_CACHE: dict[int, bool] = {}
 _LOCK = threading.Lock()
 SM70_W4_BN_TN_CHOICES = (
     (1, 1),
@@ -303,6 +312,38 @@ def is_sm7x_quant_device(device=None):
     return _sm7x_quant_device_supported(major, minor, name)
 
 
+def _sm7x_activation_quant_vectorized_for_profile(
+    major: int,
+    minor: int,
+    name: str,
+) -> bool:
+    """Use the half2 activation quantizer only on its measured exact-card route."""
+
+    return bool((int(major), int(minor)) == (7, 0) and is_v100_name(name))
+
+
+def sm7x_activation_quant_vectorized(device=None) -> bool:
+    """Resolve activation quantization per exact card, preserving prior routes."""
+
+    if torch is None or not torch.cuda.is_available():
+        return False
+    d = torch.device("cuda" if device is None else device)
+    if d.type != "cuda":
+        return False
+    index = torch.cuda.current_device() if d.index is None else d.index
+    cached = _ACTIVATION_QUANT_VECTOR_CACHE.get(int(index))
+    if isinstance(cached, bool):
+        return cached
+    major, minor = torch.cuda.get_device_capability(index)
+    try:
+        name = str(torch.cuda.get_device_name(index))
+    except Exception:
+        name = ""
+    selected = _sm7x_activation_quant_vectorized_for_profile(major, minor, name)
+    _ACTIVATION_QUANT_VECTOR_CACHE[int(index)] = selected
+    return selected
+
+
 def _w8_threads_for_profile(rows: int, *, is_t4: bool) -> int:
     """Measured W8 launch width for the supported sm7x profiles."""
 
@@ -419,7 +460,7 @@ def _load():
             from torch.utils.cpp_extension import load_inline
 
             _EXT = load_inline(
-                name="rwkv7_sm7x_quant_v23",
+                name="rwkv7_sm7x_quant_v24",
                 cpp_sources=_CPP,
                 cuda_sources=_CUDA,
                 functions=None,
@@ -490,10 +531,22 @@ def w8_linear(x, q, s, out=None):
             return out
         return result
     o = sm7x_w8_threads(int(x2.shape[0]), x2.device)
+    # M=1 uses the direct A16 kernel and never launches activation quantization;
+    # avoid even the cached card-policy lookup on the decode-hot path.
+    vector_a8 = int(
+        int(x2.shape[0]) > 1 and sm7x_activation_quant_vectorized(x2.device)
+    )
     y = (
-        e.w8(x2.contiguous(), q, s, o)
+        e.w8(x2.contiguous(), q, s, o, vector_a8)
         if out is None
-        else e.w8_out(x2.contiguous(), q, s, out.reshape(x2.shape[0], q.shape[0]), o)
+        else e.w8_out(
+            x2.contiguous(),
+            q,
+            s,
+            out.reshape(x2.shape[0], q.shape[0]),
+            o,
+            vector_a8,
+        )
     )
     return y.reshape(q.shape[0]) if scalar else y.reshape(*x.shape[:-1], q.shape[0])
 
@@ -516,8 +569,11 @@ def w4_linear(x, q, s, out_features, in_features, out=None):
     bn, tn = sm70_w4_bn_tn_config(
         int(x2.shape[0]), int(in_features), int(out_features)
     )
+    vector_a8 = int(
+        int(x2.shape[0]) > 1 and sm7x_activation_quant_vectorized(x2.device)
+    )
     y = (
-        e.w4(x2.contiguous(), q, s, int(out_features), bn, tn)
+        e.w4(x2.contiguous(), q, s, int(out_features), bn, tn, vector_a8)
         if out is None
         else e.w4_out(
             x2.contiguous(),
@@ -527,6 +583,7 @@ def w4_linear(x, q, s, out_features, in_features, out=None):
             int(out_features),
             bn,
             tn,
+            vector_a8,
         )
     )
     return y.reshape(out_features) if scalar else y.reshape(*x.shape[:-1], out_features)
@@ -570,6 +627,9 @@ def w4_groupwise_linear(
         int(out_features),
         group_size=group_size,
     )
+    vector_a8 = int(
+        int(x2.shape[0]) > 1 and sm7x_activation_quant_vectorized(x2.device)
+    )
     y = (
         e.w4_group(
             x2.contiguous(),
@@ -579,6 +639,7 @@ def w4_groupwise_linear(
             group_size,
             bn,
             tn,
+            vector_a8,
         )
         if out is None
         else e.w4_group_out(
@@ -590,6 +651,7 @@ def w4_groupwise_linear(
             group_size,
             bn,
             tn,
+            vector_a8,
         )
     )
     return y.reshape(out_features) if scalar else y.reshape(*x.shape[:-1], out_features)
@@ -606,7 +668,18 @@ def w4_linear_relu2(x, q, s, out_features, in_features):
     bn, tn = sm70_w4_bn_tn_config(
         int(x2.shape[0]), int(in_features), int(out_features)
     )
-    y = e.w4_relu2(x2.contiguous(), q, s, int(out_features), bn, tn)
+    y = e.w4_relu2(
+        x2.contiguous(),
+        q,
+        s,
+        int(out_features),
+        bn,
+        tn,
+        int(
+            int(x2.shape[0]) > 1
+            and sm7x_activation_quant_vectorized(x2.device)
+        ),
+    )
     return y.reshape(out_features) if scalar else y.reshape(*x.shape[:-1], out_features)
 
 
@@ -623,6 +696,16 @@ def w4_linear_add(x, q, s, residual, out_features, in_features):
         int(x2.shape[0]), int(in_features), int(out_features)
     )
     y = e.w4_add(
-        x2.contiguous(), q, s, residual2, int(out_features), bn, tn
+        x2.contiguous(),
+        q,
+        s,
+        residual2,
+        int(out_features),
+        bn,
+        tn,
+        int(
+            int(x2.shape[0]) > 1
+            and sm7x_activation_quant_vectorized(x2.device)
+        ),
     )
     return y.reshape(out_features) if scalar else y.reshape(*residual.shape)

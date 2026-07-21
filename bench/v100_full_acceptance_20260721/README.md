@@ -98,9 +98,10 @@ fail closed. `raw/device_map_13.3b_exact8.jsonl` preserves both attempts;
 is the accepted row.
 
 This host's direct CUDA peer copies are asymmetric and size-dependent: some
-cross-device transfers silently return corrupt values. Commit `6e2682d`
-therefore CPU-stages Native cross-GPU tensors by default. Direct P2P is an
-explicit, host-validated opt-in through `RWKV7_DEVICE_MAP_TRANSFER=p2p`.
+cross-device transfers silently return corrupt values. The follow-up runtime
+uses an exact ordered-device-pair probe in `auto` mode: this host CPU-stages,
+while healthy PCIe/NVLink systems retain the historical direct P2P route.
+Explicit `p2p` and `cpu` overrides remain available.
 
 ## Training and distributed execution
 
@@ -115,7 +116,7 @@ All 11 distributed cases pass:
 
 The structured ZeRO rows are under [`raw/distributed/`](raw/distributed/).
 The 7.2B ZeRO-3 train/resume cases require CPU parameter offload through
-`configs/deepspeed/zero3_offload.json`. GPU-only ZeRO-3 exceeded the two
+`configs/deepspeed/zero3_v100_offload.json`. GPU-only ZeRO-3 exceeded the two
 32-GiB cards and is not claimed as passing.
 
 ## Qwen3.5 comparison

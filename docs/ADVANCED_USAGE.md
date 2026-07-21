@@ -165,12 +165,11 @@ Success prints `PASS`. This proves HF device placement and output parity for
 the tested model. It is not native tensor parallelism, and cross-device layer
 handoff may be slower for small models.
 
-Cross-GPU recurrent-state handoff defaults to CPU staging because some
-virtualized CUDA hosts falsely advertise working peer access and silently
-corrupt larger P2P copies. On a host where direct CUDA P2P/NVLink has been
-validated independently, opt into the faster path with
-`RWKV7_DEVICE_MAP_TRANSFER=p2p`. Use `RWKV7_DEVICE_MAP_TRANSFER=cpu` to force
-the conservative path explicitly.
+Cross-GPU recurrent-state handoff defaults to `auto`. The runtime probes each
+ordered GPU pair once with tiny, boundary-size and multi-megabyte exact-copy
+checks. Healthy PCIe/NVLink systems retain direct P2P performance; only a
+failed correctness probe uses CPU staging. Operators may force a route with
+`RWKV7_DEVICE_MAP_TRANSFER=p2p` or `RWKV7_DEVICE_MAP_TRANSFER=cpu`.
 
 ## 4. Multi-GPU training with DeepSpeed ZeRO
 
@@ -182,6 +181,16 @@ Validate the repository presets first:
 
 ```bash
 python tests/test_deepspeed_configs.py
+```
+
+The generic `zero2.json`/`zero3.json` files keep the historical cross-card
+loss-scale defaults. The smoke harness automatically selects the exact V100
+profiles when the live product name and compute capability both match. Inspect
+the selected path with:
+
+```bash
+python -m rwkv7_hf.deepspeed_config --stage 2
+python -m rwkv7_hf.deepspeed_config --stage 3
 ```
 
 Run both one-step distributed smokes:

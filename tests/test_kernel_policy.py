@@ -11,6 +11,7 @@ from rwkv7_hf.kernel_policy import (
     env_flag,
     env_int,
     is_tesla_t4_name,
+    is_v100_name,
     policy_for_profile,
 )
 
@@ -44,6 +45,13 @@ def test_exact_t4_name_matching_is_token_scoped() -> None:
     assert is_tesla_t4_name("NVIDIA T4-PCIE-16GB")
     assert not is_tesla_t4_name("NVIDIA T400")
     assert not is_tesla_t4_name("GeForce RTX 2080 Ti")
+
+
+def test_exact_v100_name_matching_is_token_scoped() -> None:
+    assert is_v100_name("Tesla V100-PCIE-32GB")
+    assert is_v100_name("NVIDIA V100-SXM2-16GB")
+    assert not is_v100_name("NVIDIA TITAN V")
+    assert not is_v100_name("V1000 virtual display adapter")
 
 
 def test_policy_defaults_are_conservative() -> None:
@@ -80,6 +88,15 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.ada_sparse_ffn_low_memory_pack
     assert not v100.fused_projection
     assert not v100.fused_output_project
+
+    # Preserve pre-existing sm70 defaults for other Volta cards, but never
+    # inherit the new V100-only destructive packing or graph ceilings.
+    titan_v = policy_for_profile(classify_gpu("NVIDIA TITAN V", (7, 0)))
+    assert titan_v.fused_output
+    assert titan_v.prefill_graph
+    assert titan_v.prefill_graph_max_layers is None
+    assert titan_v.native_graph_max_layers is None
+    assert not titan_v.ada_sparse_ffn_low_memory_pack
 
     t4 = policy_for_profile(classify_gpu("Tesla T4", (7, 5)))
     assert t4.fast_cache

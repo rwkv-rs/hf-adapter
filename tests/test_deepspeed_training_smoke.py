@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rwkv7_hf.deepspeed_config import select_deepspeed_config
+
 # Keep the V100 training smoke path out of Dynamo/Triton compile trouble.
 os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 # Some pip/conda CUDA runtimes expose torch CUDA without a full CUDA_HOME.
@@ -258,18 +260,12 @@ def metric(metrics: dict[str, Any], key: str) -> float | None:
 
 
 def zero_config_path(config_dir: Path, stage: int, override: str = "") -> Path:
-    if override:
-        requested = Path(override)
-        path = requested if requested.is_absolute() else config_dir / requested
-    else:
-        path = config_dir / f"zero{stage}.json"
-    if not path.exists():
-        raise FileNotFoundError(f"DeepSpeed config not found: {path}")
-    cfg = json.loads(path.read_text(encoding="utf-8"))
-    actual = int((cfg.get("zero_optimization") or {}).get("stage", -1))
-    if actual != stage:
-        raise ValueError(f"{path} has zero stage {actual}, expected {stage}")
-    return path
+    return select_deepspeed_config(
+        config_dir,
+        stage,
+        override=override,
+        torch_module=optional_torch(),
+    )
 
 
 def stage_max_length(args: argparse.Namespace, stage: int) -> int:
@@ -409,8 +405,8 @@ def main() -> int:
     ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--config-dir", default="configs/deepspeed")
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
-    ap.add_argument("--zero2-config", default="", help="Optional ZeRO-2 config path, relative to --config-dir")
-    ap.add_argument("--zero3-config", default="", help="Optional ZeRO-3 config path, relative to --config-dir")
+    ap.add_argument("--zero2-config", default="", help="Optional ZeRO-2 override relative to --config-dir; otherwise exact-card auto-selection is used")
+    ap.add_argument("--zero3-config", default="", help="Optional ZeRO-3 override relative to --config-dir; otherwise exact-card auto-selection is used")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)
     ap.add_argument(

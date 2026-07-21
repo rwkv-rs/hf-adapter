@@ -153,10 +153,10 @@ python tests\test_device_map_generate.py --model C:\path\to\model-hf --dtype fp1
 成功时打印 `PASS`，表示测试模型的 HF 分层放置和输出一致。该路线按层分配模型；
 性能评估请同时记录单卡参考和跨卡传递开销，小模型通常优先使用单卡。
 
-跨卡 recurrent state 默认经 CPU 中转。原因是部分虚拟化 CUDA 主机会错误报告 P2P
-可用，但较大的直接跨卡复制会静默损坏。只有在已单独验证 CUDA P2P/NVLink 正常的
-机器上，才建议设置 `RWKV7_DEVICE_MAP_TRANSFER=p2p` 启用直接传输；设置
-`RWKV7_DEVICE_MAP_TRANSFER=cpu` 可显式固定保守路径。
+跨卡 recurrent state 默认使用 `auto`：运行时会针对每个有向 GPU 设备对只执行一次
+小尺寸、故障边界尺寸和多 MB 的精确复制探测。正常 PCIe/NVLink 机器继续使用直接
+P2P，不损失原有性能；只有探测失败的设备对才经 CPU 中转。也可以用
+`RWKV7_DEVICE_MAP_TRANSFER=p2p` 或 `RWKV7_DEVICE_MAP_TRANSFER=cpu` 强制指定。
 
 ## 4. 多卡训练：DeepSpeed ZeRO-2/3
 
@@ -167,6 +167,15 @@ Linux 或 WSL2、至少两张可见 CUDA 显卡上运行。
 
 ```bash
 python tests/test_deepspeed_configs.py
+```
+
+通用 `zero2.json`/`zero3.json` 保留原来的跨卡 loss-scale 默认值；smoke harness
+只有在产品名和 compute capability 都精确匹配 V100 时，才自动选择 V100 专用配置。
+可以先查看自动选择结果：
+
+```bash
+python -m rwkv7_hf.deepspeed_config --stage 2
+python -m rwkv7_hf.deepspeed_config --stage 3
 ```
 
 再运行 ZeRO-2 和 ZeRO-3 各一步 smoke：

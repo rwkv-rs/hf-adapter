@@ -206,13 +206,13 @@ cache, takes 4.0563 seconds (`1.97 tok/s`), and peaks at 12,589.9/12,930.8 MiB
 on the two cards. The first attempt had non-finite logits but was incorrectly
 marked pass by the old harness; the harness and runtime were fixed before the
 accepted row. This host's direct CUDA peer copies are asymmetric and silently
-corrupt some transfers, so the multi-device Native path now CPU-stages
-cross-device tensors by default. Direct P2P is explicit opt-in through
-`RWKV7_DEVICE_MAP_TRANSFER=p2p` only after host-specific validation.
+corrupt some transfers. The multi-device Native path now probes each ordered
+GPU pair once: this host automatically CPU-stages, while healthy PCIe/NVLink
+pairs retain direct P2P. Explicit `p2p` and `cpu` overrides remain available.
 
 All 0.1B/0.4B/1.5B/2.9B/7.2B ZeRO-2 and ZeRO-3 train/resume cases pass on the
 two cards. The 7.2B ZeRO-3 lane uses the explicit CPU-parameter-offload profile
-`configs/deepspeed/zero3_offload.json`; this is not evidence that GPU-only
+`configs/deepspeed/zero3_v100_offload.json`; this is not evidence that GPU-only
 ZeRO-3 fits in 2x32 GiB.
 
 This audit deliberately does **not** promote universal V100 production parity.

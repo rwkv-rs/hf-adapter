@@ -103,13 +103,14 @@ roadmap.
   passes 34/88 cells (decode 11/22, prefill 23/66; minima `0.6009x/0.4152x`).
   The quant gate passes 53/98 scored rows plus two capacity-only 13.3B rows;
   full-model prefill and MM8 batched decode remain the main Volta kernel gaps.
-- Multi-GPU V100 transfers must default to CPU staging. This exact host silently
-  corrupts asymmetric/size-dependent CUDA P2P copies. Use
-  `RWKV7_DEVICE_MAP_TRANSFER=p2p` only after an exact-host P2P correctness
-  probe. The corrected 13.3B 61-layer PP run splits after layer 30, emits 8/8
-  tokens with finite logits, and peaks at 12,589.9/12,930.8 MiB.
+- Multi-GPU transfers use an ordered device-pair correctness probe in `auto`
+  mode. Healthy PCIe/NVLink pairs preserve direct P2P; only failed pairs such
+  as this exact V100 host CPU-stage. Never replace this with a capability-wide
+  V100 or all-CUDA fallback. The corrected 13.3B 61-layer PP run splits after
+  layer 30, emits 8/8 tokens with finite logits, and peaks at
+  12,589.9/12,930.8 MiB.
 - All 0.1B through 7.2B two-card ZeRO-2/3 train and resume cases pass, but the
-  7.2B ZeRO-3 row requires `configs/deepspeed/zero3_offload.json`. Do not claim
+  7.2B ZeRO-3 row requires `configs/deepspeed/zero3_v100_offload.json`. Do not claim
   that its GPU-only optimizer/parameter state fits in 2x32 GiB.
 - Do not replace the fail-closed `>=1.0x` speed thresholds with a weaker target
   or report the prior selected-lane V100 promotion as universal. The next V100
