@@ -137,24 +137,32 @@ See [`raw/qwen_summary.md`](raw/qwen_summary.md) and
 
 ## Same-card Albatross gate: not closed
 
-The preserved comprehensive gate contains 88 cells: 22 decode cells and 66
-prefill cells across 0.1B, 0.4B, 1.5B, 2.9B, 7.2B and both 13.3B checkpoints.
-The pre-capability-cache report passes **32/88**:
+The final comprehensive gate contains 88 cells: 22 decode cells and 66 prefill
+cells across 0.1B, 0.4B, 1.5B, 2.9B, 7.2B and both 13.3B checkpoints. Decode
+was rerun cleanly at commit `31d52ca`; prefill uses the complete same-card
+matrix because the capability-cache change is decode-only. The current report
+passes **34/88**:
 
 | Phase | Pass / total | Minimum ratio |
 |---|---:|---:|
-| decode | 9/22 | `0.5479x` |
+| decode | 11/22 | `0.6009x` |
 | prefill | 23/66 | `0.4152x` |
-| total | 32/88 | `0.4152x` |
+| total | 34/88 | `0.4152x` |
 
-The decode rows in
+The median decode ratio is `0.9965x`, but the strict requirement is every cell
+at `>=1.0x`; 11 decode cells still fail. The two 13.3B rows reach only
+`0.6009x/0.6026x`, and prefill still has 43 failing cells. Therefore the broad
+Albatross production gate remains red even though many small-model rows are at
+or above parity.
+
+The final gate is
+[`raw/native_vs_albatross_gate_31d52ca.json`](raw/native_vs_albatross_gate_31d52ca.json).
+The compressed source rows and run log are
+[`raw/results_fixed_decode_31d52ca.jsonl.gz`](raw/results_fixed_decode_31d52ca.jsonl.gz)
+and [`raw/fixed_decode_31d52ca.log.gz`](raw/fixed_decode_31d52ca.log.gz).
+The earlier 32/88 report is retained as
 [`raw/native_vs_albatross_gate_pre_31d52ca.json`](raw/native_vs_albatross_gate_pre_31d52ca.json)
-predate commit `31d52ca`, which removed repeated whole-model capability scans
-from each token. They are retained for audit history rather than presented as
-the final speed of that commit. The prefill failures are unaffected by that
-decode-only optimization and remain a production blocker. A result is not
-promoted until a clean same-card post-fix rerun is committed; a partial or
-interrupted rerun is not substituted into this gate.
+to show the effect of removing repeated whole-model capability scans.
 
 ## Full-model quant gate: not closed
 

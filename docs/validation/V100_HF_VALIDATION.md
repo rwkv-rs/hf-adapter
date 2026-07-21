@@ -216,8 +216,9 @@ two cards. The 7.2B ZeRO-3 lane uses the explicit CPU-parameter-offload profile
 ZeRO-3 fits in 2x32 GiB.
 
 This audit deliberately does **not** promote universal V100 production parity.
-The full same-card Native-versus-Albatross grid remains below `1.0x` in a
-number of decode and prefill cells. The full-model quant gate passes 53/98
+The final commit-`31d52ca` same-card Native-versus-Albatross gate passes only
+34/88 cells: 11/22 decode and 23/66 prefill, with minima `0.6009x` and
+`0.4152x`. The full-model quant gate passes 53/98
 scored rows plus two 13.3B capacity rows, but fails 45 speed rows: MM4 and MM8
 still need fused quantized prefill, and MM8 also needs faster batched decode.
 Memory reduction and numerical quality generally pass; universal fp16-or-faster

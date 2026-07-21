@@ -99,9 +99,10 @@ roadmap.
   8 skipped at adapter commit `31d52ca`.
 - The two remaining red gates are real performance work, not harness waivers:
   comprehensive same-card Native-versus-Albatross parity and universal
-  full-model W8/W4 all-phase speed. The quant gate passes 53/98 scored rows
-  plus two capacity-only 13.3B rows; full-model prefill and MM8 batched decode
-  remain the main Volta kernel gaps.
+  full-model W8/W4 all-phase speed. The final commit-`31d52ca` Albatross gate
+  passes 34/88 cells (decode 11/22, prefill 23/66; minima `0.6009x/0.4152x`).
+  The quant gate passes 53/98 scored rows plus two capacity-only 13.3B rows;
+  full-model prefill and MM8 batched decode remain the main Volta kernel gaps.
 - Multi-GPU V100 transfers must default to CPU staging. This exact host silently
   corrupts asymmetric/size-dependent CUDA P2P copies. Use
   `RWKV7_DEVICE_MAP_TRANSFER=p2p` only after an exact-host P2P correctness

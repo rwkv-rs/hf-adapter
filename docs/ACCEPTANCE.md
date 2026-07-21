@@ -83,7 +83,8 @@ or by counting the table rows above.
   gates pass on 2x V100-32GB, including all validation, numerical-alignment,
   dense execution, HF/PEFT/TRL training and distributed cases. The strict Qwen
   matrix passes 72/72 cells, but the full Native-versus-Albatross grid and the
-  universal full-model W8/W4 all-phase speed gate remain red. The latter passes
+  universal full-model W8/W4 all-phase speed gate remain red. The final
+  commit-`31d52ca` Albatross grid passes 34/88 cells; the quant gate passes
   53/98 scored rows plus two capacity-only 13.3B rows. This newer broad audit
   limits, rather than erases, the older production-close claims below: those
   claims apply only to their explicitly selected models/shapes. Evidence:

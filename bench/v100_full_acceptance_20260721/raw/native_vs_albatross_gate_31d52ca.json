@@ -1,0 +1,1403 @@
+{
+  "axis": "v100_native_vs_albatross_full_gate",
+  "status": "fail",
+  "native_decode_commit": "31d52ca81f28bf94409c7803bf91fa11f3cadc86",
+  "decode_source": "dense/results_fixed_decode_31d52ca.jsonl",
+  "prefill_source": "dense/results_batch_sweep.jsonl",
+  "threshold": 1.0,
+  "expected": 88,
+  "passed": 34,
+  "failed": 54,
+  "min_ratio": 0.4151831905770639,
+  "rows": [
+    {
+      "phase": "decode",
+      "model": "0.1b",
+      "batch_size": 1,
+      "native_tokps": 761.42,
+      "albatross_tokps": 775.97,
+      "ratio": 0.9812492751008415,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 28131.7,
+      "albatross_tokps": 25992.93,
+      "ratio": 1.082282759196443,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 36742.5,
+      "albatross_tokps": 43299.42,
+      "ratio": 0.8485679484852222,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 48156.1,
+      "albatross_tokps": 50908.72,
+      "ratio": 0.9459302846349309,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "0.1b",
+      "batch_size": 2,
+      "native_tokps": 1445.21,
+      "albatross_tokps": 1387.66,
+      "ratio": 1.041472695040572,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 2,
+      "prompt_tokens": 128,
+      "native_tokps": 52242.1,
+      "albatross_tokps": 48463.7,
+      "ratio": 1.0779635067070819,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 2,
+      "prompt_tokens": 512,
+      "native_tokps": 73730.3,
+      "albatross_tokps": 71859.73,
+      "ratio": 1.0260308520502375,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 90916.2,
+      "albatross_tokps": 86708.65,
+      "ratio": 1.0485251471450656,
+      "pass": true
+    },
+    {
+      "phase": "decode",
+      "model": "0.1b",
+      "batch_size": 4,
+      "native_tokps": 2526.41,
+      "albatross_tokps": 2380.43,
+      "ratio": 1.061325054717005,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 75464.7,
+      "albatross_tokps": 75677.31,
+      "ratio": 0.99719057138791,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 4,
+      "prompt_tokens": 512,
+      "native_tokps": 116012.8,
+      "albatross_tokps": 108424.59,
+      "ratio": 1.0699860612800105,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 4,
+      "prompt_tokens": 2048,
+      "native_tokps": 139427.2,
+      "albatross_tokps": 130698.67,
+      "ratio": 1.0667836176144716,
+      "pass": true
+    },
+    {
+      "phase": "decode",
+      "model": "0.1b",
+      "batch_size": 8,
+      "native_tokps": 4085.32,
+      "albatross_tokps": 3314.59,
+      "ratio": 1.232526496489762,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 112633.0,
+      "albatross_tokps": 113083.79,
+      "ratio": 0.9960136638504954,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 157141.2,
+      "albatross_tokps": 153186.27,
+      "ratio": 1.0258177838000757,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 174703.8,
+      "albatross_tokps": 176430.04,
+      "ratio": 0.9902157251678908,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "0.4b",
+      "batch_size": 1,
+      "native_tokps": 437.65,
+      "albatross_tokps": 450.76,
+      "ratio": 0.9709157866713994,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 12362.7,
+      "albatross_tokps": 12730.42,
+      "ratio": 0.9711148571688916,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 17211.2,
+      "albatross_tokps": 20373.24,
+      "ratio": 0.8447944460478549,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 22379.4,
+      "albatross_tokps": 23628.51,
+      "ratio": 0.9471354732058858,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "0.4b",
+      "batch_size": 2,
+      "native_tokps": 746.1,
+      "albatross_tokps": 779.22,
+      "ratio": 0.9574959574959575,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 2,
+      "prompt_tokens": 128,
+      "native_tokps": 22650.9,
+      "albatross_tokps": 21841.69,
+      "ratio": 1.0370488730496588,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 2,
+      "prompt_tokens": 512,
+      "native_tokps": 32765.5,
+      "albatross_tokps": 31887.25,
+      "ratio": 1.0275423562709234,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 38634.9,
+      "albatross_tokps": 37075.14,
+      "ratio": 1.0420702389795427,
+      "pass": true
+    },
+    {
+      "phase": "decode",
+      "model": "0.4b",
+      "batch_size": 4,
+      "native_tokps": 1213.83,
+      "albatross_tokps": 1191.47,
+      "ratio": 1.0187667335308483,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 33303.0,
+      "albatross_tokps": 34526.81,
+      "ratio": 0.964554790900173,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 4,
+      "prompt_tokens": 512,
+      "native_tokps": 48693.0,
+      "albatross_tokps": 46032.57,
+      "ratio": 1.0577945137540659,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 4,
+      "prompt_tokens": 2048,
+      "native_tokps": 55609.8,
+      "albatross_tokps": 51541.24,
+      "ratio": 1.0789379533748122,
+      "pass": true
+    },
+    {
+      "phase": "decode",
+      "model": "0.4b",
+      "batch_size": 8,
+      "native_tokps": 1905.46,
+      "albatross_tokps": 1461.65,
+      "ratio": 1.3036363014401533,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 46373.0,
+      "albatross_tokps": 46355.31,
+      "ratio": 1.0003816175536309,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 58896.2,
+      "albatross_tokps": 59118.25,
+      "ratio": 0.996243968656041,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 65642.4,
+      "albatross_tokps": 65304.79,
+      "ratio": 1.005169758604231,
+      "pass": true
+    },
+    {
+      "phase": "decode",
+      "model": "1.5b",
+      "batch_size": 1,
+      "native_tokps": 230.9,
+      "albatross_tokps": 244.05,
+      "ratio": 0.9461175988526941,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 7168.8,
+      "albatross_tokps": 7884.69,
+      "ratio": 0.9092050543521686,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 11500.4,
+      "albatross_tokps": 12647.02,
+      "ratio": 0.9093367449407054,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 13456.4,
+      "albatross_tokps": 14468.74,
+      "ratio": 0.9300326082298804,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "1.5b",
+      "batch_size": 2,
+      "native_tokps": 379.34,
+      "albatross_tokps": 418.14,
+      "ratio": 0.9072081121155594,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 2,
+      "prompt_tokens": 128,
+      "native_tokps": 11998.8,
+      "albatross_tokps": 11111.61,
+      "ratio": 1.0798435150261751,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 2,
+      "prompt_tokens": 512,
+      "native_tokps": 16825.2,
+      "albatross_tokps": 16287.04,
+      "ratio": 1.0330422225278504,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 7716.3,
+      "albatross_tokps": 18585.29,
+      "ratio": 0.4151831905770639,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "1.5b",
+      "batch_size": 4,
+      "native_tokps": 609.52,
+      "albatross_tokps": 601.01,
+      "ratio": 1.0141594981780668,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 15922.9,
+      "albatross_tokps": 16739.76,
+      "ratio": 0.9512024067250666,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 4,
+      "prompt_tokens": 512,
+      "native_tokps": 20311.6,
+      "albatross_tokps": 20223.47,
+      "ratio": 1.0043578080319548,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 4,
+      "prompt_tokens": 2048,
+      "native_tokps": 12682.2,
+      "albatross_tokps": 21246.22,
+      "ratio": 0.5969155925148097,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "1.5b",
+      "batch_size": 8,
+      "native_tokps": 911.32,
+      "albatross_tokps": 863.69,
+      "ratio": 1.0551471013905451,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 18885.2,
+      "albatross_tokps": 19163.51,
+      "ratio": 0.9854770864001429,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 20843.2,
+      "albatross_tokps": 21991.01,
+      "ratio": 0.9478054896068895,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 21923.6,
+      "albatross_tokps": 22688.99,
+      "ratio": 0.9662660171298941,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "2.9b",
+      "batch_size": 1,
+      "native_tokps": 124.3,
+      "albatross_tokps": 132.87,
+      "ratio": 0.935500865507639,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 3740.2,
+      "albatross_tokps": 3826.02,
+      "ratio": 0.977569380191426,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 7271.6,
+      "albatross_tokps": 7690.95,
+      "ratio": 0.9454748763156697,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 8465.0,
+      "albatross_tokps": 8799.54,
+      "ratio": 0.9619821036099613,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "2.9b",
+      "batch_size": 2,
+      "native_tokps": 219.94,
+      "albatross_tokps": 235.64,
+      "ratio": 0.9333729417755899,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 2,
+      "prompt_tokens": 128,
+      "native_tokps": 6649.3,
+      "albatross_tokps": 5723.84,
+      "ratio": 1.161685162408453,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 2,
+      "prompt_tokens": 512,
+      "native_tokps": 10221.4,
+      "albatross_tokps": 10114.6,
+      "ratio": 1.0105589939295672,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 10341.6,
+      "albatross_tokps": 10441.97,
+      "ratio": 0.9903878291165366,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "2.9b",
+      "batch_size": 4,
+      "native_tokps": 354.72,
+      "albatross_tokps": 347.08,
+      "ratio": 1.0220122162037573,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 9446.4,
+      "albatross_tokps": 9462.53,
+      "ratio": 0.9982953818904668,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 4,
+      "prompt_tokens": 512,
+      "native_tokps": 11103.7,
+      "albatross_tokps": 10978.09,
+      "ratio": 1.0114418810558121,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 4,
+      "prompt_tokens": 2048,
+      "native_tokps": 11079.7,
+      "albatross_tokps": 11053.65,
+      "ratio": 1.002356687609975,
+      "pass": true
+    },
+    {
+      "phase": "decode",
+      "model": "2.9b",
+      "batch_size": 8,
+      "native_tokps": 527.31,
+      "albatross_tokps": 521.22,
+      "ratio": 1.0116841257050764,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 10832.8,
+      "albatross_tokps": 11156.29,
+      "ratio": 0.9710038014429526,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 11144.5,
+      "albatross_tokps": 11754.68,
+      "ratio": 0.9480904626923063,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 10769.7,
+      "albatross_tokps": 11816.62,
+      "ratio": 0.9114027530715213,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "7.2b",
+      "batch_size": 1,
+      "native_tokps": 56.62,
+      "albatross_tokps": 67.35,
+      "ratio": 0.8406829992576096,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 2249.5,
+      "albatross_tokps": 2647.55,
+      "ratio": 0.8496534531925742,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 3853.9,
+      "albatross_tokps": 4218.7,
+      "ratio": 0.9135278640339441,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 4205.0,
+      "albatross_tokps": 4485.01,
+      "ratio": 0.9375675862484141,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "7.2b",
+      "batch_size": 2,
+      "native_tokps": 102.67,
+      "albatross_tokps": 118.45,
+      "ratio": 0.8667792317433516,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 2,
+      "prompt_tokens": 128,
+      "native_tokps": 3629.7,
+      "albatross_tokps": 3306.48,
+      "ratio": 1.0977535022138345,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 2,
+      "prompt_tokens": 512,
+      "native_tokps": 4578.2,
+      "albatross_tokps": 4705.11,
+      "ratio": 0.9730271980888864,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 4749.0,
+      "albatross_tokps": 4918.78,
+      "ratio": 0.965483310902297,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "7.2b",
+      "batch_size": 4,
+      "native_tokps": 167.5,
+      "albatross_tokps": 154.57,
+      "ratio": 1.0836514200685774,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 4297.2,
+      "albatross_tokps": 4610.59,
+      "ratio": 0.9320282219846049,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 4,
+      "prompt_tokens": 512,
+      "native_tokps": 4697.9,
+      "albatross_tokps": 4995.58,
+      "ratio": 0.9404113236100713,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 4,
+      "prompt_tokens": 2048,
+      "native_tokps": 4856.7,
+      "albatross_tokps": 5223.29,
+      "ratio": 0.9298162652274715,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "7.2b",
+      "batch_size": 8,
+      "native_tokps": 265.12,
+      "albatross_tokps": 253.72,
+      "ratio": 1.0449314204635032,
+      "pass": true
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 4621.3,
+      "albatross_tokps": 4879.19,
+      "ratio": 0.9471449154470313,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 4816.3,
+      "albatross_tokps": 5198.15,
+      "ratio": 0.9265411733020402,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 4939.7,
+      "albatross_tokps": 4695.26,
+      "ratio": 1.052061014725489,
+      "pass": true
+    },
+    {
+      "phase": "decode",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "native_tokps": 18.7,
+      "albatross_tokps": 31.12,
+      "ratio": 0.6008997429305912,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 1012.7,
+      "albatross_tokps": 1401.15,
+      "ratio": 0.7227634443135995,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 2009.2,
+      "albatross_tokps": 2230.55,
+      "ratio": 0.9007643854654681,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 2211.6,
+      "albatross_tokps": 2385.79,
+      "ratio": 0.9269885446749294,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "native_tokps": 18.74,
+      "albatross_tokps": 31.1,
+      "ratio": 0.6025723472668809,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 1020.3,
+      "albatross_tokps": 1400.89,
+      "ratio": 0.728322709134907,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 2019.7,
+      "albatross_tokps": 2251.88,
+      "ratio": 0.8968950388120148,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 2216.5,
+      "albatross_tokps": 2425.02,
+      "ratio": 0.9140130803044924,
+      "pass": false
+    }
+  ],
+  "failures": [
+    {
+      "phase": "decode",
+      "model": "0.1b",
+      "batch_size": 1,
+      "native_tokps": 761.42,
+      "albatross_tokps": 775.97,
+      "ratio": 0.9812492751008415,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 36742.5,
+      "albatross_tokps": 43299.42,
+      "ratio": 0.8485679484852222,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 48156.1,
+      "albatross_tokps": 50908.72,
+      "ratio": 0.9459302846349309,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 75464.7,
+      "albatross_tokps": 75677.31,
+      "ratio": 0.99719057138791,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 112633.0,
+      "albatross_tokps": 113083.79,
+      "ratio": 0.9960136638504954,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.1b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 174703.8,
+      "albatross_tokps": 176430.04,
+      "ratio": 0.9902157251678908,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "0.4b",
+      "batch_size": 1,
+      "native_tokps": 437.65,
+      "albatross_tokps": 450.76,
+      "ratio": 0.9709157866713994,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 12362.7,
+      "albatross_tokps": 12730.42,
+      "ratio": 0.9711148571688916,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 17211.2,
+      "albatross_tokps": 20373.24,
+      "ratio": 0.8447944460478549,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 22379.4,
+      "albatross_tokps": 23628.51,
+      "ratio": 0.9471354732058858,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "0.4b",
+      "batch_size": 2,
+      "native_tokps": 746.1,
+      "albatross_tokps": 779.22,
+      "ratio": 0.9574959574959575,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 33303.0,
+      "albatross_tokps": 34526.81,
+      "ratio": 0.964554790900173,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "0.4b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 58896.2,
+      "albatross_tokps": 59118.25,
+      "ratio": 0.996243968656041,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "1.5b",
+      "batch_size": 1,
+      "native_tokps": 230.9,
+      "albatross_tokps": 244.05,
+      "ratio": 0.9461175988526941,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 7168.8,
+      "albatross_tokps": 7884.69,
+      "ratio": 0.9092050543521686,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 11500.4,
+      "albatross_tokps": 12647.02,
+      "ratio": 0.9093367449407054,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 13456.4,
+      "albatross_tokps": 14468.74,
+      "ratio": 0.9300326082298804,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "1.5b",
+      "batch_size": 2,
+      "native_tokps": 379.34,
+      "albatross_tokps": 418.14,
+      "ratio": 0.9072081121155594,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 7716.3,
+      "albatross_tokps": 18585.29,
+      "ratio": 0.4151831905770639,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 15922.9,
+      "albatross_tokps": 16739.76,
+      "ratio": 0.9512024067250666,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 4,
+      "prompt_tokens": 2048,
+      "native_tokps": 12682.2,
+      "albatross_tokps": 21246.22,
+      "ratio": 0.5969155925148097,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 18885.2,
+      "albatross_tokps": 19163.51,
+      "ratio": 0.9854770864001429,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 20843.2,
+      "albatross_tokps": 21991.01,
+      "ratio": 0.9478054896068895,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "1.5b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 21923.6,
+      "albatross_tokps": 22688.99,
+      "ratio": 0.9662660171298941,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "2.9b",
+      "batch_size": 1,
+      "native_tokps": 124.3,
+      "albatross_tokps": 132.87,
+      "ratio": 0.935500865507639,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 3740.2,
+      "albatross_tokps": 3826.02,
+      "ratio": 0.977569380191426,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 7271.6,
+      "albatross_tokps": 7690.95,
+      "ratio": 0.9454748763156697,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 8465.0,
+      "albatross_tokps": 8799.54,
+      "ratio": 0.9619821036099613,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "2.9b",
+      "batch_size": 2,
+      "native_tokps": 219.94,
+      "albatross_tokps": 235.64,
+      "ratio": 0.9333729417755899,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 10341.6,
+      "albatross_tokps": 10441.97,
+      "ratio": 0.9903878291165366,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 9446.4,
+      "albatross_tokps": 9462.53,
+      "ratio": 0.9982953818904668,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 10832.8,
+      "albatross_tokps": 11156.29,
+      "ratio": 0.9710038014429526,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 11144.5,
+      "albatross_tokps": 11754.68,
+      "ratio": 0.9480904626923063,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "2.9b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "native_tokps": 10769.7,
+      "albatross_tokps": 11816.62,
+      "ratio": 0.9114027530715213,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "7.2b",
+      "batch_size": 1,
+      "native_tokps": 56.62,
+      "albatross_tokps": 67.35,
+      "ratio": 0.8406829992576096,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 2249.5,
+      "albatross_tokps": 2647.55,
+      "ratio": 0.8496534531925742,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 3853.9,
+      "albatross_tokps": 4218.7,
+      "ratio": 0.9135278640339441,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 4205.0,
+      "albatross_tokps": 4485.01,
+      "ratio": 0.9375675862484141,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "7.2b",
+      "batch_size": 2,
+      "native_tokps": 102.67,
+      "albatross_tokps": 118.45,
+      "ratio": 0.8667792317433516,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 2,
+      "prompt_tokens": 512,
+      "native_tokps": 4578.2,
+      "albatross_tokps": 4705.11,
+      "ratio": 0.9730271980888864,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 2,
+      "prompt_tokens": 2048,
+      "native_tokps": 4749.0,
+      "albatross_tokps": 4918.78,
+      "ratio": 0.965483310902297,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 4,
+      "prompt_tokens": 128,
+      "native_tokps": 4297.2,
+      "albatross_tokps": 4610.59,
+      "ratio": 0.9320282219846049,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 4,
+      "prompt_tokens": 512,
+      "native_tokps": 4697.9,
+      "albatross_tokps": 4995.58,
+      "ratio": 0.9404113236100713,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 4,
+      "prompt_tokens": 2048,
+      "native_tokps": 4856.7,
+      "albatross_tokps": 5223.29,
+      "ratio": 0.9298162652274715,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "native_tokps": 4621.3,
+      "albatross_tokps": 4879.19,
+      "ratio": 0.9471449154470313,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "7.2b",
+      "batch_size": 8,
+      "prompt_tokens": 512,
+      "native_tokps": 4816.3,
+      "albatross_tokps": 5198.15,
+      "ratio": 0.9265411733020402,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "native_tokps": 18.7,
+      "albatross_tokps": 31.12,
+      "ratio": 0.6008997429305912,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 1012.7,
+      "albatross_tokps": 1401.15,
+      "ratio": 0.7227634443135995,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 2009.2,
+      "albatross_tokps": 2230.55,
+      "ratio": 0.9007643854654681,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1g",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 2211.6,
+      "albatross_tokps": 2385.79,
+      "ratio": 0.9269885446749294,
+      "pass": false
+    },
+    {
+      "phase": "decode",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "native_tokps": 18.74,
+      "albatross_tokps": 31.1,
+      "ratio": 0.6025723472668809,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "prompt_tokens": 128,
+      "native_tokps": 1020.3,
+      "albatross_tokps": 1400.89,
+      "ratio": 0.728322709134907,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "prompt_tokens": 512,
+      "native_tokps": 2019.7,
+      "albatross_tokps": 2251.88,
+      "ratio": 0.8968950388120148,
+      "pass": false
+    },
+    {
+      "phase": "prefill",
+      "model": "13.3b-g1h",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "native_tokps": 2216.5,
+      "albatross_tokps": 2425.02,
+      "ratio": 0.9140130803044924,
+      "pass": false
+    }
+  ]
+}
