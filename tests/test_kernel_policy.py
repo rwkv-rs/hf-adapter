@@ -13,6 +13,7 @@ from rwkv7_hf.kernel_policy import (
     is_rtx_model_name,
     is_tesla_t4_name,
     policy_for_profile,
+    single_cuda_device_from_device_map,
 )
 
 
@@ -57,6 +58,55 @@ def test_exact_rtx_model_matching_rejects_adjacent_and_variant_products() -> Non
     assert not is_rtx_model_name("NVIDIA GeForce RTX 4090 Ti", "4090")
     assert not is_rtx_model_name("NVIDIA GeForce RTX 4090 D", "4090")
     assert not is_rtx_model_name("NVIDIA GeForce RTX 4080 Max-Q", "4080")
+
+
+def test_device_map_policy_resolution_fails_closed_for_mixed_gpu_maps() -> None:
+    assert single_cuda_device_from_device_map(None) == (True, None)
+    assert single_cuda_device_from_device_map("cuda:1") == (True, "cuda:1")
+    assert single_cuda_device_from_device_map({"": 1}) == (True, "cuda:1")
+    assert single_cuda_device_from_device_map(
+        {"model.embeddings": 1, "model.layers.0": "cuda:1", "lm_head": "cpu"}
+    ) == (True, "cuda:1")
+    assert single_cuda_device_from_device_map("auto") == (False, None)
+    assert single_cuda_device_from_device_map({"model.layers.0": 0, "lm_head": 1}) == (
+        False,
+        None,
+    )
+
+
+def test_runtime_detection_defaults_to_current_cuda_device() -> None:
+    class FakeDevice:
+        def __init__(self, value):
+            text = str(value)
+            self.index = int(text.split(":", 1)[1]) if ":" in text else None
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def current_device():
+            return 1
+
+        @staticmethod
+        def get_device_name(index):
+            return {0: "NVIDIA GeForce RTX 4080", 1: "NVIDIA GeForce RTX 5090"}[index]
+
+        @staticmethod
+        def get_device_capability(index):
+            return {0: (8, 9), 1: (12, 0)}[index]
+
+    class FakeTorch:
+        cuda = FakeCuda()
+        device = FakeDevice
+
+    active = detect_gpu_profile(torch_module=FakeTorch())
+    explicit = detect_gpu_profile(device="cuda:0", torch_module=FakeTorch())
+    assert active.device_index == 1
+    assert active.name.endswith("5090")
+    assert explicit.device_index == 0
+    assert explicit.name.endswith("4080")
 
 
 def test_policy_defaults_are_conservative() -> None:

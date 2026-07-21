@@ -499,6 +499,15 @@ def test_fp16_accum_ffn_key_is_exact_shape_and_explicitly_disableable(monkeypatc
     assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
         8, 128, 4096, 32, torch.float16
     )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY", "1")
+    monkeypatch.setattr(native_jit.torch.cuda, "device_count", lambda: 2)
+    assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.float16
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FP16_ACCUM_MULTI_GPU", "1")
+    assert native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.float16
+    )
 
 
 def test_fp16_accum_ffn_key_layers_support_policy_and_shape_override(monkeypatch) -> None:

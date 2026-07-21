@@ -8,10 +8,13 @@ explicitly request FP16 state and the exact CUDA shape is supported.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-import sys
 import threading
 from typing import Any
+
+try:
+    from .extension_build import cuda_extension_build_environment
+except ImportError:  # pragma: no cover - direct remote-file execution
+    from extension_build import cuda_extension_build_environment
 
 try:  # pragma: no cover - optional in lightweight environments
     import torch
@@ -591,61 +594,38 @@ def _load_extension() -> Any | None:
         if _EXTENSION_ERROR is not None:
             return None
         try:
-            # Preserve the virtualenv bin path so Ninja and a venv-provided
-            # CUDA toolkit remain visible to torch.utils.cpp_extension.
-            python_bin = str(Path(sys.executable).absolute().parent)
-            if python_bin not in os.environ.get("PATH", "").split(os.pathsep):
-                os.environ["PATH"] = python_bin + os.pathsep + os.environ.get("PATH", "")
-            nvcc = Path(python_bin) / "nvcc"
-            if nvcc.exists() and "CUDA_HOME" not in os.environ:
-                os.environ["CUDA_HOME"] = str(nvcc.parent.parent)
             capability = torch.cuda.get_device_capability()
-            os.environ.setdefault(
-                "TORCH_CUDA_ARCH_LIST", f"{capability[0]}.{capability[1]}"
-            )
-            runtime_lib = (
-                Path(sys.prefix)
-                / "lib"
-                / f"python{sys.version_info.major}.{sys.version_info.minor}"
-                / "site-packages"
-                / "nvidia"
-                / "cuda_runtime"
-                / "lib"
-            )
-            extra_ldflags: list[str] = []
-            if runtime_lib.is_dir():
-                for variable in ("LIBRARY_PATH", "LD_LIBRARY_PATH"):
-                    items = os.environ.get(variable, "").split(os.pathsep)
-                    if str(runtime_lib) not in items:
-                        os.environ[variable] = (
-                            str(runtime_lib)
-                            + os.pathsep
-                            + os.environ.get(variable, "")
-                        )
-                extra_ldflags.append(f"-Wl,-rpath,{runtime_lib}")
-            from torch.utils.cpp_extension import load_inline
+            with cuda_extension_build_environment(
+                arch_list=f"{capability[0]}.{capability[1]}"
+            ) as runtime_lib:
+                from torch.utils.cpp_extension import load_inline
 
-            _EXTENSION = load_inline(
-                name="rwkv7_native_wkv_fp16_v7",
-                cpp_sources=_CPP_SOURCE,
-                cuda_sources=_CUDA_SOURCE,
-                functions=None,
-                extra_cflags=["-O3"],
-                extra_cuda_cflags=[
-                    "-O3",
-                    # This path is promoted only behind model-level FP16-state
-                    # logits, recurrent-state and greedy-token gates. Fast
-                    # exp2 is the measured long-prefill speed win for this route.
-                    "--use_fast_math",
-                    "--extra-device-vectorization",
-                ],
-                extra_ldflags=extra_ldflags,
-                with_cuda=True,
-                verbose=os.environ.get(
-                    "RWKV7_NATIVE_WKV_FP16_BUILD_VERBOSE", "0"
-                ).lower()
-                in {"1", "true", "yes", "on"},
-            )
+                extra_ldflags = (
+                    [f"-Wl,-rpath,{runtime_lib}"]
+                    if runtime_lib is not None
+                    else []
+                )
+                _EXTENSION = load_inline(
+                    name="rwkv7_native_wkv_fp16_v7",
+                    cpp_sources=_CPP_SOURCE,
+                    cuda_sources=_CUDA_SOURCE,
+                    functions=None,
+                    extra_cflags=["-O3"],
+                    extra_cuda_cflags=[
+                        "-O3",
+                        # This path is promoted only behind model-level FP16-state
+                        # logits, recurrent-state and greedy-token gates. Fast
+                        # exp2 is the measured long-prefill speed win for this route.
+                        "--use_fast_math",
+                        "--extra-device-vectorization",
+                    ],
+                    extra_ldflags=extra_ldflags,
+                    with_cuda=True,
+                    verbose=os.environ.get(
+                        "RWKV7_NATIVE_WKV_FP16_BUILD_VERBOSE", "0"
+                    ).lower()
+                    in {"1", "true", "yes", "on"},
+                )
         except Exception as exc:  # pragma: no cover - host toolchain dependent
             _EXTENSION_ERROR = f"{type(exc).__name__}: {exc}"
             return None
