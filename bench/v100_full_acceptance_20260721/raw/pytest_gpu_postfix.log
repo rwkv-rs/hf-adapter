@@ -1,0 +1,24 @@
+date=2026-07-21T08:24:15+08:00
+phase=validation case=pytest_gpu_postfix
+commit=31d52ca81f28bf94409c7803bf91fa11f3cadc86
+0, Tesla V100-PCIE-32GB, GPU-18fbf081-3c6d-d65b-11b8-288a4ce1ab28, 7.0, 580.159.03, 9 MiB, 32768 MiB, 0 %, 39.81 W
+1, Tesla V100-PCIE-32GB, GPU-f65db2e8-87bb-c88d-363f-23c79f793548, 7.0, 580.159.03, 9 MiB, 32768 MiB, 23 %, 38.25 W
+--- output ---
+.................................ss..................................... [ 11%]
+........................................................................ [ 23%]
+...............................................sss..........sss......... [ 34%]
+........................................................................ [ 46%]
+........................................................................ [ 57%]
+........................................................................ [ 69%]
+........................................................................ [ 80%]
+........................................................................ [ 92%]
+................................................                         [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+616 passed, 8 skipped, 2 warnings in 53.07s

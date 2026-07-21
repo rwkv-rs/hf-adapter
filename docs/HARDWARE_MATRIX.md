@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-07-20**.
+Last updated: **2026-07-21**.
 
 ## Status definitions
 
@@ -16,7 +16,7 @@ Last updated: **2026-07-20**.
 
 | Platform | Status | Models / scope | Strongest current evidence | Open work |
 |---|---|---|---|---|
-| Tesla V100 32GB, sm70 | **Production-close** | dense/Qwen lanes; packed-MM4 cached decode for 1.5B/2.9B/7.2B; larger inference/training smoke | Albatross P1; three exact MM4 profiles pass 7/7 each with lower footprint and complete greedy equality; 1.5B alone opts into fused epilogues | Larger-model P2/P3, full-memory prefill and broader optimized-Qwen shapes |
+| Tesla V100 32GB, sm70 | **Validated; production-close only on the previously promoted selected lanes** | 0.1B–13.3B dense/alignment/cache; 0.1B–7.2B HF/PEFT/TRL and two-card ZeRO; 13.3B two-card PP; W8/W4/Qwen | The 2026-07-21 fail-closed full audit passes 187/189 latest case gates, all 21 validation and 11 distributed cases, 616 GPU tests, and the strict 72/72 Qwen matrix | The comprehensive same-card Albatross gate and universal full-model W8/W4 all-phase speed gate remain red; do not generalize the earlier selected-lane promotion |
 | RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
 | RTX 4090 24GB, sm89 | **Production-close for measured bsz8 lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B, dense/W8/W4 | Small-model matrix passes 54/54 and 7.2B passes 18/18; dense prefill/decode, active-work, full Qwen FLA, quant speed and quant-local memory gates pass | bsz1/2/4 latest matrix, task quality, full-memory W4, other Ada cards |
 | RTX 4080 16GB, sm89 | **Production-close for measured Native HF B1/B8 and capacity lanes** | Native HF 0.4B/1.5B/2.9B vs full-FLA Qwen3.5 0.8B/2B/4B; 7.2B/13.3B capacity | six pair matrices pass with dense prefill/decode minima `1.012285x/1.435296x`; output-head quant complete-cell minima `1.003101x/1.015996x`; 7.2B fp16 through B4 and 13.3B MM8/MM4 fit | task quality, long-run/distributed training and full-model quant speed |
@@ -38,6 +38,7 @@ Last updated: **2026-07-20**.
 - V100: [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md)
 - V100 packed MM4 BN/TN: [`../bench/v100_sm70_mm4_bntn_20260716/README.md`](../bench/v100_sm70_mm4_bntn_20260716/README.md)
 - V100 full-FLA Qwen B1/B8: [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md)
+- V100 comprehensive fail-closed audit: [`../bench/v100_full_acceptance_20260721/README.md`](../bench/v100_full_acceptance_20260721/README.md)
 - RTX 3090 g1h 7.2B: [`../bench/3090_g1h_7p2_bsz8_20260714/README.md`](../bench/3090_g1h_7p2_bsz8_20260714/README.md)
 - RTX 4090 g1h 7.2B: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md)
 - RTX 4090 small models: [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md)

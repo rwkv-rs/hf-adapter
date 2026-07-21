@@ -1,0 +1,48 @@
+{
+  "axis": "device_map_smoke",
+  "backend": "hf_adapter",
+  "status": "pass",
+  "reason": null,
+  "dtype": "fp16",
+  "device": "Tesla V100-PCIE-32GB, Tesla V100-PCIE-32GB",
+  "device_count": 2,
+  "device_map_kind": "manual_pp_split",
+  "split_layer": 30,
+  "num_hidden_layers": 61,
+  "hf_device_map_devices": [
+    "0",
+    "1"
+  ],
+  "multi_cuda_device_map": true,
+  "fast_forward_env": "1",
+  "last_fast_token_backend": null,
+  "prompt_tokens": 8,
+  "max_new_tokens": 8,
+  "generated_tokens": 8,
+  "generated_tail": [
+    36786,
+    34,
+    20063,
+    21413,
+    308,
+    45221,
+    22799,
+    39971
+  ],
+  "reference_tail": null,
+  "generated_equal_reference": null,
+  "logits_shape": [
+    1,
+    1,
+    65536
+  ],
+  "logits_device": "cuda:0",
+  "logits_finite": true,
+  "load_s": 14.521,
+  "generate_s": 4.0563,
+  "generate_tokps": 1.97,
+  "peak_vram_mb_by_device": {
+    "0": 12589.9,
+    "1": 12930.8
+  }
+}

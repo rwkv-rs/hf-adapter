@@ -169,3 +169,59 @@ be presented as a universal memory win.
 
 Canonical evidence and reproduction commands:
 [`bench/v100_active_b1b8_20260715/README.md`](../../bench/v100_active_b1b8_20260715/README.md).
+
+## 2026-07-21 comprehensive fail-closed audit
+
+The latest audit expands the earlier selected-lane evidence to 0.1B, 0.4B,
+1.5B, 2.9B, 7.2B and both 13.3B checkpoints wherever the card capacity permits.
+It ran on two Tesla V100-PCIE-32GB cards against adapter commit `31d52ca` with
+PyTorch `2.5.1+cu124`, Transformers `5.12.1`, Triton `3.3.0`, FLA `0.5.2`,
+PEFT `0.19.1`, TRL `1.7.0` and DeepSpeed `0.19.2`.
+
+The deduplicated latest status is **187/189 case gates passing**:
+
+| Phase | Passed / total |
+|---|---:|
+| provenance | 1/1 |
+| validation | 21/21 |
+| official/Albatross numerical alignment | 21/21 |
+| dense Native execution | 32/32 |
+| HF/PEFT/TRL training | 38/38 |
+| distributed PP and ZeRO | 11/11 |
+| optimized-Qwen comparison | 3/3; strict matrix 72/72 cells |
+| Albatross execution/reference collection | 7/7; comprehensive parity gate still fails |
+| quant execution/coverage | 53/53; comprehensive production gate still fails |
+
+The final GPU regression suite reports `616 passed, 8 skipped`. The strict
+fast-token checker passes and the integrated HF/direct decode ratio is
+`0.9984`; generated decode is `1002.6 tok/s` versus `260.4 tok/s` eager with
+256/256 exact generated tokens. Native graph cache telemetry reports a 100%
+graph-cache hit rate and a 96.88% bounded fast-skip rate for the measured
+dynamic-batch run.
+
+The two-card 13.3B manual pipeline split uses 61 layers with a split after layer
+30. The corrected fail-closed run generates 8/8 requested tokens, returns
+finite logits, keeps the graph fast-token backend disabled for the mixed-device
+cache, takes 4.0563 seconds (`1.97 tok/s`), and peaks at 12,589.9/12,930.8 MiB
+on the two cards. The first attempt had non-finite logits but was incorrectly
+marked pass by the old harness; the harness and runtime were fixed before the
+accepted row. This host's direct CUDA peer copies are asymmetric and silently
+corrupt some transfers, so the multi-device Native path now CPU-stages
+cross-device tensors by default. Direct P2P is explicit opt-in through
+`RWKV7_DEVICE_MAP_TRANSFER=p2p` only after host-specific validation.
+
+All 0.1B/0.4B/1.5B/2.9B/7.2B ZeRO-2 and ZeRO-3 train/resume cases pass on the
+two cards. The 7.2B ZeRO-3 lane uses the explicit CPU-parameter-offload profile
+`configs/deepspeed/zero3_offload.json`; this is not evidence that GPU-only
+ZeRO-3 fits in 2x32 GiB.
+
+This audit deliberately does **not** promote universal V100 production parity.
+The full same-card Native-versus-Albatross grid remains below `1.0x` in a
+number of decode and prefill cells. The full-model quant gate passes 53/98
+scored rows plus two 13.3B capacity rows, but fails 45 speed rows: MM4 and MM8
+still need fused quantized prefill, and MM8 also needs faster batched decode.
+Memory reduction and numerical quality generally pass; universal fp16-or-faster
+performance does not.
+
+Canonical status, raw gate JSON and post-fix logs:
+[`bench/v100_full_acceptance_20260721/README.md`](../../bench/v100_full_acceptance_20260721/README.md).
