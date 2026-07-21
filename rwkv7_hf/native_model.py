@@ -1645,6 +1645,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             delattr(self, "_rwkv7_native_adapter_layers_present")
         if hasattr(self, "_rwkv7_native_external_quantized"):
             delattr(self, "_rwkv7_native_external_quantized")
+        if hasattr(self, "_rwkv7_native_model_quantized_cached"):
+            delattr(self, "_rwkv7_native_model_quantized_cached")
         self.rwkv7_clear_native_graph_cache()
         self.rwkv7_clear_native_prefill_graph_cache()
 
@@ -2033,12 +2035,17 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             # rather than walking every parameter on each decode token.
             return len(devices) > 1
 
+        cached = getattr(self, "_rwkv7_multi_cuda_device_map_cached", None)
+        if isinstance(cached, bool):
+            return cached
         param_devices = {
             (param.device.type, param.device.index)
             for param in self.parameters()
             if param.device.type == "cuda"
         }
-        return len(param_devices) > 1
+        result = len(param_devices) > 1
+        self._rwkv7_multi_cuda_device_map_cached = result
+        return result
 
     def _rwkv7_prepare_accelerate_pp_output(self) -> None:
         """Keep mixed-device recurrent caches out of Accelerate's P2P hook.
@@ -2547,11 +2554,19 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         is safe for JIT because ``native_jit._lm_head`` calls the module.
         Detected by class name to avoid importing optional quantization deps.
         """
+        cached = getattr(self, "_rwkv7_native_model_quantized_cached", None)
+        if isinstance(cached, bool):
+            return cached
         quantized_names = {"Linear4bit", "Linear8bit", "Linear8bitLt", "MM8Linear", "MM4Linear"}
         try:
-            return any(type(module).__name__ in quantized_names for module in self.model.layers.modules())
+            detected = any(
+                type(module).__name__ in quantized_names
+                for module in self.model.layers.modules()
+            )
         except Exception:
             return False
+        self._rwkv7_native_model_quantized_cached = bool(detected)
+        return bool(detected)
 
     def _native_model_external_quantized(self) -> bool:
         """True when layer projections use non-native quantized wrappers."""

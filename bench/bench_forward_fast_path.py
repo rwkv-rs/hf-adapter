@@ -116,8 +116,12 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
         args.hf_dir,
         trust_remote_code=True,
         torch_dtype=dtype,
-        device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
+    # A single-device benchmark should not install Accelerate's recursive
+    # device_map hooks: their Python tree walk is unrelated to model compute
+    # and disproportionately distorts one-token HF forward latency.
+    if args.device.startswith("cuda"):
+        model = model.to(args.device)
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
         actual = bool(getattr(model.config, "fuse_norm", False))
