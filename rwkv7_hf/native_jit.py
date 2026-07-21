@@ -116,6 +116,21 @@ def _native_graph_relayout_ffn_value_weight(module):
     return module.weight
 
 
+def _native_graph_maybe_relayout_ffn_value_weight(module) -> bool:
+    """Relayout a dense FFN down projection and leave quant modules intact.
+
+    Native MM8/MM4/BnB projection modules intentionally do not expose a dense
+    ``.weight`` parameter. Their packed operand already avoids the duplicate
+    sparse-FFN transpose, so the low-memory dense policy must be a no-op for
+    them rather than probing attributes from the dense ``nn.Linear`` API.
+    """
+
+    if type(module) is not torch.nn.Linear:
+        return False
+    _native_graph_relayout_ffn_value_weight(module)
+    return True
+
+
 def _native_bnb8_policy_flag(env_name: str, policy_name: str) -> bool:
     try:
         default = bool(getattr(_kernel_policy(), policy_name, False))
@@ -2901,12 +2916,14 @@ def extract_graph(model):
                 raise RuntimeError(
                     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK is inference-only"
                 )
-            value_weight = layer.ffn.value.weight
-            if value_weight.device.type != "cuda" or value_weight.dtype != torch.float16:
-                raise RuntimeError(
-                    "low-memory sparse FFN packing requires CUDA fp16 value weights"
-                )
-            _native_graph_relayout_ffn_value_weight(layer.ffn.value)
+            value_module = layer.ffn.value
+            if type(value_module) is torch.nn.Linear:
+                value_weight = value_module.weight
+                if value_weight.device.type != "cuda" or value_weight.dtype != torch.float16:
+                    raise RuntimeError(
+                        "low-memory sparse FFN packing requires CUDA fp16 value weights"
+                    )
+                _native_graph_maybe_relayout_ffn_value_weight(value_module)
         a = layer.attn
         vl = getattr(a, "v_lora", None)
         if vl is not None:

@@ -21,7 +21,13 @@ from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 
-from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
+from .native import (
+    _init_state_batched,
+    _native_device_map_transfer,
+    _step_token_batched,
+    attn_step_batched,
+    ffn_step_batched,
+)
 from .kernel_policy import current_kernel_policy
 
 # Some Transformers releases only copy files directly referenced by the
@@ -397,6 +403,17 @@ class NativeRWKV7Cache(_HFCache):
                 kwargs["dtype"] = dtype
             if len(kwargs) == 2:
                 return value.clone() if copy else value
+            target_device = kwargs.get("device")
+            if (
+                target_device is not None
+                and value.device.type == "cuda"
+                and torch.device(target_device).type == "cuda"
+                and value.device != torch.device(target_device)
+            ):
+                moved = _native_device_map_transfer(value, target_device)
+                if dtype is not None and moved.dtype != dtype:
+                    moved = moved.to(dtype=dtype)
+                return moved.clone() if copy else moved
             return value.to(**kwargs)
 
         def move_list(values):
@@ -444,13 +461,15 @@ class NativeRWKV7Cache(_HFCache):
         def select_list(values):
             if values is None:
                 return None
-            return [v.index_select(0, indices.to(v.device)) for v in values]
+            return [v.index_select(0, _native_device_map_transfer(indices, v.device)) for v in values]
 
         target._state = select_list(target._state)
         target._xpa = select_list(target._xpa)
         target._xpf = select_list(target._xpf)
         if target._v_first is not None:
-            target._v_first = target._v_first.index_select(0, indices.to(target._v_first.device))
+            target._v_first = target._v_first.index_select(
+                0, _native_device_map_transfer(indices, target._v_first.device)
+            )
         target._rwkv7_cache_metrics["select_batch_calls"] += 1
         return target
 
@@ -702,6 +721,12 @@ def _native_prefill_graph_enabled(
     else:
         policy = current_kernel_policy(torch_module=torch)
         selected = bool(getattr(policy, "prefill_graph", False))
+        max_layers = getattr(policy, "prefill_graph_max_layers", None)
+        if selected and max_layers is not None:
+            selected = (
+                num_layers is not None
+                and int(num_layers) <= int(max_layers)
+            )
         shapes = {
             tuple(int(value) for value in shape)
             for shape in getattr(policy, "prefill_graph_model_shapes", ())
@@ -737,6 +762,16 @@ def _native_prefill_graph_cache_size() -> int:
     except ValueError:
         value = default
     return max(1, min(value, 16))
+
+
+def _native_prefill_external_quant_graph_enabled() -> bool:
+    """Whether external-quant sequence prefill may enter CUDA capture."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH")
+    if raw is not None:
+        return raw not in _FALSE_VALUES
+    policy = current_kernel_policy(torch_module=torch)
+    return bool(getattr(policy, "native_external_quant_prefill_graph", False))
 
 
 def _native_prefill_graph_signature() -> tuple[tuple[str, str], ...]:
@@ -794,10 +829,21 @@ def _blend_native_recurrent_state(mask: torch.Tensor, old_state, state, old_xpa,
         return state, xpa, xpf, v_first
     state_mask = mask.view(-1, 1, 1, 1)
     hidden_mask = mask.view(-1, 1)
-    state = [torch.where(state_mask.to(new.device), new, old) for old, new in zip(old_state, state, strict=False)]
-    xpa = [torch.where(hidden_mask.to(new.device), new, old) for old, new in zip(old_xpa, xpa, strict=False)]
-    xpf = [torch.where(hidden_mask.to(new.device), new, old) for old, new in zip(old_xpf, xpf, strict=False)]
-    v_first = torch.where(hidden_mask.to(v_first.device), v_first, old_v_first)
+    state = [
+        torch.where(_native_device_map_transfer(state_mask, new.device), new, old)
+        for old, new in zip(old_state, state, strict=False)
+    ]
+    xpa = [
+        torch.where(_native_device_map_transfer(hidden_mask, new.device), new, old)
+        for old, new in zip(old_xpa, xpa, strict=False)
+    ]
+    xpf = [
+        torch.where(_native_device_map_transfer(hidden_mask, new.device), new, old)
+        for old, new in zip(old_xpf, xpf, strict=False)
+    ]
+    v_first = torch.where(
+        _native_device_map_transfer(hidden_mask, v_first.device), v_first, old_v_first
+    )
     return state, xpa, xpf, v_first
 
 
@@ -846,6 +892,17 @@ def _step_token_batched_with_hidden(model, x, state, xpa, xpf, v_first):
 
     layer_hiddens = []
     for i, layer in enumerate(model.model.layers):
+        layer_device = layer.attn_norm.weight.device
+        if x.device != layer_device:
+            x = _native_device_map_transfer(x, layer_device)
+        if state[i].device != layer_device:
+            state[i] = _native_device_map_transfer(state[i], layer_device)
+        if xpa[i].device != layer_device:
+            xpa[i] = _native_device_map_transfer(xpa[i], layer_device)
+        if xpf[i].device != layer_device:
+            xpf[i] = _native_device_map_transfer(xpf[i], layer_device)
+        if v_first.device != layer_device:
+            v_first = _native_device_map_transfer(v_first, layer_device)
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)
@@ -957,6 +1014,11 @@ class NativeRWKV7Attention(nn.Module):
             "attention_hidden_size",
             config.num_heads * config.head_dim,
         )
+        # Wrapper/FLA-compatible value-width aliases used by generic kernel
+        # probes. The native implementation currently shares the recurrent
+        # key/value projection width, so these are exact, metadata-only names.
+        self.value_dim = int(self.attention_hidden_size)
+        self.head_v_dim = self.value_dim // self.num_heads
         hidden = config.hidden_size
         attention_hidden = self.attention_hidden_size
         for p in ("x_r", "x_w", "x_k", "x_v", "x_a", "x_g"):
@@ -1581,6 +1643,10 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             delattr(self, "_rwkv7_native_graph_pack_cache")
         if hasattr(self, "_rwkv7_native_adapter_layers_present"):
             delattr(self, "_rwkv7_native_adapter_layers_present")
+        if hasattr(self, "_rwkv7_native_external_quantized"):
+            delattr(self, "_rwkv7_native_external_quantized")
+        if hasattr(self, "_rwkv7_native_model_quantized_cached"):
+            delattr(self, "_rwkv7_native_model_quantized_cached")
         self.rwkv7_clear_native_graph_cache()
         self.rwkv7_clear_native_prefill_graph_cache()
 
@@ -1947,6 +2013,58 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
 
         return self.rwkv7_native_model_last_prefill_backend()
 
+    def _rwkv7_has_multi_cuda_device_map(self) -> bool:
+        """Return whether Accelerate split this native model across CUDA GPUs."""
+
+        devices: set[tuple[str, int | None]] = set()
+        device_map = getattr(self, "hf_device_map", None)
+        if isinstance(device_map, dict) and device_map:
+            for value in device_map.values():
+                if isinstance(value, int):
+                    devices.add(("cuda", int(value)))
+                    continue
+                dev = (
+                    torch.device(value)
+                    if isinstance(value, str) and value != "disk"
+                    else None
+                )
+                if dev is not None and dev.type == "cuda":
+                    devices.add(("cuda", dev.index))
+            # ``hf_device_map`` is Accelerate's authoritative final placement.
+            # Returning here also keeps this predicate O(number of map entries)
+            # rather than walking every parameter on each decode token.
+            return len(devices) > 1
+
+        cached = getattr(self, "_rwkv7_multi_cuda_device_map_cached", None)
+        if isinstance(cached, bool):
+            return cached
+        param_devices = {
+            (param.device.type, param.device.index)
+            for param in self.parameters()
+            if param.device.type == "cuda"
+        }
+        result = len(param_devices) > 1
+        self._rwkv7_multi_cuda_device_map_cached = result
+        return result
+
+    def _rwkv7_prepare_accelerate_pp_output(self) -> None:
+        """Keep mixed-device recurrent caches out of Accelerate's P2P hook.
+
+        The native forward already returns logits/hidden outputs to the input
+        device with the validated transfer helper.  Accelerate's default
+        top-level ``io_same_device`` post-hook would additionally recurse into
+        ``NativeRWKV7Cache`` and move every layer state with raw CUDA P2P.  Apart
+        from destroying useful cache colocation, that can corrupt state on
+        virtual hosts with broken peer copies.  Disable only that redundant
+        output relocation; per-module placement hooks remain active.
+        """
+
+        if not self._rwkv7_has_multi_cuda_device_map():
+            return
+        hook = getattr(self, "_hf_hook", None)
+        if hook is not None and hasattr(hook, "io_same_device"):
+            hook.io_same_device = False
+
     def _native_prefill_can_run(
         self,
         input_ids: torch.Tensor | None,
@@ -1957,6 +2075,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         logits_to_keep,
     ) -> bool:
         if _native_model_backend_requested() == "eager":
+            return False
+        if self._rwkv7_has_multi_cuda_device_map():
             return False
         if self.training or torch.is_grad_enabled() or _native_jit_prefill is None:
             return False
@@ -1972,6 +2092,23 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return False
         return True
 
+    def _native_prefill_graph_can_run(self, batch_size: int, prompt_tokens: int) -> bool:
+        # Generic bitsandbytes/external quantized operators may synchronize or
+        # allocate while executing and therefore fail CUDA stream capture.
+        # Keep their native sequence prefill eager unless an exact-card policy
+        # or explicit environment override has validated graph safety.
+        if (
+            self._native_model_external_quantized()
+            and not _native_prefill_external_quant_graph_enabled()
+        ):
+            return False
+        return _native_prefill_graph_enabled(
+            int(batch_size),
+            int(prompt_tokens),
+            int(self.config.hidden_size),
+            int(self.config.num_hidden_layers),
+        )
+
     def _native_prefill(
         self,
         input_ids: torch.LongTensor,
@@ -1982,11 +2119,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ):
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
-        if initial_cache is None and _native_prefill_graph_enabled(
+        if initial_cache is None and self._native_prefill_graph_can_run(
             batch_size,
             prompt_tokens,
-            int(self.config.hidden_size),
-            int(self.config.num_hidden_layers),
         ):
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
@@ -2103,9 +2238,17 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         attention_mask: torch.Tensor | None,
         output_hidden_states: bool,
     ) -> bool:
+        if self._rwkv7_has_multi_cuda_device_map():
+            return False
         requested = _native_model_backend_requested()
         if requested not in {"auto", "native_graph"}:
             return False
+        if requested == "auto":
+            policy = current_kernel_policy(torch_module=torch)
+            max_layers = getattr(policy, "native_graph_max_layers", None)
+            num_layers = int(getattr(self.config, "num_hidden_layers", 0) or 0)
+            if max_layers is not None and num_layers > int(max_layers):
+                return False
         if self.training or torch.is_grad_enabled() or not _native_graph_available():
             return False
         if self._native_model_has_adapter_layers():
@@ -2411,11 +2554,36 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         is safe for JIT because ``native_jit._lm_head`` calls the module.
         Detected by class name to avoid importing optional quantization deps.
         """
+        cached = getattr(self, "_rwkv7_native_model_quantized_cached", None)
+        if isinstance(cached, bool):
+            return cached
         quantized_names = {"Linear4bit", "Linear8bit", "Linear8bitLt", "MM8Linear", "MM4Linear"}
         try:
-            return any(type(module).__name__ in quantized_names for module in self.model.layers.modules())
+            detected = any(
+                type(module).__name__ in quantized_names
+                for module in self.model.layers.modules()
+            )
         except Exception:
             return False
+        self._rwkv7_native_model_quantized_cached = bool(detected)
+        return bool(detected)
+
+    def _native_model_external_quantized(self) -> bool:
+        """True when layer projections use non-native quantized wrappers."""
+
+        cached = getattr(self, "_rwkv7_native_external_quantized", None)
+        if isinstance(cached, bool):
+            return cached
+        external_names = {"Linear4bit", "Linear8bit", "Linear8bitLt"}
+        try:
+            detected = any(
+                type(module).__name__ in external_names
+                for module in self.model.layers.modules()
+            )
+        except Exception:
+            return False
+        self._rwkv7_native_external_quantized = bool(detected)
+        return bool(detected)
 
     def _native_model_native_quant_graph_safe(self) -> bool:
         """Whether all quantized layer operands are graph-safe native modules.
@@ -2529,7 +2697,14 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         batch_size = int(inputs_embeds.shape[0] if inputs_embeds is not None else token_ids.shape[0])
         base = self.model
         x = None
-        packs = self._native_jit_packs() if use_jit and not output_hidden_states and attention_mask is None else None
+        packs = (
+            self._native_jit_packs()
+            if use_jit
+            and not self._rwkv7_has_multi_cuda_device_map()
+            and not output_hidden_states
+            and attention_mask is None
+            else None
+        )
         backend = "native_jit" if packs is not None else "eager"
         all_logits = [] if collect_all else None
         all_hidden = [] if collect_all or output_hidden_states else None
@@ -2590,7 +2765,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         if x is None:
             raise ValueError("NativeRWKV7ForCausalLM requires at least one token")
         if use_jit:
-            self._rwkv7_native_model_last_decode_backend = backend
+            self._rwkv7_native_model_last_decode_backend = (
+                None if self._rwkv7_has_multi_cuda_device_map() else backend
+            )
         if all_logits is not None:
             logits = torch.stack(all_logits, dim=1)
         else:
@@ -2599,6 +2776,16 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         hidden_states = None
         if hidden_buckets is not None:
             hidden_states = tuple(torch.stack(bucket, dim=1) for bucket in hidden_buckets)
+        # Accelerate's top-level IO hook normally returns PP outputs to the
+        # input device.  Perform that transfer ourselves so hosts with falsely
+        # advertised/broken CUDA P2P cannot corrupt logits before generation.
+        logits = _native_device_map_transfer(logits, device)
+        last_hidden_state = _native_device_map_transfer(last_hidden_state, device)
+        if hidden_states is not None:
+            hidden_states = tuple(
+                _native_device_map_transfer(layer_hidden, device)
+                for layer_hidden in hidden_states
+            )
         return logits, state, xpa, xpf, v_first, last_hidden_state, hidden_states
 
     def forward(
@@ -2621,6 +2808,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         return_legacy_cache: bool | None = None,
         **kwargs,
     ):
+        self._rwkv7_prepare_accelerate_pp_output()
         train_temp_forward = getattr(self, "_rwkv7_train_temp_forward", None)
         if callable(train_temp_forward):
             return train_temp_forward(
@@ -2817,12 +3005,12 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         if hasattr(past_key_values, "reorder_cache"):
             return past_key_values.reorder_cache(beam_idx)
         state, xpa, xpf, v_first = native_cache
-        index = beam_idx.to(v_first.device)
+        index = _native_device_map_transfer(beam_idx, v_first.device)
         seen = _cache_seen(past_key_values)
         reordered = NativeRWKV7Cache(
-            [s.index_select(0, index.to(s.device)) for s in state],
-            [x.index_select(0, index.to(x.device)) for x in xpa],
-            [x.index_select(0, index.to(x.device)) for x in xpf],
+            [s.index_select(0, _native_device_map_transfer(index, s.device)) for s in state],
+            [x.index_select(0, _native_device_map_transfer(index, x.device)) for x in xpa],
+            [x.index_select(0, _native_device_map_transfer(index, x.device)) for x in xpf],
             v_first.index_select(0, index),
             seen_tokens=seen,
         )

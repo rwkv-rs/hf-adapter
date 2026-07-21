@@ -28,7 +28,10 @@ _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 @contextmanager
 def fast_forward_env(enabled: bool):
     old = os.environ.get("RWKV7_FAST_FORWARD")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     os.environ["RWKV7_FAST_FORWARD"] = "1" if enabled else "0"
+    if not enabled:
+        os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "eager"
     try:
         yield
     finally:
@@ -36,6 +39,10 @@ def fast_forward_env(enabled: bool):
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
 
 
 def cuda_sync(device: str) -> None:
@@ -74,6 +81,7 @@ def configure_env(args: argparse.Namespace) -> None:
     if args.fast_token_layout != "auto":
         os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
 
 
 def load_model(args: argparse.Namespace, dtype: torch.dtype):

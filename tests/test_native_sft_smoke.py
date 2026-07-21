@@ -41,6 +41,7 @@ except Exception:
     pass
 
 from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+from rwkv7_hf.training_precision import peft_trainer_precision_kwargs
 
 PROMPTS = [
     "User: Say hello.\n\nAssistant: Hello!",
@@ -91,6 +92,7 @@ def main() -> int:
         lora_dropout=0.0,
         target_modules=["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"],
     )
+    precision_kwargs = peft_trainer_precision_kwargs(args.dtype)
 
     from trl import SFTConfig, SFTTrainer
 
@@ -106,8 +108,7 @@ def main() -> int:
             logging_steps=1,
             save_strategy="no",
             report_to=[],
-            fp16=(args.dtype == "fp16" and args.device.startswith("cuda")),
-            bf16=(args.dtype == "bf16" and args.device.startswith("cuda")),
+            **precision_kwargs,
             gradient_checkpointing=False,
             optim="adamw_torch",
             max_length=args.max_length,

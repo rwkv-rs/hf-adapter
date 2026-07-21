@@ -9,10 +9,119 @@ Run `python -m rwkv7_hf.native <hf_dir>` to check correctness vs FLA.
 """
 from __future__ import annotations
 
+import os
+import threading
+
 import torch
 import torch.nn.functional as F
 
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base
+_NATIVE_P2P_PROBE_LOCK = threading.Lock()
+_NATIVE_P2P_PROBE_CACHE: dict[tuple[int, int, str, str], bool] = {}
+
+
+def _native_cuda_device_index(device: torch.device) -> int:
+    if device.type != "cuda":
+        raise ValueError(f"expected CUDA device, got {device}")
+    return int(torch.cuda.current_device() if device.index is None else device.index)
+
+
+def _native_cuda_p2p_transfer_safe(source: torch.device, target: torch.device) -> bool:
+    """Probe one CUDA copy direction and cache the correctness result.
+
+    ``torch.cuda.can_device_access_peer`` is insufficient on some virtualized
+    hosts: it can return true while direct copies silently produce zeros or
+    corrupt larger payloads.  Probe multiple byte ranges once per ordered
+    device pair.  Healthy PCIe/NVLink systems keep the historical direct-copy
+    route; only a failed probe falls back to host staging.
+    """
+
+    try:
+        source_index = _native_cuda_device_index(source)
+        target_index = _native_cuda_device_index(target)
+        if source_index == target_index:
+            return True
+        source_name = str(torch.cuda.get_device_name(source_index))
+        target_name = str(torch.cuda.get_device_name(target_index))
+        key = (source_index, target_index, source_name, target_name)
+    except Exception:
+        return False
+
+    cached = _NATIVE_P2P_PROBE_CACHE.get(key)
+    if isinstance(cached, bool):
+        return cached
+
+    with _NATIVE_P2P_PROBE_LOCK:
+        cached = _NATIVE_P2P_PROBE_CACHE.get(key)
+        if isinstance(cached, bool):
+            return cached
+        safe = False
+        try:
+            can_access_peer = getattr(torch.cuda, "can_device_access_peer", None)
+            if callable(can_access_peer) and not can_access_peer(
+                source_index, target_index
+            ):
+                raise RuntimeError("CUDA peer access is unavailable")
+            source_device = torch.device("cuda", source_index)
+            target_device = torch.device("cuda", target_index)
+            # This host's failure boundary was direction- and size-dependent
+            # around 49K elements.  Cover tiny, boundary, and multi-megabyte
+            # transfers with integer payloads so a single corrupt bit fails.
+            for numel in (1, 257, 49_152, 1_048_576):
+                with torch.cuda.device(source_index):
+                    expected = torch.arange(numel, dtype=torch.int32)
+                    payload = expected.to(source_device)
+                moved = payload.to(target_device)
+                torch.cuda.synchronize(target_index)
+                if not torch.equal(moved.cpu(), expected):
+                    raise RuntimeError(
+                        f"CUDA P2P correctness probe failed for {source}->{target} "
+                        f"at {numel} elements"
+                    )
+            safe = True
+        except Exception:
+            safe = False
+        _NATIVE_P2P_PROBE_CACHE[key] = safe
+        return safe
+
+
+def _native_device_map_transfer_route(
+    source: torch.device,
+    target: torch.device,
+) -> str:
+    """Resolve ``cpu`` or ``p2p`` without changing healthy-card defaults."""
+
+    mode = os.environ.get("RWKV7_DEVICE_MAP_TRANSFER", "auto").strip().lower()
+    aliases = {"host": "cpu", "staged": "cpu", "direct": "p2p"}
+    mode = aliases.get(mode, mode)
+    if mode not in {"auto", "p2p", "cpu"}:
+        raise ValueError("RWKV7_DEVICE_MAP_TRANSFER must be auto, p2p, or cpu")
+    if mode == "auto":
+        return "p2p" if _native_cuda_p2p_transfer_safe(source, target) else "cpu"
+    return mode
+
+
+def _native_device_map_transfer(value: torch.Tensor, device) -> torch.Tensor:
+    """Move a tensor across a pipeline split without trusting broken P2P.
+
+    Some virtualized multi-GPU hosts advertise CUDA peer access while silently
+    returning zero/corrupt data for a direct ``cuda:i -> cuda:j`` copy.  The
+    The ``auto`` policy probes each ordered GPU pair once: healthy NVLink/PCIe
+    systems preserve direct-copy performance, while a failed correctness probe
+    falls back to host staging.  Operators can still force either route.
+    """
+
+    target = torch.device(device)
+    source = value.device
+    if source == target:
+        return value
+    if source.type != "cuda" or target.type != "cuda":
+        return value.to(target)
+
+    mode = _native_device_map_transfer_route(source, target)
+    if mode == "cpu":
+        return value.to("cpu").to(target)
+    return value.to(target)
 
 
 def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
@@ -150,6 +259,25 @@ def _init_state_batched(model, batch_size: int, device, dtype):
 
 def _step_token_batched(model, x, state, xpa, xpf, v_first):
     for i, layer in enumerate(model.model.layers):
+        # Accelerate's pipeline ``device_map`` attaches placement hooks to a
+        # whole RWKV block.  The native recurrent loop intentionally calls the
+        # attention and FFN children directly, so the parent hook does not get
+        # a chance to move the hidden and recurrent tensors.  Follow the
+        # block's norm parameter here.  On ordinary single-device and ZeRO
+        # runs this is a no-op; on PP it performs exactly one transition at a
+        # device boundary and keeps every layer's recurrent cache colocated
+        # with that layer.
+        layer_device = layer.attn_norm.weight.device
+        if x.device != layer_device:
+            x = _native_device_map_transfer(x, layer_device)
+        if state[i].device != layer_device:
+            state[i] = _native_device_map_transfer(state[i], layer_device)
+        if xpa[i].device != layer_device:
+            xpa[i] = _native_device_map_transfer(xpa[i], layer_device)
+        if xpf[i].device != layer_device:
+            xpf[i] = _native_device_map_transfer(xpf[i], layer_device)
+        if v_first.device != layer_device:
+            v_first = _native_device_map_transfer(v_first, layer_device)
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)

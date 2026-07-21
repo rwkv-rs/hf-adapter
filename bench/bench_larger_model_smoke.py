@@ -130,6 +130,7 @@ def main() -> int:
     args = ap.parse_args()
 
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
     os.environ.setdefault("RWKV7_FAST_FORWARD", "1")
 
     if args.device.startswith("cuda"):

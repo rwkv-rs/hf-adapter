@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rwkv7_hf.deepspeed_config import select_deepspeed_config
+
 # Keep the V100 training smoke path out of Dynamo/Triton compile trouble.
 os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 # Some pip/conda CUDA runtimes expose torch CUDA without a full CUDA_HOME.
@@ -216,6 +218,17 @@ def max_trainable_delta(before: dict[str, Any], model) -> float:
     return max_delta
 
 
+def distributed_max(torch: Any, value: float) -> float:
+    """Reduce a sharded ZeRO metric without requiring every rank to own it."""
+
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return float(value)
+    device = torch.device("cuda", int(os.environ.get("LOCAL_RANK", "0")))
+    tensor = torch.tensor(float(value), device=device, dtype=torch.float64)
+    torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.MAX)
+    return float(tensor.cpu().item())
+
+
 def load_lora_model(model_path: str, attn_mode: str, train_dtype: str):
     torch, LoraConfig, get_peft_model, AutoModelForCausalLM, _, _, _ = require_training_deps()
     model = AutoModelForCausalLM.from_pretrained(
@@ -246,15 +259,29 @@ def metric(metrics: dict[str, Any], key: str) -> float | None:
     return float(value) if value is not None else None
 
 
-def zero_config_path(config_dir: Path, stage: int) -> Path:
-    path = config_dir / f"zero{stage}.json"
-    if not path.exists():
-        raise FileNotFoundError(f"DeepSpeed config not found: {path}")
-    cfg = json.loads(path.read_text(encoding="utf-8"))
-    actual = int((cfg.get("zero_optimization") or {}).get("stage", -1))
-    if actual != stage:
-        raise ValueError(f"{path} has zero stage {actual}, expected {stage}")
-    return path
+def zero_config_path(config_dir: Path, stage: int, override: str = "") -> Path:
+    return select_deepspeed_config(
+        config_dir,
+        stage,
+        override=override,
+        torch_module=optional_torch(),
+    )
+
+
+def stage_max_length(args: argparse.Namespace, stage: int) -> int:
+    """Return the capacity profile length selected for a ZeRO stage.
+
+    ZeRO-3 gathers partitioned modules around every forward call.  The native
+    recurrent graph therefore has a different V100 smoke-test capacity curve
+    from ZeRO-2.  Keep ``--max-length`` as the requested/common length, while
+    allowing an acceptance matrix to declare an explicit per-stage effective
+    length instead of silently lowering it after an OOM.
+    """
+    value = int(getattr(args, f"zero{stage}_max_length", 0) or 0)
+    effective = value if value > 0 else int(args.max_length)
+    if effective <= 0:
+        raise ValueError(f"ZeRO-{stage} max length must be positive, got {effective}")
+    return effective
 
 
 def skip_row(args: argparse.Namespace, stage: int, reason: str) -> dict[str, Any]:
@@ -272,11 +299,17 @@ def skip_row(args: argparse.Namespace, stage: int, reason: str) -> dict[str, Any
         "cuda_device_count": cuda_device_count(),
         "distributed_world_size": int(os.environ.get("WORLD_SIZE", "1")),
         "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
+        "requested_max_length": args.max_length,
+        "max_length": stage_max_length(args, stage),
     }
 
 
 def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
-    config_path = zero_config_path(Path(args.config_dir), stage)
+    config_path = zero_config_path(
+        Path(args.config_dir),
+        stage,
+        getattr(args, f"zero{stage}_config", ""),
+    )
     ensure_single_process_distributed_env()
     if importlib.util.find_spec("deepspeed") is None:
         if args.optional:
@@ -297,7 +330,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
     Trainer = single_group_trainer_cls(Trainer, torch)
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     model = load_lora_model(args.model, args.attn_mode, args.train_dtype)
-    dataset = TokenDataset(tok, args.max_length, repeats=args.dataset_repeats)
+    effective_max_length = stage_max_length(args, stage)
+    dataset = TokenDataset(tok, effective_max_length, repeats=args.dataset_repeats)
     collator = CausalCollator(tok)
     before = trainable_snapshot(model)
     assert before, "expected LoRA/trainable parameters"
@@ -330,7 +364,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
 
     loss = float(result.training_loss)
     assert math.isfinite(loss), result.training_loss
-    delta = max_trainable_delta(before, model)
+    local_delta = max_trainable_delta(before, model)
+    delta = distributed_max(torch, local_delta)
     assert delta > 0.0, "DeepSpeed LoRA/trainable parameters did not update"
     metrics = dict(getattr(result, "metrics", {}) or {})
     return {
@@ -352,13 +387,15 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
         "max_steps": args.max_steps,
         "dataset_repeats": args.dataset_repeats,
-        "max_length": args.max_length,
+        "requested_max_length": args.max_length,
+        "max_length": effective_max_length,
         "deepspeed_config": str(config_path),
         "train_loss": loss,
         "train_runtime_s": metric(metrics, "train_runtime"),
         "train_samples_per_second": metric(metrics, "train_samples_per_second"),
         "train_steps_per_second": metric(metrics, "train_steps_per_second"),
         "max_trainable_delta": delta,
+        "local_max_trainable_delta": local_delta,
     }
 
 
@@ -368,8 +405,22 @@ def main() -> int:
     ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--config-dir", default="configs/deepspeed")
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
+    ap.add_argument("--zero2-config", default="", help="Optional ZeRO-2 override relative to --config-dir; otherwise exact-card auto-selection is used")
+    ap.add_argument("--zero3-config", default="", help="Optional ZeRO-3 override relative to --config-dir; otherwise exact-card auto-selection is used")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)
+    ap.add_argument(
+        "--zero2-max-length",
+        type=int,
+        default=0,
+        help="Explicit ZeRO-2 effective sequence length; 0 inherits --max-length",
+    )
+    ap.add_argument(
+        "--zero3-max-length",
+        type=int,
+        default=0,
+        help="Explicit ZeRO-3 effective sequence length; 0 inherits --max-length",
+    )
     ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--max-steps", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=1)

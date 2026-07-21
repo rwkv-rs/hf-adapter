@@ -109,12 +109,16 @@ def parse_result_lines(
             "checkpoint_sha256": checkpoint_sha256,
             "batch_size": batch_size,
             "tokens_per_sequence": tokens_per_sequence,
+            # Stable comparison aliases used by same-card acceptance gates.
+            # Keep the descriptive historical fields for existing analysis.
+            "tokens": tokens_per_sequence,
             "tokens_total": batch_size * tokens_per_sequence,
             "iters": int(data["iters"]) if data.get("iters") is not None else fallback_iters,
             "latency_p10_ms": latency_p10_ms,
             "latency_p50_ms": latency_p50_ms,
             "latency_p90_ms": latency_p90_ms,
             "tokps_p50": tokps_p50,
+            "tokps": tokps_p50,
             "ms_per_token_p50": round(1000.0 / tokps_p50, 6) if tokps_p50 > 0 else None,
             "peak_vram_mb": peak_vram_mb,
             "command": command,

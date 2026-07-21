@@ -1,0 +1,18 @@
+date=2026-07-21T08:35:13+08:00
+commit=31d52ca81f28bf94409c7803bf91fa11f3cadc86
+branch=wangyue/v100-full-acceptance
+Linux wzu-SYS-4029GP-TRT 6.8.0-124-generic #124~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 21:05:19 UTC  x86_64 x86_64 x86_64 GNU/Linux
+0, Tesla V100-PCIE-32GB, GPU-18fbf081-3c6d-d65b-11b8-288a4ce1ab28, 7.0, 580.159.03, 32768 MiB
+1, Tesla V100-PCIE-32GB, GPU-f65db2e8-87bb-c88d-363f-23c79f793548, 7.0, 580.159.03, 32768 MiB
+{
+  "torch": "2.5.1+cu124",
+  "torch_cuda": "12.4",
+  "transformers": "5.12.1",
+  "triton": "3.3.0",
+  "fla": "0.5.2",
+  "peft": "0.19.1",
+  "trl": "1.7.0",
+  "bitsandbytes": "0.49.2",
+  "deepspeed": "0.19.2",
+  "accelerate": "1.14.0"
+}

@@ -97,6 +97,7 @@ def reference_backend_matches(row: dict[str, Any], required: str) -> bool:
                 "qwen_fla_gated_delta_rule",
                 "qwen_fla_gated_delta_rule_torch_conv",
                 "qwen_fla_gated_delta_rule_fla_triton_conv",
+                "qwen_fla_recurrent_prefill_sm70_fla_triton_conv",
             }
             and row.get("qwen_operator_contract_pass") is True
         )

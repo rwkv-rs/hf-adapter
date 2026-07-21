@@ -63,6 +63,7 @@ def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -143,7 +144,9 @@ def diff_native_graph_copy_stats(before: dict[str, Any], after: dict[str, Any]) 
 @contextmanager
 def reference_forward_env():
     old = os.environ.get("RWKV7_FAST_FORWARD")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     os.environ["RWKV7_FAST_FORWARD"] = "0"
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "eager"
     try:
         yield
     finally:
@@ -151,6 +154,10 @@ def reference_forward_env():
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
 
 
 def encode_prompts(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.Tensor:

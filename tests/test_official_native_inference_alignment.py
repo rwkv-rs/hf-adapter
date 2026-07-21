@@ -6,7 +6,9 @@ from scripts.compare_official_native_inference import (
     build_parser,
     compare_captures,
     metrics_pass,
+    metrics_pass_fp16_trajectory,
     metrics_pass_official_envelope,
+    snapshot_native,
     tensor_metrics,
     verify_official_source,
 )
@@ -42,6 +44,7 @@ def test_official_capture_exposes_low_memory_runtime_options() -> None:
         ]
     )
     assert args.official_emb == "cpu"
+    assert args.official_wkv == "fp32io16"
     assert args.official_lowrank_weight == "transpose"
     assert args.official_orig_linear_groups == "none"
 
@@ -142,6 +145,23 @@ def test_fp16_ulp_tail_gate_is_explicit_and_bounded() -> None:
     assert metrics["max_abs"] == 0.1875
     assert metrics["max_abs_ulps_at_max"] == 3.0
     assert metrics_pass(metrics, "logits") is True
+
+
+def test_fp16_trajectory_gate_has_independent_mean_cosine_and_max_bounds() -> None:
+    official = torch.full((4096,), 32.0, dtype=torch.float16)
+    native = official.clone()
+    native[:128] += 0.25
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+
+    assert metrics_pass(metrics, "logits") is False
+    assert metrics_pass_fp16_trajectory(metrics, "logits") is True
+
+    native[0] = 34.0
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+    assert metrics_pass_fp16_trajectory(metrics, "logits") is False
+
+    fp32_metrics = tensor_metrics(native.float(), official.float(), absolute_threshold=0.125)
+    assert metrics_pass_fp16_trajectory(fp32_metrics, "logits") is False
 
 
 def test_prefill_first_decode_reuses_the_bounded_decode_tail_gate() -> None:
@@ -332,6 +352,42 @@ def test_compare_captures_enforces_numeric_thresholds_even_when_top1_matches() -
     assert report["status"] == "fail"
 
 
+def test_compare_captures_accepts_bounded_fp16_drift_only_with_exact_trajectory() -> None:
+    native = make_capture("native_hf", "native")
+    official = make_capture("official_v3a", OFFICIAL_COMMIT)
+    for capture in (native, official):
+        capture["captures"]["1"]["logits"] = capture["captures"]["1"][
+            "logits"
+        ].repeat(1, 1, 64).half()
+        for phase in ("prefill", "final"):
+            capture["captures"]["1"][phase]["xpa"] = capture["captures"]["1"][
+                phase
+            ]["xpa"].half()
+            capture["captures"]["1"][phase]["xpf"] = capture["captures"]["1"][
+                phase
+            ]["xpf"].half()
+    native["captures"]["1"]["logits"][0, 0, 0] = 0.1875
+
+    report = compare_captures(
+        native,
+        official,
+        expected_official_commit=OFFICIAL_COMMIT,
+    )
+
+    assert report["rows"][0]["standard_quality_pass"] is False
+    assert report["rows"][0]["fp16_trajectory_quality_pass"] is True
+    assert report["status"] == "pass"
+
+    native["captures"]["1"]["greedy_tokens"][0, 0] = 0
+    report = compare_captures(
+        native,
+        official,
+        expected_official_commit=OFFICIAL_COMMIT,
+    )
+    assert report["rows"][0]["fp16_trajectory_quality_pass"] is True
+    assert report["status"] == "fail"
+
+
 def test_official_self_repeat_reports_numeric_envelope() -> None:
     reference = make_capture("official_v3a", OFFICIAL_COMMIT)
     repeat = make_capture("official_v3a", OFFICIAL_COMMIT)
@@ -376,3 +432,71 @@ def test_official_source_manifest_is_fail_closed(tmp_path) -> None:
         assert "hash mismatch" in str(exc)
     else:
         raise AssertionError("modified official source must fail verification")
+
+
+def test_official_source_accepts_a_clean_git_subdirectory(tmp_path) -> None:
+    import subprocess
+
+    root = tmp_path / "official"
+    source = root / "engine"
+    source.mkdir(parents=True)
+    (source / "kernel.cu").write_text("official", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "engine/kernel.cu"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    revision = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    verified = verify_official_source(
+        source,
+        expected_commit=revision,
+        manifest_path=None,
+    )
+
+    assert verified["method"] == "git"
+    assert verified["subdirectory"] == "engine"
+
+
+def test_native_snapshot_uses_cache_position_without_a_graph_runner() -> None:
+    class Config:
+        num_heads = 2
+        num_hidden_layers = 3
+
+    class Model:
+        config = Config()
+
+    class Cache:
+        _state = [torch.zeros(1, 2, 2, 2) for _ in range(3)]
+        _xpa = [torch.zeros(1, 4) for _ in range(3)]
+        _xpf = [torch.zeros(1, 4) for _ in range(3)]
+
+        def get_batch_size(self):
+            return 1
+
+        def get_seq_length(self):
+            return 17
+
+    snapshot = snapshot_native(Model(), Cache())
+    assert snapshot["elapsed"].shape == (3, 1, 2)
+    assert torch.equal(
+        snapshot["elapsed"],
+        torch.full((3, 1, 2), 17, dtype=torch.int32),
+    )

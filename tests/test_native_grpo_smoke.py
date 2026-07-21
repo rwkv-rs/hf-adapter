@@ -45,6 +45,7 @@ except Exception:
     pass
 
 from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+from rwkv7_hf.training_precision import peft_trainer_precision_kwargs
 
 PROMPTS = ["The quick brown fox", "Once upon a time", "RWKV is a linear model"]
 
@@ -83,6 +84,7 @@ def main() -> int:
         task_type="CAUSAL_LM", r=4, lora_alpha=8, lora_dropout=0.0,
         target_modules=["r_proj", "v_proj", "o_proj"],
     )
+    precision_kwargs = peft_trainer_precision_kwargs(args.dtype)
 
     from trl import GRPOConfig, GRPOTrainer
 
@@ -98,8 +100,7 @@ def main() -> int:
             logging_steps=1,
             save_strategy="no",
             report_to=[],
-            fp16=(args.dtype == "fp16"),
-            bf16=(args.dtype == "bf16"),
+            **precision_kwargs,
             gradient_checkpointing=False,
             optim="adamw_torch",
             remove_unused_columns=False,

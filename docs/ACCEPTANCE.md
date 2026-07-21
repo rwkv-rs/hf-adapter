@@ -5,7 +5,7 @@ requirements and repository evidence. `PASS` means the named gate has a
 reproducible artifact; `PARTIAL` means the interface works but the complete
 hardware/performance matrix is not closed.
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-21**.
 
 This page reports status. For ordinary-user commands and PASS gates for every
 implemented capability below, start with
@@ -54,7 +54,7 @@ above remains mandatory.
 
 | Requirement | Status | Current evidence | Remaining boundary |
 |---|---|---|---|
-| RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on measured V100, 4090 and 5090 lanes** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | Same-card final Albatross reruns on every target, broader optimized-Qwen shapes/cards, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
+| RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on selected measured lanes** | The comprehensive V100 audit passes 187/189 latest case gates and all numerical-alignment cases, while its strict 72/72 Qwen matrix passes; prior selected V100/4090/5090 promotions remain scoped to their named shapes | The V100 full Albatross and universal full-model quant-speed gates are still red; same-card final Albatross reruns on other targets, broader optimized-Qwen shapes/cards, and larger-model P2/P3 remain open |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
 | PEFT and RL ecosystem | **PASS for smoke/compatibility; B1 and Native B16 train_temp exact lanes accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 plus Native B16/T512 exact tensors, paired real-MiniPile 3-seed x 1,000-step cohort, continuous 5,000-step run, 2,500+2,500 resume and steady-memory evidence | Larger models, multi-day runs, additional cards and distributed convergence |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
@@ -79,6 +79,16 @@ or by counting the table rows above.
 
 ### 1. Performance, speed, accuracy and memory
 
+- **V100 comprehensive audit (2026-07-21):** 187/189 deduplicated latest case
+  gates pass on 2x V100-32GB, including all validation, numerical-alignment,
+  dense execution, HF/PEFT/TRL training and distributed cases. The strict Qwen
+  matrix passes 72/72 cells, but the full Native-versus-Albatross grid and the
+  universal full-model W8/W4 all-phase speed gate remain red. The final
+  commit-`31d52ca` Albatross grid passes 34/88 cells; the quant gate passes
+  53/98 scored rows plus two capacity-only 13.3B rows. This newer broad audit
+  limits, rather than erases, the older production-close claims below: those
+  claims apply only to their explicitly selected models/shapes. Evidence:
+  [`../bench/v100_full_acceptance_20260721/README.md`](../bench/v100_full_acceptance_20260721/README.md).
 - **V100:** 0.1B/0.4B/1.5B × bsz1/2/4/8 production-close matrix is
   promoted. Dense decode is `0.908x–1.248x` and prompt-512 prefill is
   `0.930x–1.047x` of same-host Albatross references. Separately, target-only

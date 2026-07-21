@@ -87,6 +87,36 @@ roadmap.
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
+## Current V100 Full-Acceptance Snapshot (2026-07-21)
+
+- Canonical evidence is `bench/v100_full_acceptance_20260721/`. Read its
+  `README.md` and `status_latest.tsv` before making any V100 support or
+  performance claim.
+- On 2x Tesla V100-PCIE-32GB, the deduplicated full matrix passes 187/189
+  latest case gates. Validation is 21/21, numerical alignment 21/21, dense
+  execution 32/32, HF/PEFT/TRL training 38/38, distributed 11/11, and the
+  strict Qwen comparison is 72/72 cells. The final GPU suite is 616 passed and
+  8 skipped at adapter commit `31d52ca`.
+- The two remaining red gates are real performance work, not harness waivers:
+  comprehensive same-card Native-versus-Albatross parity and universal
+  full-model W8/W4 all-phase speed. The final commit-`31d52ca` Albatross gate
+  passes 34/88 cells (decode 11/22, prefill 23/66; minima `0.6009x/0.4152x`).
+  The quant gate passes 53/98 scored rows plus two capacity-only 13.3B rows;
+  full-model prefill and MM8 batched decode remain the main Volta kernel gaps.
+- Multi-GPU transfers use an ordered device-pair correctness probe in `auto`
+  mode. Healthy PCIe/NVLink pairs preserve direct P2P; only failed pairs such
+  as this exact V100 host CPU-stage. Never replace this with a capability-wide
+  V100 or all-CUDA fallback. The corrected 13.3B 61-layer PP run splits after
+  layer 30, emits 8/8 tokens with finite logits, and peaks at
+  12,589.9/12,930.8 MiB.
+- All 0.1B through 7.2B two-card ZeRO-2/3 train and resume cases pass, but the
+  7.2B ZeRO-3 row requires `configs/deepspeed/zero3_v100_offload.json`. Do not claim
+  that its GPU-only optimizer/parameter state fits in 2x32 GiB.
+- Do not replace the fail-closed `>=1.0x` speed thresholds with a weaker target
+  or report the prior selected-lane V100 promotion as universal. The next V100
+  optimization line is fused fp16 prefill/large-model decode, then fused MM4
+  and MM8 prefill/batched decode, with same-card correctness reruns.
+
 ## RTX 4090 Milestone Snapshot (2026-07-10)
 
 This is a dated checkpoint. Current promoted 4090 matrices live in

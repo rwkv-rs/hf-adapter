@@ -109,6 +109,8 @@ def assert_albatross_rows_are_parsed_and_compared(tmpdir: Path) -> None:
     assert albatross_rows[0]["batch_size"] == 1
     assert albatross_rows[0]["tokens_per_sequence"] == 1
     assert albatross_rows[0]["tokps_p50"] == 125.0
+    assert albatross_rows[0]["tokens"] == 1
+    assert albatross_rows[0]["tokps"] == 125.0
 
     hf_rows = [
         {

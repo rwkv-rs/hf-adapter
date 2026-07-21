@@ -52,6 +52,7 @@ def configure_env(args: argparse.Namespace) -> None:
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = str(args.native_graph_cache_size)
 
 

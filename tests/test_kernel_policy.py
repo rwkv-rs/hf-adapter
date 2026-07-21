@@ -11,6 +11,7 @@ from rwkv7_hf.kernel_policy import (
     env_flag,
     env_int,
     is_tesla_t4_name,
+    is_v100_name,
     policy_for_profile,
 )
 
@@ -46,6 +47,13 @@ def test_exact_t4_name_matching_is_token_scoped() -> None:
     assert not is_tesla_t4_name("GeForce RTX 2080 Ti")
 
 
+def test_exact_v100_name_matching_is_token_scoped() -> None:
+    assert is_v100_name("Tesla V100-PCIE-32GB")
+    assert is_v100_name("NVIDIA V100-SXM2-16GB")
+    assert not is_v100_name("NVIDIA TITAN V")
+    assert not is_v100_name("V1000 virtual display adapter")
+
+
 def test_policy_defaults_are_conservative() -> None:
     pascal = policy_for_profile(classify_gpu("Tesla P100", (6, 0)))
     assert not pascal.fused_output
@@ -59,12 +67,14 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.fused_prefill_scan
     assert v100.prefill_graph
     assert v100.prefill_graph_cache_size == 4
+    assert v100.prefill_graph_max_layers == 32
     assert v100.fused_prefill_shift_mix
     assert v100.fused_prefill_state_prep
     assert v100.fused_prefill_state_scan
     assert v100.fused_prefill_state_scan_max_batch == 1
     assert v100.fused_prefill_output
     assert v100.fused_norm_mix
+    assert v100.native_graph_max_layers == 32
     assert v100.fused_wavg_lora
     assert v100.wavg_lora_bsz1_max_hidden == 4096
     assert v100.wavg_lora_blocks == (32, 64, 256)
@@ -75,8 +85,18 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.ada_sparse_ffn_max_rows == 4
     assert v100.ada_sparse_ffn_inplace
     assert not v100.ada_sparse_ffn_up
+    assert v100.ada_sparse_ffn_low_memory_pack
     assert not v100.fused_projection
     assert not v100.fused_output_project
+
+    # Preserve pre-existing sm70 defaults for other Volta cards, but never
+    # inherit the new V100-only destructive packing or graph ceilings.
+    titan_v = policy_for_profile(classify_gpu("NVIDIA TITAN V", (7, 0)))
+    assert titan_v.fused_output
+    assert titan_v.prefill_graph
+    assert titan_v.prefill_graph_max_layers is None
+    assert titan_v.native_graph_max_layers is None
+    assert not titan_v.ada_sparse_ffn_low_memory_pack
 
     t4 = policy_for_profile(classify_gpu("Tesla T4", (7, 5)))
     assert t4.fast_cache

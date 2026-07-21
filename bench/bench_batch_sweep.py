@@ -96,6 +96,27 @@ def peak_mb(device: str) -> float | None:
     return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
 
 
+def clear_native_graph_caches(model) -> dict[str, int]:
+    """Release shape-specific graph pools between independent batch rows.
+
+    A sweep is not a simultaneous multi-shape residency benchmark. Keeping
+    prior prefill/decode CUDA graphs alive can consume several GiB and make a
+    later, otherwise valid B8/P2048 row fail only because B1/B2/B4 graph pools
+    are still retained. Production cache-residency behavior has dedicated
+    warmup/cache benchmarks; this helper keeps throughput rows independent.
+    """
+
+    cleared = {}
+    for name in (
+        "rwkv7_clear_native_graph_cache",
+        "rwkv7_clear_native_prefill_graph_cache",
+    ):
+        clear = getattr(model, name, None)
+        if callable(clear):
+            cleared[name] = int(clear())
+    return cleared
+
+
 def set_attn_mode(model, attn_mode: str) -> None:
     model.config.attn_mode = attn_mode
     for layer in getattr(model.model, "layers", []):
@@ -122,6 +143,7 @@ def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -147,7 +169,12 @@ def last_fast_token_backend(model):
 @contextmanager
 def reference_forward_env():
     old = os.environ.get("RWKV7_FAST_FORWARD")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     os.environ["RWKV7_FAST_FORWARD"] = "0"
+    # NativeRWKV7Model dispatch is independent of the legacy wrapper switch.
+    # Pin the reference path to eager so this benchmark measures the optimized
+    # native backend against a real unfused recurrent baseline.
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "eager"
     try:
         yield
     finally:
@@ -155,6 +182,10 @@ def reference_forward_env():
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
 
 
 def encode(tok, prompt_tokens: int, bsz: int, device: str) -> torch.Tensor:
@@ -164,6 +195,7 @@ def encode(tok, prompt_tokens: int, bsz: int, device: str) -> torch.Tensor:
 
 
 def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
+    clear_native_graph_caches(model)
     if args.device.startswith("cuda"):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()

@@ -78,6 +78,7 @@ def load_model(args, dtype):
     if args.fast_token_layout != "auto":
         os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -103,7 +104,9 @@ def last_fast_token_backend(model):
 @contextmanager
 def reference_forward_env():
     old = os.environ.get("RWKV7_FAST_FORWARD")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     os.environ["RWKV7_FAST_FORWARD"] = "0"
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "eager"
     try:
         yield
     finally:
@@ -111,6 +114,10 @@ def reference_forward_env():
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
 
 
 @contextmanager
@@ -135,7 +142,11 @@ def bench_decode_paths(args, model, ids: torch.Tensor) -> dict[str, Any]:
     fixed = ids[:, -1:]
 
     def seed_state():
-        out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
+        # CUDA graph warmup can make the returned cache an inference tensor.
+        # Seed every timed path under inference_mode as well; otherwise the
+        # eager reference leg asks autograd to save those tensors and fails.
+        with torch.inference_mode():
+            out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
         return out.past_key_values, out.logits[:, -1:].argmax(dim=-1)
 
     with torch.inference_mode():

@@ -37,6 +37,10 @@ from bench.qwen35_fla_triton_conv import (  # noqa: E402
     qwen35_fla_triton_causal_conv1d,
     qwen35_fla_triton_causal_conv1d_update,
 )
+from bench.qwen35_sm70_fla import (  # noqa: E402
+    bind_qwen35_sm70_fla,
+    qwen35_sm70_recurrent_gated_delta_rule,
+)
 from bench.bench_cross_model_speed_resident import cell_args, resolve_sweep_cells, resolve_sweep_shapes
 from bench.compare_qwen35_speed_matrix import quantization_family
 from bench.compare_qwen35_backend_probe import compare as compare_backend_probe  # noqa: E402
@@ -1186,6 +1190,43 @@ def test_qwen_fast_path_binding_verification_is_fail_closed() -> None:
     fallback = qwen35_fast_path_bindings(FakeQwenModel(fast=False))
     assert fallback["verified"] is False
     assert fallback["layer_count"] == 1
+
+
+def test_qwen_sm70_fla_binding_preserves_fast_path_contract(monkeypatch) -> None:
+    layer_type = type("Qwen3_5GatedDeltaNet", (), {})
+    layer = layer_type()
+    layer.chunk_gated_delta_rule = _fake_operator("fla.ops.gated_delta_rule.chunk")
+    layer.recurrent_gated_delta_rule = _fake_operator(
+        "fla.ops.gated_delta_rule.fused_recurrent"
+    )
+    layer.causal_conv1d_fn = _fake_operator("bench.qwen35_fla_triton_conv")
+    layer.causal_conv1d_update = _fake_operator("bench.qwen35_fla_triton_conv")
+    layer.norm = _fake_operator("fla.modules.fused_norm_gate")
+    model = SimpleNamespace(
+        modules=lambda: [model, layer],
+        named_modules=lambda: [("model.layers.0.linear_attn", layer)],
+    )
+
+    assert bind_qwen35_sm70_fla(model) == 1
+    assert layer.chunk_gated_delta_rule is qwen35_sm70_recurrent_gated_delta_rule
+    contract = qwen_fla_operator_contract(model)
+    assert contract["qwen_fla_core_contract_pass"] is True
+    assert contract["qwen_sm70_recurrent_prefill_layers"] == 1
+    assert qwen35_fast_path_bindings(model)["verified"] is True
+
+
+def test_qwen_sm70_effective_backend_is_explicit() -> None:
+    args = SimpleNamespace(model_kind="qwen35")
+    contract = {
+        "qwen_operator_contract_pass": True,
+        "qwen_causal_conv1d_contract_pass": True,
+        "qwen_conv_backend_effective": "fla_triton",
+        "qwen_sm70_recurrent_prefill_layers": 18,
+    }
+    assert (
+        qwen_effective_backend(args, contract)
+        == "qwen_fla_recurrent_prefill_sm70_fla_triton_conv"
+    )
 
 
 def test_qwen_fla_triton_bridge_preserves_qwen_layout_and_cache(monkeypatch) -> None:

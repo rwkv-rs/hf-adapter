@@ -46,7 +46,10 @@ def peak_mb(device: str) -> float | None:
 @contextmanager
 def fast_forward_env(enabled: bool):
     old = os.environ.get("RWKV7_FAST_FORWARD")
+    old_native_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     os.environ["RWKV7_FAST_FORWARD"] = "1" if enabled else "0"
+    if not enabled:
+        os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = "eager"
     try:
         yield
     finally:
@@ -54,6 +57,10 @@ def fast_forward_env(enabled: bool):
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+        if old_native_backend is None:
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
+        else:
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_native_backend
 
 
 def set_attn_mode(model, attn_mode: str) -> None:
@@ -95,6 +102,7 @@ def configure_env(args: argparse.Namespace) -> None:
     if args.fast_token_layout != "auto":
         os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = args.fast_token_backend
 
 
 def encode(tok, prompt_tokens: int, device: str) -> torch.Tensor:
@@ -108,8 +116,12 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
         args.hf_dir,
         trust_remote_code=True,
         torch_dtype=dtype,
-        device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
+    # A single-device benchmark should not install Accelerate's recursive
+    # device_map hooks: their Python tree walk is unrelated to model compute
+    # and disproportionately distorts one-token HF forward latency.
+    if args.device.startswith("cuda"):
+        model = model.to(args.device)
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
         actual = bool(getattr(model.config, "fuse_norm", False))
@@ -120,7 +132,10 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
 
 
 def seed_state(model, ids: torch.Tensor):
-    out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
+    # Native graph warmup returns inference tensors; every timing seed must be
+    # created under the same inference-only contract as the measured loop.
+    with torch.inference_mode():
+        out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
     return out.past_key_values, out.logits[:, -1:].argmax(dim=-1)
 
 

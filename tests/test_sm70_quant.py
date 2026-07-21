@@ -4,7 +4,10 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+import rwkv7_hf.sm70_quant as sm70_quant_module
+
 from rwkv7_hf.sm70_quant import (
+    _sm7x_activation_quant_vectorized_for_profile,
     _sm7x_quant_device_supported,
     _w8_threads_for_profile,
     SM70_W4_BN_TN_CHOICES,
@@ -46,6 +49,59 @@ def test_t4_w8_threads_use_the_measured_batch_policy() -> None:
         128,
         128,
     ]
+
+
+def test_sm7x_activation_quantizer_uses_vectorized_pairs() -> None:
+    # Keep the V100 speedup exact-card scoped. T4 retains its previously
+    # measured scalar activation quantizer until a separate physical rerun.
+    assert _sm7x_activation_quant_vectorized_for_profile(
+        7, 0, "Tesla V100-PCIE-32GB"
+    )
+    assert not _sm7x_activation_quant_vectorized_for_profile(7, 5, "Tesla T4")
+    assert not _sm7x_activation_quant_vectorized_for_profile(
+        7, 0, "NVIDIA TITAN V"
+    )
+    assert "quant_a8_scalar" in sm70_quant_module._CUDA
+    assert "quant_a8_half2" in sm70_quant_module._CUDA
+    assert "const half2* xr" in sm70_quant_module._CUDA
+    assert "char2* qr" in sm70_quant_module._CUDA
+    assert "make_char2" in sm70_quant_module._CUDA
+
+
+def test_activation_quant_card_dispatch_is_cached(monkeypatch) -> None:
+    calls = {"capability": 0, "name": 0}
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def current_device():
+            return 0
+
+        @staticmethod
+        def get_device_capability(_index):
+            calls["capability"] += 1
+            return (7, 0)
+
+        @staticmethod
+        def get_device_name(_index):
+            calls["name"] += 1
+            return "Tesla V100-PCIE-32GB"
+
+    class FakeTorch:
+        cuda = FakeCuda()
+        device = staticmethod(torch.device)
+
+    sm70_quant_module._ACTIVATION_QUANT_VECTOR_CACHE.clear()
+    try:
+        monkeypatch.setattr(sm70_quant_module, "torch", FakeTorch())
+        assert sm70_quant_module.sm7x_activation_quant_vectorized("cuda:0")
+        assert sm70_quant_module.sm7x_activation_quant_vectorized("cuda:0")
+        assert calls == {"capability": 1, "name": 1}
+    finally:
+        sm70_quant_module._ACTIVATION_QUANT_VECTOR_CACHE.clear()
 
 
 def test_row_quantized_layout_and_cpu_fallback() -> None:
