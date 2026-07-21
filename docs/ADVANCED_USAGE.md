@@ -165,6 +165,13 @@ Success prints `PASS`. This proves HF device placement and output parity for
 the tested model. It is not native tensor parallelism, and cross-device layer
 handoff may be slower for small models.
 
+Cross-GPU recurrent-state handoff defaults to CPU staging because some
+virtualized CUDA hosts falsely advertise working peer access and silently
+corrupt larger P2P copies. On a host where direct CUDA P2P/NVLink has been
+validated independently, opt into the faster path with
+`RWKV7_DEVICE_MAP_TRANSFER=p2p`. Use `RWKV7_DEVICE_MAP_TRANSFER=cpu` to force
+the conservative path explicitly.
+
 ## 4. Multi-GPU training with DeepSpeed ZeRO
 
 DeepSpeed ZeRO partitions training state. ZeRO-2 partitions optimizer state and

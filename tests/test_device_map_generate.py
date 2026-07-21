@@ -149,10 +149,29 @@ def main() -> int:
         generated_equal_reference = bool(torch.equal(generated.detach().cpu(), ref_generated.detach().cpu()))
         del ref
 
+    last_backend = last_fast_backend(model)
+    multi_cuda_device_map = bool(getattr(model, "_rwkv7_has_multi_cuda_device_map")())
+    generated_tokens = int(generated.shape[1] - enc["input_ids"].shape[1])
+    status = "pass"
+    reasons = []
+    if not multi_cuda_device_map:
+        reasons.append("model was not split across multiple CUDA devices")
+    if not logits_finite:
+        reasons.append("forward produced non-finite logits")
+    if generated_tokens != int(args.max_new_tokens):
+        reasons.append(f"generated {generated_tokens} tokens, expected {args.max_new_tokens}")
+    if last_backend is not None:
+        reasons.append(f"multi-GPU device_map selected single-device backend {last_backend!r}")
+    if args.compare_single_device and generated_equal_reference is not True:
+        reasons.append("multi-GPU greedy output differs from the single-GPU reference")
+    if reasons:
+        status = "fail"
+
     row: dict[str, Any] = {
         "axis": "device_map_smoke",
         "backend": "hf_adapter",
-        "status": "pass",
+        "status": status,
+        "reason": "; ".join(reasons) if reasons else None,
         "dtype": args.dtype,
         "device": ", ".join(torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())),
         "device_count": torch.cuda.device_count(),
@@ -160,12 +179,12 @@ def main() -> int:
         "split_layer": int(split_layer),
         "num_hidden_layers": num_layers,
         "hf_device_map_devices": sorted({str(v) for v in getattr(model, "hf_device_map", {}).values()}),
-        "multi_cuda_device_map": bool(getattr(model, "_rwkv7_has_multi_cuda_device_map")()),
+        "multi_cuda_device_map": multi_cuda_device_map,
         "fast_forward_env": os.environ.get("RWKV7_FAST_FORWARD", "1"),
-        "last_fast_token_backend": last_fast_backend(model),
+        "last_fast_token_backend": last_backend,
         "prompt_tokens": int(enc["input_ids"].shape[1]),
         "max_new_tokens": int(args.max_new_tokens),
-        "generated_tokens": int(generated.shape[1] - enc["input_ids"].shape[1]),
+        "generated_tokens": generated_tokens,
         "generated_tail": tail,
         "reference_tail": reference_tail,
         "generated_equal_reference": generated_equal_reference,
@@ -184,8 +203,8 @@ def main() -> int:
         with out_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(f"appended 1 row -> {out_path}", flush=True)
-    print("PASS", flush=True)
-    return 0
+    print(status.upper(), flush=True)
+    return 0 if status == "pass" else 1
 
 
 if __name__ == "__main__":

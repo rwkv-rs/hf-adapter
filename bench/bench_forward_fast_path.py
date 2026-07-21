@@ -128,7 +128,10 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
 
 
 def seed_state(model, ids: torch.Tensor):
-    out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
+    # Native graph warmup returns inference tensors; every timing seed must be
+    # created under the same inference-only contract as the measured loop.
+    with torch.inference_mode():
+        out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
     return out.past_key_values, out.logits[:, -1:].argmax(dim=-1)
 
 

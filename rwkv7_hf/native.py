@@ -9,10 +9,39 @@ Run `python -m rwkv7_hf.native <hf_dir>` to check correctness vs FLA.
 """
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn.functional as F
 
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base
+def _native_device_map_transfer(value: torch.Tensor, device) -> torch.Tensor:
+    """Move a tensor across a pipeline split without trusting broken P2P.
+
+    Some virtualized multi-GPU hosts advertise CUDA peer access while silently
+    returning zero/corrupt data for a direct ``cuda:i -> cuda:j`` copy.  The
+    safe ``auto`` policy therefore uses host staging; validated NVLink/PCIe
+    deployments can explicitly opt into direct copies with
+    ``RWKV7_DEVICE_MAP_TRANSFER=p2p``.
+    """
+
+    target = torch.device(device)
+    source = value.device
+    if source == target:
+        return value
+    if source.type != "cuda" or target.type != "cuda":
+        return value.to(target)
+
+    mode = os.environ.get("RWKV7_DEVICE_MAP_TRANSFER", "auto").strip().lower()
+    aliases = {"host": "cpu", "staged": "cpu", "direct": "p2p"}
+    mode = aliases.get(mode, mode)
+    if mode not in {"auto", "p2p", "cpu"}:
+        raise ValueError("RWKV7_DEVICE_MAP_TRANSFER must be auto, p2p, or cpu")
+    if mode == "auto":
+        mode = "cpu"
+    if mode == "cpu":
+        return value.to("cpu").to(target)
+    return value.to(target)
 
 
 def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
@@ -160,15 +189,15 @@ def _step_token_batched(model, x, state, xpa, xpf, v_first):
         # with that layer.
         layer_device = layer.attn_norm.weight.device
         if x.device != layer_device:
-            x = x.to(layer_device)
+            x = _native_device_map_transfer(x, layer_device)
         if state[i].device != layer_device:
-            state[i] = state[i].to(layer_device)
+            state[i] = _native_device_map_transfer(state[i], layer_device)
         if xpa[i].device != layer_device:
-            xpa[i] = xpa[i].to(layer_device)
+            xpa[i] = _native_device_map_transfer(xpa[i], layer_device)
         if xpf[i].device != layer_device:
-            xpf[i] = xpf[i].to(layer_device)
+            xpf[i] = _native_device_map_transfer(xpf[i], layer_device)
         if v_first.device != layer_device:
-            v_first = v_first.to(layer_device)
+            v_first = _native_device_map_transfer(v_first, layer_device)
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)

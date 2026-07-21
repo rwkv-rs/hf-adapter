@@ -142,7 +142,11 @@ def bench_decode_paths(args, model, ids: torch.Tensor) -> dict[str, Any]:
     fixed = ids[:, -1:]
 
     def seed_state():
-        out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
+        # CUDA graph warmup can make the returned cache an inference tensor.
+        # Seed every timed path under inference_mode as well; otherwise the
+        # eager reference leg asks autograd to save those tensors and fails.
+        with torch.inference_mode():
+            out = model(ids[:, : min(8, ids.shape[1])], use_cache=True, logits_to_keep=1)
         return out.past_key_values, out.logits[:, -1:].argmax(dim=-1)
 
     with torch.inference_mode():
