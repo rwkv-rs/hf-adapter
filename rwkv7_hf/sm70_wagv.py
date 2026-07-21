@@ -6,9 +6,13 @@ self-contained lazy extension keeps HF checkpoints in their native layout and
 fuses four low-rank projections without duplicate persistent weights.
 """
 from __future__ import annotations
-import os, sys, threading
-from pathlib import Path
+import os, threading
 from typing import Any
+
+try:
+    from .extension_build import cuda_extension_build_environment
+except ImportError:  # pragma: no cover - direct remote-file execution
+    from extension_build import cuda_extension_build_environment
 
 try:
     import torch
@@ -515,39 +519,25 @@ def _load_extension():
         if _EXTENSION is not None:
             return _EXTENSION
         try:
-            pb = str(Path(sys.executable).resolve().parent)
-            os.environ["PATH"] = pb + os.pathsep + os.environ.get("PATH", "")
-            nv = Path(pb) / "nvcc"
-            if nv.exists():
-                os.environ.setdefault("CUDA_HOME", str(nv.parent.parent))
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.0")
-            rt = (
-                Path(sys.prefix)
-                / "lib"
-                / f"python{sys.version_info.major}.{sys.version_info.minor}"
-                / "site-packages"
-                / "nvidia"
-                / "cuda_runtime"
-                / "lib"
-            )
-            ld = [f"-L{rt}", f"-Wl,-rpath,{rt}"] if rt.is_dir() else []
-            from torch.utils.cpp_extension import load_inline
+            with cuda_extension_build_environment(arch_list="7.0") as rt:
+                from torch.utils.cpp_extension import load_inline
 
-            _EXTENSION = load_inline(
-                name="rwkv7_sm70_wagv_v3",
-                cpp_sources=_CPP_SOURCE,
-                cuda_sources=_CUDA_SOURCE,
-                functions=None,
-                extra_cflags=["-O3"],
-                extra_cuda_cflags=[
-                    "-O3",
-                    "--use_fast_math",
-                    "--extra-device-vectorization",
-                ],
-                extra_ldflags=ld,
-                with_cuda=True,
-                verbose=False,
-            )
+                ld = [f"-L{rt}", f"-Wl,-rpath,{rt}"] if rt is not None else []
+                _EXTENSION = load_inline(
+                    name="rwkv7_sm70_wagv_v3",
+                    cpp_sources=_CPP_SOURCE,
+                    cuda_sources=_CUDA_SOURCE,
+                    functions=None,
+                    extra_cflags=["-O3"],
+                    extra_cuda_cflags=[
+                        "-O3",
+                        "--use_fast_math",
+                        "--extra-device-vectorization",
+                    ],
+                    extra_ldflags=ld,
+                    with_cuda=True,
+                    verbose=False,
+                )
         except Exception as e:
             _EXTENSION_ERROR = f"{type(e).__name__}: {e}"
     return _EXTENSION

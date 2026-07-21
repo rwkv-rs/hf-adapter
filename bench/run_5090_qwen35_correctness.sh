@@ -8,7 +8,7 @@ QWEN_MODEL="${QWEN_MODEL:-${3:-}}"
 OUT_DIR="${OUT_DIR:-${4:-}}"
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-REQUIRED_GPU_SUBSTRING="RTX 5090"
+REQUIRED_GPU_MODEL="5090"
 BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_5090_hf_final}"
 CORRECTNESS_PROMPT_TOKENS="${CORRECTNESS_PROMPT_TOKENS:-512}"
 CORRECTNESS_BATCH_SIZE="${CORRECTNESS_BATCH_SIZE:-8}"
@@ -28,8 +28,9 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-if [[ "${gpu_name}" != *"${REQUIRED_GPU_SUBSTRING}"* ]]; then
-  echo "correctness requires ${REQUIRED_GPU_SUBSTRING}; detected: ${gpu_name:-no CUDA GPU}" >&2
+if ! "${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" \
+  --model "${REQUIRED_GPU_MODEL}" --name "${gpu_name}"; then
+  echo "correctness requires exact desktop RTX ${REQUIRED_GPU_MODEL}; detected: ${gpu_name:-no CUDA GPU}" >&2
   exit 2
 fi
 

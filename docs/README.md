@@ -27,6 +27,7 @@ and history.
 | Do we meet the public HF requirements? | [`ACCEPTANCE.md`](ACCEPTANCE.md) |
 | What are the current promoted numbers? | [`../BENCHMARK.md`](../BENCHMARK.md) |
 | Which cards are validated? | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |
+| Are RTX 4080 defaults isolated from RTX 4090/5090? | [`validation/RTX4080_CROSS_CARD_AUDIT.md`](validation/RTX4080_CROSS_CARD_AUDIT.md) |
 | What is the performance boundary? | [`PERFORMANCE.md`](PERFORMANCE.md) |
 | What is the W8/W4 status? | [`QUANTIZATION.md`](QUANTIZATION.md) |
 | Which training libraries and distributed paths work? | [`TRAINING.md`](TRAINING.md) |

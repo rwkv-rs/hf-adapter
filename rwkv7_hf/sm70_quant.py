@@ -10,9 +10,12 @@ graph-safe, and has CPU/unsupported-device fallbacks.
 """
 from __future__ import annotations
 import os
-import sys
 import threading
-from pathlib import Path
+
+try:
+    from .extension_build import cuda_extension_build_environment
+except ImportError:  # pragma: no cover - direct remote-file execution
+    from extension_build import cuda_extension_build_environment
 
 try:
     import torch
@@ -387,52 +390,27 @@ def _load():
         return None
     with _LOCK:
         try:
-            pb = str(Path(sys.executable).resolve().parent)
-            os.environ["PATH"] = pb + os.pathsep + os.environ.get("PATH", "")
-            nv = Path(pb) / "nvcc"
-            if nv.exists():
-                os.environ.setdefault("CUDA_HOME", str(nv.parent.parent))
-            # ``python /path/to/venv/bin/python`` does not necessarily put the
-            # venv's scripts directory on PATH.  PyTorch's extension loader
-            # still shells out to its colocated ``ninja`` binary, so make that
-            # invocation robust without requiring shell activation.
-            python_bin = Path(sys.executable).resolve().parent
-            if (python_bin / "ninja").exists():
-                path_parts = os.environ.get("PATH", "").split(os.pathsep)
-                if str(python_bin) not in path_parts:
-                    os.environ["PATH"] = os.pathsep.join(
-                        [str(python_bin), *path_parts]
-                    )
             # Build a portable sm7x fatbin by default.  An explicit deployment
             # value still wins, which keeps packaged/offline builds in control.
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "7.0;7.5")
-            rt = (
-                Path(sys.prefix)
-                / "lib"
-                / f"python{sys.version_info.major}.{sys.version_info.minor}"
-                / "site-packages"
-                / "nvidia"
-                / "cuda_runtime"
-                / "lib"
-            )
-            ld = [f"-L{rt}", f"-Wl,-rpath,{rt}"] if rt.is_dir() else []
-            from torch.utils.cpp_extension import load_inline
+            with cuda_extension_build_environment(arch_list="7.0;7.5") as rt:
+                from torch.utils.cpp_extension import load_inline
 
-            _EXT = load_inline(
-                name="rwkv7_sm7x_quant_v22",
-                cpp_sources=_CPP,
-                cuda_sources=_CUDA,
-                functions=None,
-                extra_cflags=["-O3"],
-                extra_cuda_cflags=[
-                    "-O3",
-                    "--use_fast_math",
-                    "--extra-device-vectorization",
-                ],
-                extra_ldflags=ld,
-                with_cuda=True,
-                verbose=False,
-            )
+                ld = [f"-L{rt}", f"-Wl,-rpath,{rt}"] if rt is not None else []
+                _EXT = load_inline(
+                    name="rwkv7_sm7x_quant_v22",
+                    cpp_sources=_CPP,
+                    cuda_sources=_CUDA,
+                    functions=None,
+                    extra_cflags=["-O3"],
+                    extra_cuda_cflags=[
+                        "-O3",
+                        "--use_fast_math",
+                        "--extra-device-vectorization",
+                    ],
+                    extra_ldflags=ld,
+                    with_cuda=True,
+                    verbose=False,
+                )
         except Exception as e:
             _ERR = f"{type(e).__name__}: {e}"
     return _EXT

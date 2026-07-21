@@ -18,10 +18,13 @@ CUDA graph capture with :func:`ada_sparse_ffn_pack_weight`.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-import sys
 import threading
 from typing import Any
+
+try:
+    from .extension_build import cuda_extension_build_environment
+except ImportError:  # pragma: no cover - direct remote-file execution
+    from extension_build import cuda_extension_build_environment
 import weakref
 
 try:  # pragma: no cover - optional in lightweight environments
@@ -41,17 +44,17 @@ except Exception:  # pragma: no cover
         env_flag = None  # type: ignore[assignment]
 
 
-def _kernel_policy():
+def _kernel_policy(device: Any = None):
     if current_kernel_policy is None:
         return None
     try:
-        return current_kernel_policy(torch_module=torch)
+        return current_kernel_policy(device=device, torch_module=torch)
     except Exception:
         return None
 
 
-def _policy_flag(env_name: str, policy_name: str) -> bool:
-    policy = _kernel_policy()
+def _policy_flag(env_name: str, policy_name: str, device: Any = None) -> bool:
+    policy = _kernel_policy(device)
     default = bool(getattr(policy, policy_name, False)) if policy is not None else False
     if env_flag is not None:
         return bool(env_flag(env_name, default))
@@ -1210,6 +1213,8 @@ torch::Tensor rwkv7_ada_sparse_ffn_deterministic4_cuda(
 
 _EXTENSION: Any | None = None
 _EXTENSION_ERROR: str | None = None
+_EXTENSIONS: dict[tuple[int, int], Any] = {}
+_EXTENSION_ERRORS: dict[tuple[int, int], str] = {}
 _EXTENSION_LOCK = threading.Lock()
 _PACK_LOCK = threading.Lock()
 _PACKED_WEIGHTS: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
@@ -1218,20 +1223,20 @@ _DETERMINISTIC_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], 
 
 
 def _is_sparse_ffn_device(device: Any = None) -> bool:
+    return _sparse_ffn_capability(device) in {(7, 0), (8, 9), (12, 0)}
+
+
+def _sparse_ffn_capability(device: Any = None) -> tuple[int, int] | None:
     if torch is None or not torch.cuda.is_available():
-        return False
+        return None
     try:
         resolved = torch.device("cuda" if device is None else device)
         if resolved.type != "cuda":
-            return False
+            return None
         index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
-        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) in {
-            (7, 0),
-            (8, 9),
-            (12, 0),
-        }
+        return tuple(int(v) for v in torch.cuda.get_device_capability(index))
     except Exception:
-        return False
+        return None
 
 
 def _is_blackwell_device(device: Any = None) -> bool:
@@ -1259,69 +1264,60 @@ def blackwell_cmix_should_use(rows: int, outputs: int, inputs: int) -> bool:
 
 def _blackwell_cmix_enabled(device: Any = None) -> bool:
     return (
-        _policy_flag("RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX", "blackwell_cmix")
+        _policy_flag(
+            "RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX",
+            "blackwell_cmix",
+            device,
+        )
         and _is_blackwell_device(device)
     )
 
 
-def _load_extension() -> Any | None:
+def _load_extension(device: Any = None) -> Any | None:
     global _EXTENSION, _EXTENSION_ERROR
-    if _EXTENSION is not None:
-        return _EXTENSION
-    if _EXTENSION_ERROR is not None or torch is None or not _is_sparse_ffn_device():
+    capability = _sparse_ffn_capability(device)
+    if capability not in {(7, 0), (8, 9), (12, 0)}:
+        return None
+    if capability in _EXTENSIONS:
+        return _EXTENSIONS[capability]
+    if capability in _EXTENSION_ERRORS:
         return None
     with _EXTENSION_LOCK:
-        if _EXTENSION is not None:
-            return _EXTENSION
-        if _EXTENSION_ERROR is not None:
+        if capability in _EXTENSIONS:
+            return _EXTENSIONS[capability]
+        if capability in _EXTENSION_ERRORS:
             return None
         try:
-            # Keep the virtualenv bin directory. Resolving the Python symlink
-            # can incorrectly replace it with /usr/bin and hide venv tools
-            # such as Ninja from torch.utils.cpp_extension.
-            python_bin = str(Path(sys.executable).absolute().parent)
-            path_items = os.environ.get("PATH", "").split(os.pathsep)
-            if python_bin not in path_items:
-                os.environ["PATH"] = python_bin + os.pathsep + os.environ.get("PATH", "")
-            nvcc = Path(python_bin) / "nvcc"
-            if nvcc.exists() and "CUDA_HOME" not in os.environ:
-                os.environ["CUDA_HOME"] = str(nvcc.parent.parent)
-            capability = torch.cuda.get_device_capability()
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{capability[0]}.{capability[1]}")
-            runtime_lib = (
-                Path(sys.prefix)
-                / "lib"
-                / f"python{sys.version_info.major}.{sys.version_info.minor}"
-                / "site-packages"
-                / "nvidia"
-                / "cuda_runtime"
-                / "lib"
-            )
-            extra_ldflags: list[str] = []
-            if runtime_lib.is_dir():
-                for variable in ("LIBRARY_PATH", "LD_LIBRARY_PATH"):
-                    items = os.environ.get(variable, "").split(os.pathsep)
-                    if str(runtime_lib) not in items:
-                        os.environ[variable] = str(runtime_lib) + os.pathsep + os.environ.get(variable, "")
-                extra_ldflags.append(f"-Wl,-rpath,{runtime_lib}")
-            from torch.utils.cpp_extension import load_inline
+            with cuda_extension_build_environment(
+                arch_list=f"{capability[0]}.{capability[1]}"
+            ) as runtime_lib:
+                from torch.utils.cpp_extension import load_inline
 
-            _EXTENSION = load_inline(
-                name="rwkv7_sparse_ffn_v20",
-                cpp_sources=_CPP_SOURCE,
-                cuda_sources=_CUDA_SOURCE,
-                functions=None,
-                extra_cflags=["-O3"],
-                extra_cuda_cflags=["-O3", "--use_fast_math", "--extra-device-vectorization"],
-                extra_ldflags=extra_ldflags,
-                with_cuda=True,
-                verbose=os.environ.get("RWKV7_ADA_SPARSE_FFN_BUILD_VERBOSE", "0").lower()
-                in {"1", "true", "yes", "on"},
-            )
+                extra_ldflags = (
+                    [f"-Wl,-rpath,{runtime_lib}"]
+                    if runtime_lib is not None
+                    else []
+                )
+                extension = load_inline(
+                    name=f"rwkv7_sparse_ffn_v20_sm{capability[0]}{capability[1]}",
+                    cpp_sources=_CPP_SOURCE,
+                    cuda_sources=_CUDA_SOURCE,
+                    functions=None,
+                    extra_cflags=["-O3"],
+                    extra_cuda_cflags=["-O3", "--use_fast_math", "--extra-device-vectorization"],
+                    extra_ldflags=extra_ldflags,
+                    with_cuda=True,
+                    verbose=os.environ.get("RWKV7_ADA_SPARSE_FFN_BUILD_VERBOSE", "0").lower()
+                    in {"1", "true", "yes", "on"},
+                )
+            _EXTENSION = extension
+            _EXTENSIONS[capability] = extension
         except Exception as exc:  # pragma: no cover - depends on host toolchain
-            _EXTENSION_ERROR = f"{type(exc).__name__}: {exc}"
+            message = f"{type(exc).__name__}: {exc}"
+            _EXTENSION_ERROR = message
+            _EXTENSION_ERRORS[capability] = message
             return None
-    return _EXTENSION
+    return _EXTENSIONS.get(capability)
 
 
 def ada_sparse_ffn_should_use(rows: int, outputs: int, inputs: int) -> bool:
@@ -1345,11 +1341,12 @@ def ada_linear_should_use(rows: int, outputs: int, inputs: int) -> bool:
 def ada_sparse_ffn_available(device: Any = None, *, build: bool = False) -> bool:
     if not _is_sparse_ffn_device(device):
         return False
-    return _load_extension() is not None if build else True
+    return _load_extension(device) is not None if build else True
 
 
-def ada_sparse_ffn_build_error() -> str | None:
-    return _EXTENSION_ERROR
+def ada_sparse_ffn_build_error(device: Any = None) -> str | None:
+    capability = _sparse_ffn_capability(device)
+    return _EXTENSION_ERRORS.get(capability) if capability is not None else _EXTENSION_ERROR
 
 
 def _weight_cache_key(weight: Any, cache_tag: Any = None) -> tuple[Any, ...]:
@@ -1382,6 +1379,7 @@ def ada_sparse_ffn_pack_weight(weight: Any, *, cache_tag: Any = None) -> Any:
     if _policy_flag(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_SHARE_PACK",
         "ada_sparse_ffn_share_pack",
+        weight.device,
     ):
         cache_tag = None
     key = _weight_cache_key(weight, cache_tag)
@@ -1501,7 +1499,7 @@ def ada_sparse_ffn_down_add(
         and tuple(residual2.shape) == (rows, outputs)
         and _is_sparse_ffn_device(preact2.device)
     )
-    extension = _load_extension() if valid else None
+    extension = _load_extension(preact2.device) if valid else None
     if extension is None:
         result = residual + F.linear(torch.relu(preact) ** 2, weight)
         if out is not None:
@@ -1535,12 +1533,14 @@ def ada_sparse_ffn_down_add(
     fp32_accum = _policy_flag(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM",
         "ada_sparse_ffn_fp32_accum",
+        preact2.device,
     )
     official_boundary = _policy_flag(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY",
         "ada_sparse_ffn_official_boundary",
+        preact2.device,
     )
-    policy = _kernel_policy()
+    policy = _kernel_policy(preact2.device)
     deterministic_splits = int(
         os.environ.get(
             "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS",
@@ -1618,7 +1618,7 @@ def ada_ffn_up(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
         and tuple(weight.shape) == (outputs, inputs)
         and _is_sparse_ffn_device(x2.device)
     )
-    extension = _load_extension() if valid else None
+    extension = _load_extension(x2.device) if valid else None
     if extension is None:
         return F.linear(x, weight)
     if (
@@ -1655,7 +1655,7 @@ def ada_linear(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
         and tuple(weight.shape) == (outputs, inputs)
         and _is_sparse_ffn_device(x2.device)
     )
-    extension = _load_extension() if valid else None
+    extension = _load_extension(x2.device) if valid else None
     if extension is None:
         return F.linear(x, weight)
     output = extension.linear(x2, weight)

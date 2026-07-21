@@ -286,13 +286,20 @@ prompt/final cosine 是 13.3B B8 `0.99955201/0.99955237`。原始证据：
 
 ## 6. RTX 4080 B1/B8 配对验收
 
-**前置条件和支持环境。** 使用 Linux、单张 RTX 4080 16GB、CUDA 12.4 兼容的
-PyTorch、Transformers、FLA、causal-conv1d、bitsandbytes 和 TorchAO。安装仓库的
-量化依赖：
+**前置条件和支持环境。** 使用 Linux、单张 RTX 4080 16GB，以及已验证的
+PyTorch `2.6.0+cu124`、Triton `3.2.0`、TorchAO `0.16.0` 环境；另需
+Transformers、FLA、causal-conv1d 和 bitsandbytes。4080 验收脚本默认严格检查
+前三个版本，避免无意升级 kernel 编译器后继续沿用旧性能结论。仓库的 `cuda` 和
+`quant` extra 不再单独升级 Triton，而是使用当前 PyTorch 配套的 Triton：
 
 ```bash
-python -m pip install -e ".[train,quant]"
+python -m pip install -e ".[train]"
+python -m pip install bitsandbytes==0.49.2 torchao==0.16.0
 ```
+
+仓库的通用 `torchao` extra 不再设置全局最低版本；4090、5090 和未来显卡各自
+保留已经验证的软件栈，不会因 4080 的版本需求被强制升级。非验收环境实验请直接
+使用通用 benchmark 入口；正式 4080 验收不提供跳过版本检查的开关。
 
 **最小安全模型和输入。** 准备一组本地模型目录。支持的官方配对是 RWKV-7
 0.4B/Qwen3.5-0.8B、RWKV-7 1.5B/Qwen3.5-2B 和 RWKV-7 2.9B/Qwen3.5-4B。

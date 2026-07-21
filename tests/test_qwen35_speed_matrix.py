@@ -1441,8 +1441,8 @@ def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
         encoding="utf-8"
     )
     assert 'PREFILL_CHUNK_SIZE="${PREFILL_CHUNK_SIZE:-512}"' in script
-    assert 'REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4090}"' in script
-    assert '"${gpu_name}" != *"${REQUIRED_GPU_SUBSTRING}"*' in script
+    assert 'REQUIRED_GPU_MODEL="${REQUIRED_GPU_MODEL:-4090}"' in script
+    assert 'bench/check_exact_gpu.py" --model "${REQUIRED_GPU_MODEL}"' in script
     assert 'BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_4090_hf_final}"' in script
     assert 'QWEN_CONV_BACKEND="${QWEN_CONV_BACKEND:-auto}"' in script
     assert 'REQUIRE_QWEN_FULL_FUSED="${REQUIRE_QWEN_FULL_FUSED:-0}"' in script
@@ -1466,7 +1466,13 @@ def test_4080_acceptance_entrypoint_is_full_prompt_and_fail_closed() -> None:
     script = (ROOT / "bench" / "run_4080_qwen35_pair_acceptance.sh").read_text(
         encoding="utf-8"
     )
-    assert 'REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4080}"' in script
+    assert 'REQUIRED_GPU_MODEL="4080"' in script
+    assert 'bench/check_exact_gpu.py"' in script
+    assert '"torch": "2.6.0+cu124"' in script
+    assert '"triton": "3.2.0"' in script
+    assert '"torchao": "0.16.0"' in script
+    assert "use the generic benchmark entrypoints for an unvalidated runtime experiment" in script
+    assert "REQUIRE_VALIDATED_RUNTIME" not in script
     assert '--benchmark-matrix qwen35_4080_hf_final' in script
     assert 'rwkv-0.4b__qwen3.5-0.8b)' in script
     assert 'rwkv-1.5b__qwen3.5-2b)' in script
@@ -1489,11 +1495,19 @@ def test_4080_acceptance_entrypoint_is_full_prompt_and_fail_closed() -> None:
     assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"' in script
 
 
+def test_4080_torchao_version_does_not_leak_into_global_optional_dependency() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'torchao = ["torchao; platform_system == \'Linux\'"]' in pyproject
+    assert 'torchao>=' not in pyproject
+    assert 'quant = ["bitsandbytes"]' in pyproject
+    assert "triton>=" not in pyproject
+
+
 def test_5090_acceptance_reuses_contract_without_4090_policy_defaults() -> None:
     script = (ROOT / "bench" / "run_5090_qwen35_pair_acceptance.sh").read_text(
         encoding="utf-8"
     )
-    assert 'REQUIRED_GPU_SUBSTRING="RTX 5090"' in script
+    assert 'REQUIRED_GPU_MODEL="5090"' in script
     assert 'BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_5090_hf_final}"' in script
     assert 'QWEN_CONV_BACKEND="fla_triton"' in script
     assert "export RUN_NATIVE_MM8=1" in script
@@ -1514,7 +1528,8 @@ def test_5090_correctness_entrypoint_checks_full_fla_and_native_prefill() -> Non
     script = (ROOT / "bench" / "run_5090_qwen35_correctness.sh").read_text(
         encoding="utf-8"
     )
-    assert 'REQUIRED_GPU_SUBSTRING="RTX 5090"' in script
+    assert 'REQUIRED_GPU_MODEL="5090"' in script
+    assert 'bench/check_exact_gpu.py"' in script
     assert 'CORRECTNESS_PROMPT_TOKENS="${CORRECTNESS_PROMPT_TOKENS:-512}"' in script
     assert 'CORRECTNESS_BATCH_SIZE="${CORRECTNESS_BATCH_SIZE:-8}"' in script
     assert 'QWEN_CORRECTNESS_PROMPT_TOKENS="${QWEN_CORRECTNESS_PROMPT_TOKENS:-}"' in script
@@ -1560,7 +1575,8 @@ def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
     script = (ROOT / "bench" / "run_5090_g1h_13b_acceptance.sh").read_text(
         encoding="utf-8"
     )
-    assert 'REQUIRED_GPU_SUBSTRING="RTX 5090"' in script
+    assert 'REQUIRED_GPU_MODEL="5090"' in script
+    assert 'bench/check_exact_gpu.py"' in script
     assert "bench_larger_model_smoke.py" in script
     assert "--fast-token-backend native_jit" in script
     assert "--quantizations none mm8 mm4" in script

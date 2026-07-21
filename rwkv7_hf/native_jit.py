@@ -9,9 +9,22 @@ Run: python -m rwkv7_hf.native_jit <hf_dir>
 from __future__ import annotations
 
 import os
+import threading
+from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
+
+
+_FP16_ACCUMULATION_LOCK = threading.RLock()
+
+
+def _cuda_device_guard(device):
+    return (
+        torch.cuda.device(device)
+        if getattr(device, "type", None) == "cuda" and torch.cuda.is_available()
+        else nullcontext()
+    )
 
 try:  # pragma: no cover - optional Triton prefill acceleration
     from .fused_elementwise import fused_relu_square, fused_relu_square_available
@@ -350,14 +363,15 @@ def _native_prefill_linear(
         )
         if not can_select_accumulation:
             return F.linear(x, operand, bias)
-        previous = bool(matmul.allow_fp16_accumulation)
-        if not previous:
-            matmul.allow_fp16_accumulation = True
-        try:
-            return F.linear(x, operand, bias)
-        finally:
+        with _FP16_ACCUMULATION_LOCK:
+            previous = bool(matmul.allow_fp16_accumulation)
             if not previous:
-                matmul.allow_fp16_accumulation = False
+                matmul.allow_fp16_accumulation = True
+            try:
+                return F.linear(x, operand, bias)
+            finally:
+                if not previous:
+                    matmul.allow_fp16_accumulation = False
     direct = _bnb8_direct_linear(x, operand)
     if direct is not None:
         return direct
@@ -409,6 +423,27 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
                 env_int(names[0], defaults[0], lower=1, upper=uppers[0]),
                 env_int(names[1], defaults[1], lower=1, upper=uppers[1]),
                 env_int(names[2], defaults[2], lower=1, upper=uppers[2]),
+            )
+
+try:  # Keep this separate so older remote-code policy modules still import.
+    from .kernel_policy import is_rtx_model_name as _is_rtx_model_name
+except Exception:  # pragma: no cover - remote-code/backward-compatible fallback
+    try:
+        from kernel_policy import is_rtx_model_name as _is_rtx_model_name
+    except Exception:
+        def _is_rtx_model_name(name: str, model: str) -> bool:
+            normalized = "".join(
+                character if character.isalnum() else " "
+                for character in str(name).lower()
+            )
+            tokens = tuple(normalized.split())
+            model_token = str(model).lower()
+            if "rtx" not in tokens or model_token not in tokens:
+                return False
+            model_index = tokens.index(model_token)
+            return bool(
+                not {"laptop", "mobile", "maxq", "max", "q", "super", "ti"}.intersection(tokens)
+                and all(token == "gpu" for token in tokens[model_index + 1 :])
             )
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
@@ -1074,7 +1109,7 @@ def _native_prefill_default_scan_block_m(
                 name = str(torch.cuda.get_device_name()).lower()
             except Exception:
                 name = ""
-            if "4090" in name:
+            if _is_rtx_model_name(name, "4090"):
                 if (
                     batch_size is not None
                     and int(batch_size) >= 8
@@ -1723,6 +1758,19 @@ def _native_prefill_fp16_accum_ffn_key_enabled(
         return False
     matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
     if matmul is None or not hasattr(matmul, "allow_fp16_accumulation"):
+        return False
+    try:
+        visible_cuda_devices = int(torch.cuda.device_count())
+    except Exception:
+        visible_cuda_devices = 1
+    if visible_cuda_devices > 1 and not env_flag(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_MULTI_GPU",
+        False,
+    ):
+        # This PyTorch switch is process-global. Keep the exact-5090 default
+        # off in multi-GPU processes so a concurrent 4080/4090 request cannot
+        # observe reduced accumulation during its own GEMM. Isolated workers
+        # retain the measured route; explicit multi-GPU opt-in stays possible.
         return False
     policy = _kernel_policy()
     raw_shapes = os.environ.get(
@@ -2833,7 +2881,7 @@ def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
     return x, xpa, xpf, v_first, state
 
 
-def extract(model):
+def _extract_current_device(model):
     layers = model.model.layers
     H = layers[0].attn.num_heads
     N = layers[0].attn.head_dim
@@ -2877,7 +2925,15 @@ def extract(model):
     return packs, H, N, eps
 
 
-def extract_graph(model):
+def extract(model):
+    """Extract JIT packs under the model weight's CUDA device guard."""
+
+    device = model.model.embeddings.weight.device
+    with _cuda_device_guard(device):
+        return _extract_current_device(model)
+
+
+def _extract_graph_current_device(model):
     """Pack CUDA-graph operands while preserving MM8/MM4 modules.
 
     Dense models keep the exact historical tensor tuple. Quantized projection
@@ -2956,6 +3012,14 @@ def extract_graph(model):
             stacked_rkv,
         ))
     return packs, H, N, eps
+
+
+def extract_graph(model):
+    """Extract graph packs under the model weight's CUDA device guard."""
+
+    device = model.model.embeddings.weight.device
+    with _cuda_device_guard(device):
+        return _extract_graph_current_device(model)
 
 
 def _init(model, device, dtype):
@@ -3125,7 +3189,7 @@ def _native_prefill_scan(
     return torch.stack(outs, dim=1), cur_state
 
 
-def prefill(
+def _prefill_current_device(
     model,
     ids,
     packs,
@@ -3942,6 +4006,32 @@ def prefill(
     )
     setattr(model, "_rwkv7_native_prefill_layer_outputs", layer_outputs)
     return logits, state, xpa, xpf
+
+
+def prefill(
+    model,
+    ids,
+    packs,
+    *,
+    state=None,
+    xpa=None,
+    xpf=None,
+    logits_to_keep: int | None = 1,
+    fp16_elapsed=None,
+):
+    """Run prefill with policy detection bound to the input tensor's GPU."""
+
+    with _cuda_device_guard(ids.device):
+        return _prefill_current_device(
+            model,
+            ids,
+            packs,
+            state=state,
+            xpa=xpa,
+            xpf=xpf,
+            logits_to_keep=logits_to_keep,
+            fp16_elapsed=fp16_elapsed,
+        )
 
 
 def forward(model, ids, packs):

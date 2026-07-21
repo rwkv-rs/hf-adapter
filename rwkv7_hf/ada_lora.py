@@ -15,10 +15,13 @@ ordinary PyTorch for every unsupported device, dtype, shape, or build failure.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-import sys
 import threading
 from typing import Any
+
+try:
+    from .extension_build import cuda_extension_build_environment
+except ImportError:  # pragma: no cover - direct remote-file execution
+    from extension_build import cuda_extension_build_environment
 
 try:  # pragma: no cover - optional in lightweight environments
     import torch
@@ -451,92 +454,84 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
 
 _EXTENSION: Any | None = None
 _EXTENSION_ERROR: str | None = None
+_EXTENSIONS: dict[tuple[int, int], Any] = {}
+_EXTENSION_ERRORS: dict[tuple[int, int], str] = {}
 _EXTENSION_LOCK = threading.Lock()
 
 
 def _is_small_row_cuda_device(device: Any = None) -> bool:
+    return _small_row_capability(device) in {(8, 9), (12, 0)}
+
+
+def _small_row_capability(device: Any = None) -> tuple[int, int] | None:
     if torch is None or not torch.cuda.is_available():
-        return False
+        return None
     try:
         resolved = torch.device("cuda" if device is None else device)
         if resolved.type != "cuda":
-            return False
+            return None
         index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
-        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) in {
-            (8, 9),
-            (12, 0),
-        }
+        return tuple(int(v) for v in torch.cuda.get_device_capability(index))
     except Exception:
-        return False
+        return None
 
 
-def _load_extension() -> Any | None:
+def _load_extension(device: Any = None) -> Any | None:
     global _EXTENSION, _EXTENSION_ERROR
-    if _EXTENSION is not None:
-        return _EXTENSION
-    if _EXTENSION_ERROR is not None or torch is None or not _is_small_row_cuda_device():
+    capability = _small_row_capability(device)
+    if capability not in {(8, 9), (12, 0)}:
+        return None
+    if capability in _EXTENSIONS:
+        return _EXTENSIONS[capability]
+    if capability in _EXTENSION_ERRORS:
         return None
     with _EXTENSION_LOCK:
-        if _EXTENSION is not None:
-            return _EXTENSION
-        if _EXTENSION_ERROR is not None:
+        if capability in _EXTENSIONS:
+            return _EXTENSIONS[capability]
+        if capability in _EXTENSION_ERRORS:
             return None
         try:
-            # Keep the virtualenv bin directory. Resolving the Python symlink
-            # can incorrectly replace it with /usr/bin and hide venv tools
-            # such as Ninja from torch.utils.cpp_extension.
-            python_bin = str(Path(sys.executable).absolute().parent)
-            if python_bin not in os.environ.get("PATH", "").split(os.pathsep):
-                os.environ["PATH"] = python_bin + os.pathsep + os.environ.get("PATH", "")
-            nvcc = Path(python_bin) / "nvcc"
-            if nvcc.exists() and "CUDA_HOME" not in os.environ:
-                os.environ["CUDA_HOME"] = str(nvcc.parent.parent)
-            capability = torch.cuda.get_device_capability()
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{capability[0]}.{capability[1]}")
-            runtime_lib = (
-                Path(sys.prefix)
-                / "lib"
-                / f"python{sys.version_info.major}.{sys.version_info.minor}"
-                / "site-packages"
-                / "nvidia"
-                / "cuda_runtime"
-                / "lib"
-            )
-            extra_ldflags: list[str] = []
-            if runtime_lib.is_dir():
-                for variable in ("LIBRARY_PATH", "LD_LIBRARY_PATH"):
-                    items = os.environ.get(variable, "").split(os.pathsep)
-                    if str(runtime_lib) not in items:
-                        os.environ[variable] = str(runtime_lib) + os.pathsep + os.environ.get(variable, "")
-                extra_ldflags.append(f"-Wl,-rpath,{runtime_lib}")
-            from torch.utils.cpp_extension import load_inline
+            with cuda_extension_build_environment(
+                arch_list=f"{capability[0]}.{capability[1]}"
+            ) as runtime_lib:
+                from torch.utils.cpp_extension import load_inline
 
-            _EXTENSION = load_inline(
-                name="rwkv7_ada_lora_v8",
-                cpp_sources=_CPP_SOURCE,
-                cuda_sources=_CUDA_SOURCE,
-                functions=None,
-                extra_cflags=["-O3"],
-                extra_cuda_cflags=["-O3", "--use_fast_math", "--extra-device-vectorization"],
-                extra_ldflags=extra_ldflags,
-                with_cuda=True,
-                verbose=os.environ.get("RWKV7_ADA_LORA_BUILD_VERBOSE", "0").lower()
-                in {"1", "true", "yes", "on"},
-            )
+                extra_ldflags = (
+                    [f"-Wl,-rpath,{runtime_lib}"]
+                    if runtime_lib is not None
+                    else []
+                )
+                extension = load_inline(
+                    name=f"rwkv7_ada_lora_v8_sm{capability[0]}{capability[1]}",
+                    cpp_sources=_CPP_SOURCE,
+                    cuda_sources=_CUDA_SOURCE,
+                    functions=None,
+                    extra_cflags=["-O3"],
+                    extra_cuda_cflags=["-O3", "--use_fast_math", "--extra-device-vectorization"],
+                    extra_ldflags=extra_ldflags,
+                    with_cuda=True,
+                    verbose=os.environ.get("RWKV7_ADA_LORA_BUILD_VERBOSE", "0").lower()
+                    in {"1", "true", "yes", "on"},
+                )
+            _EXTENSION = extension
+            _EXTENSIONS[capability] = extension
         except Exception as exc:  # pragma: no cover - host toolchain dependent
-            _EXTENSION_ERROR = f"{type(exc).__name__}: {exc}"
+            message = f"{type(exc).__name__}: {exc}"
+            _EXTENSION_ERROR = message
+            _EXTENSION_ERRORS[capability] = message
             return None
-    return _EXTENSION
+    return _EXTENSIONS.get(capability)
 
 
 def ada_wagv_lora_available(device: Any = None, *, build: bool = False) -> bool:
     if not _is_small_row_cuda_device(device):
         return False
-    return _load_extension() is not None if build else True
+    return _load_extension(device) is not None if build else True
 
 
-def ada_wagv_lora_build_error() -> str | None:
-    return _EXTENSION_ERROR
+def ada_wagv_lora_build_error(device: Any = None) -> str | None:
+    capability = _small_row_capability(device)
+    return _EXTENSION_ERRORS.get(capability) if capability is not None else _EXTENSION_ERROR
 
 
 def ada_wagv_lora_should_use(rows: int, hidden: int, max_rank: int) -> bool:
@@ -606,7 +601,7 @@ def ada_wagv_lora(
         and all(int(item.numel()) == hidden for item in (w0, a0, v0))
         and _is_small_row_cuda_device(xw2.device)
     )
-    extension = _load_extension() if valid else None
+    extension = _load_extension(xw2.device) if valid else None
     if extension is None:
         if compute_v:
             outputs = _fallback(
@@ -686,7 +681,7 @@ def ada_wag_lora(
         and int(a0.numel()) == hidden
         and _is_small_row_cuda_device(xw2.device)
     )
-    extension = _load_extension() if valid else None
+    extension = _load_extension(xw2.device) if valid else None
     if extension is None:
         outputs = (
             F.linear(torch.tanh(F.linear(xw2, w1)), w2, w0),
