@@ -177,6 +177,13 @@ DeepSpeed ZeRO partitions training state. ZeRO-2 partitions optimizer state and
 gradients; ZeRO-3 also partitions parameters. Run this path on Linux or WSL2
 with at least two visible CUDA GPUs.
 
+The native recurrent forward may execute descendant modules a different number
+of times when rank-local batches have different padded sequence lengths. Under
+ZeRO-3 the adapter therefore all-reduces the training sequence length and adds
+masked padding to the shorter ranks before recurrence. This keeps the
+parameter-gather hook order identical across ranks while preserving local loss
+and returned-logit semantics. Do not disable this global-length normalization.
+
 Validate the repository presets first:
 
 ```bash

@@ -163,6 +163,11 @@ python tests\test_device_map_generate.py --model C:\path\to\model-hf --dtype fp1
 ZeRO-2 切分 optimizer state 和 gradient，ZeRO-3 进一步切分 parameter。该流程请在
 Linux 或 WSL2、至少两张可见 CUDA 显卡上运行。
 
+不同 rank 的局部 batch 如果 padding 后序列长度不同，原生递归 forward 可能以不同
+次数执行后代模块。ZeRO-3 下，适配器会先 all-reduce 训练序列长度，并给较短 rank 增加
+masked padding；这样各 rank 的 parameter-gather hook 顺序保持一致，同时不改变本地 loss
+和返回 logits 的语义。不要关闭这项全局长度归一化。
+
 先检查仓库配置文件：
 
 ```bash
