@@ -6,8 +6,9 @@
 
 ## Fixed decisions
 
-- Clean base: `4bbd911e4dcb446e8c21fb795e373b4a59775ff3`.
-- Working branch: `perf/optional-kernels-v1`.
+- Initial clean base: `4bbd911e4dcb446e8c21fb795e373b4a59775ff3`.
+- Current baseline: `7692a263d451c6769016a3d383e00a7d84515c52`.
+- Working branch: `perf/training-large-batch-v1`.
 - `rwkv7_hf/` remains the readable HF source of truth and contains only the
   canonical model modules.
 - CLI/conversion/smoke stay in the sibling `rwkv7_hf_tools/` package.
@@ -217,6 +218,44 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - [x] Distinguish optimized training from reference fallback in every report.
 - [x] Benchmark forward+backward only after numerical gates pass.
 
+### Large-batch training hot-path follow-up
+
+This subsection tracks the post-`7692a263` optimization candidate. Earlier
+training evidence does not validate these changed bytes and must not be
+relabelled as evidence for this candidate.
+
+- [x] Preserve the fixed-row reference projection contract for `B*T <= 128`,
+      while making the opt-in native whole-model runtime use one flattened
+      projection when `B*T > 128`.
+- [x] Remove the benchmark's second causal cross-entropy calculation and avoid
+      materializing a contiguous shifted-logits tensor in the runtime/model
+      loss path.
+- [x] Add a single-use positive native-probe ticket so a supported request is
+      not probed and synchronized twice before the same execution.
+- [x] Replace Mix6 parameter-gradient atomics and FP32 scratch/cast launches
+      with a deterministic current-stream reduction; retain canonical replay
+      for higher-order differentiation only.
+- [x] Add a reproducible profiler that records actual routes, selected
+      operator counts/times, recurrence time, peak memory, environment,
+      command, code identity, and wheel identity.
+- [x] Pass the complete local Python test/lint/hash gate on the source
+      candidate: 225 tests, Ruff, diff check, 102/102 migration hashes, and
+      source-scope/capability-inventory audits all pass.
+- [ ] Build one immutable HF/kernel wheel pair and compile the changed Mix6
+      extension on RTX 4080 from that exact pair.
+- [ ] Pass Mix6 output/first-gradient parity, repeated-run determinism, and
+      higher-order-gradient coverage on RTX 4080.
+- [ ] Re-profile optimized/reference/pinned-FLA B1/T128 and B4/T128 and record
+      the measured `aten::mm`, copy, recurrence, total-time, and peak-memory
+      deltas. Expected reductions are hypotheses, not acceptance evidence.
+- [ ] Pass full-model logits/loss/all-gradient/checkpoint parity and the
+      forward+CE+backward speed matrix for B=`1/4`, T=`16/17/128` before any
+      large-batch speed claim.
+- [ ] Re-run the affected HF ecosystem and SFT/DPO/GRPO gates. Run an
+      inference/lm_eval regression smoke to prove the training-only routing
+      changes did not alter evaluation outputs; do not claim a new 144-unit
+      result unless the full matrix is actually rerun.
+
 ## Release gate
 
 - [ ] `rwkv7_hf/` remains clean after kernel installation.
@@ -228,6 +267,32 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - [ ] GitHub, Hub and PyPI versions/tags agree.
 
 ## Session log
+
+### 2026-08-30 — large-batch training hot-path source candidate
+
+- Started from merged baseline
+  `7692a263d451c6769016a3d383e00a7d84515c52` on
+  `perf/training-large-batch-v1` after profiling attributed the B4/T128
+  regression primarily to row-serialized projection launches and tensor-copy
+  overhead rather than recurrent time.
+- Implemented adaptive whole-model projection flattening, a single causal-loss
+  path, positive-probe reuse, deterministic Mix6 first-order backward, and a
+  formal hotspot profiler. The readable HF model/cache/module ownership and
+  the small-shape fixed-row reference contract remain unchanged.
+- The NVIDIA manifest still contains exactly 102 historical destinations. Its
+  current classification is 90 byte-identical transfers and 12 declared clean
+  adaptations; the complete historical source scope is 90 byte-migrated, 22
+  adapted, 7 canonical-reference, 6 relocated/retired tooling, 27 separate
+  hardware, and 1 retired non-kernel file. Destination SHA256 values currently
+  match the working-tree bytes.
+- **No new wheel or RTX 4080 result exists for these changed bytes yet.** All
+  GPU, FLA-speed, ecosystem, finetune and lm_eval checkboxes in the follow-up
+  subsection remain open until an immutable wheel pair produces matching JSON
+  evidence.
+- Local source gate: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q`
+  completed with **225 passed**; Ruff and `git diff --check` passed. The wheel
+  audit now explicitly requires `nvidia/training_math.py`, and all 102
+  destination hashes plus the 153-row frozen source scope were revalidated.
 
 ### 2026-08-27 — checklist created
 

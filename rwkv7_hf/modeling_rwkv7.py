@@ -185,6 +185,51 @@ def _normalize_attention_mask(
     return attention_mask[:, -sequence_length:].to(device=device, dtype=torch.bool)
 
 
+def _causal_language_model_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    """Compute shifted causal CE without materializing shifted logits.
+
+    Logits remain in their contiguous ``[B, T, V]`` layout. Only the compact
+    integer targets are shifted, and the final time step is ignored. Summed CE
+    divided by a clamped valid-token count preserves the ordinary mean while
+    returning a finite zero for an empty or fully ignored target set.
+    """
+
+    shifted_targets = torch.cat(
+        (labels[:, 1:], labels.new_full((int(labels.shape[0]), 1), -100)),
+        dim=1,
+    )
+    if attention_mask is not None:
+        label_mask = attention_mask[:, -labels.shape[1] :].to(
+            device=shifted_targets.device,
+            dtype=torch.bool,
+        )
+        target_mask = torch.cat(
+            (
+                label_mask[:, 1:],
+                torch.zeros(
+                    int(label_mask.shape[0]),
+                    1,
+                    device=label_mask.device,
+                    dtype=torch.bool,
+                ),
+            ),
+            dim=1,
+        )
+        shifted_targets = shifted_targets.masked_fill(~target_mask, -100)
+    loss_sum = F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]).float(),
+        shifted_targets.reshape(-1),
+        ignore_index=-100,
+        reduction="sum",
+    )
+    valid_tokens = (shifted_targets != -100).sum().clamp_min(1)
+    return loss_sum / valid_tokens.to(dtype=loss_sum.dtype)
+
+
 def _masked_token_shift(
     hidden_states: torch.Tensor,
     previous: torch.Tensor,
@@ -1113,25 +1158,11 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                 labels = labels.unsqueeze(0)
             if tuple(labels.shape[:2]) != tuple(full_logits.shape[:2]):
                 raise ValueError("labels must have the same [batch, sequence] shape")
-            shifted_labels = labels[:, 1:].contiguous()
-            if attention_mask is not None:
-                label_mask = attention_mask[:, -labels.shape[1] :].to(
-                    device=shifted_labels.device, dtype=torch.bool
-                )
-                shifted_labels = shifted_labels.masked_fill(
-                    ~label_mask[:, 1:], -100
-                )
-            shifted_logits = full_logits[:, :-1].contiguous()
-            if shifted_logits.numel() == 0 or not bool(
-                (shifted_labels != -100).any().detach().cpu()
-            ):
-                loss = full_logits.float().sum() * 0.0
-            else:
-                loss = F.cross_entropy(
-                    shifted_logits.view(-1, shifted_logits.shape[-1]).float(),
-                    shifted_labels.reshape(-1),
-                    ignore_index=-100,
-                )
+            loss = _causal_language_model_loss(
+                full_logits,
+                labels,
+                attention_mask,
+            )
 
         logits = _select_logits(full_logits, logits_to_keep)
         return_dict = (

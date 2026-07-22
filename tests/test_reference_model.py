@@ -154,6 +154,55 @@ def test_loss_gradient_inputs_embeds_and_unsupported_attentions(tiny_config):
         model(input_ids=ids, output_attentions=True)
 
 
+def test_causal_loss_shifts_targets_without_copying_logits():
+    from rwkv7_hf.modeling_rwkv7 import _causal_language_model_loss
+
+    torch.manual_seed(13)
+    expected_logits = torch.randn(3, 7, 23, requires_grad=True)
+    actual_logits = expected_logits.detach().clone().requires_grad_(True)
+    labels = torch.randint(0, 23, (3, 7))
+    labels[0, 2] = -100
+    mask = torch.tensor(
+        [
+            [1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 0, 0, 0],
+            [0, 0, 1, 1, 1, 1, 1],
+        ]
+    )
+    expected_labels = labels[:, 1:].contiguous().masked_fill(
+        ~mask[:, 1:].bool(), -100
+    )
+    expected = torch.nn.functional.cross_entropy(
+        expected_logits[:, :-1].contiguous().reshape(-1, 23),
+        expected_labels.reshape(-1),
+        ignore_index=-100,
+    )
+    actual = _causal_language_model_loss(actual_logits, labels, mask)
+    torch.testing.assert_close(actual, expected)
+
+    expected.backward()
+    actual.backward()
+    torch.testing.assert_close(actual_logits.grad, expected_logits.grad)
+
+    ignored_logits = torch.randn(2, 4, 23, requires_grad=True)
+    ignored = _causal_language_model_loss(
+        ignored_logits,
+        torch.full((2, 4), -100, dtype=torch.long),
+        None,
+    )
+    assert ignored.item() == 0.0
+    ignored.backward()
+    assert ignored_logits.grad is not None
+    assert torch.count_nonzero(ignored_logits.grad) == 0
+
+    single = _causal_language_model_loss(
+        torch.randn(2, 1, 23, requires_grad=True),
+        torch.randint(0, 23, (2, 1)),
+        None,
+    )
+    assert single.item() == 0.0
+
+
 def test_gradient_checkpointing_disables_cache(tiny_config):
     model = RWKV7ForCausalLM(tiny_config).train()
     model.gradient_checkpointing_enable()

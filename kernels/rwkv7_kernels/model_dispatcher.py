@@ -36,6 +36,81 @@ _AUTO_NATIVE_MODEL_SHAPES = {
 }
 _AUTO_NATIVE_MAX_BATCH = 8
 _AUTO_NATIVE_MAX_PREFILL_TOKENS = 2048
+_NATIVE_TRAINING_PROBE_TICKET_KEY = "__rwkv7_native_training_probe_ticket_v1"
+
+
+class _NativeTrainingProbeTicket:
+    """Single-use handoff from the public probe to its matching execution."""
+
+    __slots__ = ("owner", "request_stamp", "support")
+
+    def __init__(
+        self,
+        owner: Any,
+        request_stamp: tuple[Any, ...],
+        support: dict[str, Any],
+    ) -> None:
+        self.owner = owner
+        self.request_stamp = request_stamp
+        self.support = dict(support)
+
+
+def _probe_value_stamp(value: Any) -> tuple[Any, ...]:
+    if isinstance(value, torch.Tensor):
+        try:
+            version = int(value._version)
+        except RuntimeError:
+            # Inference tensors intentionally do not expose a version counter.
+            version = None
+        return (
+            "tensor",
+            id(value),
+            version,
+            tuple(value.shape),
+            tuple(value.stride()),
+            value.dtype,
+            value.device,
+            bool(value.requires_grad),
+        )
+    if value is None or type(value) in (bool, int, float, str):
+        return ("value", type(value), value)
+    return ("object", id(value))
+
+
+def _native_training_request_stamp(request: dict[str, Any]) -> tuple[Any, ...]:
+    return tuple(
+        (key, _probe_value_stamp(value))
+        for key, value in request.items()
+        if key != _NATIVE_TRAINING_PROBE_TICKET_KEY
+    )
+
+
+def _publish_native_training_probe_ticket(
+    owner: Any,
+    request: dict[str, Any],
+    support: dict[str, Any],
+) -> None:
+    request.pop(_NATIVE_TRAINING_PROBE_TICKET_KEY, None)
+    if bool(request["training"]) and bool(support["supported"]):
+        request[_NATIVE_TRAINING_PROBE_TICKET_KEY] = _NativeTrainingProbeTicket(
+            owner,
+            _native_training_request_stamp(request),
+            support,
+        )
+
+
+def _consume_native_training_probe_ticket(
+    owner: Any,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    ticket = request.pop(_NATIVE_TRAINING_PROBE_TICKET_KEY, None)
+    if not isinstance(ticket, _NativeTrainingProbeTicket):
+        return None
+    if ticket.owner is not owner:
+        return None
+    if ticket.request_stamp != _native_training_request_stamp(request):
+        return None
+    return dict(ticket.support)
 
 
 def _phase(request: dict[str, Any]) -> str:
@@ -732,11 +807,14 @@ def probe_model_forward_v1(owner: Any, request: dict[str, Any]):
     """Return whether a migrated whole-model implementation accepts a call."""
 
     validate_model_request(request)
+    request.pop(_NATIVE_TRAINING_PROBE_TICKET_KEY, None)
     requested = _requested_implementation()
     if requested == "dense":
         return _probe_dense(owner, request)
     if requested == "native":
-        return _probe_native(owner, request)
+        support = _probe_native(owner, request)
+        _publish_native_training_probe_ticket(owner, request, support)
+        return support
     return _probe_auto_native(owner, request)
 
 
@@ -759,11 +837,15 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
 
     implementation = _requested_implementation()
     if implementation in ("native", "auto"):
-        support = (
-            _probe_native(owner, request)
-            if implementation == "native"
-            else _probe_auto_native(owner, request)
-        )
+        support = None
+        if implementation == "native" and bool(request["training"]):
+            support = _consume_native_training_probe_ticket(owner, request)
+        if support is None:
+            support = (
+                _probe_native(owner, request)
+                if implementation == "native"
+                else _probe_auto_native(owner, request)
+            )
         if not support["supported"]:
             raise RuntimeError(support["reason"])
         if bool(request["training"]):

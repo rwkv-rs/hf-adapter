@@ -481,7 +481,16 @@ def timed_training(
     *,
     warmup: int,
     repeats: int,
+    legacy_double_ce: bool = False,
 ) -> dict[str, Any]:
+    """Time model training, including exactly one model-provided CE by default.
+
+    ``legacy_double_ce`` reproduces the old diagnostic path: the model first
+    computes ``output.loss`` because labels are supplied, then a second CE is
+    built from its logits and used for backward.  It is intentionally a Python
+    API-only escape hatch so published benchmark runs keep the fair default.
+    """
+
     def step():
         model.zero_grad(set_to_none=True)
         output = model(
@@ -490,11 +499,18 @@ def timed_training(
             use_cache=False,
             logits_to_keep=0,
         )
-        loss = F.cross_entropy(
-            output.logits[:, :-1].float().reshape(-1, output.logits.shape[-1]),
-            labels[:, 1:].reshape(-1),
-            ignore_index=-100,
-        )
+        if legacy_double_ce:
+            loss = F.cross_entropy(
+                output.logits[:, :-1]
+                .float()
+                .reshape(-1, output.logits.shape[-1]),
+                labels[:, 1:].reshape(-1),
+                ignore_index=-100,
+            )
+        else:
+            loss = output.loss
+            if loss is None:
+                raise RuntimeError("training model did not return loss for labels")
         loss.backward()
         return loss
 
@@ -528,6 +544,9 @@ def timed_training(
         "peak_memory_bytes": int(torch.cuda.max_memory_allocated()),
         "warmup": warmup,
         "repeats": repeats,
+        "loss_mode": (
+            "legacy-double-ce" if legacy_double_ce else "model-output-loss"
+        ),
     }
 
 
@@ -541,6 +560,8 @@ def benchmark_training_lane(
     warmup: int,
     repeats: int,
     seed: int,
+    *,
+    legacy_double_ce: bool = False,
 ) -> dict[str, Any]:
     model = load_model(kind, path, dtype, training=True)
     training_route_mode(kind, training_mode)
@@ -556,7 +577,14 @@ def benchmark_training_lane(
             )
             labels = ids.clone()
             labels[0, sequence // 2] = -100
-            result = timed_training(model, ids, labels, warmup=warmup, repeats=repeats)
+            result = timed_training(
+                model,
+                ids,
+                labels,
+                warmup=warmup,
+                repeats=repeats,
+                legacy_double_ce=legacy_double_ce,
+            )
             result["tokens_per_second"] = (
                 batch * sequence / (result["median_ms"] / 1000.0)
             )

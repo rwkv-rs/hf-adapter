@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import itertools
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 import torch
 
 
 EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
 sys.path.insert(0, str(EVALUATION))
 
+import benchmark_backend_v2 as benchmark  # noqa: E402
 from benchmark_backend_v2 import add_speedups, percentile, routes_passed  # noqa: E402
 from validate_backend_v2_ecosystem import (  # noqa: E402
     adapter_fallback_route,
@@ -181,6 +185,208 @@ def test_speed_route_gate_accepts_explicit_not_applicable_training():
 
 def test_percentile_uses_nearest_rank():
     assert percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.95) == 5.0
+
+
+def test_timed_training_uses_model_loss_once_and_preserves_sync_order(monkeypatch):
+    trace = []
+    ce_calls = []
+    model_loss_backwards = []
+    original_cross_entropy = benchmark.F.cross_entropy
+
+    def counted_cross_entropy(*args, **kwargs):
+        ce_calls.append((args, kwargs))
+        return original_cross_entropy(*args, **kwargs)
+
+    class Model:
+        def __init__(self):
+            self.weight = torch.nn.Parameter(torch.zeros(1, 1, 5))
+
+        def zero_grad(self, *, set_to_none):
+            assert set_to_none
+            self.weight.grad = None
+
+        def __call__(self, *, input_ids, labels, use_cache, logits_to_keep):
+            trace.append("step")
+            assert not use_cache
+            assert logits_to_keep == 0
+            logits = self.weight.expand(*input_ids.shape, -1)
+            loss = benchmark.F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.shape[-1]),
+                labels[:, 1:].reshape(-1),
+                ignore_index=-100,
+            )
+            loss.register_hook(lambda gradient: model_loss_backwards.append(gradient))
+            return SimpleNamespace(loss=loss, logits=logits)
+
+    clock = itertools.count()
+
+    def perf_counter():
+        trace.append("clock")
+        return next(clock) / 1000.0
+
+    monkeypatch.setattr(benchmark.F, "cross_entropy", counted_cross_entropy)
+    monkeypatch.setattr(benchmark, "synchronize", lambda: trace.append("sync"))
+    monkeypatch.setattr(benchmark.time, "perf_counter", perf_counter)
+    monkeypatch.setattr(benchmark.torch.cuda, "reset_peak_memory_stats", lambda: None)
+    monkeypatch.setattr(benchmark.torch.cuda, "max_memory_allocated", lambda: 0)
+
+    ids = torch.tensor([[1, 2, 3, 4]])
+    labels = ids.clone()
+    result = benchmark.timed_training(Model(), ids, labels, warmup=1, repeats=2)
+
+    steps = 1 + 1 + 2  # cold + warmup + measured repeats
+    assert len(ce_calls) == steps
+    assert len(model_loss_backwards) == steps
+    assert result["loss_mode"] == "model-output-loss"
+    assert trace == [
+        "sync",
+        "clock",
+        "step",
+        "sync",
+        "clock",
+        "step",
+        "sync",
+        "sync",
+        "clock",
+        "step",
+        "sync",
+        "clock",
+        "sync",
+        "clock",
+        "step",
+        "sync",
+        "clock",
+    ]
+
+
+def test_timed_training_legacy_double_ce_is_explicit(monkeypatch):
+    ce_calls = []
+    model_loss_backwards = []
+    original_cross_entropy = benchmark.F.cross_entropy
+
+    def counted_cross_entropy(*args, **kwargs):
+        ce_calls.append((args, kwargs))
+        return original_cross_entropy(*args, **kwargs)
+
+    class Model:
+        def __init__(self):
+            self.weight = torch.nn.Parameter(torch.zeros(1, 1, 5))
+
+        def zero_grad(self, *, set_to_none):
+            self.weight.grad = None
+
+        def __call__(self, *, input_ids, labels, use_cache, logits_to_keep):
+            logits = self.weight.expand(*input_ids.shape, -1)
+            loss = benchmark.F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.shape[-1]),
+                labels[:, 1:].reshape(-1),
+                ignore_index=-100,
+            )
+            loss.register_hook(lambda gradient: model_loss_backwards.append(gradient))
+            return SimpleNamespace(loss=loss, logits=logits)
+
+    monkeypatch.setattr(benchmark.F, "cross_entropy", counted_cross_entropy)
+    monkeypatch.setattr(benchmark, "synchronize", lambda: None)
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: 0.0)
+    monkeypatch.setattr(benchmark.torch.cuda, "reset_peak_memory_stats", lambda: None)
+    monkeypatch.setattr(benchmark.torch.cuda, "max_memory_allocated", lambda: 0)
+
+    ids = torch.tensor([[1, 2, 3, 4]])
+    result = benchmark.timed_training(
+        Model(),
+        ids,
+        ids.clone(),
+        warmup=0,
+        repeats=1,
+        legacy_double_ce=True,
+    )
+
+    steps = 1 + 0 + 1
+    assert len(ce_calls) == steps * 2
+    assert not model_loss_backwards
+    assert result["loss_mode"] == "legacy-double-ce"
+
+
+@pytest.mark.parametrize("legacy_double_ce", [False, True])
+def test_training_lanes_share_the_same_loss_mode(monkeypatch, legacy_double_ce):
+    calls = []
+    route_calls = []
+
+    class Generator:
+        def __init__(self, *, device):
+            assert device == "cuda"
+
+        def manual_seed(self, seed):
+            self.seed = seed
+            return self
+
+    class Model:
+        def __init__(self, kind):
+            self.kind = kind
+            self.config = SimpleNamespace(vocab_size=8)
+
+    def load_model(kind, path, dtype, *, training):
+        assert training
+        return Model(kind)
+
+    def randint(low, high, size, *, generator, device):
+        assert (low, high, device) == (1, 8, "cuda")
+        assert generator.seed == 17
+        return torch.arange(size[0] * size[1]).reshape(size) % (high - low) + low
+
+    def timed_training(model, ids, labels, **kwargs):
+        calls.append(
+            {
+                "kind": model.kind,
+                "ids": ids.clone(),
+                "labels": labels.clone(),
+                "kwargs": kwargs,
+            }
+        )
+        return {"median_ms": 1.0}
+
+    monkeypatch.setattr(benchmark, "load_model", load_model)
+    monkeypatch.setattr(
+        benchmark,
+        "training_route_mode",
+        lambda kind, mode: route_calls.append((kind, mode)),
+    )
+    monkeypatch.setattr(benchmark.torch, "Generator", Generator)
+    monkeypatch.setattr(benchmark.torch, "randint", randint)
+    monkeypatch.setattr(benchmark, "timed_training", timed_training)
+    monkeypatch.setattr(benchmark, "last_route", lambda kind: {"kind": kind})
+    monkeypatch.setattr(benchmark.gc, "collect", lambda: None)
+    monkeypatch.setattr(benchmark.torch.cuda, "empty_cache", lambda: None)
+
+    for kind in ("reference", "optimized", "fla"):
+        benchmark.benchmark_training_lane(
+            kind,
+            Path("/checkpoint"),
+            torch.bfloat16,
+            "native",
+            (1,),
+            (16,),
+            2,
+            3,
+            17,
+            legacy_double_ce=legacy_double_ce,
+        )
+
+    assert route_calls == [
+        ("reference", "native"),
+        ("optimized", "native"),
+        ("fla", "native"),
+    ]
+    assert [call["kind"] for call in calls] == ["reference", "optimized", "fla"]
+    for call in calls:
+        assert call["kwargs"] == {
+            "warmup": 2,
+            "repeats": 3,
+            "legacy_double_ce": legacy_double_ce,
+        }
+        assert torch.equal(call["ids"], calls[0]["ids"])
+        assert torch.equal(call["labels"], calls[0]["labels"])
+        assert call["labels"][0, 8].item() == -100
 
 
 def test_ecosystem_route_gates_distinguish_native_and_adapter_fallback():

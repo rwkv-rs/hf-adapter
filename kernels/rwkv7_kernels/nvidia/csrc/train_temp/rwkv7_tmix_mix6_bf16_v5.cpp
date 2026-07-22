@@ -95,13 +95,21 @@ std::vector<torch::Tensor> backward(
     check_bf16_cuda(x_v, "x_v");
     check_bf16_cuda(x_a, "x_a");
     check_bf16_cuda(x_g, "x_g");
+    TORCH_CHECK(x.dim() == 3, "x must have shape [B, T, C]");
     TORCH_CHECK(grad_r.sizes() == x.sizes(), "grad_r shape mismatch");
     TORCH_CHECK(grad_w.sizes() == x.sizes(), "grad_w shape mismatch");
     TORCH_CHECK(grad_k.sizes() == x.sizes(), "grad_k shape mismatch");
     TORCH_CHECK(grad_v.sizes() == x.sizes(), "grad_v shape mismatch");
     TORCH_CHECK(grad_a.sizes() == x.sizes(), "grad_a shape mismatch");
     TORCH_CHECK(grad_g.sizes() == x.sizes(), "grad_g shape mismatch");
-    TORCH_CHECK((x.size(2) % 2) == 0, "tmix_mix6_v5 currently requires even C");
+    int64_t c = x.size(2);
+    TORCH_CHECK((c % 2) == 0, "tmix_mix6_v5 currently requires even C");
+    check_vec(x_r, c, "x_r");
+    check_vec(x_w, c, "x_w");
+    check_vec(x_k, c, "x_k");
+    check_vec(x_v, c, "x_v");
+    check_vec(x_a, c, "x_a");
+    check_vec(x_g, c, "x_g");
     return tmix_mix6_backward_v5_cuda(grad_r, grad_w, grad_k, grad_v, grad_a, grad_g, x, x_r, x_w, x_k, x_v, x_a, x_g);
 }
 

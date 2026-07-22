@@ -10,8 +10,8 @@ boundary, without copying its duplicate Hugging Face model stack back into
 `kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json` records **102** files
 from `perf/native-kernels-v0.8`. Each row contains the old path, Git blob, new
 path, destination SHA256, and transfer kind. The wheel test recomputes every
-destination hash. For the **91 byte-identical** rows it also reconstructs the
-Git blob directly from the wheel bytes. Eleven files require explicit
+destination hash. For the **90 byte-identical** rows it also reconstructs the
+Git blob directly from the wheel bytes. Twelve files require explicit
 clean-boundary adaptation rather than a false byte-identity claim:
 
 - `native_graph_runtime.py` now binds only canonical `RWKV7Cache` views rather
@@ -32,9 +32,14 @@ clean-boundary adaptation rather than a false byte-identity claim:
 - the train-temp recurrent C++/CUDA pair now accepts canonical FP32 decay and
   FP32 decay gradients, retains FP32 state with BF16 outer-product/output
   rounding, and disables FMA contraction for exact reference parity;
-- the three BF16 train-temp CUDA translation units retain the vector FP32
-  atomic on SM90+ and use equivalent scalar FP32 atomics on SM89, SM80 and
-  SM70, where CUDA does not provide `atomicAdd(float2*, float2)`.
+- the ChannelMix and KK-pre BF16 train-temp CUDA translation units retain the
+  vector FP32 atomic on SM90+ and use equivalent scalar FP32 atomics on SM89,
+  SM80 and SM70, where CUDA does not provide
+  `atomicAdd(float2*, float2)`;
+- the Mix6 C++ boundary validates its full rank/channel/vector contract, while
+  its CUDA backward uses a deterministic current-stream channel-pair
+  reduction instead of architecture-dependent atomic parameter-gradient
+  accumulation.
 
 All adapted destinations retain their old Git blob identity, new SHA256 and a
 machine-checked rationale. The complete 102-file set includes:
@@ -51,7 +56,7 @@ machine-checked rationale. The complete 102-file set includes:
 
 Source-tree presence is not enough: `scripts/audit_release_wheels.py` opens the
 actual kernel wheel, rejects unsafe/cross-package members, reads the embedded
-manifest, and recomputes all 102 destination hashes plus all 91 applicable
+manifest, and recomputes all 102 destination hashes plus all 90 applicable
 source Git blobs. It also requires the adapted
 dispatcher, dense/prefill/decode, graph/state-pool, quantization, recurrent and
 training runtime modules that were intentionally not byte-copied from the old
@@ -97,8 +102,8 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 
 | disposition | files |
 |---|---:|
-| byte-identical NVIDIA implementation | 91 |
-| adapted to the clean model-forward protocol | 21 |
+| byte-identical NVIDIA implementation | 90 |
+| adapted to the clean model-forward protocol | 22 |
 | replaced by canonical reference ownership | 7 |
 | tooling relocated or retired | 6 |
 | separate non-NVIDIA hardware distribution | 27 |
@@ -107,7 +112,7 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 Every row retains its historical Git mode and blob ID. The wheel audit rebuilds
 the Git tree object from all 153 rows and requires the result to equal frozen
 tree `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`. It then cross-checks all 102
-NVIDIA rows (91 exact transfers and eleven clean adaptations) against
+NVIDIA rows (90 exact transfers and twelve clean adaptations) against
 `MIGRATION_MANIFEST.json` and requires every adapted kernel
 replacement to exist in the wheel. An omitted historical file, an
 `unclassified` row, or a relabelled blob changes the reconstructed tree and
@@ -169,8 +174,8 @@ until one immutable HF wheel and one immutable kernel wheel pass:
 2. cache, padding, cached decode, greedy/beam, loss and all-gradient gates;
 3. dense and quantized route gates, HF ecosystem, SFT/DPO/GRPO;
 4. the 144-unit three-way `lm_eval` matrix;
-5. honest prefill/decode/forward-backward speed matrices on RTX 4080, V100,
-   and RTX 4090.
+5. honest prefill/decode/forward-backward speed matrices on RTX 4080 and RTX
+   4090. V100 results remain historical and are not a release requirement.
 
 Requested environment selectors are never accepted as proof.  Result bundles
 must contain the actual `native-nvidia-*-v2[...]` or recurrent implementation

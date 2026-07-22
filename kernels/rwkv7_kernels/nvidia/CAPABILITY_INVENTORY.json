@@ -520,6 +520,7 @@
         "rwkv7_kernels/linear/training_flattened.py",
         "rwkv7_kernels/model_dispatcher.py",
         "rwkv7_kernels/nvidia/train_temp_cuda.py",
+        "rwkv7_kernels/nvidia/training_math.py",
         "rwkv7_kernels/nvidia/training_runtime.py",
         "rwkv7_kernels/recurrent/training_factorized.py",
         "rwkv7_kernels/recurrent/training_matrix.py",

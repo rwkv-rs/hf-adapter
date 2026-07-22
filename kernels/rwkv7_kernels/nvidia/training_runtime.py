@@ -18,6 +18,33 @@ from .training_math import channel_mix, module_linear
 IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
 
 
+def causal_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+) -> torch.Tensor:
+    """Compute the public shifted causal loss without copying shifted logits.
+
+    The former implementation materialized ``logits[:, :-1].contiguous()`` and
+    then promoted that large tensor to FP32.  Keep logits in their native
+    contiguous ``[B, T, V]`` layout instead and shift the tiny integer target
+    tensor.  A sum divided by the valid-token count also handles an all-ignored
+    batch without a device-to-host synchronization or a NaN mean.
+    """
+
+    shifted_targets = torch.cat(
+        (labels[:, 1:], labels.new_full((int(labels.shape[0]), 1), -100)),
+        dim=1,
+    )
+    loss_sum = F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]).float(),
+        shifted_targets.reshape(-1),
+        ignore_index=-100,
+        reduction="sum",
+    )
+    valid_tokens = (shifted_targets != -100).sum().clamp_min(1)
+    return loss_sum / valid_tokens.to(dtype=loss_sum.dtype)
+
+
 def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     """Execute dense BF16 forward/backward-capable RWKV-7 training math."""
 
@@ -69,21 +96,10 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     labels = request.get("labels")
     loss = None
     if labels is not None:
-        shifted_logits = full_logits[:, :-1].contiguous()
-        shifted_labels = labels[:, 1:].contiguous()
-        if shifted_logits.numel() == 0 or not bool(
-            (shifted_labels != -100).any().detach().cpu()
-        ):
-            loss = full_logits.float().sum() * 0.0
-        else:
-            # Preserve the public HF loss exactly. The historical train_temp
-            # fused loss adds L2Wrap to the gradient and is therefore exposed
-            # only as a leaf operator, never substituted for standard CE.
-            loss = F.cross_entropy(
-                shifted_logits.view(-1, shifted_logits.shape[-1]).float(),
-                shifted_labels.reshape(-1),
-                ignore_index=-100,
-            )
+        # Preserve standard HF causal CE. The historical fused loss adds
+        # L2Wrap to the gradient and therefore remains a separate leaf rather
+        # than silently changing the public model loss.
+        loss = causal_cross_entropy(full_logits, labels)
 
     keep = request.get("logits_to_keep")
     logits = full_logits
@@ -103,4 +119,4 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["IMPLEMENTATION", "run_training"]
+__all__ = ["IMPLEMENTATION", "causal_cross_entropy", "run_training"]

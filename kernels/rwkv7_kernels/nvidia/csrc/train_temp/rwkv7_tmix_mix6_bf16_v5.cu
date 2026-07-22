@@ -16,17 +16,6 @@ __device__ inline void store_bf16x2(at::BFloat16* ptr, __nv_bfloat162 value) {
     *reinterpret_cast<__nv_bfloat162*>(ptr) = value;
 }
 
-__device__ inline void atomic_add_float2(float* ptr, float x0, float x1) {
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-    atomicAdd(reinterpret_cast<float2*>(ptr), make_float2(x0, x1));
-#else
-    // Vector float atomics require SM90+. Ada (SM89), Ampere, and Volta
-    // retain the same operation through two scalar atomics.
-    atomicAdd(ptr, x0);
-    atomicAdd(ptr + 1, x1);
-#endif
-}
-
 inline int64_t ceil_div(int64_t n, int64_t d) {
     return (n + d - 1) / d;
 }
@@ -75,10 +64,12 @@ __global__ void tmix_mix6_forward_kernel(
     store_bf16x2(out_g + idx, __hadd2(x_now, __hmul2(xx, load_bf16x2(x_g + c))));
 }
 
-constexpr int TMIX_PARAM_THREADS = 256;
-constexpr int TMIX_PARAM_BT_TILE = 8;
+// The deterministic kernel exposes only C/2 independent workers. Smaller
+// blocks distribute the common C=768 case over six SMs instead of two while
+// retaining two warps per block for latency hiding.
+constexpr int TMIX_PARAM_THREADS = 64;
 
-__global__ void tmix_mix6_backward_fused_kernel_v5(
+__global__ void tmix_mix6_backward_deterministic_kernel_v5(
     const at::BFloat16* __restrict__ grad_r,
     const at::BFloat16* __restrict__ grad_w,
     const at::BFloat16* __restrict__ grad_k,
@@ -93,12 +84,12 @@ __global__ void tmix_mix6_backward_fused_kernel_v5(
     const at::BFloat16* __restrict__ x_a,
     const at::BFloat16* __restrict__ x_g,
     at::BFloat16* __restrict__ grad_x,
-    float* __restrict__ grad_x_r,
-    float* __restrict__ grad_x_w,
-    float* __restrict__ grad_x_k,
-    float* __restrict__ grad_x_v,
-    float* __restrict__ grad_x_a,
-    float* __restrict__ grad_x_g,
+    at::BFloat16* __restrict__ grad_x_r,
+    at::BFloat16* __restrict__ grad_x_w,
+    at::BFloat16* __restrict__ grad_x_k,
+    at::BFloat16* __restrict__ grad_x_v,
+    at::BFloat16* __restrict__ grad_x_a,
+    at::BFloat16* __restrict__ grad_x_g,
     int64_t bt_size,
     int64_t t_size,
     int64_t c_size) {
@@ -109,8 +100,6 @@ __global__ void tmix_mix6_backward_fused_kernel_v5(
     }
 
     int64_t c = c_pair * 2;
-    int64_t bt_start = static_cast<int64_t>(blockIdx.y) * TMIX_PARAM_BT_TILE;
-    int64_t bt_end = min(bt_start + static_cast<int64_t>(TMIX_PARAM_BT_TILE), bt_size);
 
     __nv_bfloat162 one = __floats2bfloat162_rn(1.0f, 1.0f);
     __nv_bfloat162 pr = load_bf16x2(x_r + c);
@@ -137,11 +126,13 @@ __global__ void tmix_mix6_backward_fused_kernel_v5(
     __nv_bfloat162 gg = __floats2bfloat162_rn(0.0f, 0.0f);
     bool have_current_grad = false;
     float2 prev_x = make_float2(0.0f, 0.0f);
-    bool have_prev_x = false;
+    int64_t t = 0;
 
-    for (int64_t bt = bt_start; bt < bt_end; ++bt) {
+    // One channel-pair thread visits rows in the canonical flattened [B, T]
+    // order. This removes cross-block atomics and fixes the FP32 parameter
+    // reduction order independently of block scheduling.
+    for (int64_t bt = 0; bt < bt_size; ++bt) {
         int64_t idx = bt * c_size + c;
-        int64_t t = bt % t_size;
         if (!have_current_grad) {
             gr = load_bf16x2(grad_r + idx);
             gw = load_bf16x2(grad_w + idx);
@@ -189,7 +180,7 @@ __global__ void tmix_mix6_backward_fused_kernel_v5(
         float2 x_now = __bfloat1622float2(load_bf16x2(x + idx));
         float2 x_prev = make_float2(0.0f, 0.0f);
         if (t > 0) {
-            x_prev = (have_prev_x ? prev_x : __bfloat1622float2(load_bf16x2(x + idx - c_size)));
+            x_prev = prev_x;
         }
         float dx0 = x_prev.x - x_now.x;
         float dx1 = x_prev.y - x_now.y;
@@ -208,30 +199,17 @@ __global__ void tmix_mix6_backward_fused_kernel_v5(
         ag0 += fg.x * dx0; ag1 += fg.y * dx1;
 
         prev_x = x_now;
-        have_prev_x = (t + 1 < t_size);
         gr = next_gr; gw = next_gw; gk = next_gk; gv = next_gv; ga = next_ga; gg = next_gg;
         have_current_grad = have_next_grad;
+        t = have_next_grad ? t + 1 : 0;
     }
 
-    atomic_add_float2(grad_x_r + c, ar0, ar1);
-    atomic_add_float2(grad_x_w + c, aw0, aw1);
-    atomic_add_float2(grad_x_k + c, ak0, ak1);
-    atomic_add_float2(grad_x_v + c, av0, av1);
-    atomic_add_float2(grad_x_a + c, aa0, aa1);
-    atomic_add_float2(grad_x_g + c, ag0, ag1);
-}
-
-__global__ void cast_float_to_bf16_vec2_kernel(
-    const float* __restrict__ src,
-    at::BFloat16* __restrict__ dst,
-    int64_t c_size) {
-    int64_t c_pair = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    int64_t total_pairs = c_size / 2;
-    if (c_pair >= total_pairs) {
-        return;
-    }
-    int64_t c = c_pair * 2;
-    store_bf16x2(dst + c, __floats2bfloat162_rn(src[c], src[c + 1]));
+    store_bf16x2(grad_x_r + c, __floats2bfloat162_rn(ar0, ar1));
+    store_bf16x2(grad_x_w + c, __floats2bfloat162_rn(aw0, aw1));
+    store_bf16x2(grad_x_k + c, __floats2bfloat162_rn(ak0, ak1));
+    store_bf16x2(grad_x_v + c, __floats2bfloat162_rn(av0, av1));
+    store_bf16x2(grad_x_a + c, __floats2bfloat162_rn(aa0, aa1));
+    store_bf16x2(grad_x_g + c, __floats2bfloat162_rn(ag0, ag1));
 }
 
 } // namespace
@@ -300,24 +278,13 @@ std::vector<torch::Tensor> tmix_mix6_backward_v5_cuda(
     auto grad_x_a = torch::empty({x.size(2)}, x.options());
     auto grad_x_g = torch::empty({x.size(2)}, x.options());
 
-    auto fp32_opts = x.options().dtype(torch::kFloat);
-    auto grad_x_r_fp32 = torch::zeros({x.size(2)}, fp32_opts);
-    auto grad_x_w_fp32 = torch::zeros({x.size(2)}, fp32_opts);
-    auto grad_x_k_fp32 = torch::zeros({x.size(2)}, fp32_opts);
-    auto grad_x_v_fp32 = torch::zeros({x.size(2)}, fp32_opts);
-    auto grad_x_a_fp32 = torch::zeros({x.size(2)}, fp32_opts);
-    auto grad_x_g_fp32 = torch::zeros({x.size(2)}, fp32_opts);
-
-    const int threads = 256;
     const int64_t bt_size = x.size(0) * x.size(1);
     const int64_t c_size = x.size(2);
     auto stream = at::cuda::getCurrentCUDAStream();
 
-    dim3 fused_blocks(
-        static_cast<unsigned int>(ceil_div(c_size / 2, static_cast<int64_t>(TMIX_PARAM_THREADS))),
-        static_cast<unsigned int>(ceil_div(bt_size, static_cast<int64_t>(TMIX_PARAM_BT_TILE))),
-        1);
-    tmix_mix6_backward_fused_kernel_v5<<<fused_blocks, TMIX_PARAM_THREADS, 0, stream>>>(
+    const int blocks = static_cast<int>(
+        ceil_div(c_size / 2, static_cast<int64_t>(TMIX_PARAM_THREADS)));
+    tmix_mix6_backward_deterministic_kernel_v5<<<blocks, TMIX_PARAM_THREADS, 0, stream>>>(
         grad_r.data_ptr<at::BFloat16>(),
         grad_w.data_ptr<at::BFloat16>(),
         grad_k.data_ptr<at::BFloat16>(),
@@ -332,24 +299,15 @@ std::vector<torch::Tensor> tmix_mix6_backward_v5_cuda(
         x_a.data_ptr<at::BFloat16>(),
         x_g.data_ptr<at::BFloat16>(),
         grad_x.data_ptr<at::BFloat16>(),
-        grad_x_r_fp32.data_ptr<float>(),
-        grad_x_w_fp32.data_ptr<float>(),
-        grad_x_k_fp32.data_ptr<float>(),
-        grad_x_v_fp32.data_ptr<float>(),
-        grad_x_a_fp32.data_ptr<float>(),
-        grad_x_g_fp32.data_ptr<float>(),
+        grad_x_r.data_ptr<at::BFloat16>(),
+        grad_x_w.data_ptr<at::BFloat16>(),
+        grad_x_k.data_ptr<at::BFloat16>(),
+        grad_x_v.data_ptr<at::BFloat16>(),
+        grad_x_a.data_ptr<at::BFloat16>(),
+        grad_x_g.data_ptr<at::BFloat16>(),
         bt_size,
         x.size(1),
         c_size);
-    C10_CUDA_KERNEL_LAUNCH_CHECK();
-
-    const int cast_blocks = static_cast<int>(ceil_div(c_size / 2, static_cast<int64_t>(threads)));
-    cast_float_to_bf16_vec2_kernel<<<cast_blocks, threads, 0, stream>>>(grad_x_r_fp32.data_ptr<float>(), grad_x_r.data_ptr<at::BFloat16>(), c_size);
-    cast_float_to_bf16_vec2_kernel<<<cast_blocks, threads, 0, stream>>>(grad_x_w_fp32.data_ptr<float>(), grad_x_w.data_ptr<at::BFloat16>(), c_size);
-    cast_float_to_bf16_vec2_kernel<<<cast_blocks, threads, 0, stream>>>(grad_x_k_fp32.data_ptr<float>(), grad_x_k.data_ptr<at::BFloat16>(), c_size);
-    cast_float_to_bf16_vec2_kernel<<<cast_blocks, threads, 0, stream>>>(grad_x_v_fp32.data_ptr<float>(), grad_x_v.data_ptr<at::BFloat16>(), c_size);
-    cast_float_to_bf16_vec2_kernel<<<cast_blocks, threads, 0, stream>>>(grad_x_a_fp32.data_ptr<float>(), grad_x_a.data_ptr<at::BFloat16>(), c_size);
-    cast_float_to_bf16_vec2_kernel<<<cast_blocks, threads, 0, stream>>>(grad_x_g_fp32.data_ptr<float>(), grad_x_g.data_ptr<at::BFloat16>(), c_size);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
     return {grad_x, grad_x_r, grad_x_w, grad_x_k, grad_x_v, grad_x_a, grad_x_g};

@@ -82,6 +82,18 @@ def probe_linear_training_v1(
     }
 
 
+def flattened_linear(
+    value: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+) -> torch.Tensor:
+    """Apply the shared stateless ``[B * T, C]`` projection math."""
+
+    batch, tokens, channels = value.shape
+    projected = F.linear(value.reshape(batch * tokens, channels), weight, bias)
+    return projected.reshape(batch, tokens, int(weight.shape[0]))
+
+
 def linear_training_v1(
     value: torch.Tensor,
     weight: torch.Tensor,
@@ -101,9 +113,12 @@ def linear_training_v1(
     )
     if not support["supported"]:
         raise RuntimeError(str(support["reason"]))
-    batch, tokens, channels = value.shape
-    projected = F.linear(value.reshape(batch * tokens, channels), weight, bias)
-    return projected.reshape(batch, tokens, int(weight.shape[0]))
+    return flattened_linear(value, weight, bias)
 
 
-__all__ = ["IMPLEMENTATION", "linear_training_v1", "probe_linear_training_v1"]
+__all__ = [
+    "IMPLEMENTATION",
+    "flattened_linear",
+    "linear_training_v1",
+    "probe_linear_training_v1",
+]

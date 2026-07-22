@@ -459,6 +459,46 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
     assert "train_temp._CMix.apply(" not in source
 
 
+def test_native_training_causal_loss_avoids_shifted_logits_copy(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    runtime = importlib.import_module("rwkv7_kernels.nvidia.training_runtime")
+    torch.manual_seed(119)
+    expected_logits = torch.randn(3, 7, 19, requires_grad=True)
+    actual_logits = expected_logits.detach().clone().requires_grad_(True)
+    labels = torch.randint(0, 19, (3, 7))
+    labels[0, 2] = -100
+    labels[2, 5:] = -100
+
+    expected = torch.nn.functional.cross_entropy(
+        expected_logits[:, :-1].contiguous().reshape(-1, 19),
+        labels[:, 1:].contiguous().reshape(-1),
+        ignore_index=-100,
+    )
+    actual = runtime.causal_cross_entropy(actual_logits, labels)
+    torch.testing.assert_close(actual, expected)
+
+    expected.backward()
+    actual.backward()
+    torch.testing.assert_close(actual_logits.grad, expected_logits.grad)
+
+    ignored_logits = torch.randn(2, 4, 19, requires_grad=True)
+    ignored = runtime.causal_cross_entropy(
+        ignored_logits,
+        torch.full((2, 4), -100, dtype=torch.long),
+    )
+    assert ignored.item() == 0.0
+    ignored.backward()
+    assert ignored_logits.grad is not None
+    assert torch.count_nonzero(ignored_logits.grad) == 0
+
+    single_logits = torch.randn(2, 1, 19, requires_grad=True)
+    single = runtime.causal_cross_entropy(
+        single_logits,
+        torch.randint(0, 19, (2, 1)),
+    )
+    assert single.item() == 0.0
+
+
 def test_native_training_math_matches_clean_fixed_row_contract(
     tiny_config, monkeypatch
 ):
@@ -471,11 +511,43 @@ def test_native_training_math_matches_clean_fixed_row_contract(
     projection = model.model.layers[0].attn.r_proj
 
     expected = projection(value)
-    actual = training_math.module_linear(projection, value)
-    repeated = training_math.module_linear(projection, value.repeat(3, 1, 1))
+    actual = training_math.fixed_row_linear(
+        value, projection.weight, projection.bias
+    )
+    repeated = training_math.fixed_row_linear(
+        value.repeat(3, 1, 1), projection.weight, projection.bias
+    )
 
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
     torch.testing.assert_close(actual, repeated[:3], rtol=0, atol=0)
+
+
+def test_native_training_linear_flattens_only_multiple_reference_tiles(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    training_math = importlib.import_module("rwkv7_kernels.nvidia.training_math")
+    original_linear = training_math.F.linear
+    calls = []
+
+    def record_linear(value, weight, bias=None):
+        calls.append(tuple(value.shape))
+        return original_linear(value, weight, bias)
+
+    monkeypatch.setattr(training_math.F, "linear", record_linear)
+    weight = torch.randn(11, 7)
+
+    one_tile = torch.randn(4, 16, 7)
+    one_output = training_math.training_linear(one_tile, weight)
+    assert one_output.shape == (4, 16, 11)
+    assert calls == [(training_math.REFERENCE_LINEAR_ROWS, 7)]
+
+    calls.clear()
+    four_tiles = torch.randn(4, 128, 7, requires_grad=True)
+    four_output = training_math.training_linear(four_tiles, weight)
+    assert four_output.shape == (4, 128, 11)
+    assert calls == [(512, 7)]
+    four_output.square().mean().backward()
+    assert four_tiles.grad is not None
+    assert torch.isfinite(four_tiles.grad).all()
 
 
 def test_native_training_channel_mix_does_not_reenter_linear_dispatch(
@@ -653,3 +725,108 @@ def test_train_temp_mix6_backward_matches_canonical_token_mix():
     actual = train_temp._Mix6.backward(Context(), *output_grads)
     for candidate, reference in zip(actual, expected, strict=True):
         torch.testing.assert_close(candidate, reference)
+
+
+def test_train_temp_mix6_normal_backward_calls_native_operator(monkeypatch):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    torch.manual_seed(131)
+    x = torch.randn(2, 8, 5).transpose(1, 2)
+    mixes = [torch.randn(16)[::2] for _ in range(6)]
+    output_grads = [torch.randn(2, 8, 5).transpose(1, 2) for _ in range(6)]
+    native_results = (torch.randn_like(x), *(torch.randn_like(mix) for mix in mixes))
+    calls = []
+
+    def native_backward(*args):
+        calls.append(args)
+        return native_results
+
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "backward",
+        native_backward,
+        raising=False,
+    )
+
+    class Context:
+        saved_tensors = (x, *mixes)
+
+    with torch.no_grad():
+        actual = train_temp._Mix6.backward(Context(), *output_grads)
+
+    assert len(calls) == 1
+    assert all(
+        candidate is expected for candidate, expected in zip(actual, native_results)
+    )
+    assert all(value.is_contiguous() for value in calls[0])
+    for candidate, expected in zip(calls[0][:6], output_grads, strict=True):
+        torch.testing.assert_close(candidate, expected)
+    for candidate, expected in zip(calls[0][6:], (x, *mixes), strict=True):
+        torch.testing.assert_close(candidate, expected)
+
+
+def test_train_temp_mix6_double_backward_retains_canonical_graph(monkeypatch):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    torch.manual_seed(137)
+    x = torch.randn(2, 5, 8, requires_grad=True)
+    mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
+    output_grads = [torch.randn_like(x) for _ in range(6)]
+
+    def canonical_forward(value, *parameters):
+        shifted = torch.cat(
+            (torch.zeros_like(value[:, :1]), value[:, :-1]), dim=1
+        )
+        delta = shifted - value
+        return tuple(
+            value + delta * parameter.view(1, 1, -1)
+            for parameter in parameters
+        )
+
+    def reject_native_backward(*_args):
+        raise AssertionError("double backward must use the canonical replay")
+
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "forward",
+        canonical_forward,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "backward",
+        reject_native_backward,
+        raising=False,
+    )
+
+    outputs = train_temp._Mix6.apply(x, *mixes)
+    first_gradients = torch.autograd.grad(
+        outputs,
+        (x, *mixes),
+        output_grads,
+        create_graph=True,
+    )
+    assert all(gradient.requires_grad for gradient in first_gradients)
+    second_gradients = torch.autograd.grad(
+        sum(gradient.sum() for gradient in first_gradients),
+        (x, *mixes),
+    )
+    assert all(torch.isfinite(gradient).all() for gradient in second_gradients)
+
+
+def test_train_temp_mix6_cuda_backward_has_fixed_reduction_order():
+    source = (
+        ROOT
+        / "kernels"
+        / "rwkv7_kernels"
+        / "nvidia"
+        / "csrc"
+        / "train_temp"
+        / "rwkv7_tmix_mix6_bf16_v5.cu"
+    ).read_text()
+
+    assert "tmix_mix6_backward_deterministic_kernel_v5" in source
+    assert "for (int64_t bt = 0; bt < bt_size; ++bt)" in source
+    assert "atomicAdd" not in source
+    assert "blockIdx.y" not in source
+    assert "torch::zeros" not in source
+    assert source.count("at::cuda::getCurrentCUDAStream()") == 2
+    assert "grad_x_r.data_ptr<at::BFloat16>()" in source

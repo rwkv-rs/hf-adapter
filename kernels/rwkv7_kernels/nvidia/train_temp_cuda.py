@@ -349,42 +349,54 @@ def recurrent_training_cuda_available(*, build: bool = False) -> bool:
 class _Mix6(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, x_r, x_w, x_k, x_v, x_a, x_g):
-        inputs = tuple(
-            value.contiguous() for value in (x, x_r, x_w, x_k, x_v, x_a, x_g)
-        )
-        ctx.save_for_backward(*inputs)
+        saved = (x, x_r, x_w, x_k, x_v, x_a, x_g)
+        inputs = tuple(value.contiguous() for value in saved)
+        # Save the original inputs rather than the temporary contiguous views.
+        # The CUDA backward makes its own contiguous views below, while retaining
+        # the originals here keeps higher-order derivatives connected to callers.
+        ctx.save_for_backward(*saved)
         return tuple(torch.ops.rwkv7_tmix_mix6_bf16_v5.forward(*inputs))
 
     @staticmethod
     def backward(ctx, grad_r, grad_w, grad_k, grad_v, grad_a, grad_g):
         x, *mixes = ctx.saved_tensors
         grads = tuple(
-            value.contiguous()
+            (value if value is not None else torch.zeros_like(x)).contiguous()
             for value in (grad_r, grad_w, grad_k, grad_v, grad_a, grad_g)
         )
-        # Keep the fused forward, which is bit-identical to the clean token
-        # mix, but replay the tiny canonical expression for backward. The
-        # historical CUDA backward uses atomic parameter reductions whose BF16
-        # summation order exceeds the strict HF gradient parity budget.
-        create_graph = torch.is_grad_enabled()
-        with torch.enable_grad():
-            x_ref = x.detach().requires_grad_(True)
-            mix_refs = [mix.detach().requires_grad_(True) for mix in mixes]
-            shifted = torch.cat(
-                (torch.zeros_like(x_ref[:, :1]), x_ref[:, :-1]), dim=1
-            )
-            delta = shifted - x_ref
-            outputs = [
-                x_ref + delta * mix.view(1, 1, -1) for mix in mix_refs
-            ]
-            return tuple(
-                torch.autograd.grad(
-                    outputs,
-                    (x_ref, *mix_refs),
-                    grads,
-                    create_graph=create_graph,
+        if torch.is_grad_enabled():
+            # CUDA custom operators do not define a double backward. Rebuild the
+            # canonical expression only for create_graph=True, preserving the
+            # original saved tensors so the returned gradients remain connected.
+            with torch.enable_grad():
+                references = tuple(
+                    value
+                    if value.requires_grad
+                    else value.detach().requires_grad_(True)
+                    for value in (x, *mixes)
                 )
+                x_ref, *mix_refs = references
+                shifted = torch.cat(
+                    (torch.zeros_like(x_ref[:, :1]), x_ref[:, :-1]), dim=1
+                )
+                delta = shifted - x_ref
+                outputs = [x_ref + delta * mix.view(1, 1, -1) for mix in mix_refs]
+                return tuple(
+                    torch.autograd.grad(
+                        outputs,
+                        references,
+                        grads,
+                        create_graph=True,
+                    )
+                )
+
+        inputs = tuple(value.contiguous() for value in (x, *mixes))
+        return tuple(
+            torch.ops.rwkv7_tmix_mix6_bf16_v5.backward(
+                *grads,
+                *inputs,
             )
+        )
 
 
 class _KkPre(torch.autograd.Function):

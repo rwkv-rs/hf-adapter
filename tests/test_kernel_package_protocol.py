@@ -228,6 +228,92 @@ def test_explicit_native_training_reports_actual_training_capability(monkeypatch
     assert "CUDA" in support["reason"]
 
 
+def test_native_training_forward_consumes_probe_ticket_once(monkeypatch):
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
+    runtime = importlib.import_module("rwkv7_kernels.nvidia.training_runtime")
+    calls = {"probe": 0, "run": 0}
+
+    def probe(_owner, _request):
+        calls["probe"] += 1
+        return {
+            "supported": True,
+            "implementation": "native-nvidia-train-temp-autograd-v2",
+            "reason": "migrated train_temp autograd implementation selected",
+            "phase": "training",
+        }
+
+    def run(_owner, _request):
+        calls["run"] += 1
+        return {
+            "output_kind": "causal_lm",
+            "logits": torch.zeros(1, 16, 4),
+            "loss": None,
+            "past_key_values": None,
+            "hidden_states": None,
+            "implementation": "native-nvidia-train-temp-autograd-v2",
+            "phase": "training",
+        }
+
+    monkeypatch.setattr(dispatcher, "_probe_native", probe)
+    monkeypatch.setattr(runtime, "run_training", run)
+    owner = object()
+    request = {
+        "model_kind": "causal_lm",
+        "training": True,
+        "grad_enabled": True,
+        "use_cache": False,
+        "input_ids": torch.ones(1, 16, dtype=torch.long),
+        "labels": torch.ones(1, 16, dtype=torch.long),
+    }
+
+    support = dispatcher.probe_model_forward_v1(owner, request)
+    result = dispatcher.model_forward_v1(owner, request)
+
+    assert support["supported"]
+    assert result["phase"] == "training"
+    assert calls == {"probe": 1, "run": 1}
+    assert dispatcher._NATIVE_TRAINING_PROBE_TICKET_KEY not in request
+
+
+def test_native_training_probe_ticket_rejects_mutated_label_values(monkeypatch):
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
+    calls = {"probe": 0}
+
+    def probe(_owner, request):
+        calls["probe"] += 1
+        labels = request["labels"]
+        invalid = (labels < -100) | ((labels < 0) & (labels != -100))
+        supported = not bool(invalid.any())
+        return {
+            "supported": supported,
+            "implementation": "native-nvidia-train-temp-autograd-v2",
+            "reason": (
+                "accepted" if supported else "native training labels are invalid"
+            ),
+            "phase": "training",
+        }
+
+    monkeypatch.setattr(dispatcher, "_probe_native", probe)
+    owner = object()
+    request = {
+        "model_kind": "causal_lm",
+        "training": True,
+        "grad_enabled": True,
+        "use_cache": False,
+        "labels": torch.ones(1, 16, dtype=torch.long),
+    }
+
+    assert dispatcher.probe_model_forward_v1(owner, request)["supported"]
+    request["labels"][0, 0] = -1
+    with pytest.raises(RuntimeError, match="labels are invalid"):
+        dispatcher.model_forward_v1(owner, request)
+
+    assert calls == {"probe": 2}
+    assert dispatcher._NATIVE_TRAINING_PROBE_TICKET_KEY not in request
+
+
 def test_native_training_never_bypasses_wrapped_ffn_adapters(monkeypatch):
     monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
     kernels = importlib.import_module("rwkv7_kernels")

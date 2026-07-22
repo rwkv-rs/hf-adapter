@@ -54,6 +54,7 @@ KERNEL_REQUIRED = {
     "rwkv7_kernels/nvidia/graph_pool.py",
     "rwkv7_kernels/nvidia/prefill_graph_pool.py",
     "rwkv7_kernels/nvidia/prefill_graph_runtime.py",
+    "rwkv7_kernels/nvidia/training_math.py",
     "rwkv7_kernels/nvidia/training_runtime.py",
     "rwkv7_kernels/protocol.py",
     "rwkv7_kernels/quantization.py",
@@ -121,6 +122,7 @@ ADAPTED_MIGRATION_SOURCES = {
     "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
     "rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
     "rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
+    "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
     "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
     "rwkv7_hf/native_graph_runtime.py",
     "rwkv7_hf/native_jit_decode.py",
@@ -742,7 +744,7 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
                     )
             transfers[transfer] += 1
             migrated.add(member)
-        if transfers != {"adapted_clean_boundary": 11, "byte_identical": 91}:
+        if transfers != {"adapted_clean_boundary": 12, "byte_identical": 90}:
             raise ValueError(f"NVIDIA migration transfer counts differ: {transfers}")
         capability_report = audit_capability_inventory(
             archive,
