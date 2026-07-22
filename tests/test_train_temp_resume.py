@@ -65,6 +65,18 @@ def test_training_checkpoint_restores_model_optimizer_rng_and_progress(
     assert state_sha256(capture_rng_state()) == saved_rng_digest
 
 
+def test_captured_numpy_rng_keys_use_a_portable_checkpoint_dtype(
+    tmp_path: Path,
+) -> None:
+    state = capture_rng_state()
+    keys = state["numpy"]["keys"]
+    assert keys.dtype == torch.int64
+    path = tmp_path / "rng-state.pt"
+    torch.save(state, path)
+    restored = torch.load(path, map_location="cpu", weights_only=False)
+    assert torch.equal(restored["numpy"]["keys"], keys)
+
+
 def test_training_checkpoint_rejects_provenance_mismatch(tmp_path: Path) -> None:
     model = torch.nn.Linear(2, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)

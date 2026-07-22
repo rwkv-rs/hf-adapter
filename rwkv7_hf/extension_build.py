@@ -58,10 +58,24 @@ def cuda_extension_build_environment(
             # ``absolute`` preserves a venv path where ``resolve`` may jump to
             # /usr/bin and hide the colocated Ninja/NVCC executables.
             python_bin = Path(sys.executable).absolute().parent
+            # A thin venv can symlink the base interpreter while leaving build
+            # tools installed beside that base interpreter.  Keep the venv
+            # first, but expose the base bin as a deployment-safe fallback.
+            base_bin = Path(sys.base_prefix).absolute() / "bin"
+            if base_bin != python_bin and base_bin.is_dir():
+                _prepend_env_path("PATH", str(base_bin))
             _prepend_env_path("PATH", str(python_bin))
-            nvcc = python_bin / "nvcc"
-            if nvcc.exists() and "CUDA_HOME" not in os.environ:
-                os.environ["CUDA_HOME"] = str(nvcc.parent.parent)
+            if "CUDA_HOME" not in os.environ:
+                nvcc = next(
+                    (
+                        candidate / "nvcc"
+                        for candidate in (python_bin, base_bin)
+                        if (candidate / "nvcc").exists()
+                    ),
+                    None,
+                )
+                if nvcc is not None:
+                    os.environ["CUDA_HOME"] = str(nvcc.parent.parent)
             os.environ["TORCH_CUDA_ARCH_LIST"] = str(arch_list)
 
             runtime_lib = (

@@ -22,7 +22,15 @@ from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 
-from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
+from .native import (
+    _eager_model_is_multi_device,
+    _init_state_batched,
+    _move_layer_inputs,
+    _ordered_to_device,
+    _step_token_batched,
+    attn_step_batched,
+    ffn_step_batched,
+)
 from .kernel_policy import current_kernel_policy, single_cuda_device_from_device_map
 
 # Some Transformers releases only copy files directly referenced by the
@@ -879,7 +887,17 @@ def _step_token_batched_with_hidden(model, x, state, xpa, xpf, v_first):
     """Native eager token step that also returns per-layer hidden outputs."""
 
     layer_hiddens = []
+    multi_device = _eager_model_is_multi_device(model)
     for i, layer in enumerate(model.model.layers):
+        if multi_device:
+            x, state[i], xpa[i], xpf[i], v_first = _move_layer_inputs(
+                layer,
+                x,
+                state[i],
+                xpa[i],
+                xpf[i],
+                v_first,
+            )
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)
@@ -1078,6 +1096,7 @@ class NativeRWKV7Model(PreTrainedModel):
     base_model_prefix = "model"
     main_input_name = "input_ids"
     _no_split_modules = ["NativeRWKV7Layer"]
+    _skip_keys_device_placement = ["past_key_values"]
     supports_gradient_checkpointing = True
     _tied_weights_keys = {}
 
@@ -1223,11 +1242,14 @@ class NativeRWKV7Model(PreTrainedModel):
             final_hidden.append(normed)
             last_normed = normed
 
-        last_hidden_state = torch.stack(final_hidden, dim=1)
+        last_hidden_state = _ordered_to_device(torch.stack(final_hidden, dim=1), device)
         new_cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=seen) if use_cache else None
         hidden_states = None
         if hidden_buckets is not None:
-            hidden_states = tuple(torch.stack(bucket, dim=1) for bucket in hidden_buckets)
+            hidden_states = tuple(
+                _ordered_to_device(torch.stack(bucket, dim=1), device)
+                for bucket in hidden_buckets
+            )
         if not return_dict:
             values = (last_hidden_state, new_cache, hidden_states)
             return tuple(v for v in values if v is not None)
@@ -1386,6 +1408,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     base_model_prefix = "model"
     main_input_name = "input_ids"
     _no_split_modules = ["NativeRWKV7Layer"]
+    # A recurrent cache is sharded alongside the layers under a pipeline
+    # device map. Accelerate must not collapse it back onto the input device.
+    _skip_keys_device_placement = ["past_key_values"]
     supports_gradient_checkpointing = True
     # Transformers >=5 expects dict-like _tied_weights_keys; RWKV-7 ties nothing.
     _tied_weights_keys = {}
@@ -1992,6 +2017,53 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
 
         return self.rwkv7_native_model_last_prefill_backend()
 
+    def _rwkv7_has_multi_cuda_device_map(self) -> bool:
+        """Detect an Accelerate model split across multiple CUDA devices.
+
+        Native prefill/decode packs assume every layer shares one device.
+        Accelerate's ordinary module hooks can move eager inputs and recurrent
+        state across a pipeline split, so all packed/graph routes must fail
+        closed while that split is active.
+        """
+
+        cacheable = isinstance(self, NativeRWKV7ForCausalLM)
+        if cacheable:
+            cached = getattr(self, "_rwkv7_multi_cuda_device_map_cache", None)
+            if cached is not None:
+                return bool(cached)
+
+        devices: set[tuple[str, int | None]] = set()
+        device_map = getattr(self, "hf_device_map", None)
+        if isinstance(device_map, dict) and device_map:
+            for value in device_map.values():
+                if isinstance(value, int):
+                    devices.add(("cuda", int(value)))
+                    continue
+                if not isinstance(value, str) or value == "disk":
+                    continue
+                device = torch.device(value)
+                if device.type == "cuda":
+                    devices.add(("cuda", device.index))
+            if len(devices) > 1:
+                if cacheable:
+                    self._rwkv7_multi_cuda_device_map_cache = True
+                return True
+            # Accelerate's recorded map is authoritative for a dispatched
+            # model. Avoid a full parameter walk on every decode token.
+            if cacheable:
+                self._rwkv7_multi_cuda_device_map_cache = False
+            return False
+
+        parameter_devices = {
+            (parameter.device.type, parameter.device.index)
+            for parameter in self.parameters()
+            if parameter.device.type == "cuda"
+        }
+        result = len(parameter_devices) > 1
+        if cacheable:
+            self._rwkv7_multi_cuda_device_map_cache = result
+        return result
+
     def _native_prefill_can_run(
         self,
         input_ids: torch.Tensor | None,
@@ -2002,6 +2074,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         logits_to_keep,
     ) -> bool:
         if _native_model_backend_requested() == "eager":
+            return False
+        if self._rwkv7_has_multi_cuda_device_map():
             return False
         if self.training or torch.is_grad_enabled() or _native_jit_prefill is None:
             return False
@@ -2167,6 +2241,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ) -> bool:
         requested = _native_model_backend_requested()
         if requested not in {"auto", "native_graph"}:
+            return False
+        if self._rwkv7_has_multi_cuda_device_map():
             return False
         if self.training or torch.is_grad_enabled() or not _native_graph_available():
             return False
@@ -2554,6 +2630,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     def _native_jit_packs(self):
         if _native_model_backend_requested() == "eager":
             return None
+        if self._rwkv7_has_multi_cuda_device_map():
+            return None
         if not _native_model_jit_enabled() or _native_jit_extract is None or _native_jit_step_batched is None:
             return None
         if self._native_model_requires_eager_decode():
@@ -2672,6 +2750,13 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         hidden_states = None
         if hidden_buckets is not None:
             hidden_states = tuple(torch.stack(bucket, dim=1) for bucket in hidden_buckets)
+        # Accelerate normally returns model-parallel outputs to the input
+        # device. Do that copy here with an explicit source-stream dependency;
+        # otherwise the destination stream can race the last pipeline stage.
+        logits = _ordered_to_device(logits, device)
+        last_hidden_state = _ordered_to_device(last_hidden_state, device)
+        if hidden_states is not None:
+            hidden_states = tuple(_ordered_to_device(value, device) for value in hidden_states)
         return logits, state, xpa, xpf, v_first, last_hidden_state, hidden_states
 
     def forward(

@@ -165,6 +165,12 @@ Success prints `PASS`. This proves HF device placement and output parity for
 the tested model. It is not native tensor parallelism, and cross-device layer
 handoff may be slower for small models.
 
+Cross-device recurrent tensors use fail-closed host staging by default. This
+also covers virtualized PCIe systems that report CUDA peer access but corrupt
+larger peer copies. A deployment that has independently validated P2P may set
+`RWKV7_CUDA_PEER_COPY=1`; rerun the command above with
+`--compare-single-device` before retaining that setting.
+
 ## 4. Multi-GPU training with DeepSpeed ZeRO
 
 DeepSpeed ZeRO partitions training state. ZeRO-2 partitions optimizer state and

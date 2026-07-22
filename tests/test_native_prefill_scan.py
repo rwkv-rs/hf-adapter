@@ -469,6 +469,9 @@ def test_sequence_ffn_exact_model_shape_does_not_alias_equal_rows(monkeypatch) -
 def test_fp16_accum_ffn_key_is_exact_shape_and_explicitly_disableable(monkeypatch) -> None:
     from rwkv7_hf import native_jit
 
+    # This policy test models an isolated single-device worker.  Do not let the
+    # host's physical CUDA device count change the default under test.
+    monkeypatch.setattr(native_jit.torch.cuda, "device_count", lambda: 1)
     monkeypatch.setattr(
         native_jit.torch.backends.cuda,
         "matmul",
