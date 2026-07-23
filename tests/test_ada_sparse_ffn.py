@@ -6,12 +6,16 @@ import torch.nn.functional as F
 import pytest
 
 import rwkv7_hf.ada_sparse_ffn as sparse_ffn_module
-from rwkv7_hf.native_jit import _native_graph_relayout_ffn_value_weight
+from rwkv7_hf.native_jit import (
+    _native_graph_relayout_ffn_value_weight,
+    _native_graph_try_relayout_ffn_value_weight,
+)
 from rwkv7_hf.ada_sparse_ffn import (
     ada_ffn_up,
     ada_ffn_up_should_use,
     ada_linear,
     ada_linear_should_use,
+    ada_sparse_ffn_deterministic4_should_use,
     ada_sparse_ffn_pack_weight,
     ada_sparse_ffn_down_add,
     ada_sparse_ffn_should_use,
@@ -81,6 +85,9 @@ def test_shape_policy_is_narrow() -> None:
     assert not ada_sparse_ffn_should_use(20, 1024, 4096)
     assert not ada_sparse_ffn_should_use(8, 1000, 4000)
     assert not ada_sparse_ffn_should_use(8, 1024, 2048)
+    assert ada_sparse_ffn_deterministic4_should_use(8, 4096, 16384)
+    assert not ada_sparse_ffn_deterministic4_should_use(1, 4096, 16384)
+    assert not ada_sparse_ffn_deterministic4_should_use(8, 768, 3072)
     assert ada_ffn_up_should_use(1, 4096, 1024)
     assert ada_ffn_up_should_use(2, 3072, 768)
     assert not ada_ffn_up_should_use(4, 3072, 768)
@@ -190,3 +197,23 @@ def test_low_memory_ffn_relayout_reuses_transposed_storage() -> None:
     torch.testing.assert_close(F.linear(inputs, weight), expected)
     assert list(linear.state_dict()) == ["weight"]
     assert _native_graph_relayout_ffn_value_weight(linear) is weight
+
+
+def test_low_memory_ffn_relayout_skips_quantized_and_non_fp16_operands() -> None:
+    class FakeQuantLinear(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_features = 16
+            self.out_features = 8
+            self.register_buffer("weight", torch.ones(8, 16, dtype=torch.int8))
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            return F.linear(value, self.weight.to(value.dtype))
+
+    quant = FakeQuantLinear()
+    dense = torch.nn.Linear(16, 8, bias=False)
+
+    assert not _native_graph_try_relayout_ffn_value_weight(quant)
+    assert not _native_graph_try_relayout_ffn_value_weight(dense)
+    assert not hasattr(quant, "_rwkv7_sparse_low_memory_layout")
+    assert not hasattr(dense, "_rwkv7_sparse_low_memory_layout")

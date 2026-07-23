@@ -1,0 +1,17 @@
+........................................................................ [ 11%]
+........................................................................ [ 22%]
+.....................................................sss..........sss... [ 34%]
+........................................................................ [ 45%]
+........................................................................ [ 57%]
+........................................................................ [ 68%]
+.......................................s................................ [ 80%]
+.....sss................................................................ [ 91%]
+...................ss...............................                     [100%]
+=============================== warnings summary ===============================
+../venvs/rwkv7-5090-regression/lib/python3.10/site-packages/torch/jit/_script.py:1480: 13 warnings
+tests/test_convert_attention_width_integration.py: 24 warnings
+  /home/ubuntu/venvs/rwkv7-5090-regression/lib/python3.10/site-packages/torch/jit/_script.py:1480: DeprecationWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+616 passed, 12 skipped, 37 warnings in 60.29s (0:01:00)

@@ -1,0 +1,63 @@
+{
+  "axis": "native_graph_fused_recurrent_output",
+  "backend": "hf_adapter",
+  "model_name": "rwkv7-g1d-0.1b-hf",
+  "model_size_label": "0.1b",
+  "hf_model_dir": "/home/ubuntu/models/rwkv7/rwkv7-g1d-0.1b-hf",
+  "hidden_size": 768,
+  "intermediate_size": 3072,
+  "num_hidden_layers": 12,
+  "head_dim": 64,
+  "num_heads": 12,
+  "status": "pass",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 5090",
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "batch_size": 1,
+  "prompt_tokens": 64,
+  "steps": 32,
+  "fixed_token": false,
+  "fused_output_enabled": true,
+  "baseline_effective_backend": "native_graph",
+  "fused_effective_backend": "native_graph",
+  "baseline_fused_recurrent_output": false,
+  "fused_recurrent_output": true,
+  "baseline_ms_per_step": 1.0929,
+  "fused_ms_per_step": 1.0838,
+  "speedup": 1.0084,
+  "baseline_tokps_total": 915.0,
+  "fused_tokps_total": 922.7,
+  "max_abs_diff_first_step": 0.03125,
+  "min_cosine_first_step": 1.0,
+  "greedy_match": 32,
+  "greedy_total": 32,
+  "baseline_cache_stats": {
+    "requests": 34,
+    "hits": 33,
+    "misses": 1,
+    "evictions": 0,
+    "size": 1,
+    "limit": 8,
+    "batch_sizes": [
+      1
+    ],
+    "hit_rate": 0.9705882352941176
+  },
+  "fused_cache_stats": {
+    "requests": 34,
+    "hits": 33,
+    "misses": 1,
+    "evictions": 0,
+    "size": 1,
+    "limit": 8,
+    "batch_sizes": [
+      1
+    ],
+    "hit_rate": 0.9705882352941176
+  },
+  "peak_vram_mb": 501.2
+}
+
+appended 1 row -> /home/ubuntu/rwkv7-5090-regression-results-20260723/hf_matrix_0p1b_clean_pass/results_5090.jsonl
