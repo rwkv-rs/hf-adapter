@@ -67,7 +67,10 @@ def capture_rng_state() -> dict[str, Any]:
         "python": random.getstate(),
         "numpy": {
             "bit_generator": str(numpy_state[0]),
-            "keys": torch.from_numpy(numpy_state[1].copy()),
+            # PyTorch 2.5 cannot serialize TypedStorage(torch.uint32).  Keep the
+            # MT19937 words losslessly in int64 so checkpoints remain writable
+            # on older supported PyTorch/CUDA stacks.
+            "keys": torch.from_numpy(numpy_state[1].copy()).to(dtype=torch.int64),
             "position": int(numpy_state[2]),
             "has_gauss": int(numpy_state[3]),
             "cached_gaussian": float(numpy_state[4]),

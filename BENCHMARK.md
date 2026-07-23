@@ -24,7 +24,7 @@ Status vocabulary:
 
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
-| V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4 decode | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x` | **PASS measured lanes** |
+| V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4 | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 decode-profile cells plus 4/4 1.5B group256 all-phase cells | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x`; 1.5B speed-profile prefill/decode minima `1.0032x/1.0011x` | **PASS measured lanes** |
 | Tesla T4 15GB | 0.1B–2.9B HF/cache/fused-prefill/native-graph, exact-T4 W8/W4, training integration | functional/cache/fused rows pass; quant greedy 52/52; official alignment 0.1B/0.4B/1.5B passes | head-speed W8/W4 decode `>=1.0207x` fp16; dense decode `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; full-model quant prefill remains slower | **VALIDATED / performance partial** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
@@ -183,11 +183,22 @@ old unfused 1.5B B4 row (`0.9997x`), a 2.9B group128 B8 row (`0.9984x`) and
 2.9B full-memory B4 (`0.9888x`) are retained as rejected boundaries; the gate
 was not relaxed.
 
-This is primarily a cached-decode result. Full-memory prefill is
-`0.1276x-0.3192x` fp16 for 1.5B and `0.0716x-0.1516x` for 7.2B, so no universal
-W4/prefill claim is made. The head-only 2.9B speed profile separately passes
-paired prefill at `1.0006x-1.0603x`. Evidence:
+The original matrix is primarily a cached-decode result. Exact-sm70 long-row
+dequant+BLAS now raises 1.5B memory/group128 P128/D128 B1/B8 prefill from a
+forced-DP4A `0.2820x/0.1171x` to `0.7816x/0.9076x` paired FP16 while retaining
+`0.5395x` model footprint and `1.1786x/1.0411x` decode. Other memory-profile
+shapes and 7.2B remain open, so no universal full-memory W4/prefill claim is
+made.
+
+The 1.5B head-only `speed + group256` profile separately passes P128/D128
+B1/B2/B4/B8 all-phase gates with `0.9344x` footprint, prefill
+`1.0032x-1.0119x`, decode `1.0011x-1.0353x`, final cosine `>=0.99978340`,
+complete greedy equality and stable repeat hashes. The head-only 2.9B speed
+profile continues to pass its seven prefill cells at `1.0006x-1.0603x`.
+Evidence:
 [`bench/v100_sm70_mm4_bntn_20260716/README.md`](bench/v100_sm70_mm4_bntn_20260716/README.md).
+New prefill evidence:
+[`bench/v100_sm70_prefill_dequant_20260723/README.md`](bench/v100_sm70_prefill_dequant_20260723/README.md).
 
 ### V100 B1/B8 active-parameter comparison against full-FLA Qwen3.5
 

@@ -78,6 +78,16 @@ def last_fast_backend(model) -> str | None:
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
+def cache_cuda_devices(cache) -> list[str]:
+    tensors = []
+    for name in ("_state", "_xpa", "_xpf"):
+        tensors.extend(getattr(cache, name, None) or [])
+    v_first = getattr(cache, "_v_first", None)
+    if v_first is not None:
+        tensors.append(v_first)
+    return sorted({str(value.device) for value in tensors if value.device.type == "cuda"})
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -127,6 +137,7 @@ def main() -> int:
     with torch.inference_mode():
         out = model(**enc0, use_cache=True, logits_to_keep=1)
         logits_finite = bool(out.logits.detach().float().isfinite().all().item())
+        recurrent_cache_devices = cache_cuda_devices(out.past_key_values)
         generated = model.generate(**enc0, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True)
     cuda_sync()
     generate_s = time.time() - t0
@@ -149,10 +160,17 @@ def main() -> int:
         generated_equal_reference = bool(torch.equal(generated.detach().cpu(), ref_generated.detach().cpu()))
         del ref
 
+    multi_cuda_device_map = bool(getattr(model, "_rwkv7_has_multi_cuda_device_map")())
+    passed = bool(
+        logits_finite
+        and multi_cuda_device_map
+        and len(recurrent_cache_devices) >= 2
+        and generated_equal_reference is not False
+    )
     row: dict[str, Any] = {
         "axis": "device_map_smoke",
         "backend": "hf_adapter",
-        "status": "pass",
+        "status": "pass" if passed else "fail",
         "dtype": args.dtype,
         "device": ", ".join(torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())),
         "device_count": torch.cuda.device_count(),
@@ -160,7 +178,8 @@ def main() -> int:
         "split_layer": int(split_layer),
         "num_hidden_layers": num_layers,
         "hf_device_map_devices": sorted({str(v) for v in getattr(model, "hf_device_map", {}).values()}),
-        "multi_cuda_device_map": bool(getattr(model, "_rwkv7_has_multi_cuda_device_map")()),
+        "multi_cuda_device_map": multi_cuda_device_map,
+        "recurrent_cache_devices": recurrent_cache_devices,
         "fast_forward_env": os.environ.get("RWKV7_FAST_FORWARD", "1"),
         "last_fast_token_backend": last_fast_backend(model),
         "prompt_tokens": int(enc["input_ids"].shape[1]),
@@ -184,8 +203,8 @@ def main() -> int:
         with out_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(f"appended 1 row -> {out_path}", flush=True)
-    print("PASS", flush=True)
-    return 0
+    print("PASS" if passed else "FAIL", flush=True)
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

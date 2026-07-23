@@ -9,8 +9,42 @@ Run `python -m rwkv7_hf.native <hf_dir>` to check correctness vs FLA.
 """
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn.functional as F
+
+
+_CUDA_PEER_COPY_USABLE: dict[tuple[int, int], bool] = {}
+
+
+def _cuda_peer_copy_usable(source: torch.device, target: torch.device) -> bool:
+    """Return whether explicitly enabled CUDA peer copies may be used."""
+
+    if source.type != "cuda" or target.type != "cuda" or source == target:
+        return True
+    if os.environ.get("RWKV7_CUDA_PEER_COPY", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        # Some virtualized PCIe systems report peer access but silently return
+        # corrupt tensors for production-sized copies. Keep host staging as the
+        # fail-closed default; healthy deployments can opt in after validation.
+        return False
+    source_index = torch.cuda.current_device() if source.index is None else int(source.index)
+    target_index = torch.cuda.current_device() if target.index is None else int(target.index)
+    key = (source_index, target_index)
+    cached = _CUDA_PEER_COPY_USABLE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        usable = bool(torch.cuda.can_device_access_peer(source_index, target_index))
+    except (RuntimeError, AssertionError):
+        usable = False
+    _CUDA_PEER_COPY_USABLE[key] = usable
+    return usable
 
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base
 
@@ -148,16 +182,121 @@ def _init_state_batched(model, batch_size: int, device, dtype):
     return state, xpa, xpf, v_first
 
 
+def _move_layer_inputs(layer, x, state, xpa, xpf, v_first):
+    """Move one eager layer's values and order cross-device CUDA copies."""
+
+    layer_device = layer.attn_norm.weight.device
+    values = (x, state, xpa, xpf, v_first)
+    if all(value.device == layer_device for value in values):
+        return values
+    guard = (
+        torch.cuda.device(layer_device)
+        if layer_device.type == "cuda" and torch.cuda.is_available()
+        else None
+    )
+    if guard is None:
+        moved = tuple(value.to(layer_device) for value in values)
+    else:
+        source_devices = {
+            value.device
+            for value in values
+            if value.device.type == "cuda" and value.device != layer_device
+        }
+        if any(not _cuda_peer_copy_usable(source, layer_device) for source in source_devices):
+            # Some virtualized PCIe setups advertise peer access but return
+            # corrupt data. Host staging is slower but preserves PP correctness
+            # unless a validated deployment explicitly opts into peer copies.
+            return tuple(
+                value.cpu().to(layer_device) if value.device != layer_device else value
+                for value in values
+            )
+        for source_device in source_devices:
+            torch.cuda.synchronize(source_device)
+        with guard:
+            destination_stream = torch.cuda.current_stream(layer_device)
+            for source_device in source_devices:
+                destination_stream.wait_stream(torch.cuda.current_stream(source_device))
+            moved = tuple(value.to(layer_device) for value in values)
+            for value in values:
+                if value.device.type == "cuda" and value.device != layer_device:
+                    value.record_stream(destination_stream)
+            # Cross-GPU eager PP is a correctness fallback rather than the
+            # single-device fast path. Complete the handoff before recurrent
+            # temporaries can be recycled on either allocator.
+            for source_device in source_devices:
+                torch.cuda.synchronize(source_device)
+            destination_stream.synchronize()
+    return moved
+
+
+def _ordered_to_device(value: torch.Tensor, device) -> torch.Tensor:
+    """Copy a tensor after its source CUDA stream has completed its work."""
+
+    target = torch.device(device)
+    if value.device == target:
+        return value
+    if value.device.type == "cuda" and target.type == "cuda" and torch.cuda.is_available():
+        if not _cuda_peer_copy_usable(value.device, target):
+            return value.cpu().to(target)
+        torch.cuda.synchronize(value.device)
+        with torch.cuda.device(target):
+            destination_stream = torch.cuda.current_stream(target)
+            destination_stream.wait_stream(torch.cuda.current_stream(value.device))
+            moved = value.to(target)
+            value.record_stream(destination_stream)
+            torch.cuda.synchronize(value.device)
+            destination_stream.synchronize()
+        return moved
+    return value.to(target)
+
+
+def _eager_model_is_multi_device(model) -> bool:
+    """Resolve and cache whether eager recurrent layers span devices."""
+
+    cached = getattr(model, "_rwkv7_multi_cuda_device_map_cache", None)
+    if cached is not None:
+        return bool(cached)
+    detector = getattr(model, "_rwkv7_has_multi_cuda_device_map", None)
+    if callable(detector):
+        result = bool(detector())
+        if getattr(model, "_rwkv7_multi_cuda_device_map_cache", None) is None:
+            try:
+                model._rwkv7_multi_cuda_device_map_cache = result
+            except (AttributeError, TypeError):
+                pass
+        return result
+    devices = {layer.attn_norm.weight.device for layer in model.model.layers}
+    result = len(devices) > 1
+    try:
+        model._rwkv7_multi_cuda_device_map_cache = result
+    except (AttributeError, TypeError):
+        pass
+    return result
+
+
 def _step_token_batched(model, x, state, xpa, xpf, v_first):
+    multi_device = _eager_model_is_multi_device(model)
     for i, layer in enumerate(model.model.layers):
+        # This helper calls attention/FFN submodules directly rather than the
+        # enclosing layer, so an Accelerate hook on that layer cannot move the
+        # residual and recurrent tensors for us. Keep every layer-local value
+        # beside its parameters; same-device inference takes the identity path.
+        if multi_device:
+            x, state[i], xpa[i], xpf[i], v_first = _move_layer_inputs(
+                layer,
+                x,
+                state[i],
+                xpa[i],
+                xpf[i],
+                v_first,
+            )
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)
         # Call the attention / FFN modules instead of passing them directly to
-        # the functional helpers.  DeepSpeed ZeRO-3 uses module pre-forward
+        # the functional helpers. DeepSpeed ZeRO-3 uses module pre-forward
         # hooks to gather partitioned parameters; bypassing ``Module.__call__``
-        # leaves raw parameters such as ``x_r``, ``r_k``, ``g_norm.weight`` and
-        # ``ffn.x_k`` sharded during backward.
+        # leaves raw parameters sharded during backward.
         a, xpa[i], state[i], v_first = attn(h, xpa[i], v_first, state[i])
         x = residual + a
         residual = x
