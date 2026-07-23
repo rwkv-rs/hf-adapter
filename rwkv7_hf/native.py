@@ -49,6 +49,19 @@ def _cuda_peer_copy_usable(source: torch.device, target: torch.device) -> bool:
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base
 
 
+def _eager_recurrent_state(state: torch.Tensor) -> torch.Tensor:
+    """Keep the correctness-first eager recurrence on its FP32 contract.
+
+    An exact-card native prefill may return an FP16 cache. External quantized
+    modules (for example BnB W8/W4) deliberately disable CUDA-graph decode and
+    fall back here. Promote that cache once instead of mixing FP16 state with
+    the historical FP32 ``ab``/``vk`` operands or silently changing eager
+    recurrence precision.
+    """
+
+    return state if state.dtype == torch.float32 else state.float()
+
+
 def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
               v_first: torch.Tensor, state: torch.Tensor):
     """Port of RWKV_x070_TMix_one with independent residual/attention widths.
@@ -84,6 +97,7 @@ def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
 
     vk = v.view(H, N, 1) @ k.view(H, 1, N)
     ab = (-kk).view(H, N, 1) @ (kk * a).view(H, 1, N)
+    state = _eager_recurrent_state(state)
     state = state * w.view(H, 1, N) + state @ ab.float() + vk.float()
     out = state.to(x.dtype) @ r.view(H, N, 1)
     out = out.view(attention_hidden)
@@ -147,6 +161,7 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
 
     vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
     ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
+    state = _eager_recurrent_state(state)
     state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
     out = state.to(x.dtype) @ r.view(B, H, N, 1)
     out = out.view(B, attention_hidden)

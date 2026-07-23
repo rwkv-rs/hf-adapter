@@ -4,6 +4,7 @@ from __future__ import annotations
 import torch
 
 from rwkv7_hf import native_jit
+from rwkv7_hf.native import _eager_recurrent_state
 from rwkv7_hf.native_wkv_fp16 import (
     native_fp16_recurrent_should_use,
     native_fp16_sequence,
@@ -33,7 +34,20 @@ def test_fp16_recurrent_policy_is_narrow() -> None:
     )
 
 
+def test_eager_fallback_promotes_exact_card_fp16_cache_to_fp32() -> None:
+    state = torch.randn(2, 3, 4, 4, dtype=torch.float16)
+    promoted = _eager_recurrent_state(state)
+
+    assert promoted.dtype == torch.float32
+    torch.testing.assert_close(promoted, state.float(), rtol=0.0, atol=0.0)
+    fp32 = state.float()
+    assert _eager_recurrent_state(fp32) is fp32
+
+
 def test_prefill_fp16_recurrent_is_explicit_and_shape_gated(monkeypatch) -> None:
+    # Do not inherit an exact-card default (RTX 5090 enables this path) while
+    # testing the generic explicit opt-in and shape gates.
+    monkeypatch.setattr(native_jit, "_kernel_policy", lambda: None)
     state = torch.zeros(1, 2, 64, 64, dtype=torch.float16)
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FP16_RECURRENT", raising=False)
     assert not native_jit._native_prefill_fp16_recurrent_enabled(state)

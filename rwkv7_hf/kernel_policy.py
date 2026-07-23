@@ -923,6 +923,11 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
     if family == "blackwell":
         is_5090 = is_rtx_model_name(profile.name, "5090")
         production_prefill_graph_shapes = (
+            # g1h 1.5B B8/P128: the graph removes Python/custom-op launch
+            # overhead from the Marlin W4 FFN route.  An exclusive 5090
+            # paired run measured W4 at 1.0633x dense BF16 prefill while
+            # preserving the full greedy stream; eager W4 was only 0.9287x.
+            (2048, 24, 8, 128),
             (2560, 32, 1, 128),
             (2560, 32, 1, 512),
             (2560, 32, 1, 2048),
@@ -1062,7 +1067,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 rows promote the official-FP16-state native graph decode profile and allowlisted 2.9B/13.3B B1/B8 prefill shapes. The 13.3B B8/P2048 row intentionally stays outside the graph allowlist because graph-private pools exceed 32 GiB; its measured eager fused route remains active. Existing 1.5B/2.9B/7.2B shape-specific prefill and quant routes remain exact-card gates. Other Blackwell cards retain the compatible fallback; use triton_compat for early sm_120 stacks and keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: exact RTX 5090 rows promote the official-FP16-state native graph decode profile and allowlisted 1.5B/2.9B/13.3B B1/B8 prefill shapes. The 1.5B B8/P128 graph is shared by dense and Marlin W4 and restores the measured W4 prefill win by removing custom-op launch overhead. The 13.3B B8/P2048 row intentionally stays outside the graph allowlist because graph-private pools exceed 32 GiB; its measured eager fused route remains active. Existing 1.5B/2.9B/7.2B shape-specific prefill and quant routes remain exact-card gates. Other Blackwell cards retain the compatible fallback; use triton_compat for early sm_120 stacks and keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

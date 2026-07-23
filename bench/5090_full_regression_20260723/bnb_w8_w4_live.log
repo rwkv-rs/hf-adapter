@@ -1,0 +1,7 @@
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.10.0+cu128).
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:  45%|████▍     | 179/399 [00:00<00:00, 1785.81it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 2113.20it/s]
+{"axis": "native_bnb_quant_smoke", "backend": "hf_native_model", "quantization": "8bit", "status": "pass", "dtype": "fp16", "device": "NVIDIA GeForce RTX 5090", "load_s": 1.717, "forward_decode_generate_s": 1.625, "logits_shape": [1, 15, 65536], "decode_backend": "eager", "next_token": 4171, "generated_tail": [4171, 1184], "module_counts": {"linear_dense": 95, "linear_8bit": 72, "linear_4bit": 0}, "model_footprint_mb": 283.4, "peak_vram_mb": 310.0}
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:  95%|█████████▌| 380/399 [00:00<00:00, 3799.37it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 3834.00it/s]
+{"axis": "native_bnb_quant_smoke", "backend": "hf_native_model", "quantization": "4bit", "status": "pass", "dtype": "fp16", "device": "NVIDIA GeForce RTX 5090", "load_s": 0.362, "forward_decode_generate_s": 0.108, "logits_shape": [1, 15, 65536], "decode_backend": "eager", "next_token": 4171, "generated_tail": [4171, 1184], "module_counts": {"linear_dense": 95, "linear_8bit": 0, "linear_4bit": 72}, "model_footprint_mb": 242.9, "peak_vram_mb": 274.3}
+NATIVE BNB QUANT PASS

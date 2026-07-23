@@ -410,6 +410,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_self_chunk_size == 16
     assert blackwell.prefill_self_chunk_model_shapes == ()
     assert blackwell.prefill_fp16_recurrent
+    assert (2048, 24, 8, 128) in blackwell.prefill_graph_model_shapes
     assert (4096, 61, 8, 2048) not in blackwell.prefill_graph_model_shapes
     assert (4096, 61, 8, 512) in blackwell.prefill_graph_model_shapes
     assert blackwell.native_graph_state_dtype == "fp16"

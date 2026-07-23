@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import torch
 
+from rwkv7_hf import native_graph_runtime as native_graph_runtime_module
 from rwkv7_hf import native_model as native_model_module
 from rwkv7_hf.native_graph_runtime import (
     NativeGraphRunner,
@@ -147,6 +149,14 @@ def test_native_graph_cache_management_surface() -> None:
 
 
 def test_native_graph_state_dtype_is_explicit_and_fail_closed(monkeypatch) -> None:
+    # Keep the unit contract independent of the physical GPU running pytest.
+    # Exact-card defaults (for example RTX 5090 FP16 graph state) are covered by
+    # test_kernel_policy.py; this test exercises the generic fail-closed policy.
+    monkeypatch.setattr(
+        native_graph_runtime_module,
+        "current_kernel_policy",
+        lambda **_: SimpleNamespace(native_graph_state_dtype="fp32"),
+    )
     monkeypatch.delenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", raising=False)
     assert native_graph_state_dtype(torch.float16) == torch.float32
     monkeypatch.setenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", "fp16")
@@ -177,6 +187,13 @@ def test_allocated_zero_length_cache_is_initialized_without_history() -> None:
 
 
 def test_embedding_ln0_precompute_is_independent_and_default_off(monkeypatch) -> None:
+    # Pin the generic policy so this assertion does not inherit a validated
+    # exact-card default from the GPU on the test host.
+    monkeypatch.setattr(
+        native_graph_runtime_module,
+        "current_kernel_policy",
+        lambda **_: SimpleNamespace(native_graph_precompute_embedding=False),
+    )
     monkeypatch.delenv("RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0", raising=False)
     assert native_graph_precompute_embedding_enabled() is False
     monkeypatch.setenv("RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0", "1")

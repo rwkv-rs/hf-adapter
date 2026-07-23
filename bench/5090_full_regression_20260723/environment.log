@@ -1,0 +1,8 @@
+# RTX 5090 HF validation
+date=2026-07-23T20:05:30+08:00
+hf_dir=/home/ubuntu/models/rwkv7/rwkv7-g1d-0.1b-hf
+out_dir=/home/ubuntu/rwkv7-5090-regression-results-20260723/hf_matrix_0p1b_clean_pass results=/home/ubuntu/rwkv7-5090-regression-results-20260723/hf_matrix_0p1b_clean_pass/results_5090.jsonl
+dtype=fp16 device=cuda batch_sizes=1 2 4 8
+torch 2.10.0+cu128 cuda 12.8 available True
+gpu NVIDIA GeForce RTX 5090 capability (12, 0)
+TORCH_COMPILE_DISABLE 1
