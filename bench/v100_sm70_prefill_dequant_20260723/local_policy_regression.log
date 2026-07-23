@@ -1,0 +1,10 @@
+.........sss..........                                                   [100%]
+=============================== warnings summary ===============================
+../.venv-rwkv7-apple/lib/python3.11/site-packages/torch/jit/_script.py:1488: 13 warnings
+  /Users/wangyue/Documents/vllmsp/.venv-rwkv7-apple/lib/python3.11/site-packages/torch/jit/_script.py:1488: DeprecationWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+19 passed, 3 skipped, 13 warnings in 2.38s
+.                                                                        [100%]
+1 passed in 0.22s

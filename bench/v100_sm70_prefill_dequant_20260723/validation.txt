@@ -1,0 +1,19 @@
+V100 CUDA regression:
+  python -m pytest -q tests/test_sm70_quant.py tests/test_native_quant_mm8_cpu.py tests/test_backend_boundaries.py
+  12 passed in 6.56s
+
+V100 full repository regression:
+  python -m pytest -q -k "not test_default_manifest_is_exhaustive_and_rendered_without_drift"
+  616 passed, 8 skipped, 1 deselected in 56.13s
+  The single deselection is an Apple artifact-render test whose evidence files
+  were intentionally absent from the 63 MB GPU staging copy. It passes in the
+  complete local worktree (recorded in local_policy_regression.log).
+
+RTX 4080 isolation regression:
+  19 passed, 3 skipped in 2.06s
+  The three skips are sm70/T4-only physical CUDA tests. Policy and generic
+  group-size/configuration tests pass on the RTX 4080.
+
+Complete local artifact/policy regression:
+  19 passed, 3 skipped in 2.38s
+  Apple acceptance render drift test: 1 passed in 0.22s
