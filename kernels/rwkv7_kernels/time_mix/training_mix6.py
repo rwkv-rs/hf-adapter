@@ -96,19 +96,22 @@ def load_mix6_training_cuda_extension(
                             str(root / "rwkv7_tmix_mix6_shifted_bf16_v1.cu"),
                         ],
                         extra_cflags=["-O3"],
-                        extra_cuda_cflags=list(
-                            CUDA_EXTENSION_OPTIMIZATION_FLAGS
+                        extra_cuda_cflags=list(CUDA_EXTENSION_OPTIMIZATION_FLAGS),
+                        # Pip-split CUDA installations may expose the public
+                        # headers separately from ``crt/host_config.h``.  The
+                        # toolkit target include is therefore part of this
+                        # leaf's reproducible build contract.
+                        extra_include_paths=cuda_include_paths(
+                            cuda_home,
+                            include_target=True,
                         ),
-                        extra_include_paths=cuda_include_paths(cuda_home),
                         is_python_module=False,
                         verbose=cuda_build_verbose(verbose),
                     )
                 finally:
                     cpp_extension.CUDA_HOME = previous_cuda_home
             if not _operator_registered():
-                raise RuntimeError(
-                    f"extension did not register {OPERATOR_NAMESPACE}"
-                )
+                raise RuntimeError(f"extension did not register {OPERATOR_NAMESPACE}")
             _LOADED = True
         except BaseException as exc:
             _LOAD_ERROR = exc
@@ -130,12 +133,13 @@ def probe_mix6_training_v1(
         return _unsupported("Mix6 value and shifted inputs must share [B,T,C]")
     batch, tokens, channels = value.shape
     if batch <= 0 or tokens <= 0 or channels <= 0:
-        return _unsupported("Mix6 requires non-empty batch, token, and channel dimensions")
+        return _unsupported(
+            "Mix6 requires non-empty batch, token, and channel dimensions"
+        )
     if channels % 2:
         return _unsupported("native Mix6 requires an even channel dimension")
     if len(mixes) != 6 or any(
-        not isinstance(mix, torch.Tensor) or mix.numel() != channels
-        for mix in mixes
+        not isinstance(mix, torch.Tensor) or mix.numel() != channels for mix in mixes
     ):
         return _unsupported("Mix6 requires six channel-sized parameter tensors")
     tensors = (value, shifted, *mixes)
@@ -152,9 +156,7 @@ def probe_mix6_training_v1(
     return {
         "supported": True,
         "implementation": IMPLEMENTATION,
-        "reason": (
-            "explicit-shift BF16 CUDA Mix6 forward/autograd leaf is supported"
-        ),
+        "reason": ("explicit-shift BF16 CUDA Mix6 forward/autograd leaf is supported"),
     }
 
 
@@ -194,9 +196,7 @@ class _Mix6Shifted(torch.autograd.Function):
     def backward(ctx, grad_r, grad_w, grad_k, grad_v, grad_a, grad_g):
         value, shifted, *mixes = ctx.saved_tensors
         output_grads = tuple(
-            _bf16x2_contiguous(
-                item if item is not None else torch.zeros_like(value)
-            )
+            _bf16x2_contiguous(item if item is not None else torch.zeros_like(value))
             for item in (grad_r, grad_w, grad_k, grad_v, grad_a, grad_g)
         )
         create_graph = torch.is_grad_enabled()
@@ -204,9 +204,7 @@ class _Mix6Shifted(torch.autograd.Function):
         if create_graph or rows < NATIVE_BACKWARD_MIN_ROWS:
             with torch.enable_grad():
                 references = tuple(
-                    item
-                    if item.requires_grad
-                    else item.detach().requires_grad_(True)
+                    item if item.requires_grad else item.detach().requires_grad_(True)
                     for item in (value, shifted, *mixes)
                 )
                 value_ref, shifted_ref, *mix_refs = references
@@ -224,9 +222,7 @@ class _Mix6Shifted(torch.autograd.Function):
                     )
                 )
 
-        inputs = tuple(
-            _bf16x2_contiguous(item) for item in (value, shifted, *mixes)
-        )
+        inputs = tuple(_bf16x2_contiguous(item) for item in (value, shifted, *mixes))
         namespace = getattr(torch.ops, OPERATOR_NAMESPACE)
         return tuple(namespace.backward(*output_grads, *inputs))
 

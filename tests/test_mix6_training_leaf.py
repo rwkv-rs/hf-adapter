@@ -156,6 +156,7 @@ def test_mix6_loader_is_independent_of_legacy_train_temp_module():
     source = Path(leaf.__file__).read_text(encoding="utf-8")
 
     assert "train_temp_cuda" not in source
+    assert "include_target=True" in source
     assert "--use_fast_math" not in build.CUDA_EXTENSION_OPTIMIZATION_FLAGS
     assert "-O3" in build.CUDA_EXTENSION_OPTIMIZATION_FLAGS
 
