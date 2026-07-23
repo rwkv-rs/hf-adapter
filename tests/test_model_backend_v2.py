@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import importlib
 from pathlib import Path
 import sys
@@ -469,6 +470,7 @@ def test_private_training_diagnostic_uses_direct_layer_loop_without_monkeypatch(
 
 
 def test_training_runtime_loader_compiles_only_accepted_leaf_set(monkeypatch):
+    _load_dense_backend(monkeypatch)
     train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
     calls = []
     monkeypatch.setattr(
@@ -488,6 +490,58 @@ def test_training_runtime_loader_compiles_only_accepted_leaf_set(monkeypatch):
         ("mix6", {"verbose": True}),
         ("recurrent", {"verbose": True}),
     ]
+
+
+def test_recurrent_training_loader_uses_isolated_cuda_build_environment(monkeypatch):
+    """A thin venv must expose base Ninja/NVCC and the active GPU arch."""
+
+    _load_dense_backend(monkeypatch)
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    state = {"active": False, "built": False}
+    calls = []
+
+    @contextmanager
+    def build_environment(*, arch_list):
+        calls.append(("environment", arch_list))
+        state["active"] = True
+        try:
+            yield None
+        finally:
+            state["active"] = False
+
+    def build_recurrent(_cpp_extension, cuda_home, *, verbose):
+        assert state["active"]
+        calls.append(("build", cuda_home, verbose))
+        state["built"] = True
+
+    monkeypatch.setattr(train_temp, "_RECURRENT_LOADED", False)
+    monkeypatch.setattr(train_temp, "_RECURRENT_LOAD_ERROR", None)
+    monkeypatch.setattr(train_temp, "_validate_runtime", lambda: None)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: (8, 9))
+    monkeypatch.setattr(
+        train_temp,
+        "cuda_extension_build_environment",
+        build_environment,
+    )
+    monkeypatch.setattr(
+        train_temp,
+        "_resolve_cuda_home",
+        lambda _cpp_extension: Path("/cuda-13.0"),
+    )
+    monkeypatch.setattr(
+        train_temp,
+        "_op_registered",
+        lambda namespace: namespace == "rwkv7_clampw_v3" and state["built"],
+    )
+    monkeypatch.setattr(train_temp, "_build_recurrent_operator", build_recurrent)
+
+    train_temp.load_recurrent_training_cuda_extension(verbose=True)
+
+    assert calls == [
+        ("environment", "8.9"),
+        ("build", Path("/cuda-13.0"), True),
+    ]
+    assert train_temp._RECURRENT_LOADED is True
 
 
 def test_native_training_causal_loss_avoids_shifted_logits_copy(monkeypatch):

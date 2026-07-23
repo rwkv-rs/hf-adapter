@@ -18,6 +18,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from .extension_build import cuda_extension_build_environment
 from .training_math import low_rank_projection, module_linear
 
 
@@ -157,6 +158,13 @@ def _validate_runtime() -> None:
         )
 
 
+def _cuda_arch_list() -> str:
+    """Return the active device architecture for one isolated JIT build."""
+
+    major, minor = torch.cuda.get_device_capability()
+    return f"{major}.{minor}"
+
+
 def _resolve_cuda_home(cpp_extension: Any) -> Path | None:
     candidates = [
         os.environ.get("CUDA_HOME"),
@@ -249,19 +257,20 @@ def load_mix6_training_cuda_extension(*, verbose: bool | None = None) -> None:
             _MIX6_LOADED = True
             return
         try:
-            from torch.utils import cpp_extension
+            with cuda_extension_build_environment(arch_list=_cuda_arch_list()):
+                from torch.utils import cpp_extension
 
-            cuda_home = _resolve_cuda_home(cpp_extension)
-            if cuda_home is None:
-                raise RuntimeError(
-                    "Mix6 training CUDA JIT requires a local CUDA toolkit; "
-                    "set CUDA_HOME to the toolkit matching the PyTorch CUDA build"
+                cuda_home = _resolve_cuda_home(cpp_extension)
+                if cuda_home is None:
+                    raise RuntimeError(
+                        "Mix6 training CUDA JIT requires a local CUDA toolkit; "
+                        "set CUDA_HOME to the toolkit matching the PyTorch CUDA build"
+                    )
+                _build_mix6_operator(
+                    cpp_extension,
+                    cuda_home,
+                    verbose=_build_verbose(verbose),
                 )
-            _build_mix6_operator(
-                cpp_extension,
-                cuda_home,
-                verbose=_build_verbose(verbose),
-            )
             if not _op_registered(namespace):
                 raise RuntimeError(
                     "Mix6 training extension did not register rwkv7_tmix_mix6_bf16_v5"
@@ -291,19 +300,20 @@ def load_recurrent_training_cuda_extension(*, verbose: bool | None = None) -> No
             _RECURRENT_LOADED = True
             return
         try:
-            from torch.utils import cpp_extension
+            with cuda_extension_build_environment(arch_list=_cuda_arch_list()):
+                from torch.utils import cpp_extension
 
-            cuda_home = _resolve_cuda_home(cpp_extension)
-            if cuda_home is None:
-                raise RuntimeError(
-                    "recurrent training CUDA JIT requires a local CUDA toolkit; "
-                    "set CUDA_HOME to the toolkit matching the PyTorch CUDA build"
+                cuda_home = _resolve_cuda_home(cpp_extension)
+                if cuda_home is None:
+                    raise RuntimeError(
+                        "recurrent training CUDA JIT requires a local CUDA toolkit; "
+                        "set CUDA_HOME to the toolkit matching the PyTorch CUDA build"
+                    )
+                _build_recurrent_operator(
+                    cpp_extension,
+                    cuda_home,
+                    verbose=_build_verbose(verbose),
                 )
-            _build_recurrent_operator(
-                cpp_extension,
-                cuda_home,
-                verbose=_build_verbose(verbose),
-            )
             if not _op_registered("rwkv7_clampw_v3"):
                 raise RuntimeError(
                     "recurrent training extension did not register rwkv7_clampw_v3"
@@ -332,42 +342,46 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
         if _LOADED:
             return
         try:
-            from torch.utils import cpp_extension
+            with cuda_extension_build_environment(arch_list=_cuda_arch_list()):
+                from torch.utils import cpp_extension
 
-            cuda_home = _resolve_cuda_home(cpp_extension)
-            if cuda_home is None:
-                raise RuntimeError(
-                    "train_temp CUDA JIT requires a local CUDA toolkit; set CUDA_HOME "
-                    "to the toolkit matching the PyTorch CUDA build"
-                )
-            verbose = _build_verbose(verbose)
-            root = _source_root()
-            include_paths = _cuda_include_paths(cuda_home)
-            for namespace, filenames in _OP_SOURCES.items():
-                if _op_registered(namespace):
-                    continue
-                cpp_extension.load(
-                    name=f"rwkv7_kernels_{namespace}",
-                    sources=[str(root / filename) for filename in filenames],
+                cuda_home = _resolve_cuda_home(cpp_extension)
+                if cuda_home is None:
+                    raise RuntimeError(
+                        "train_temp CUDA JIT requires a local CUDA toolkit; set "
+                        "CUDA_HOME to the toolkit matching the PyTorch CUDA build"
+                    )
+                verbose = _build_verbose(verbose)
+                root = _source_root()
+                include_paths = _cuda_include_paths(cuda_home)
+                for namespace, filenames in _OP_SOURCES.items():
+                    if _op_registered(namespace):
+                        continue
+                    cpp_extension.load(
+                        name=f"rwkv7_kernels_{namespace}",
+                        sources=[str(root / filename) for filename in filenames],
+                        extra_cflags=["-O3"],
+                        extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
+                        extra_include_paths=include_paths,
+                        is_python_module=False,
+                        verbose=verbose,
+                    )
+                _build_recurrent_operator(cpp_extension, cuda_home, verbose=verbose)
+                _RECURRENT_LOADED = True
+                _L2WRAP_EXTENSION = cpp_extension.load(
+                    name="rwkv7_kernels_l2wrap_ce_bf16_v2",
+                    sources=[
+                        str(root / "rwkv7_l2wrap_ce_bf16_v2.cpp"),
+                        str(root / "rwkv7_l2wrap_ce_bf16_v2.cu"),
+                    ],
                     extra_cflags=["-O3"],
                     extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
-                    extra_include_paths=include_paths,
-                    is_python_module=False,
+                    extra_include_paths=_cuda_include_paths(
+                        cuda_home,
+                        include_target=True,
+                    ),
                     verbose=verbose,
                 )
-            _build_recurrent_operator(cpp_extension, cuda_home, verbose=verbose)
-            _RECURRENT_LOADED = True
-            _L2WRAP_EXTENSION = cpp_extension.load(
-                name="rwkv7_kernels_l2wrap_ce_bf16_v2",
-                sources=[
-                    str(root / "rwkv7_l2wrap_ce_bf16_v2.cpp"),
-                    str(root / "rwkv7_l2wrap_ce_bf16_v2.cu"),
-                ],
-                extra_cflags=["-O3"],
-                extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
-                extra_include_paths=_cuda_include_paths(cuda_home, include_target=True),
-                verbose=verbose,
-            )
             missing = [
                 namespace for namespace in _OP_SOURCES if not _op_registered(namespace)
             ]
