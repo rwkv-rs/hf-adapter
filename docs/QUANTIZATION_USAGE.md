@@ -147,6 +147,14 @@ assert model._rwkv7_native_mm_replaced_modules > 0
 仍为关闭，只有精确的 1.5B 配置显式打开。2.9B 只替换 `lm_head`，因此省内存
 较少，但当前七个 paired-fp16 prefill 单元也达到 `1.0006x-1.0603x`。
 
+精确 `sm_70` 上，默认 `RWKV7_SM70_W4_PREFILL_BACKEND=auto` 会在逻辑行数
+`>=16` 时选择临时反量化 FP16 + cuBLAS；cached decode 和带 `out=` 的图捕获调用
+仍走原来的 DP4A。可用 `RWKV7_SM70_W4_PREFILL_BACKEND=dp4a` 回退做 A/B，或用
+`dequant_blas` 强制长行路径；非 `sm_70` 和少于 16 行始终 fail-closed 到 DP4A。
+1.5B 另有经过验证的 head-only 速度配置：
+`speed + group256 + lm_head + unfused`，在 P128/D128 的 B1/B2/B4/B8
+同时通过显存、prefill、decode 和精度门。
+
 直接复制下面的命令做严格验收：
 
 ```bash

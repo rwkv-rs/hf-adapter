@@ -1,0 +1,9 @@
+date=2026-07-23T11:37:26+08:00
+hostname=wzu-SYS-4029GP-TRT
+python=Python 3.11.15
+torch=2.5.1+cu124
+cuda=12.4
+transformers=5.12.1
+0, Tesla V100-PCIE-32GB, GPU-18fbf081-3c6d-d65b-11b8-288a4ce1ab28, 580.159.03, 32768 MiB
+1, Tesla V100-PCIE-32GB, GPU-f65db2e8-87bb-c88d-363f-23c79f793548, 580.159.03, 32768 MiB
+b5eef8d8811bab93ad98d31bfe0d8c7f4d848b2ceefabed1217fd355b4146e20  /home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-hf/config.json

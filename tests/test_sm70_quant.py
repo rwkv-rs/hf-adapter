@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from rwkv7_hf.sm70_quant import (
     _sm7x_quant_device_supported,
+    _w4_prefill_backend,
     _w8_threads_for_profile,
     SM70_W4_BN_TN_CHOICES,
     build_error,
@@ -40,6 +41,21 @@ def test_t4_w8_threads_use_the_measured_batch_policy() -> None:
         64,
         64,
     ]
+
+
+def test_w4_large_row_prefill_backend_is_exact_sm70_fail_closed() -> None:
+    assert _w4_prefill_backend(15, exact_sm70=True) == "dp4a"
+    assert _w4_prefill_backend(16, exact_sm70=True) == "dequant_blas"
+    assert _w4_prefill_backend(1024, exact_sm70=True) == "dequant_blas"
+    assert _w4_prefill_backend(1024, exact_sm70=False) == "dp4a"
+    assert (
+        _w4_prefill_backend(
+            1024, exact_sm70=True, requested="dp4a"
+        )
+        == "dp4a"
+    )
+    with pytest.raises(ValueError, match="must be auto, dp4a, or dequant_blas"):
+        _w4_prefill_backend(128, exact_sm70=True, requested="wmma")
     assert [_w8_threads_for_profile(b, is_t4=False) for b in (1, 2, 4, 8)] == [
         256,
         128,
@@ -167,6 +183,11 @@ def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
     dequant4[:, 1::2] = hi
     dequant4.mul_(s4[:, None])
     kernel_reference4 = F.linear(x, dequant4).float()
+    prefill4 = w4_linear(prefill_x, q4, s4, 4096, inputs)
+    prefill4_reference = F.linear(prefill_x, dequant4).float()
+    assert F.cosine_similarity(
+        prefill4.float(), prefill4_reference, dim=-1
+    ).min() >= 0.9999
     assert F.cosine_similarity(out4.float(), kernel_reference4, dim=-1).min() >= 0.9999
     assert F.cosine_similarity(out4.float(), ref, dim=-1).min() >= 0.989
     graph = torch.cuda.CUDAGraph()
@@ -204,6 +225,15 @@ def test_sm70_groupwise_w4_matches_dequantized_oracle(group_size: int) -> None:
     dequant[:, 1::2] = hi
     dequant.mul_(scales.repeat_interleave(group_size, dim=1))
     oracle = F.linear(x, dequant).float()
+    prefill = w4_groupwise_linear(
+        x,
+        packed,
+        scales,
+        1024,
+        inputs,
+        group_size=group_size,
+    )
     torch.cuda.synchronize()
     assert got.data_ptr() == out.data_ptr()
     assert F.cosine_similarity(got.float(), oracle, dim=-1).min() >= 0.9999
+    assert F.cosine_similarity(prefill.float(), oracle, dim=-1).min() >= 0.9999

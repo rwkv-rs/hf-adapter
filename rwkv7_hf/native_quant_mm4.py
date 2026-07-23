@@ -535,7 +535,7 @@ class MM4Linear(torch.nn.Module):
         if self.group_size not in {0, 128, 256}:
             raise ValueError("native MM4 group_size must be 0, 128, or 256")
         self.groupwise = bool(
-            self.group_size == 128
+            self.group_size in {128, 256}
             and int(linear.weight.shape[1]) % self.group_size == 0
             and quantize_w4_groupwise is not None
         )

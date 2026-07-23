@@ -15,7 +15,7 @@ boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
 
-## V100 packed MM4 decode profiles
+## V100 packed MM4 profiles
 
 Exact-sm70 MM4 now has production-gated cached-decode profiles for the
 official 1.5B, 2.9B and 7.2B checkpoints. The kernel uses card-local BN/TN
@@ -41,6 +41,21 @@ prefill cells at `1.0006x-1.0603x`. Group128 and group256 remain
 explicit opt-ins and do not change non-V100 defaults. Copyable configuration
 is in [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md); raw evidence is in
 [`../bench/v100_sm70_mm4_bntn_20260716/`](../bench/v100_sm70_mm4_bntn_20260716/README.md).
+
+The newer 1.5B P128/D128 speed profile uses real group-256 storage for
+`lm_head` and passes B1/B2/B4/B8 all-phase gates: footprint `0.9344x`, prefill
+`1.0032x-1.0119x`, decode `1.0011x-1.0353x`, final cosine `>=0.99978340`,
+complete greedy equality and repeat determinism. This is a separate head-only
+speed lane, not a replacement for the lower-footprint memory profile.
+
+For exact-sm70 prefill with at least 16 logical rows, packed W4 now
+dequantizes directly into a temporary FP16 weight and calls cuBLAS; direct
+output and cached-decode calls retain DP4A. On 1.5B memory/group128 P128/D128,
+this raises B1/B8 prefill from `0.2820x/0.1171x` to `0.7816x/0.9076x` paired
+FP16 (`2.790x/7.731x` quantized tok/s). Full-memory prefill therefore remains
+open, but the previous dominant bottleneck is substantially reduced. The
+dispatch is fail-closed to exact `sm_70`; evidence:
+[`../bench/v100_sm70_prefill_dequant_20260723/`](../bench/v100_sm70_prefill_dequant_20260723/README.md).
 
 ## Tesla T4 exact-card DP4A lanes
 
