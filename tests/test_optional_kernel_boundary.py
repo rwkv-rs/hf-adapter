@@ -5,6 +5,7 @@ import types
 
 import pytest
 import torch
+from torch.utils.checkpoint import checkpoint
 
 from rwkv7_hf import ops_rwkv7
 from rwkv7_hf.ops_rwkv7 import (
@@ -378,6 +379,51 @@ def test_training_linear_prefers_atomic_execute_without_legacy_probe(monkeypatch
 
     assert output is not None and tuple(output.shape) == (2, 3, 5)
     assert calls == {"execute": 1, "legacy_probe": 0, "legacy_run": 0}
+
+
+def test_training_linear_preserves_non_reentrant_checkpoint_control_flow(monkeypatch):
+    """Fail-closed dispatch must not swallow checkpoint's replay sentinel."""
+
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"execute": 0}
+
+    def execute(value, weight, bias, **_kwargs):
+        calls["execute"] += 1
+        return {
+            "supported": True,
+            "implementation": "fake-atomic-linear-training-v1",
+            "reason": "checkpoint replay",
+            "output": torch.nn.functional.linear(value, weight, bias),
+        }
+
+    module.execute_linear_training_v1 = execute
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    value = torch.randn(4, 8, requires_grad=True)
+    weight = torch.randn(8, 8, requires_grad=True)
+
+    def projection(hidden):
+        output = maybe_linear_training(
+            hidden,
+            weight,
+            None,
+            training=True,
+        )
+        assert output is not None
+        return output
+
+    output = checkpoint(projection, value, use_reentrant=False)
+    output.sum().backward()
+
+    assert calls == {"execute": 2}
+    assert value.grad is not None
+    assert weight.grad is not None
+    assert torch.isfinite(value.grad).all()
+    assert torch.isfinite(weight.grad).all()
+    assert torch.count_nonzero(value.grad)
+    assert torch.count_nonzero(weight.grad)
 
 
 def test_training_linear_atomic_fallback_and_error_are_fail_closed(monkeypatch):

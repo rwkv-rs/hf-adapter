@@ -48,6 +48,26 @@ _training_batch_token_aligned: ContextVar[bool | None] = ContextVar(
 )
 
 
+def _is_checkpoint_control_flow(exc: Exception) -> bool:
+    """Return whether *exc* belongs to PyTorch checkpoint control flow.
+
+    PyTorch stops a non-reentrant checkpoint replay by raising the private
+    ``_StopRecomputationError`` after it has recreated every saved tensor.
+    Optional backend boundaries normally contain arbitrary implementation
+    failures, but treating that signal as a kernel failure makes execution
+    continue into the reference fallback. The checkpoint pack hook then sees
+    an extra saved tensor and raises ``target_frame.early_stop is set``.
+
+    Detect checkpoint-owned exceptions without importing private PyTorch
+    symbols so this package remains importable across supported Torch
+    releases. User-visible ``CheckpointError`` instances must escape for the
+    same reason: they describe replay correctness, not an optional backend
+    failure.
+    """
+
+    return type(exc).__module__.startswith("torch.utils.checkpoint")
+
+
 def rwkv7_recurrent_reference(
     receptance: torch.Tensor,
     decay: torch.Tensor,
@@ -464,6 +484,8 @@ def maybe_model_forward(
                     "kernel model result phase must be prefill, decode, or training"
                 )
         except Exception as exc:
+            if _is_checkpoint_control_flow(exc):
+                raise
             if requested == "optimized":
                 raise RuntimeError(
                     "optimized RWKV7 model-forward-v1 execution failed: "
@@ -591,6 +613,8 @@ def maybe_linear_training(
                     f"expected {expected}, got {tuple(result.shape)}"
                 )
         except Exception as exc:
+            if _is_checkpoint_control_flow(exc):
+                raise
             if requested == "optimized":
                 raise RuntimeError(
                     "optimized RWKV7 linear-training-v1 execution failed: "
@@ -714,6 +738,8 @@ def maybe_mix6_training(
                     "mix6_training_v1() outputs must match input shape, dtype, and device"
                 )
         except Exception as exc:
+            if _is_checkpoint_control_flow(exc):
+                raise
             if requested == "optimized":
                 raise RuntimeError(
                     "optimized RWKV7 mix6-training-v1 execution failed: "
@@ -875,6 +901,8 @@ def rwkv7_recurrent(
                 initial_state=initial_state,
             )
         except Exception as exc:
+            if _is_checkpoint_control_flow(exc):
+                raise
             if requested == "optimized":
                 raise RuntimeError(
                     f"optimized RWKV7 {protocol} execution failed: "
