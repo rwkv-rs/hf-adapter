@@ -209,6 +209,81 @@ def test_mix6_small_backward_replays_explicit_shift_math(monkeypatch):
         torch.testing.assert_close(candidate, reference)
 
 
+def test_mix6_small_custom_autograd_preserves_shared_parent_graph(monkeypatch):
+    leaf = importlib.import_module("rwkv7_kernels.time_mix.training_mix6")
+    torch.manual_seed(223)
+    parent = torch.randn(1, 16, 8, requires_grad=True)
+    mixes = tuple(torch.randn(8, requires_grad=True) for _ in range(6))
+    namespace = getattr(torch.ops, leaf.OPERATOR_NAMESPACE)
+    monkeypatch.setattr(
+        namespace,
+        "forward",
+        lambda value, shifted, *parameters: leaf._canonical_mix6(
+            value,
+            shifted,
+            tuple(parameters),
+        ),
+        raising=False,
+    )
+
+    value = parent.square()
+    shifted = parent.sin()
+    outputs = leaf._Mix6Shifted.apply(value, shifted, *mixes)
+    loss = sum(output.float().square().mean() for output in outputs)
+    actual = torch.autograd.grad(loss, (parent, *mixes))
+
+    reference_parent = parent.detach().clone().requires_grad_(True)
+    reference_mixes = tuple(mix.detach().clone().requires_grad_(True) for mix in mixes)
+    reference_outputs = leaf._canonical_mix6(
+        reference_parent.square(),
+        reference_parent.sin(),
+        reference_mixes,
+    )
+    reference_loss = sum(output.float().square().mean() for output in reference_outputs)
+    expected = torch.autograd.grad(
+        reference_loss,
+        (reference_parent, *reference_mixes),
+    )
+    for candidate, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(candidate, reference)
+
+
+def test_mix6_custom_autograd_higher_order_uses_local_vjp(monkeypatch):
+    leaf = importlib.import_module("rwkv7_kernels.time_mix.training_mix6")
+    torch.manual_seed(227)
+    parent = torch.randn(1, 32, 8, requires_grad=True)
+    mixes = tuple(torch.randn(8, requires_grad=True) for _ in range(6))
+    namespace = getattr(torch.ops, leaf.OPERATOR_NAMESPACE)
+    monkeypatch.setattr(
+        namespace,
+        "forward",
+        lambda value, shifted, *parameters: leaf._canonical_mix6(
+            value,
+            shifted,
+            tuple(parameters),
+        ),
+        raising=False,
+    )
+
+    outputs = leaf._Mix6Shifted.apply(parent.square(), parent.sin(), *mixes)
+    output_gradients = tuple(torch.randn_like(output) for output in outputs)
+    first = torch.autograd.grad(
+        outputs,
+        (parent, *mixes),
+        grad_outputs=output_gradients,
+        create_graph=True,
+    )
+    second = torch.autograd.grad(
+        sum(gradient.square().mean() for gradient in first),
+        (parent, *mixes),
+        allow_unused=True,
+    )
+
+    assert all(gradient.requires_grad for gradient in first)
+    assert all(gradient is not None for gradient in second)
+    assert all(torch.isfinite(gradient).all() for gradient in (*first, *second))
+
+
 def test_mix6_native_backward_starts_at_exact_row_threshold(monkeypatch):
     leaf = importlib.import_module("rwkv7_kernels.time_mix.training_mix6")
     rows = leaf.NATIVE_BACKWARD_MIN_ROWS

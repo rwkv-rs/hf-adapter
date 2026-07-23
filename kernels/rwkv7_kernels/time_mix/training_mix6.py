@@ -169,6 +169,35 @@ def _canonical_mix6(
     return tuple(value + delta * mix.reshape(1, 1, -1) for mix in mixes)
 
 
+def _canonical_mix6_higher_order_backward(
+    value: torch.Tensor,
+    shifted: torch.Tensor,
+    mixes: tuple[torch.Tensor, ...],
+    output_grads: tuple[torch.Tensor, ...],
+) -> tuple[torch.Tensor, ...]:
+    """Express the local VJP without traversing either input's parent graph.
+
+    ``value`` and ``shifted`` are independent inputs at the custom-autograd
+    boundary even when both were derived from the same hidden state. Calling
+    ``autograd.grad`` on those non-leaf tensors from inside ``backward`` can
+    otherwise consume their shared parent graph before the outer engine gets
+    to it.  This explicit local VJP preserves higher-order differentiation and
+    the same fixed six-term accumulation order as the CUDA kernel.
+    """
+
+    direct = output_grads[0]
+    grad_delta = output_grads[0] * mixes[0].reshape(1, 1, -1)
+    for gradient, mix in zip(output_grads[1:], mixes[1:], strict=True):
+        direct = direct + gradient
+        grad_delta = grad_delta + gradient * mix.reshape(1, 1, -1)
+    difference = shifted - value
+    mix_gradients = tuple(
+        (gradient * difference).sum(dim=(0, 1)).reshape_as(mix)
+        for gradient, mix in zip(output_grads, mixes, strict=True)
+    )
+    return direct - grad_delta, grad_delta, *mix_gradients
+
+
 def _bf16x2_contiguous(value: torch.Tensor) -> torch.Tensor:
     """Return storage safe for the CUDA leaf's packed two-BF16 accesses."""
 
@@ -201,10 +230,17 @@ class _Mix6Shifted(torch.autograd.Function):
         )
         create_graph = torch.is_grad_enabled()
         rows = int(value.shape[0]) * int(value.shape[1])
-        if create_graph or rows < NATIVE_BACKWARD_MIN_ROWS:
+        if create_graph:
+            return _canonical_mix6_higher_order_backward(
+                value,
+                shifted,
+                tuple(mixes),
+                output_grads,
+            )
+        if rows < NATIVE_BACKWARD_MIN_ROWS:
             with torch.enable_grad():
                 references = tuple(
-                    item if item.requires_grad else item.detach().requires_grad_(True)
+                    item.detach().requires_grad_(True)
                     for item in (value, shifted, *mixes)
                 )
                 value_ref, shifted_ref, *mix_refs = references
@@ -218,7 +254,6 @@ class _Mix6Shifted(torch.autograd.Function):
                         outputs,
                         references,
                         output_grads,
-                        create_graph=create_graph,
                     )
                 )
 

@@ -298,7 +298,7 @@ relabelled as evidence for this candidate.
   subsection remain open until an immutable wheel pair produces matching JSON
   evidence.
 - Local source gate: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q`
-  completed with **307 passed**; Ruff, format check, Python bytecode
+  completed with **309 passed**; Ruff, format check, Python bytecode
   compilation and `git diff --check` passed. The wheel
   audit now explicitly requires `nvidia/training_math.py`, and all 102
   destination hashes plus the 153-row frozen source scope were revalidated.
