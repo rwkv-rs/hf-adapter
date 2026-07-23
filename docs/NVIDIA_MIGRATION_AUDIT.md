@@ -10,8 +10,8 @@ boundary, without copying its duplicate Hugging Face model stack back into
 `kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json` records **102** files
 from `perf/native-kernels-v0.8`. Each row contains the old path, Git blob, new
 path, destination SHA256, and transfer kind. The wheel test recomputes every
-destination hash. For the **90 byte-identical** rows it also reconstructs the
-Git blob directly from the wheel bytes. Twelve files require explicit
+destination hash. For the **89 byte-identical** rows it also reconstructs the
+Git blob directly from the wheel bytes. Thirteen files require explicit
 clean-boundary adaptation rather than a false byte-identity claim:
 
 - `native_graph_runtime.py` now binds only canonical `RWKV7Cache` views rather
@@ -25,10 +25,10 @@ clean-boundary adaptation rather than a false byte-identity claim:
 - `native_jit_prefill.py` and `native_jit_decode.py` add that decay bias only
   after promoting the low-rank projection to FP32 and bypass same-dtype fused
   raw-decay lanes that cannot preserve the clean contract;
-- `train_temp_cuda.py` now owns only the leaf forward/backward autograd
-  operators; whole-model/layer dispatch lives in `training_runtime.py` and no
-  model `forward` method is replaced. Its accepted path preserves FP32 decay,
-  canonical GroupNorm/direct/gate math and exact recurrent/token-mix autograd;
+- `train_temp_cuda.py` retains the migrated leaf forward/backward autograd
+  operators, while `training_runtime.py` preserves the old whole-model
+  composition only as a private historical diagnostic. Neither is a formal HF
+  training route and no model `forward` method is replaced;
 - the train-temp recurrent C++/CUDA pair now accepts canonical FP32 decay and
   FP32 decay gradients, retains FP32 state with BF16 outer-product/output
   rounding, and disables FMA contraction for exact reference parity;
@@ -36,13 +36,27 @@ clean-boundary adaptation rather than a false byte-identity claim:
   vector FP32 atomic on SM90+ and use equivalent scalar FP32 atomics on SM89,
   SM80 and SM70, where CUDA does not provide
   `atomicAdd(float2*, float2)`;
-- the Mix6 C++ boundary validates its full rank/channel/vector contract, while
-  its CUDA backward uses a deterministic current-stream channel-pair
-  reduction instead of architecture-dependent atomic parameter-gradient
-  accumulation.
+- the historical Mix6 C++ boundary validates its full rank/channel/vector
+  contract, while its CUDA backward uses a deterministic current-stream
+  channel-pair reduction instead of architecture-dependent atomic
+  parameter-gradient accumulation.
+- `extension_build.py` adds process-safe CUDA build helpers shared by the
+  clean stateless training leaves without moving model or mathematical
+  ownership into the build layer.
 
-All adapted destinations retain their old Git blob identity, new SHA256 and a
-machine-checked rationale. The complete 102-file set includes:
+Formal HF training follows a different, clean composition: the readable
+`modeling_rwkv7.py` layer loop remains the model boundary and independently
+dispatches recurrent, flattened-linear, and explicit-shift Mix6 tensor leaves.
+The admissible accelerated implementations are
+`native-nvidia-rwkv7-factorized-recurrent-training-v1`,
+`torch-cuda-rwkv7-flattened-linear-training-v1`, and
+`native-nvidia-rwkv7-mix6-training-v1`; their model route remains
+`torch-reference-model-v1`. This is the same structure seen by Trainer,
+Accelerate, PEFT and TRL.
+
+All adapted rows retain the historical **source** Git blob identity, the new
+destination SHA256 and a machine-checked rationale; adapted destination bytes
+are never mislabelled as the old Git blob. The complete 102-file set includes:
 
 - CUDA/Triton fused projection, norm/mix, W/A/G/V LoRA, recurrent output,
   FFN, DPLR, self-chunk, and sequence-prefill implementations;
@@ -56,12 +70,14 @@ machine-checked rationale. The complete 102-file set includes:
 
 Source-tree presence is not enough: `scripts/audit_release_wheels.py` opens the
 actual kernel wheel, rejects unsafe/cross-package members, reads the embedded
-manifest, and recomputes all 102 destination hashes plus all 90 applicable
-source Git blobs. It also requires the adapted
-dispatcher, dense/prefill/decode, graph/state-pool, quantization, recurrent and
-training runtime modules that were intentionally not byte-copied from the old
-duplicate model stack. The same command checks that the `rwkv7-hf` wheel keeps
-only the canonical model package and does not contain `rwkv7_kernels`.
+manifest, and recomputes all 102 destination hashes plus all 89 applicable
+source Git blobs. It also requires the adapted dispatcher,
+dense/prefill/decode, graph/state-pool, quantization, recurrent and historical
+diagnostic runtime modules that were intentionally not byte-copied from the
+old duplicate model stack. Presence of the diagnostic runtime proves source
+preservation, not formal route eligibility. The same command checks that the
+`rwkv7-hf` wheel keeps only the canonical model package and does not contain
+`rwkv7_kernels`.
 
 `kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json` is the second,
 semantic half of this audit. It assigns every one of those 102 files exactly
@@ -88,11 +104,13 @@ high-performance recurrent implementation is covered in addition to all 102
 v0.8 NVIDIA files.
 
 The inventory deliberately distinguishes `migrated` from `production auto`.
-All implementation families are present behind API v2, but full-model v2
-families remain diagnostic until the same immutable wheel passes the complete
-RTX 4080 and RTX 4090 gate. Native quantization stays an explicit user opt-in. This
-prevents a source-completeness statement from being mistaken for unmeasured
-device/shape promotion.
+All implementation families are present behind API v2, but inference
+whole-model families remain diagnostic until the same immutable wheel passes
+the complete RTX 4080 and RTX 4090 gate. The historical whole-model training
+runtime is never promoted as the HF training boundary; only the clean tensor
+leaves above are eligible. Native quantization stays an explicit user opt-in.
+This prevents a source-completeness statement from being mistaken for
+unmeasured device/shape promotion.
 
 ## Complete historical scope, including every deliberate exclusion
 
@@ -102,8 +120,8 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 
 | disposition | files |
 |---|---:|
-| byte-identical NVIDIA implementation | 90 |
-| adapted to the clean model-forward protocol | 22 |
+| byte-identical NVIDIA implementation | 89 |
+| adapted to the clean protocol/package boundary | 23 |
 | replaced by canonical reference ownership | 7 |
 | tooling relocated or retired | 6 |
 | separate non-NVIDIA hardware distribution | 27 |
@@ -112,7 +130,7 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 Every row retains its historical Git mode and blob ID. The wheel audit rebuilds
 the Git tree object from all 153 rows and requires the result to equal frozen
 tree `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`. It then cross-checks all 102
-NVIDIA rows (90 exact transfers and twelve clean adaptations) against
+NVIDIA rows (89 exact transfers and thirteen clean adaptations) against
 `MIGRATION_MANIFEST.json` and requires every adapted kernel
 replacement to exist in the wheel. An omitted historical file, an
 `unclassified` row, or a relabelled blob changes the reconstructed tree and
@@ -172,11 +190,22 @@ until one immutable HF wheel and one immutable kernel wheel pass:
 
 1. reference/optimized/pinned-FLA operator and full-model parity;
 2. cache, padding, cached decode, greedy/beam, loss and all-gradient gates;
-3. dense and quantized route gates, HF ecosystem, SFT/DPO/GRPO;
+3. the readable training model route plus independent recurrent, linear and
+   Mix6 leaf routes, dense and quantized route gates, HF ecosystem, and
+   SFT/DPO/GRPO;
 4. the 144-unit three-way `lm_eval` matrix;
 5. honest prefill/decode/forward-backward speed matrices on RTX 4080 and RTX
    4090. V100 results remain historical and are not a release requirement.
 
-Requested environment selectors are never accepted as proof.  Result bundles
-must contain the actual `native-nvidia-*-v2[...]` or recurrent implementation
-route together with code, model, environment, and wheel hashes.
+Requested environment selectors are never accepted as proof. Result bundles
+must contain the actual inference routes and, for training, the
+`torch-reference-model-v1` boundary together with all executed recurrent,
+linear and Mix6 leaf routes. The historical
+`native-nvidia-train-temp-autograd-v2` route is admissible only in explicitly
+labelled archived diagnostics and is rejected by release provenance. Every
+formal result remains bound to code, model, environment, and wheel hashes.
+Formal adaptive training additionally records the fail-closed selector state
+`RWKV7_BACKEND=auto`, `RWKV7_KERNEL_IMPL=auto`,
+`RWKV7_MODEL_KERNEL_IMPL=auto`, and
+`RWKV7_TRAINING_KERNEL_IMPL=adaptive`; release consolidation rejects any other
+environment even when a report claims to have passed.

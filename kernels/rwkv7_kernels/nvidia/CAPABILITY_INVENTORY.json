@@ -486,6 +486,7 @@
         "ada",
         "blackwell"
       ],
+      "historical_diagnostic": "nvidia/training_runtime.py is private and is not reachable through model_forward_v1",
       "id": "training_autograd",
       "implementation_status": "migrated",
       "migration_files": [
@@ -515,15 +516,20 @@
         "training"
       ],
       "policy_flags": [],
+      "public_boundary": "readable HF layer loop with recurrent, linear, and Mix6 tensor leaves",
       "runtime_files": [
         "rwkv7_kernels/linear/__init__.py",
         "rwkv7_kernels/linear/training_flattened.py",
-        "rwkv7_kernels/model_dispatcher.py",
+        "rwkv7_kernels/nvidia/csrc/training/rwkv7_tmix_mix6_shifted_bf16_v1.cpp",
+        "rwkv7_kernels/nvidia/csrc/training/rwkv7_tmix_mix6_shifted_bf16_v1.cu",
+        "rwkv7_kernels/nvidia/extension_build.py",
         "rwkv7_kernels/nvidia/train_temp_cuda.py",
         "rwkv7_kernels/nvidia/training_math.py",
         "rwkv7_kernels/nvidia/training_runtime.py",
         "rwkv7_kernels/recurrent/training_factorized.py",
         "rwkv7_kernels/recurrent/training_matrix.py",
+        "rwkv7_kernels/time_mix/__init__.py",
+        "rwkv7_kernels/time_mix/training_mix6.py",
         "rwkv7_kernels/training_dispatcher.py"
       ]
     }

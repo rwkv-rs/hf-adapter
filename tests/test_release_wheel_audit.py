@@ -8,6 +8,8 @@ import pytest
 from conftest import write_valid_hf_wheel, write_valid_kernel_wheel
 from scripts.audit_release_wheels import (
     CAPABILITY_INVENTORY,
+    EXPECTED_MIGRATION_TRANSFERS,
+    EXPECTED_SOURCE_SCOPE_DISPOSITIONS,
     MIGRATION_MANIFEST,
     RECURRENT_SOURCE_SCOPE,
     SOURCE_SCOPE,
@@ -35,15 +37,12 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     report = audit_kernel_wheel(kernel)
     assert report["status"] == "passed"
     assert report["migrated_files"] == 102
-    assert report["transfers"] == {
-        "adapted_clean_boundary": 12,
-        "byte_identical": 90,
-    }
+    assert report["transfers"] == EXPECTED_MIGRATION_TRANSFERS
+    assert sum(report["transfers"].values()) == 102
     assert report["capability_inventory"]["capabilities"] == 16
     assert report["capability_inventory"]["mapped_migration_files"] == 102
     assert report["source_scope"]["historical_files"] == 153
-    assert report["source_scope"]["dispositions"]["byte_migrated_nvidia"] == 90
-    assert report["source_scope"]["dispositions"]["adapted_protocol"] == 22
+    assert report["source_scope"]["dispositions"] == EXPECTED_SOURCE_SCOPE_DISPOSITIONS
     assert report["recurrent_source_scope"]["historical_files"] == 3
     assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
     assert report["dependencies"] == ["ninja", "numpy", "packaging", "torch"]
@@ -208,6 +207,29 @@ def test_kernel_wheel_audit_rejects_unclassified_historical_source(tmp_path: Pat
         extra={SOURCE_SCOPE: json.dumps(scope).encode()},
     )
     with pytest.raises(ValueError, match="unknown dispositions"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_relabelled_source_scope_counts(
+    tmp_path: Path,
+):
+    root = Path(__file__).resolve().parents[1]
+    scope_path = root / "kernels/rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
+    scope = json.loads(scope_path.read_text())
+    row = next(
+        entry
+        for entry in scope["entries"]
+        if entry["disposition"] == "canonical_reference"
+    )
+    row["disposition"] = "tooling_relocated_or_retired"
+    scope["counts"]["canonical_reference"] -= 1
+    scope["counts"]["tooling_relocated_or_retired"] += 1
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={SOURCE_SCOPE: json.dumps(scope).encode()},
+    )
+    with pytest.raises(ValueError, match="canonical disposition counts differ"):
         audit_kernel_wheel(kernel)
 
 

@@ -4,10 +4,12 @@
 The file intentionally shows the full model structure: token mixing, channel
 mixing, residuals, normalization, layer iteration, cache handling, language
 model loss, and generation integration. Optional acceleration enters through
-three versioned boundaries in ops_rwkv7.py: stateless training linears, the
-recurrence, and one early whole-layer-loop hook. None of these boundaries owns
-model, configuration, cache, parameter, adapter, or optimizer definitions.
+four versioned boundaries in ops_rwkv7.py: stateless Mix6 and training-linear
+leaves, the recurrence, and one inference-only whole-layer-loop hook. None of
+these boundaries owns model, configuration, cache, parameter, adapter, or
+optimizer definitions.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +22,10 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
 from transformers.modeling_utils import PreTrainedModel
 
 try:
@@ -33,6 +38,7 @@ try:
     from .configuration_rwkv7 import RWKV7Config
     from .ops_rwkv7 import (
         maybe_linear_training,
+        maybe_mix6_training,
         maybe_model_forward,
         rwkv7_recurrent,
         set_training_batch_context,
@@ -62,6 +68,7 @@ except ModuleNotFoundError:
     RWKV7Config = _load_remote_sibling("configuration_rwkv7").RWKV7Config
     _remote_ops = _load_remote_sibling("ops_rwkv7")
     maybe_linear_training = _remote_ops.maybe_linear_training
+    maybe_mix6_training = _remote_ops.maybe_mix6_training
     maybe_model_forward = _remote_ops.maybe_model_forward
     rwkv7_recurrent = _remote_ops.rwkv7_recurrent
     set_training_batch_context = _remote_ops.set_training_batch_context
@@ -102,9 +109,7 @@ def _linear_reference(
     batch_size, sequence_length, input_size = value.shape
     batch_groups: list[torch.Tensor] = []
     for batch_start in range(0, batch_size, RWKV7_REFERENCE_LINEAR_ROWS):
-        group = value[
-            batch_start : batch_start + RWKV7_REFERENCE_LINEAR_ROWS
-        ]
+        group = value[batch_start : batch_start + RWKV7_REFERENCE_LINEAR_ROWS]
         valid_batch = int(group.shape[0])
         padded_batch = 1 << (valid_batch - 1).bit_length()
         tokens_per_block = RWKV7_REFERENCE_LINEAR_ROWS // padded_batch
@@ -169,9 +174,7 @@ def _normalize_attention_mask(
     device: torch.device,
 ) -> torch.Tensor:
     if attention_mask is None:
-        return torch.ones(
-            batch_size, sequence_length, dtype=torch.bool, device=device
-        )
+        return torch.ones(batch_size, sequence_length, dtype=torch.bool, device=device)
     if not isinstance(attention_mask, torch.Tensor):
         raise TypeError("attention_mask must be a torch.Tensor")
     if attention_mask.ndim == 1:
@@ -234,6 +237,8 @@ def _masked_token_shift(
     hidden_states: torch.Tensor,
     previous: torch.Tensor,
     attention_mask: torch.Tensor,
+    *,
+    fully_active: bool,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return the preceding valid token and the final shift state."""
 
@@ -241,7 +246,7 @@ def _masked_token_shift(
     if tuple(previous.shape) != (batch_size, int(hidden_states.shape[-1])):
         raise ValueError("shift state must be shaped [batch, hidden]")
 
-    if bool(attention_mask.all().detach().cpu()):
+    if fully_active:
         shifted = torch.cat((previous.unsqueeze(1), hidden_states[:, :-1]), dim=1)
         return shifted, hidden_states[:, -1]
 
@@ -410,19 +415,35 @@ class RWKV7TimeMix(nn.Module):
         shift_state: torch.Tensor,
         v_first: torch.Tensor,
         attention_mask: torch.Tensor,
+        mask_fully_active: bool | None = None,
+        initial_state_zero: bool | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, sequence_length, _ = hidden_states.shape
+        if mask_fully_active is None:
+            mask_fully_active = bool(attention_mask.all().detach().cpu())
         shifted, final_shift = _masked_token_shift(
-            hidden_states, shift_state, attention_mask
+            hidden_states,
+            shift_state,
+            attention_mask,
+            fully_active=mask_fully_active,
         )
         delta = shifted - hidden_states
 
-        xr = hidden_states + delta * self.x_r
-        xw = hidden_states + delta * self.x_w
-        xk = hidden_states + delta * self.x_k
-        xv = hidden_states + delta * self.x_v
-        xa = hidden_states + delta * self.x_a
-        xg = hidden_states + delta * self.x_g
+        mixed_inputs = maybe_mix6_training(
+            hidden_states,
+            shifted,
+            (self.x_r, self.x_w, self.x_k, self.x_v, self.x_a, self.x_g),
+            training=self.training,
+        )
+        if mixed_inputs is None:
+            xr = hidden_states + delta * self.x_r
+            xw = hidden_states + delta * self.x_w
+            xk = hidden_states + delta * self.x_k
+            xv = hidden_states + delta * self.x_v
+            xa = hidden_states + delta * self.x_a
+            xg = hidden_states + delta * self.x_g
+        else:
+            xr, xw, xk, xv, xa, xg = mixed_inputs
 
         receptance = self.r_proj(xr)
         # ``w0`` is evaluated in FP32 by the official implementation.  Keep
@@ -445,9 +466,7 @@ class RWKV7TimeMix(nn.Module):
             ),
             p=2,
             dim=-1,
-        ).view(
-            batch_size, sequence_length, self.attention_hidden_size
-        )
+        ).view(batch_size, sequence_length, self.attention_hidden_size)
         key = key * (
             1
             + (in_context_learning - 1)
@@ -455,9 +474,12 @@ class RWKV7TimeMix(nn.Module):
         )
 
         if self.layer_idx == 0:
-            v_first = torch.where(
-                attention_mask.unsqueeze(-1), value, torch.zeros_like(value)
-            )
+            if mask_fully_active:
+                v_first = value
+            else:
+                v_first = torch.where(
+                    attention_mask.unsqueeze(-1), value, torch.zeros_like(value)
+                )
         else:
             value_mix = torch.sigmoid(self.v_lora.project(xv))
             value = value + (v_first - value) * value_mix
@@ -466,8 +488,7 @@ class RWKV7TimeMix(nn.Module):
         if decay_bias is None:  # pragma: no cover - checkpoint contract guard
             raise RuntimeError("RWKV7 decay projection requires the w0 bias")
         decay = torch.exp(
-            -RWKV7_DECAY_BASE
-            * torch.sigmoid(raw_decay.float() + decay_bias.float())
+            -RWKV7_DECAY_BASE * torch.sigmoid(raw_decay.float() + decay_bias.float())
         )
 
         shape = (
@@ -486,6 +507,7 @@ class RWKV7TimeMix(nn.Module):
             recurrent_state,
             attention_mask,
             training=self.training,
+            initial_state_zero=initial_state_zero,
         )
 
         recurrent_output = recurrent_output.reshape(
@@ -509,7 +531,8 @@ class RWKV7TimeMix(nn.Module):
             batch_size, sequence_length, self.attention_hidden_size
         )
         output = self.o_proj(mixed * gate)
-        output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
+        if not mask_fully_active:
+            output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
         return output, recurrent_state, final_shift, v_first
 
 
@@ -519,9 +542,7 @@ class RWKV7ChannelMix(nn.Module):
     def __init__(self, config: RWKV7Config):
         super().__init__()
         self.x_k = nn.Parameter(torch.zeros(config.hidden_size))
-        self.key = RWKV7Linear(
-            config.hidden_size, config.intermediate_size, bias=False
-        )
+        self.key = RWKV7Linear(config.hidden_size, config.intermediate_size, bias=False)
         self.value = RWKV7Linear(
             config.intermediate_size, config.hidden_size, bias=False
         )
@@ -531,14 +552,21 @@ class RWKV7ChannelMix(nn.Module):
         hidden_states: torch.Tensor,
         shift_state: torch.Tensor,
         attention_mask: torch.Tensor,
+        mask_fully_active: bool | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if mask_fully_active is None:
+            mask_fully_active = bool(attention_mask.all().detach().cpu())
         shifted, final_shift = _masked_token_shift(
-            hidden_states, shift_state, attention_mask
+            hidden_states,
+            shift_state,
+            attention_mask,
+            fully_active=mask_fully_active,
         )
         mixed = hidden_states + (shifted - hidden_states) * self.x_k.view(1, 1, -1)
         activated = torch.relu(self.key(mixed)).square()
         output = self.value(activated)
-        output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
+        if not mask_fully_active:
+            output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
         return output, final_shift
 
 
@@ -569,6 +597,8 @@ class RWKV7Block(nn.Module):
         ffn_shift: torch.Tensor,
         v_first: torch.Tensor,
         attention_mask: torch.Tensor,
+        mask_fully_active: bool,
+        initial_state_zero: bool,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor,
@@ -577,9 +607,7 @@ class RWKV7Block(nn.Module):
         torch.Tensor,
     ]:
         residual = (
-            self.pre_norm(hidden_states)
-            if hasattr(self, "pre_norm")
-            else hidden_states
+            self.pre_norm(hidden_states) if hasattr(self, "pre_norm") else hidden_states
         )
         attention_input = self.attn_norm(residual)
         attention_output, recurrent_state, attention_shift, v_first = self.attn(
@@ -588,18 +616,24 @@ class RWKV7Block(nn.Module):
             attention_shift,
             v_first,
             attention_mask,
+            mask_fully_active,
+            initial_state_zero,
         )
         hidden_states = residual + attention_output
 
         residual = hidden_states
         ffn_input = self.ffn_norm(hidden_states)
         ffn_output, ffn_shift = self.ffn(
-            ffn_input, ffn_shift, attention_mask
+            ffn_input,
+            ffn_shift,
+            attention_mask,
+            mask_fully_active,
         )
         hidden_states = residual + ffn_output
-        hidden_states = hidden_states * attention_mask.unsqueeze(-1).to(
-            dtype=hidden_states.dtype
-        )
+        if not mask_fully_active:
+            hidden_states = hidden_states * attention_mask.unsqueeze(-1).to(
+                dtype=hidden_states.dtype
+            )
         return (
             hidden_states,
             recurrent_state,
@@ -618,6 +652,7 @@ class RWKV7PreTrainedModel(PreTrainedModel):
     _skip_keys_device_placement = ["past_key_values"]
     _supports_cache_class = True
     _tied_weights_keys = {}
+
     @classmethod
     def _supports_default_dynamic_cache(cls) -> bool:
         # RWKV recurrent state is not a Transformer key/value cache.
@@ -653,9 +688,7 @@ class RWKV7Model(RWKV7PreTrainedModel):
         self.layers = nn.ModuleList(
             [RWKV7Block(config, index) for index in range(config.num_hidden_layers)]
         )
-        self.norm = _layer_norm(
-            config.hidden_size, config.norm_eps, config.norm_bias
-        )
+        self.norm = _layer_norm(config.hidden_size, config.norm_eps, config.norm_bias)
         self.gradient_checkpointing = False
         self.post_init()
 
@@ -714,9 +747,7 @@ class RWKV7Model(RWKV7PreTrainedModel):
             )
         return (
             recurrent.to(device=hidden_states.device),
-            attention_shift.to(
-                device=hidden_states.device, dtype=hidden_states.dtype
-            ),
+            attention_shift.to(device=hidden_states.device, dtype=hidden_states.dtype),
             ffn_shift.to(device=hidden_states.device, dtype=hidden_states.dtype),
         )
 
@@ -729,15 +760,19 @@ class RWKV7Model(RWKV7PreTrainedModel):
         ffn_shift: torch.Tensor,
         v_first: torch.Tensor,
         attention_mask: torch.Tensor,
+        mask_fully_active: bool,
+        initial_state_zero: bool,
     ):
         def custom_forward(hidden, state, attn_shift, channel_shift, first_value):
             # Autograd may recompute a checkpoint on a worker context that
             # does not inherit Python ContextVars from the outer model call.
-            # Re-publish only the mask semantic here so optional stateless
-            # linears select the same mathematical program in both passes.
+            # Re-publish mask semantics and zero-state provenance here so
+            # optional leaves select the same mathematical program in both
+            # passes.
             set_training_batch_context(
                 attention_mask,
                 training=self.training,
+                fully_active=mask_fully_active,
             )
             return layer(
                 hidden,
@@ -746,6 +781,8 @@ class RWKV7Model(RWKV7PreTrainedModel):
                 channel_shift,
                 first_value,
                 attention_mask,
+                mask_fully_active,
+                initial_state_zero,
             )
 
         checkpoint_fn = getattr(self, "_gradient_checkpointing_func", None)
@@ -811,16 +848,28 @@ class RWKV7Model(RWKV7PreTrainedModel):
         if batch_size == 0 or sequence_length == 0:
             raise ValueError("RWKV7 requires a non-empty batch and sequence")
 
+        supplied_attention_mask = attention_mask
         mask = _normalize_attention_mask(
             attention_mask,
             int(batch_size),
             int(sequence_length),
             inputs_embeds.device,
         )
-        set_training_batch_context(mask, training=self.training)
-        hidden_states = inputs_embeds * mask.unsqueeze(-1).to(
-            dtype=inputs_embeds.dtype
+        # Determine mask semantics once per model call.  The old implementation
+        # copied ``attention_mask.all()`` to the host in every TMix and CMix
+        # layer, serializing the CUDA queue dozens of times at large batch.
+        # A missing mask is known to be fully active without touching the GPU;
+        # an explicit mask pays at most one synchronization here.
+        mask_fully_active = set_training_batch_context(
+            mask,
+            training=self.training,
+            fully_active=(True if supplied_attention_mask is None else None),
         )
+        hidden_states = inputs_embeds
+        if not mask_fully_active:
+            hidden_states = hidden_states * mask.unsqueeze(-1).to(
+                dtype=hidden_states.dtype
+            )
 
         use_cache = self.config.use_cache if use_cache is None else bool(use_cache)
         if self.training or (self.gradient_checkpointing and torch.is_grad_enabled()):
@@ -883,7 +932,9 @@ class RWKV7Model(RWKV7PreTrainedModel):
             )
 
         all_hidden_states = (hidden_states,) if output_hidden_states else None
-        v_first = torch.zeros(
+        # Layer zero defines every v_first element before a later layer reads
+        # it, so this placeholder need not pay for a full-tensor zero fill.
+        v_first = torch.empty(
             batch_size,
             sequence_length,
             self.config.attention_hidden_size,
@@ -892,12 +943,22 @@ class RWKV7Model(RWKV7PreTrainedModel):
         )
 
         for layer_idx, layer in enumerate(self.layers):
+            # Cache provenance is a Python-side fact.  Only a missing layer,
+            # for which `_layer_state` allocates fresh zeros, may claim the
+            # factorized leaf's zero-state contract. Existing tensors are not
+            # reduced or guessed to be zero.
+            initial_state_zero = any(
+                collection[layer_idx] is None
+                for collection in (
+                    working_cache.recurrent_state,
+                    working_cache.attention_shift,
+                    working_cache.ffn_shift,
+                )
+            )
             recurrent, attention_shift, ffn_shift = self._layer_state(
                 working_cache, layer_idx, hidden_states
             )
-            v_first = v_first.to(
-                device=hidden_states.device, dtype=hidden_states.dtype
-            )
+            v_first = v_first.to(device=hidden_states.device, dtype=hidden_states.dtype)
             layer_mask = mask.to(device=hidden_states.device)
             if self.gradient_checkpointing and self.training:
                 outputs = self._checkpointed_layer(
@@ -908,6 +969,8 @@ class RWKV7Model(RWKV7PreTrainedModel):
                     ffn_shift,
                     v_first,
                     layer_mask,
+                    mask_fully_active,
+                    initial_state_zero,
                 )
             else:
                 outputs = layer(
@@ -917,6 +980,8 @@ class RWKV7Model(RWKV7PreTrainedModel):
                     ffn_shift,
                     v_first,
                     layer_mask,
+                    mask_fully_active,
+                    initial_state_zero,
                 )
             (
                 hidden_states,
@@ -933,9 +998,10 @@ class RWKV7Model(RWKV7PreTrainedModel):
                 all_hidden_states += (hidden_states,)
 
         hidden_states = self.norm(hidden_states)
-        hidden_states = hidden_states * mask.to(
-            hidden_states.device
-        ).unsqueeze(-1).to(dtype=hidden_states.dtype)
+        if not mask_fully_active:
+            hidden_states = hidden_states * mask.to(hidden_states.device).unsqueeze(
+                -1
+            ).to(dtype=hidden_states.dtype)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -979,9 +1045,7 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
     def __init__(self, config: RWKV7Config):
         super().__init__(config)
         self.model = RWKV7Model(config)
-        self.lm_head = RWKV7Linear(
-            config.hidden_size, config.vocab_size, bias=False
-        )
+        self.lm_head = RWKV7Linear(config.hidden_size, config.vocab_size, bias=False)
         self.post_init()
 
     def get_input_embeddings(self):
@@ -1042,9 +1106,7 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                 model_inputs[key] = kwargs[key]
         return model_inputs
 
-    def _reorder_cache(
-        self, past_key_values: RWKV7Cache, beam_idx: torch.LongTensor
-    ):
+    def _reorder_cache(self, past_key_values: RWKV7Cache, beam_idx: torch.LongTensor):
         return past_key_values.reorder_cache(beam_idx)
 
     def forward(
@@ -1065,14 +1127,15 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
     ) -> tuple | CausalLMOutputWithPast:
         if num_logits_to_keep is not None:
             if logits_to_keep not in (None, 0):
-                if not (
-                    isinstance(logits_to_keep, torch.Tensor)
-                    and isinstance(num_logits_to_keep, torch.Tensor)
-                    and torch.equal(logits_to_keep, num_logits_to_keep)
-                ) and logits_to_keep != num_logits_to_keep:
-                    raise ValueError(
-                        "logits_to_keep and num_logits_to_keep disagree"
+                if (
+                    not (
+                        isinstance(logits_to_keep, torch.Tensor)
+                        and isinstance(num_logits_to_keep, torch.Tensor)
+                        and torch.equal(logits_to_keep, num_logits_to_keep)
                     )
+                    and logits_to_keep != num_logits_to_keep
+                ):
+                    raise ValueError("logits_to_keep and num_logits_to_keep disagree")
             logits_to_keep = num_logits_to_keep
 
         effective_use_cache = (
@@ -1102,9 +1165,7 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                 "past_key_values": optimized_cache,
                 "labels": labels,
                 "training": bool(self.training),
-                "gradient_checkpointing": bool(
-                    self.model.gradient_checkpointing
-                ),
+                "gradient_checkpointing": bool(self.model.gradient_checkpointing),
                 "grad_enabled": bool(torch.is_grad_enabled()),
                 "use_cache": effective_use_cache,
                 "output_hidden_states": effective_hidden_states,

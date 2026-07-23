@@ -7,7 +7,7 @@
 ## Fixed decisions
 
 - Initial clean base: `4bbd911e4dcb446e8c21fb795e373b4a59775ff3`.
-- Current baseline: `7692a263d451c6769016a3d383e00a7d84515c52`.
+- Current baseline: `10584cb5abf25f9e685116a863d73cdd426ce931`.
 - Working branch: `perf/training-large-batch-v1`.
 - `rwkv7_hf/` remains the readable HF source of truth and contains only the
   canonical model modules.
@@ -208,8 +208,9 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 
 ## Phase 6 — backend-v2 training implementation and unified acceptance
 
-- [x] Port the existing versioned forward/backward autograd operators behind
-      `model_forward_v1`; do not create a separate model class or cache.
+- [x] Preserve the existing whole-model forward/backward runtime only as a
+      private historical diagnostic. Formal HF training never dispatches it
+      through `model_forward_v1` and does not create a separate model/cache.
 - [x] Add clean recurrent and stateless-linear training leaf protocols so the
       readable HF layer loop can use CUDA without the historical whole-model
       training wrapper.
@@ -224,23 +225,29 @@ This subsection tracks the post-`7692a263` optimization candidate. Earlier
 training evidence does not validate these changed bytes and must not be
 relabelled as evidence for this candidate.
 
-- [x] Preserve the fixed-row reference projection contract for `B*T <= 128`,
-      while making the opt-in native whole-model runtime use one flattened
-      projection when `B*T > 128`.
-- [x] Remove the benchmark's second causal cross-entropy calculation and avoid
-      materializing a contiguous shifted-logits tensor in the runtime/model
-      loss path.
-- [x] Add a single-use positive native-probe ticket so a supported request is
-      not probed and synchronized twice before the same execution.
+- [x] Keep `modeling_rwkv7.py` as the only public training program and dispatch
+      recurrent, flattened-linear, and explicit-shift Mix6 as independent
+      tensor leaves. The historical whole-model runtime remains a private
+      diagnostic and is not eligible for formal HF training evidence.
+- [x] Preserve the fixed-row readable reference projection contract while the
+      optional flattened-linear leaf presents one `[B*T,C]` GEMM to PyTorch.
+- [x] Remove the benchmark's second causal cross-entropy calculation without
+      changing the model-provided HF causal-loss contract.
+- [x] Ensure each optimized flattened-linear call performs only one fail-closed
+      support validation, with no reusable trusted bypass.
+- [x] Resolve all-active mask and zero-state provenance once at the readable
+      model boundary rather than synchronizing once per layer.
+- [x] Skip redundant mask multiplications and zero fills only when the readable
+      model has already proven that doing so is mathematically identical.
 - [x] Replace Mix6 parameter-gradient atomics and FP32 scratch/cast launches
-      with a deterministic current-stream reduction; retain canonical replay
-      for higher-order differentiation only.
+      with a deterministic, parallel, current-stream two-stage reduction;
+      retain canonical replay for small and higher-order requests.
 - [x] Add a reproducible profiler that records actual routes, selected
       operator counts/times, recurrence time, peak memory, environment,
       command, code identity, and wheel identity.
-- [x] Pass the complete local Python test/lint/hash gate on the source
-      candidate: 225 tests, Ruff, diff check, 102/102 migration hashes, and
-      source-scope/capability-inventory audits all pass.
+- [x] Pass the complete local Python test/lint/hash gate on the final source
+      candidate: full pytest, Ruff on changed first-party Python, diff check,
+      102/102 migration hashes, and source-scope/capability audits.
 - [ ] Build one immutable HF/kernel wheel pair and compile the changed Mix6
       extension on RTX 4080 from that exact pair.
 - [ ] Pass Mix6 output/first-gradient parity, repeated-run determinism, and
@@ -271,17 +278,18 @@ relabelled as evidence for this candidate.
 ### 2026-08-30 — large-batch training hot-path source candidate
 
 - Started from merged baseline
-  `7692a263d451c6769016a3d383e00a7d84515c52` on
+  `10584cb5abf25f9e685116a863d73cdd426ce931` on
   `perf/training-large-batch-v1` after profiling attributed the B4/T128
   regression primarily to row-serialized projection launches and tensor-copy
   overhead rather than recurrent time.
-- Implemented adaptive whole-model projection flattening, a single causal-loss
-  path, positive-probe reuse, deterministic Mix6 first-order backward, and a
-  formal hotspot profiler. The readable HF model/cache/module ownership and
-  the small-shape fixed-row reference contract remain unchanged.
+- Implemented clean adaptive tensor leaves for recurrent, flattened linear and
+  explicit-shift Mix6, retained the single model-owned causal-loss path, and
+  added a formal hotspot profiler. The readable HF layer loop, cache and
+  parameter ownership remain unchanged; no public whole-model training route
+  is used.
 - The NVIDIA manifest still contains exactly 102 historical destinations. Its
-  current classification is 90 byte-identical transfers and 12 declared clean
-  adaptations; the complete historical source scope is 90 byte-migrated, 22
+  current classification is 89 byte-identical transfers and 13 declared clean
+  adaptations; the complete historical source scope is 89 byte-migrated, 23
   adapted, 7 canonical-reference, 6 relocated/retired tooling, 27 separate
   hardware, and 1 retired non-kernel file. Destination SHA256 values currently
   match the working-tree bytes.
@@ -290,7 +298,8 @@ relabelled as evidence for this candidate.
   subsection remain open until an immutable wheel pair produces matching JSON
   evidence.
 - Local source gate: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q`
-  completed with **225 passed**; Ruff and `git diff --check` passed. The wheel
+  completed with **307 passed**; Ruff, format check, Python bytecode
+  compilation and `git diff --check` passed. The wheel
   audit now explicitly requires `nvidia/training_math.py`, and all 102
   destination hashes plus the 153-row frozen source scope were revalidated.
 

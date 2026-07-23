@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Validate reference/native RWKV-7 against one pinned FLA checkout.
+"""Validate reference/optimized RWKV-7 against one pinned FLA checkout.
 
 The script records three distinct lanes.  The optimized lane is accepted only
-when the actual whole-model trace names a backend-v2 prefill/decode/training
-implementation; requesting an environment selector is not route evidence.
+when inference names its actual whole-model implementation and training names
+the readable model plus every selected tensor leaf; requesting an environment
+selector is not route evidence.
 """
 
 from __future__ import annotations
@@ -50,9 +51,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--training-tokens", type=int, default=16)
     parser.add_argument(
         "--training-mode",
-        choices=("native", "skip-not-applicable"),
-        default="native",
-        help="SM70 uses skip-not-applicable because train_temp requires BF16/sm80.",
+        choices=("adaptive", "native", "skip-not-applicable"),
+        default="adaptive",
+        help=(
+            "adaptive validates BF16 clean-loop tensor leaves; native is a "
+            "deprecated alias; SM70 may use skip-not-applicable"
+        ),
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--code-sha")
@@ -85,10 +89,41 @@ def route_mode(optimized: bool) -> None:
     os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native" if optimized else "auto"
 
 
+def canonical_training_mode(value: str) -> str:
+    return "adaptive" if value == "native" else value
+
+
+def training_route_mode(optimized: bool) -> None:
+    os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
+    if optimized:
+        os.environ["RWKV7_BACKEND"] = "auto"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "adaptive"
+    else:
+        os.environ["RWKV7_BACKEND"] = "reference"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+
+
 def last_model_route() -> dict[str, Any] | None:
     from rwkv7_hf.ops_rwkv7 import get_last_model_route
 
     return get_last_model_route()
+
+
+def last_training_routes() -> dict[str, Any]:
+    from rwkv7_hf.ops_rwkv7 import (
+        get_last_linear_route,
+        get_last_mix6_route,
+        get_last_model_route,
+        get_last_recurrent_route,
+    )
+
+    return {
+        "model": get_last_model_route(),
+        "recurrent": get_last_recurrent_route(),
+        "linear": get_last_linear_route(),
+        "mix6": get_last_mix6_route(),
+    }
 
 
 def route_is(route: dict[str, Any] | None, phase: str) -> bool:
@@ -98,7 +133,6 @@ def route_is(route: dict[str, Any] | None, phase: str) -> bool:
     expected = {
         "prefill": "native-nvidia-prefill-v2[",
         "decode": "native-nvidia-fused-decode-v2[",
-        "training": "native-nvidia-train-temp-autograd-v2",
     }[phase]
     return implementation.startswith(expected)
 
@@ -280,7 +314,9 @@ def fla_model(path: Path, dtype: torch.dtype, *, training: bool = False):
     config.fuse_cross_entropy = False
     config.fuse_linear_cross_entropy = False
     config.use_l2warp = False
-    model = RWKV7ForCausalLM.from_pretrained(path, config=config, torch_dtype=dtype).cuda()
+    model = RWKV7ForCausalLM.from_pretrained(
+        path, config=config, torch_dtype=dtype
+    ).cuda()
     return model.train() if training else model.eval()
 
 
@@ -539,7 +575,7 @@ def run_training_lane(kind: str, path: Path, ids: torch.Tensor, labels: torch.Te
         model = fla_model(path, dtype, training=True)
     else:
         model = clean_model(path, dtype).train()
-        route_mode(kind == "optimized")
+        training_route_mode(kind == "optimized")
     model.zero_grad(set_to_none=True)
     output = model(
         input_ids=ids,
@@ -564,7 +600,7 @@ def run_training_lane(kind: str, path: Path, ids: torch.Tensor, labels: torch.Te
         "logits": output.logits.detach().cpu(),
         "loss": shifted.detach().cpu(),
         "gradients": gradients,
-        "route": None if kind == "fla" else last_model_route(),
+        "route": None if kind == "fla" else last_training_routes(),
     }
     del output, model
     gc.collect()
@@ -573,8 +609,6 @@ def run_training_lane(kind: str, path: Path, ids: torch.Tensor, labels: torch.Te
 
 
 def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, Any]:
-    if tokens % 16:
-        raise ValueError("native training sequence length must be divisible by 16")
     probe = clean_model(path, torch.bfloat16)
     vocab = int(probe.config.vocab_size)
     del probe
@@ -603,7 +637,36 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
             "loss": loss,
             "gradients": gradients,
         }
-    optimized_route_passed = route_is(lanes["optimized"]["route"], "training")
+    routes = lanes["optimized"]["route"] or {}
+    model_route = routes.get("model") or {}
+    recurrent_route = routes.get("recurrent") or {}
+    linear_route = routes.get("linear") or {}
+    mix6_route = routes.get("mix6") or {}
+    aligned = tokens > 0 and tokens % 16 == 0
+    recurrent_implementation = (
+        "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+        if aligned
+        else "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+    )
+    linear_optimized = aligned and batch * tokens >= 128
+    linear_route_passed = (
+        linear_route.get("selected") == "optimized"
+        and linear_route.get("implementation")
+        == "torch-cuda-rwkv7-flattened-linear-training-v1"
+        if linear_optimized
+        else linear_route.get("selected") == "reference"
+        and linear_route.get("implementation") == "torch-reference-linear-v1"
+    )
+    optimized_route_passed = bool(
+        model_route.get("selected") == "reference"
+        and model_route.get("phase") == "training"
+        and model_route.get("implementation") == "torch-reference-model-v1"
+        and recurrent_route.get("selected") == "optimized"
+        and recurrent_route.get("implementation") == recurrent_implementation
+        and linear_route_passed
+        and mix6_route.get("selected") == "optimized"
+        and mix6_route.get("implementation") == "native-nvidia-rwkv7-mix6-training-v1"
+    )
     for lane in lanes.values():
         lane.pop("logits")
         lane.pop("loss")
@@ -654,7 +717,8 @@ def main() -> int:
     training_label = args.training_model or next(iter(models))
     if training_label not in models:
         raise ValueError(f"unknown --training-model label: {training_label}")
-    if args.training_mode == "native":
+    training_mode = canonical_training_mode(args.training_mode)
+    if training_mode == "adaptive":
         training = run_training(
             models[training_label],
             args.training_batch,
@@ -673,8 +737,8 @@ def main() -> int:
             "tokens": args.training_tokens,
             "device_capability": tuple(torch.cuda.get_device_capability()),
             "reason": (
-                "migrated train_temp is BF16 and requires sm80 or newer; "
-                "operator input/state gradients remain covered above"
+                "native BF16 training leaves require sm80 or newer; the "
+                "readable HF training loop remains available"
             ),
         }
     wheels = {}
@@ -691,7 +755,7 @@ def main() -> int:
         and training["passed"]
     )
     report = {
-        "schema": "rwkv7-backend-v2-three-way-parity-v1",
+        "schema": "rwkv7-backend-v2-three-way-parity-v2",
         "status": "passed" if passed else "failed",
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "dtype": args.dtype,
@@ -704,7 +768,8 @@ def main() -> int:
             "decode_steps": args.decode_steps,
             "greedy_tokens": args.greedy_tokens,
             "seed": args.seed,
-            "training_mode": args.training_mode,
+            "training_mode": training_mode,
+            "requested_training_mode": args.training_mode,
         },
         "operator": operator,
         "inference": inference,

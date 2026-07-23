@@ -17,9 +17,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from evaluation.fla_common import EXPECTED_FLA_COMMIT  # noqa: E402
+from scripts.release_route_contract import (  # noqa: E402
+    HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
+    validate_actual_routes,
+    validate_formal_adaptive_environment,
+    validate_training_routes,
+)
 
 
-DEVICES = {"rtx-4080", "tesla-v100", "rtx-4090"}
+DEVICES = {"rtx-4080", "rtx-4090"}
 PRIMARY_REPORTS = (
     "correctness",
     "hf_ecosystem",
@@ -30,10 +36,10 @@ PRIMARY_REPORTS = (
 )
 REPORT_SCHEMAS = {
     "correctness": "rwkv7-backend-v2-inference-validation-v1",
-    "hf_ecosystem": "rwkv7-backend-v2-hf-ecosystem-v1",
-    "training": "rwkv7-backend-v2-training-validation-v1",
+    "hf_ecosystem": "rwkv7-backend-v2-hf-ecosystem-v2",
+    "training": "rwkv7-backend-v2-training-validation-v2",
     "quantization": "rwkv7-backend-v2-quantization-validation-v1",
-    "fla": "rwkv7-backend-v2-three-way-parity-v1",
+    "fla": "rwkv7-backend-v2-three-way-parity-v2",
     "speed": "rwkv7-backend-v2-three-way-speed-v1",
 }
 REPORT_SCHEMA = "rwkv7-device-release-validation-v1"
@@ -159,12 +165,12 @@ def require_environment(label: str, report: dict[str, Any]) -> None:
         raise ValueError(f"{label} report runtime environment is incomplete")
 
 
-def require_native_training_toolkit(report: dict[str, Any]) -> None:
+def require_clean_leaf_training_toolkit(report: dict[str, Any]) -> None:
     environment = report.get("environment") or {}
     toolkit = environment.get("cuda_toolkit") or {}
     provenance = toolkit.get("provenance") or {}
     if not toolkit.get("nvcc") or not toolkit.get("nvcc_version"):
-        raise ValueError("native training report lacks CUDA compiler provenance")
+        raise ValueError("clean training leaf report lacks CUDA compiler provenance")
     cuda_home = Path(str(toolkit.get("cuda_home", "")))
     nvcc = Path(str(toolkit["nvcc"]))
     extensions = Path(str(toolkit.get("torch_extensions_dir", "")))
@@ -173,10 +179,10 @@ def require_native_training_toolkit(report: dict[str, Any]) -> None:
         or nvcc != cuda_home / "bin" / "nvcc"
         or not extensions.is_absolute()
     ):
-        raise ValueError("native training CUDA build paths are not bound")
+        raise ValueError("clean training leaf CUDA build paths are not bound")
     digest = str(provenance.get("sha256", ""))
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
-        raise ValueError("native training report lacks CUDA toolkit identity")
+        raise ValueError("clean training leaf report lacks CUDA toolkit identity")
     torch_match = re.search(r"(\d+)\.(\d+)", str(environment.get("cuda", "")))
     nvcc_match = re.search(
         r"release\s+(\d+)\.(\d+)",
@@ -184,11 +190,11 @@ def require_native_training_toolkit(report: dict[str, Any]) -> None:
         re.IGNORECASE,
     )
     if not torch_match or not nvcc_match:
-        raise ValueError("native training CUDA version provenance is incomplete")
+        raise ValueError("clean training leaf CUDA version provenance is incomplete")
     torch_cuda = tuple(int(value) for value in torch_match.groups())
     nvcc_cuda = tuple(int(value) for value in nvcc_match.groups())
     if torch_cuda != nvcc_cuda:
-        raise ValueError("native training compiler does not match PyTorch CUDA")
+        raise ValueError("clean training leaf compiler does not match PyTorch CUDA")
 
 
 def validate_finetune(
@@ -216,8 +222,41 @@ def validate_finetune(
         }
         if actual != expected:
             raise ValueError(f"{name} report wheel identity mismatch")
-        if not phase_routes(row.get("backend_routes"), "training"):
-            raise ValueError(f"{name} report lacks actual training route evidence")
+        training_routes = set(phase_routes(row.get("backend_routes"), "training"))
+        trace = row.get("kernel_route_trace") or {}
+        if trace.get("schema") != "rwkv7-kernel-route-trace-v2":
+            raise ValueError(f"{name} report lacks the versioned kernel route trace")
+        if trace.get("requested_training_policy") != "adaptive":
+            raise ValueError(f"{name} report was not run with adaptive training")
+        counters = (
+            "actual_model_calls",
+            "actual_recurrent_calls",
+            "actual_linear_calls",
+            "actual_mix6_calls",
+        )
+        for counter in counters:
+            values = trace.get(counter) or {}
+            if not isinstance(values, dict):
+                raise ValueError(f"{name} report has invalid {counter}")
+            training_routes.update(
+                str(implementation)
+                for implementation, count in values.items()
+                if int(count) > 0
+            )
+        if int(
+            (trace.get("actual_model_calls") or {}).get(
+                HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE, 0
+            )
+        ):
+            raise ValueError(
+                f"{name} report executed the historical whole-model diagnostic"
+            )
+        try:
+            validate_training_routes(sorted(training_routes))
+        except ValueError as exc:
+            raise ValueError(
+                f"{name} report has invalid training routes: {exc}"
+            ) from exc
         statuses[f"{name}_status"] = "passed"
     return statuses
 
@@ -308,9 +347,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     require_fla_commit("fla", reports["fla"])
     require_fla_commit("speed", reports["speed"])
 
-    expected_training_mode = (
-        "reference-fallback" if args.device == "tesla-v100" else "native"
-    )
+    expected_training_mode = "adaptive"
     if (reports["training"].get("settings") or {}).get(
         "candidate_route"
     ) != expected_training_mode:
@@ -321,8 +358,30 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("HF ecosystem training mode does not match the release device")
     if (reports["speed"].get("training") or {}).get("mode") != expected_training_mode:
         raise ValueError("speed training mode does not match the release device")
-    if expected_training_mode == "native":
-        require_native_training_toolkit(reports["training"])
+    require_clean_leaf_training_toolkit(reports["training"])
+    training_backend_environment = validate_formal_adaptive_environment(
+        reports["training"].get("environment")
+    )
+    hf_backend_environment = validate_formal_adaptive_environment(
+        reports["hf_ecosystem"].get("environment")
+    )
+    if hf_backend_environment != training_backend_environment:
+        raise ValueError("formal training and HF ecosystem environments differ")
+
+    reported_training_implementations = {
+        implementation for _, implementation in implementations(reports["training"])
+    }
+    historical_training = sorted(
+        route
+        for route in reported_training_implementations
+        if route == HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE
+        or route.startswith(f"{HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE}[")
+    )
+    if historical_training:
+        raise ValueError(
+            "training report contains the historical whole-model train-temp route: "
+            f"{historical_training}"
+        )
 
     actual_routes = {
         "prefill": phase_routes(reports["correctness"], "prefill"),
@@ -330,9 +389,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "training": phase_routes(reports["training"], "training"),
         "quantization": quantization_routes(reports["quantization"]),
     }
-    for phase, routes in actual_routes.items():
-        if not routes:
-            raise ValueError(f"{phase} report lacks actual route evidence")
+    try:
+        actual_routes = validate_actual_routes(actual_routes)
+    except ValueError as exc:
+        raise ValueError(f"formal device route evidence is invalid: {exc}") from exc
 
     finetune_path = args.finetune_report.expanduser().resolve()
     finetune = safe_json(finetune_path)
@@ -361,6 +421,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
         "lm_eval_comparison_summary": lm_eval["comparison_summary"],
+        "training_policy": "adaptive",
+        "training_backend_environment": training_backend_environment,
         **{f"{label}_status": "passed" for label in PRIMARY_REPORTS},
         **finetune_statuses,
         "actual_routes": actual_routes,

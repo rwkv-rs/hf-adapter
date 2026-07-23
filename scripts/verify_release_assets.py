@@ -30,20 +30,15 @@ from scripts.audit_release_wheels import (  # noqa: E402
     audit_kernel_wheel,
     open_wheel,
 )
+from scripts.release_route_contract import (  # noqa: E402
+    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    validate_actual_routes,
+)
 
 
 FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 DEVICE_ORDER = ("rtx-4080", "rtx-4090")
 DEVICES = frozenset(DEVICE_ORDER)
-REQUIRED_ROUTE_PHASES = {"prefill", "decode", "training", "quantization"}
-SELECTOR_ONLY_ROUTES = {
-    "auto",
-    "graph",
-    "native",
-    "optimized",
-    "reference",
-    "triton",
-}
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -93,9 +88,7 @@ def audit_wheel_against_checkout(
     matched: list[str] = []
     try:
         for member in sorted(members):
-            mapping = next(
-                (row for row in mappings if member.startswith(row[0])), None
-            )
+            mapping = next((row for row in mappings if member.startswith(row[0])), None)
             if mapping is None:
                 continue
             prefix, source_root = mapping
@@ -323,6 +316,13 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         ):
             if row.get(f"{gate}_status") != "passed":
                 raise ValueError(f"{gate} gate did not pass: {device}")
+        if row.get("training_policy") != "adaptive":
+            raise ValueError(f"formal adaptive training policy is missing: {device}")
+        if (
+            row.get("training_backend_environment")
+            != FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT
+        ):
+            raise ValueError(f"formal adaptive training environment differs: {device}")
         bundle_sha = str(row.get("compact_bundle_manifest_sha256", ""))
         if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha):
             raise ValueError(f"compact evidence identity is missing: {device}")
@@ -334,20 +334,12 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         )
         if completed_at <= started_at:
             raise ValueError(f"device acceptance completion precedes start: {device}")
-        routes = row.get("actual_routes")
-        if not isinstance(routes, dict) or not REQUIRED_ROUTE_PHASES <= set(routes):
-            raise ValueError(f"actual route evidence is missing: {device}")
-        for phase in REQUIRED_ROUTE_PHASES:
-            values = routes[phase]
-            if isinstance(values, str):
-                values = [values]
-            if (
-                not isinstance(values, list)
-                or not values
-                or not all(isinstance(value, str) and value.strip() for value in values)
-                or any(value.lower() in SELECTOR_ONLY_ROUTES for value in values)
-            ):
-                raise ValueError(f"actual {phase} route evidence is invalid: {device}")
+        try:
+            validate_actual_routes(row.get("actual_routes"))
+        except ValueError as exc:
+            raise ValueError(
+                f"actual route evidence is invalid: {device}: {exc}"
+            ) from exc
     for previous, following in zip(DEVICE_ORDER, DEVICE_ORDER[1:]):
         previous_completed = aware_datetime(
             devices[previous]["acceptance_completed_at"],

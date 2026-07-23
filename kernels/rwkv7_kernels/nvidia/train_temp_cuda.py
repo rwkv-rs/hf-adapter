@@ -28,6 +28,8 @@ TRAIN_TEMP_CHUNK_LEN = 16
 _LOAD_LOCK = threading.Lock()
 _LOADED = False
 _LOAD_ERROR: BaseException | None = None
+_MIX6_LOADED = False
+_MIX6_LOAD_ERROR: BaseException | None = None
 _RECURRENT_LOADED = False
 _RECURRENT_LOAD_ERROR: BaseException | None = None
 _L2WRAP_EXTENSION: Any | None = None
@@ -73,9 +75,7 @@ _OP_SOURCES = {
 
 def _train_temp_checkpoint_backend() -> str:
     requested = (
-        os.environ.get("RWKV7_TRAIN_TEMP_CHECKPOINT_BACKEND", "auto")
-        .strip()
-        .lower()
+        os.environ.get("RWKV7_TRAIN_TEMP_CHECKPOINT_BACKEND", "auto").strip().lower()
     )
     if requested not in {"auto", "deepspeed", "torch"}:
         raise ValueError(
@@ -208,9 +208,73 @@ def _build_recurrent_operator(
     )
 
 
-def load_recurrent_training_cuda_extension(
-    *, verbose: bool | None = None
-) -> None:
+def _build_mix6_operator(cpp_extension: Any, cuda_home: Path, *, verbose: bool) -> None:
+    """Build only the Mix6 leaf used by the accepted whole-model runtime."""
+
+    namespace = "rwkv7_tmix_mix6_bf16_v5"
+    if _op_registered(namespace):
+        return
+    root = _source_root()
+    cpp_extension.load(
+        name=f"rwkv7_kernels_{namespace}",
+        sources=[str(root / filename) for filename in _OP_SOURCES[namespace]],
+        extra_cflags=["-O3"],
+        extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
+        extra_include_paths=_cuda_include_paths(cuda_home),
+        is_python_module=False,
+        verbose=verbose,
+    )
+
+
+def load_mix6_training_cuda_extension(*, verbose: bool | None = None) -> None:
+    """Build only the Mix6 training leaf once.
+
+    The accepted whole-model path uses Mix6 plus the recurrent ClampW leaf.
+    Keeping this loader separate avoids compiling four experimental fused
+    gates and the L2Wrap loss before the first ordinary HF training step.
+    """
+
+    global _MIX6_LOADED, _MIX6_LOAD_ERROR
+    _validate_runtime()
+    namespace = "rwkv7_tmix_mix6_bf16_v5"
+    if _MIX6_LOADED or _op_registered(namespace):
+        _MIX6_LOADED = True
+        return
+    if _MIX6_LOAD_ERROR is not None:
+        raise RuntimeError(
+            "Mix6 training CUDA extension previously failed to load"
+        ) from _MIX6_LOAD_ERROR
+    with _LOAD_LOCK:
+        if _MIX6_LOADED or _op_registered(namespace):
+            _MIX6_LOADED = True
+            return
+        try:
+            from torch.utils import cpp_extension
+
+            cuda_home = _resolve_cuda_home(cpp_extension)
+            if cuda_home is None:
+                raise RuntimeError(
+                    "Mix6 training CUDA JIT requires a local CUDA toolkit; "
+                    "set CUDA_HOME to the toolkit matching the PyTorch CUDA build"
+                )
+            _build_mix6_operator(
+                cpp_extension,
+                cuda_home,
+                verbose=_build_verbose(verbose),
+            )
+            if not _op_registered(namespace):
+                raise RuntimeError(
+                    "Mix6 training extension did not register rwkv7_tmix_mix6_bf16_v5"
+                )
+            _MIX6_LOADED = True
+        except BaseException as exc:
+            _MIX6_LOAD_ERROR = exc
+            raise RuntimeError(
+                f"Mix6 training CUDA extension failed to load: {exc}"
+            ) from exc
+
+
+def load_recurrent_training_cuda_extension(*, verbose: bool | None = None) -> None:
     """Build only the canonical recurrent training operator once."""
 
     global _RECURRENT_LOADED, _RECURRENT_LOAD_ERROR
@@ -255,7 +319,8 @@ def load_recurrent_training_cuda_extension(
 def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
     """Build and load the vendored train_temp operators once."""
 
-    global _L2WRAP_EXTENSION, _LOADED, _LOAD_ERROR, _RECURRENT_LOADED
+    global _L2WRAP_EXTENSION, _LOADED, _LOAD_ERROR, _MIX6_LOADED
+    global _RECURRENT_LOADED
     _validate_runtime()
     if _LOADED:
         return
@@ -300,9 +365,7 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                 ],
                 extra_cflags=["-O3"],
                 extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
-                extra_include_paths=_cuda_include_paths(
-                    cuda_home, include_target=True
-                ),
+                extra_include_paths=_cuda_include_paths(cuda_home, include_target=True),
                 verbose=verbose,
             )
             missing = [
@@ -314,6 +377,7 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                 raise RuntimeError(
                     f"train_temp extension did not register required ops: {missing}"
                 )
+            _MIX6_LOADED = True
             _LOADED = True
         except BaseException as exc:
             _LOAD_ERROR = exc
@@ -346,7 +410,20 @@ def recurrent_training_cuda_available(*, build: bool = False) -> bool:
     return True
 
 
+def load_training_runtime_cuda_extensions(*, verbose: bool | None = None) -> None:
+    """Load the minimal operator set used by whole-model HF training."""
+
+    load_mix6_training_cuda_extension(verbose=verbose)
+    load_recurrent_training_cuda_extension(verbose=verbose)
+
+
 class _Mix6(torch.autograd.Function):
+    # The fused CUDA backward is profitable once there are enough rows to
+    # amortize its fixed launch cost. At the smallest accepted whole-model
+    # shape (B1/T16), replaying the canonical PyTorch expression is both cheap
+    # and measurably closer to the complete reference optimizer update.
+    _NATIVE_BACKWARD_MIN_ROWS = 32
+
     @staticmethod
     def forward(ctx, x, x_r, x_w, x_k, x_v, x_a, x_g):
         saved = (x, x_r, x_w, x_k, x_v, x_a, x_g)
@@ -364,10 +441,14 @@ class _Mix6(torch.autograd.Function):
             (value if value is not None else torch.zeros_like(x)).contiguous()
             for value in (grad_r, grad_w, grad_k, grad_v, grad_a, grad_g)
         )
-        if torch.is_grad_enabled():
-            # CUDA custom operators do not define a double backward. Rebuild the
-            # canonical expression only for create_graph=True, preserving the
-            # original saved tensors so the returned gradients remain connected.
+        create_graph = torch.is_grad_enabled()
+        flattened_rows = int(x.shape[0]) * int(x.shape[1])
+        if create_graph or flattened_rows < _Mix6._NATIVE_BACKWARD_MIN_ROWS:
+            # CUDA custom operators do not define a double backward. The
+            # smallest row count also stays on this exact expression: RTX 4080
+            # full-model validation showed that it closes the last global
+            # gradient tolerance miss while leaving the large-batch hot path on
+            # the deterministic fused reduction below.
             with torch.enable_grad():
                 references = tuple(
                     value
@@ -386,7 +467,7 @@ class _Mix6(torch.autograd.Function):
                         outputs,
                         references,
                         grads,
-                        create_graph=True,
+                        create_graph=create_graph,
                     )
                 )
 
@@ -500,8 +581,7 @@ def _recurrent_decay_reference(r, decay, k, v, a, b, initial_state):
             state_a = torch.zeros_like(state_vk[..., 0])
             for key_idx in range(head_size):
                 state_a = state_a + (
-                    state_vk[..., key_idx]
-                    * a_t[..., key_idx].unsqueeze(-1).float()
+                    state_vk[..., key_idx] * a_t[..., key_idx].unsqueeze(-1).float()
                 )
             state_vk = state_vk * decay_t.unsqueeze(-2) + (
                 state_a.unsqueeze(-1) * b_t.unsqueeze(-2).float() + vk.float()
@@ -535,9 +615,7 @@ class _ClampW(torch.autograd.Function):
             )
         if decay.dtype != torch.float32:
             raise TypeError(f"train_temp decay must be FP32, got {decay.dtype}")
-        recurrent_inputs = tuple(
-            value.contiguous() for value in (r, decay, k, v, a, b)
-        )
+        recurrent_inputs = tuple(value.contiguous() for value in (r, decay, k, v, a, b))
         output = torch.empty_like(v)
         state = torch.empty(
             batch,
@@ -551,13 +629,9 @@ class _ClampW(torch.autograd.Function):
         state_aux = torch.empty(
             batch, tokens, heads, head_size, dtype=torch.float32, device=decay.device
         )
-        torch.ops.rwkv7_clampw_v3.forward(
-            *recurrent_inputs, output, state, state_aux
-        )
+        torch.ops.rwkv7_clampw_v3.forward(*recurrent_inputs, output, state, state_aux)
         ctx.set_materialize_grads(False)
-        ctx.save_for_backward(
-            *recurrent_inputs, state, state_aux, initial_state
-        )
+        ctx.save_for_backward(*recurrent_inputs, state, state_aux, initial_state)
         # The last CUDA checkpoint is the canonical [B,H,K,V] final state.
         # Returning it preserves the public recurrent operator contract.
         return output, state[:, :, -1]
@@ -585,8 +659,7 @@ class _ClampW(torch.autograd.Function):
             # contribution through the canonical recurrence.
             with torch.enable_grad():
                 replay_inputs = [
-                    value.detach().requires_grad_(True)
-                    for value in recurrent_inputs
+                    value.detach().requires_grad_(True) for value in recurrent_inputs
                 ]
                 replay_state = initial_state.detach().requires_grad_(True)
                 _, replay_final_state = _recurrent_decay_reference(
@@ -870,12 +943,9 @@ def _train_temp_attention_forward(
         r.reshape(batch, tokens, heads, head_dim)
         * k.reshape(batch, tokens, heads, head_dim)
         * self.r_k.reshape(1, 1, heads, head_dim)
-    ).sum(dim=-1, keepdim=True) * v.reshape(
-        batch, tokens, heads, head_dim
-    )
+    ).sum(dim=-1, keepdim=True) * v.reshape(batch, tokens, heads, head_dim)
     values = (normalized + direct).reshape(batch, tokens, -1) * g
     return module_linear(self.o_proj, values), v_first
-
 
 
 # Whole-model/layer dispatch intentionally lives in training_runtime.py.  This
@@ -887,8 +957,10 @@ __all__ = [
     "TRAIN_TEMP_CHUNK_LEN",
     "TRAIN_TEMP_HEAD_SIZE",
     "TRAIN_TEMP_SOURCE_COMMIT",
+    "load_mix6_training_cuda_extension",
     "load_recurrent_training_cuda_extension",
     "load_train_temp_cuda_extension",
+    "load_training_runtime_cuda_extensions",
     "recurrent_training_cuda_available",
     "rwkv7_training_recurrent",
     "train_temp_causal_cross_entropy",

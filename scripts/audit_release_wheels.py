@@ -56,6 +56,8 @@ KERNEL_REQUIRED = {
     "rwkv7_kernels/nvidia/prefill_graph_runtime.py",
     "rwkv7_kernels/nvidia/training_math.py",
     "rwkv7_kernels/nvidia/training_runtime.py",
+    "rwkv7_kernels/nvidia/csrc/training/rwkv7_tmix_mix6_shifted_bf16_v1.cpp",
+    "rwkv7_kernels/nvidia/csrc/training/rwkv7_tmix_mix6_shifted_bf16_v1.cu",
     "rwkv7_kernels/protocol.py",
     "rwkv7_kernels/quantization.py",
     "rwkv7_kernels/recurrent/graph.py",
@@ -64,6 +66,8 @@ KERNEL_REQUIRED = {
     "rwkv7_kernels/recurrent/triton.py",
     "rwkv7_kernels/trace.py",
     "rwkv7_kernels/training_dispatcher.py",
+    "rwkv7_kernels/time_mix/__init__.py",
+    "rwkv7_kernels/time_mix/training_mix6.py",
 }
 KERNEL_FORBIDDEN = {
     "cache_rwkv7.py",
@@ -117,7 +121,24 @@ ALLOWED_DISPOSITIONS = {
     "tooling_relocated_or_retired",
 }
 ALLOWED_TRANSFERS = {"byte_identical", "adapted_clean_boundary"}
+EXPECTED_MIGRATION_TRANSFERS = {
+    "adapted_clean_boundary": 13,
+    "byte_identical": 89,
+}
+EXPECTED_SOURCE_SCOPE_DISPOSITIONS = {
+    "adapted_protocol": 23,
+    "byte_migrated_nvidia": 89,
+    "canonical_reference": 7,
+    "non_kernel_feature_retired": 1,
+    "separate_hardware_distribution": 27,
+    "tooling_relocated_or_retired": 6,
+}
+EXPECTED_RECURRENT_SCOPE_DISPOSITIONS = {
+    "adapted_protocol": 1,
+    "byte_migrated_nvidia": 2,
+}
 ADAPTED_MIGRATION_SOURCES = {
+    "rwkv7_hf/extension_build.py",
     "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3.cpp",
     "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
     "rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
@@ -470,6 +491,11 @@ def audit_source_scope(
     counts = {name: count for name, count in sorted(counts.items()) if count}
     if scope.get("counts") != counts:
         raise ValueError("historical source-scope counts differ from its entries")
+    if counts != EXPECTED_SOURCE_SCOPE_DISPOSITIONS:
+        raise ValueError(
+            "historical source-scope canonical disposition counts differ: "
+            f"expected={EXPECTED_SOURCE_SCOPE_DISPOSITIONS} actual={counts}"
+        )
 
     migration_by_source = {
         str(row["source"]): (
@@ -605,6 +631,11 @@ def audit_recurrent_source_scope(
     counts = {name: count for name, count in sorted(counts.items()) if count}
     if scope.get("counts") != counts:
         raise ValueError("recurrent source-scope counts differ from its entries")
+    if counts != EXPECTED_RECURRENT_SCOPE_DISPOSITIONS:
+        raise ValueError(
+            "recurrent source-scope canonical disposition counts differ: "
+            f"expected={EXPECTED_RECURRENT_SCOPE_DISPOSITIONS} actual={counts}"
+        )
 
     byte_migrations = 0
     adapted_files: set[str] = set()
@@ -744,8 +775,15 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
                     )
             transfers[transfer] += 1
             migrated.add(member)
-        if transfers != {"adapted_clean_boundary": 12, "byte_identical": 90}:
-            raise ValueError(f"NVIDIA migration transfer counts differ: {transfers}")
+        if sum(transfers.values()) != len(rows):
+            raise ValueError(
+                "NVIDIA migration transfer classes do not cover the 102-file manifest"
+            )
+        if transfers != EXPECTED_MIGRATION_TRANSFERS:
+            raise ValueError(
+                "NVIDIA migration canonical transfer counts differ: "
+                f"expected={EXPECTED_MIGRATION_TRANSFERS} actual={transfers}"
+            )
         capability_report = audit_capability_inventory(
             archive,
             names,

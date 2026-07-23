@@ -26,6 +26,33 @@ from common import environment, git_revision, model_fingerprint, sha256_file
 from fla_common import activate_fla_source, write_json
 
 
+MATRIX_RECURRENT_IMPLEMENTATION = (
+    "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+)
+FACTORIZED_RECURRENT_IMPLEMENTATION = (
+    "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+)
+FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
+MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
+CUDA_LINEAR_MIN_ROWS = 128
+
+
+def canonical_training_mode(value: str) -> str:
+    """Normalize historical CLI spellings without restoring old routing."""
+
+    aliases = {
+        "adaptive": "adaptive",
+        "native": "adaptive",
+        "reference": "reference",
+        "reference-fallback": "reference",
+        "skip-not-applicable": "skip-not-applicable",
+    }
+    try:
+        return aliases[value]
+    except KeyError as exc:  # pragma: no cover - argparse owns CLI validation
+        raise ValueError(f"unknown training mode: {value}") from exc
+
+
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", action="append", required=True, help="label=path")
@@ -48,12 +75,19 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--training-repeats", type=int, default=3)
     parser.add_argument(
         "--training-mode",
-        choices=("native", "reference-fallback", "skip-not-applicable"),
-        default="native",
+        choices=(
+            "adaptive",
+            "reference",
+            "skip-not-applicable",
+            "native",
+            "reference-fallback",
+        ),
+        default="adaptive",
         help=(
-            "native benchmarks the BF16 optimized autograd route; "
-            "reference-fallback benchmarks the explicit clean-model fallback; "
-            "skip-not-applicable records the hardware limitation without timing"
+            "adaptive benchmarks the readable HF loop with independently "
+            "selected BF16 recurrent/linear/Mix6 leaves; reference benchmarks "
+            "the pure PyTorch loop; native and reference-fallback are deprecated "
+            "aliases; skip-not-applicable records a hardware limitation"
         ),
     )
     parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")
@@ -84,12 +118,19 @@ def route_mode(kind: str) -> None:
 
 
 def training_route_mode(kind: str, training_mode: str) -> None:
-    if kind == "optimized" and training_mode == "reference-fallback":
+    training_mode = canonical_training_mode(training_mode)
+    os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
+    if kind == "optimized" and training_mode == "adaptive":
+        # The adaptive training candidate is a composition of independent
+        # leaves. Unsupported small/masked shapes deliberately retain the
+        # readable PyTorch operation, so the outer failure-containment mode
+        # must be ``auto`` rather than strict all-leaves-or-error.
         os.environ["RWKV7_BACKEND"] = "auto"
-        os.environ["RWKV7_KERNEL_IMPL"] = "auto"
-        os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native"
-        return
-    route_mode(kind)
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "adaptive"
+    else:
+        os.environ["RWKV7_BACKEND"] = "reference"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
 
 
 def last_route(kind: str) -> dict[str, Any] | None:
@@ -98,6 +139,26 @@ def last_route(kind: str) -> dict[str, Any] | None:
     from rwkv7_hf.ops_rwkv7 import get_last_model_route
 
     return get_last_model_route()
+
+
+def last_training_routes(kind: str) -> dict[str, Any] | None:
+    """Return every actual boundary used by one clean HF training step."""
+
+    if kind == "fla":
+        return None
+    from rwkv7_hf.ops_rwkv7 import (
+        get_last_linear_route,
+        get_last_mix6_route,
+        get_last_model_route,
+        get_last_recurrent_route,
+    )
+
+    return {
+        "model": get_last_model_route(),
+        "recurrent": get_last_recurrent_route(),
+        "linear": get_last_linear_route(),
+        "mix6": get_last_mix6_route(),
+    }
 
 
 def percentile(samples: list[float], fraction: float) -> float:
@@ -394,7 +455,9 @@ def load_model(kind: str, path: Path, dtype: torch.dtype, *, training: bool = Fa
 
         config = RWKV7Config.from_pretrained(path)
         route_mode(kind)
-    model = RWKV7ForCausalLM.from_pretrained(path, config=config, torch_dtype=dtype).cuda()
+    model = RWKV7ForCausalLM.from_pretrained(
+        path, config=config, torch_dtype=dtype
+    ).cuda()
     return model.train() if training else model.eval()
 
 
@@ -501,9 +564,7 @@ def timed_training(
         )
         if legacy_double_ce:
             loss = F.cross_entropy(
-                output.logits[:, :-1]
-                .float()
-                .reshape(-1, output.logits.shape[-1]),
+                output.logits[:, :-1].float().reshape(-1, output.logits.shape[-1]),
                 labels[:, 1:].reshape(-1),
                 ignore_index=-100,
             )
@@ -544,9 +605,7 @@ def timed_training(
         "peak_memory_bytes": int(torch.cuda.max_memory_allocated()),
         "warmup": warmup,
         "repeats": repeats,
-        "loss_mode": (
-            "legacy-double-ce" if legacy_double_ce else "model-output-loss"
-        ),
+        "loss_mode": ("legacy-double-ce" if legacy_double_ce else "model-output-loss"),
     }
 
 
@@ -570,8 +629,6 @@ def benchmark_training_lane(
     rows = {}
     for batch in batches:
         for sequence in tokens:
-            if training_mode == "native" and sequence % 16:
-                raise ValueError("native training tokens must be divisible by 16")
             ids = torch.randint(
                 1, vocab, (batch, sequence), generator=generator, device="cuda"
             )
@@ -588,7 +645,8 @@ def benchmark_training_lane(
             result["tokens_per_second"] = (
                 batch * sequence / (result["median_ms"] / 1000.0)
             )
-            result["route"] = last_route(kind)
+            result["shape"] = {"batch": batch, "tokens": sequence}
+            result["route"] = last_training_routes(kind)
             rows[f"b{batch}-t{sequence}"] = result
     del model
     gc.collect()
@@ -678,23 +736,64 @@ def routes_passed(report: dict[str, Any]) -> bool:
                 return False
     training = report.get("training")
     if training:
-        mode = training.get("mode", "native")
+        mode = canonical_training_mode(training.get("mode", "adaptive"))
         if mode == "skip-not-applicable":
             return training.get("status") == "not_applicable"
         for row in training["lanes"]["optimized"].values():
-            route = row.get("route") or {}
-            if mode == "native":
-                if (
-                    route.get("selected") != "optimized"
-                    or route.get("implementation")
-                    != "native-nvidia-train-temp-autograd-v2"
+            routes = row.get("route") or {}
+            model_route = routes.get("model") or {}
+            recurrent_route = routes.get("recurrent") or {}
+            linear_route = routes.get("linear") or {}
+            mix6_route = routes.get("mix6") or {}
+            if not (
+                model_route.get("selected") == "reference"
+                and model_route.get("phase") == "training"
+                and model_route.get("implementation") == "torch-reference-model-v1"
+            ):
+                return False
+            if mode == "reference":
+                if not (
+                    recurrent_route.get("selected") == "reference"
+                    and recurrent_route.get("implementation") == "torch-reference-v1"
+                    and linear_route.get("selected") == "reference"
+                    and linear_route.get("implementation")
+                    == "torch-reference-linear-v1"
+                    and mix6_route.get("selected") == "reference"
+                    and mix6_route.get("implementation") == "torch-reference-mix6-v1"
+                ):
+                    return False
+                continue
+
+            shape = row.get("shape") or {}
+            batch = int(shape.get("batch", 0))
+            tokens = int(shape.get("tokens", 0))
+            aligned = tokens > 0 and tokens % 16 == 0
+            recurrent_implementation = (
+                FACTORIZED_RECURRENT_IMPLEMENTATION
+                if aligned
+                else MATRIX_RECURRENT_IMPLEMENTATION
+            )
+            if not (
+                recurrent_route.get("selected") == "optimized"
+                and recurrent_route.get("implementation") == recurrent_implementation
+            ):
+                return False
+            linear_is_optimized = aligned and batch * tokens >= CUDA_LINEAR_MIN_ROWS
+            if linear_is_optimized:
+                if not (
+                    linear_route.get("selected") == "optimized"
+                    and linear_route.get("implementation")
+                    == FLATTENED_LINEAR_IMPLEMENTATION
                 ):
                     return False
             elif not (
-                route.get("selected") == "reference"
-                and route.get("phase") == "training"
-                and route.get("implementation") == "torch-reference-model-v1"
-                and route.get("reason")
+                linear_route.get("selected") == "reference"
+                and linear_route.get("implementation") == "torch-reference-linear-v1"
+            ):
+                return False
+            if not (
+                mix6_route.get("selected") == "optimized"
+                and mix6_route.get("implementation") == MIX6_IMPLEMENTATION
             ):
                 return False
     return True
@@ -706,6 +805,13 @@ def main() -> int:
         raise SystemExit("CUDA is required")
     if args.warmup < 0 or args.repeats <= 0:
         raise ValueError("warmup must be non-negative and repeats must be positive")
+    training_mode = canonical_training_mode(args.training_mode)
+    if (
+        args.training_model is not None
+        and training_mode == "adaptive"
+        and args.training_dtype != "bf16"
+    ):
+        raise ValueError("adaptive clean-leaf training requires --training-dtype bf16")
     fla = activate_fla_source(args.fla_source)
     models = parse_models(args.model)
     dtype = torch.float16 if args.dtype == "fp16" else torch.bfloat16
@@ -785,13 +891,17 @@ def main() -> int:
         training_path = args.training_model.expanduser().resolve()
         train_batches = tuple(args.training_batch or (1, 4))
         train_tokens = tuple(args.training_tokens or (128, 512))
-        if args.training_mode == "skip-not-applicable":
+        if training_mode == "skip-not-applicable":
             report["training"] = {
                 "model": model_fingerprint(training_path),
                 "dtype": args.training_dtype,
-                "mode": args.training_mode,
+                "mode": training_mode,
+                "requested_mode": args.training_mode,
                 "status": "not_applicable",
-                "reason": "native whole-model training requires BF16 and sm80 or newer",
+                "reason": (
+                    "native BF16 tensor leaves require CUDA sm80 or newer; the "
+                    "readable HF training loop itself remains available"
+                ),
             }
         else:
             train_dtype = (
@@ -803,7 +913,7 @@ def main() -> int:
                     kind,
                     training_path,
                     train_dtype,
-                    args.training_mode,
+                    training_mode,
                     train_batches,
                     train_tokens,
                     args.training_warmup,
@@ -813,7 +923,8 @@ def main() -> int:
             report["training"] = {
                 "model": model_fingerprint(training_path),
                 "dtype": args.training_dtype,
-                "mode": args.training_mode,
+                "mode": training_mode,
+                "requested_mode": args.training_mode,
                 "settings": {
                     "batches": train_batches,
                     "tokens": train_tokens,

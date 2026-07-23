@@ -9,9 +9,11 @@ import torch
 from rwkv7_hf import ops_rwkv7
 from rwkv7_hf.ops_rwkv7 import (
     get_last_linear_route,
+    get_last_mix6_route,
     get_last_model_route,
     get_last_recurrent_route,
     maybe_linear_training,
+    maybe_mix6_training,
     maybe_model_forward,
     rwkv7_recurrent,
     rwkv7_recurrent_reference,
@@ -211,6 +213,92 @@ def test_training_uses_separate_leaf_autograd_protocol(monkeypatch):
     }
 
 
+def test_training_recurrent_protocol_receives_model_context_hints(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    received = []
+
+    def probe(*_args, **kwargs):
+        received.append(("probe", kwargs))
+        return {
+            "supported": True,
+            "implementation": "fake-cuda-training-v1",
+            "reason": "fake training leaf",
+        }
+
+    def run(*args, **kwargs):
+        received.append(("run", kwargs))
+        return rwkv7_recurrent_reference(*args)
+
+    module.probe_recurrent_training_v1 = probe
+    module.recurrent_training_v1 = run
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    inputs = recurrent_inputs(requires_grad=True)
+    ops_rwkv7.set_training_batch_context(inputs[-1], training=True, fully_active=False)
+    rwkv7_recurrent(*inputs, training=True, initial_state_zero=True)
+
+    expected = {
+        "fully_active": False,
+        "initial_state_zero": True,
+        "token_aligned": False,
+    }
+    assert received == [("probe", expected), ("run", expected)]
+
+
+def test_training_recurrent_prefers_atomic_execute_and_is_strict(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"execute": 0, "legacy": 0}
+
+    def execute(*args, **kwargs):
+        calls["execute"] += 1
+        assert kwargs["initial_state_zero"] is True
+        return {
+            "supported": True,
+            "implementation": "fake-atomic-recurrent-training-v1",
+            "reason": "atomic recurrent",
+            "result": rwkv7_recurrent_reference(*args),
+        }
+
+    def legacy(*_args, **_kwargs):
+        calls["legacy"] += 1
+        raise AssertionError("atomic recurrent must bypass legacy probe/run")
+
+    module.execute_recurrent_training_v1 = execute
+    module.probe_recurrent_training_v1 = legacy
+    module.recurrent_training_v1 = legacy
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+    inputs = recurrent_inputs(requires_grad=True)
+
+    actual = rwkv7_recurrent(*inputs, training=True, initial_state_zero=True)
+    assert_reference_equal(actual, rwkv7_recurrent_reference(*inputs))
+    assert calls == {"execute": 1, "legacy": 0}
+
+    def unsupported(*_args, **_kwargs):
+        calls["execute"] += 1
+        return {
+            "supported": False,
+            "implementation": "fake-atomic-recurrent-training-v1",
+            "reason": "atomic recurrent unsupported",
+            "result": None,
+        }
+
+    module.execute_recurrent_training_v1 = unsupported
+    fallback = rwkv7_recurrent(*inputs, training=True, initial_state_zero=True)
+    assert_reference_equal(fallback, rwkv7_recurrent_reference(*inputs))
+    with pytest.raises(RuntimeError, match="atomic recurrent unsupported"):
+        rwkv7_recurrent(
+            *inputs,
+            training=True,
+            initial_state_zero=True,
+            backend="optimized",
+        )
+    assert calls == {"execute": 3, "legacy": 0}
+
+
 def test_training_linear_uses_stateless_optional_protocol(monkeypatch):
     module = types.ModuleType("rwkv7_kernels")
     module.RWKV7_KERNEL_API_VERSION = 2
@@ -254,6 +342,78 @@ def test_training_linear_uses_stateless_optional_protocol(monkeypatch):
     }
 
 
+def test_training_linear_prefers_atomic_execute_without_legacy_probe(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"execute": 0, "legacy_probe": 0, "legacy_run": 0}
+
+    def execute(value, weight, bias, *, fully_active, token_aligned):
+        calls["execute"] += 1
+        assert fully_active is None
+        assert token_aligned is None
+        return {
+            "supported": True,
+            "implementation": "fake-atomic-linear-training-v1",
+            "reason": "one call-local validation",
+            "output": torch.nn.functional.linear(value, weight, bias),
+        }
+
+    def legacy_probe(*_args, **_kwargs):
+        calls["legacy_probe"] += 1
+        raise AssertionError("atomic protocol must bypass the legacy probe/run pair")
+
+    def legacy_run(*_args, **_kwargs):
+        calls["legacy_run"] += 1
+        raise AssertionError("atomic protocol must bypass the legacy probe/run pair")
+
+    module.execute_linear_training_v1 = execute
+    module.probe_linear_training_v1 = legacy_probe
+    module.linear_training_v1 = legacy_run
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    weight = torch.randn(5, 4, requires_grad=True)
+    output = maybe_linear_training(value, weight, None, training=True)
+
+    assert output is not None and tuple(output.shape) == (2, 3, 5)
+    assert calls == {"execute": 1, "legacy_probe": 0, "legacy_run": 0}
+
+
+def test_training_linear_atomic_fallback_and_error_are_fail_closed(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"execute": 0}
+
+    def unsupported(*_args, **_kwargs):
+        calls["execute"] += 1
+        return {
+            "supported": False,
+            "implementation": "fake-atomic-linear-training-v1",
+            "reason": "unsupported atomic request",
+            "output": None,
+        }
+
+    module.execute_linear_training_v1 = unsupported
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    weight = torch.randn(5, 4, requires_grad=True)
+
+    assert maybe_linear_training(value, weight, None, training=True) is None
+    assert calls == {"execute": 1}
+    assert get_last_linear_route()["reason"] == "unsupported atomic request"
+
+    def broken(*_args, **_kwargs):
+        calls["execute"] += 1
+        raise RuntimeError("broken atomic execution")
+
+    module.execute_linear_training_v1 = broken
+    assert maybe_linear_training(value, weight, None, training=True) is None
+    assert calls == {"execute": 2}
+    assert "broken atomic execution" in get_last_linear_route()["reason"]
+
+
 def test_training_linear_auto_falls_back_and_optimized_is_strict(monkeypatch):
     install_fake_kernel(monkeypatch)
     value = torch.randn(2, 3, 4, requires_grad=True)
@@ -272,6 +432,131 @@ def test_training_linear_auto_falls_back_and_optimized_is_strict(monkeypatch):
         )
 
 
+def test_training_mix6_uses_stateless_explicit_shift_protocol(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"probe": 0, "run": 0}
+
+    def probe(value, shifted, *mixes, fully_active, token_aligned):
+        calls["probe"] += 1
+        assert value.shape == shifted.shape
+        assert len(mixes) == 6
+        assert fully_active is None
+        assert token_aligned is None
+        return {
+            "supported": True,
+            "implementation": "fake-cuda-mix6-training-v1",
+            "reason": "fake explicit-shift Mix6 leaf",
+        }
+
+    def run(value, shifted, *mixes, fully_active, token_aligned):
+        calls["run"] += 1
+        assert fully_active is None
+        assert token_aligned is None
+        delta = shifted - value
+        return tuple(value + delta * mix.view(1, 1, -1) for mix in mixes)
+
+    module.probe_mix6_training_v1 = probe
+    module.mix6_training_v1 = run
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    shifted = torch.randn_like(value, requires_grad=True)
+    mixes = tuple(torch.randn(4, requires_grad=True) for _ in range(6))
+    outputs = maybe_mix6_training(
+        value,
+        shifted,
+        mixes,
+        training=True,
+    )
+    assert outputs is not None
+    sum(item.square().mean() for item in outputs).backward()
+
+    assert calls == {"probe": 1, "run": 1}
+    assert value.grad is not None and shifted.grad is not None
+    assert all(mix.grad is not None for mix in mixes)
+    assert get_last_mix6_route() == {
+        "requested": "auto",
+        "selected": "optimized",
+        "implementation": "fake-cuda-mix6-training-v1",
+        "reason": "fake explicit-shift Mix6 leaf",
+    }
+
+
+def test_training_mix6_prefers_atomic_execute_and_is_strict(monkeypatch):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    calls = {"execute": 0, "legacy": 0}
+
+    def execute(value, shifted, *mixes, **_kwargs):
+        calls["execute"] += 1
+        delta = shifted - value
+        return {
+            "supported": True,
+            "implementation": "fake-atomic-mix6-training-v1",
+            "reason": "atomic Mix6",
+            "result": tuple(value + delta * mix.view(1, 1, -1) for mix in mixes),
+        }
+
+    def legacy(*_args, **_kwargs):
+        calls["legacy"] += 1
+        raise AssertionError("atomic Mix6 must bypass legacy probe/run")
+
+    module.execute_mix6_training_v1 = execute
+    module.probe_mix6_training_v1 = legacy
+    module.mix6_training_v1 = legacy
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    shifted = torch.randn_like(value, requires_grad=True)
+    mixes = tuple(torch.randn(4, requires_grad=True) for _ in range(6))
+
+    result = maybe_mix6_training(value, shifted, mixes, training=True)
+    assert result is not None and len(result) == 6
+    assert calls == {"execute": 1, "legacy": 0}
+
+    def unsupported(*_args, **_kwargs):
+        calls["execute"] += 1
+        return {
+            "supported": False,
+            "implementation": "fake-atomic-mix6-training-v1",
+            "reason": "atomic Mix6 unsupported",
+            "result": None,
+        }
+
+    module.execute_mix6_training_v1 = unsupported
+    assert maybe_mix6_training(value, shifted, mixes, training=True) is None
+    with pytest.raises(RuntimeError, match="atomic Mix6 unsupported"):
+        maybe_mix6_training(
+            value,
+            shifted,
+            mixes,
+            training=True,
+            backend="optimized",
+        )
+    assert calls == {"execute": 3, "legacy": 0}
+
+
+def test_training_mix6_auto_falls_back_and_optimized_is_strict(monkeypatch):
+    install_fake_kernel(monkeypatch)
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    shifted = torch.randn_like(value, requires_grad=True)
+    mixes = tuple(torch.randn(4, requires_grad=True) for _ in range(6))
+
+    assert maybe_mix6_training(value, shifted, mixes, training=True) is None
+    assert get_last_mix6_route()["selected"] == "reference"
+    assert "mix6-training-v1" in get_last_mix6_route()["reason"]
+    with pytest.raises(RuntimeError, match="mix6-training-v1"):
+        maybe_mix6_training(
+            value,
+            shifted,
+            mixes,
+            training=True,
+            backend="optimized",
+        )
+
+
 def test_training_model_keeps_readable_loop_and_selects_both_leafs(
     monkeypatch, tiny_config
 ):
@@ -279,19 +564,26 @@ def test_training_model_keeps_readable_loop_and_selects_both_leafs(
 
     module = types.ModuleType("rwkv7_kernels")
     module.RWKV7_KERNEL_API_VERSION = 2
-    module.probe_model_forward_v1 = lambda _owner, _request: {
-        "supported": False,
-        "implementation": "fake-model-training-v1",
-        "reason": "model structure stays in modeling_rwkv7.py",
-        "phase": "training",
-    }
-    module.model_forward_v1 = lambda *_args: None
-    module.probe_recurrent_training_v1 = lambda *_args: {
-        "supported": True,
-        "implementation": "fake-cuda-recurrent-training-v1",
-        "reason": "fake recurrent leaf",
-    }
-    module.recurrent_training_v1 = lambda *args: rwkv7_recurrent_reference(*args)
+
+    def forbidden_model_boundary(*_args, **_kwargs):
+        raise AssertionError("HF training must not enter whole-model dispatch")
+
+    module.probe_model_forward_v1 = forbidden_model_boundary
+    module.model_forward_v1 = forbidden_model_boundary
+    recurrent_hints = []
+
+    def probe_recurrent(*_args, **kwargs):
+        recurrent_hints.append(kwargs)
+        return {
+            "supported": True,
+            "implementation": "fake-cuda-recurrent-training-v1",
+            "reason": "fake recurrent leaf",
+        }
+
+    module.probe_recurrent_training_v1 = probe_recurrent
+    module.recurrent_training_v1 = lambda *args, **_kwargs: rwkv7_recurrent_reference(
+        *args
+    )
     module.probe_linear_training_v1 = lambda *_args, **_kwargs: {
         "supported": True,
         "implementation": "fake-cuda-linear-training-v1",
@@ -299,6 +591,14 @@ def test_training_model_keeps_readable_loop_and_selects_both_leafs(
     }
     module.linear_training_v1 = lambda value, weight, bias, **_kwargs: (
         torch.nn.functional.linear(value, weight, bias)
+    )
+    module.probe_mix6_training_v1 = lambda *_args, **_kwargs: {
+        "supported": True,
+        "implementation": "fake-cuda-mix6-training-v1",
+        "reason": "fake Mix6 leaf",
+    }
+    module.mix6_training_v1 = lambda value, shifted, *mixes, **_kwargs: tuple(
+        value + (shifted - value) * mix.view(1, 1, -1) for mix in mixes
     )
     monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
     ops_rwkv7._reset_kernel_discovery_for_tests()
@@ -315,8 +615,99 @@ def test_training_model_keeps_readable_loop_and_selects_both_leafs(
     assert get_last_recurrent_route()["implementation"] == (
         "fake-cuda-recurrent-training-v1"
     )
-    assert get_last_linear_route()["implementation"] == (
-        "fake-cuda-linear-training-v1"
+    assert get_last_linear_route()["implementation"] == ("fake-cuda-linear-training-v1")
+    assert get_last_mix6_route()["implementation"] == ("fake-cuda-mix6-training-v1")
+    assert recurrent_hints
+    assert all(
+        hints
+        == {
+            "fully_active": True,
+            "initial_state_zero": True,
+            "token_aligned": False,
+        }
+        for hints in recurrent_hints
+    )
+
+
+def test_training_cache_provenance_disables_zero_state_leaf(monkeypatch, tiny_config):
+    from rwkv7_hf.cache_rwkv7 import RWKV7Cache
+    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    recurrent_hints = []
+
+    def probe(*_args, **kwargs):
+        recurrent_hints.append(kwargs)
+        return {
+            "supported": False,
+            "implementation": "fake-zero-state-training-v1",
+            "reason": "capture cache provenance",
+        }
+
+    module.probe_recurrent_training_v1 = probe
+    module.recurrent_training_v1 = lambda *_args, **_kwargs: None
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+    batch = 1
+    recurrent = torch.ones(
+        batch,
+        tiny_config.num_heads,
+        tiny_config.head_dim,
+        tiny_config.head_dim,
+    )
+    shift = torch.zeros(batch, tiny_config.hidden_size)
+    cache = RWKV7Cache(
+        [recurrent.clone() for _ in range(tiny_config.num_hidden_layers)],
+        [shift.clone() for _ in range(tiny_config.num_hidden_layers)],
+        [shift.clone() for _ in range(tiny_config.num_hidden_layers)],
+    )
+    model = RWKV7ForCausalLM(tiny_config).train()
+    model(
+        input_ids=torch.tensor([[1, 2, 3]]),
+        past_key_values=cache,
+        use_cache=False,
+    )
+
+    assert recurrent_hints
+    assert all(hints["initial_state_zero"] is False for hints in recurrent_hints)
+
+
+def test_checkpoint_replay_preserves_atomic_recurrent_hints(monkeypatch, tiny_config):
+    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    recurrent_hints = []
+
+    def execute(*args, **kwargs):
+        recurrent_hints.append(dict(kwargs))
+        return {
+            "supported": True,
+            "implementation": "fake-checkpoint-recurrent-training-v1",
+            "reason": "checkpoint hint capture",
+            "result": rwkv7_recurrent_reference(*args),
+        }
+
+    module.execute_recurrent_training_v1 = execute
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+    model = RWKV7ForCausalLM(tiny_config).train()
+    model.gradient_checkpointing_enable()
+    ids = torch.tensor([[1, 2, 3, 4]])
+
+    model(input_ids=ids, labels=ids, use_cache=False).loss.backward()
+
+    assert len(recurrent_hints) >= 2 * tiny_config.num_hidden_layers
+    assert all(
+        hints
+        == {
+            "fully_active": True,
+            "initial_state_zero": True,
+            "token_aligned": False,
+        }
+        for hints in recurrent_hints
     )
 
 

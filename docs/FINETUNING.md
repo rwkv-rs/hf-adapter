@@ -81,6 +81,8 @@ are recorded with the dataset/model revisions:
 
 ```bash
 export RWKV7_BACKEND=auto
+export RWKV7_KERNEL_IMPL=auto
+export RWKV7_MODEL_KERNEL_IMPL=auto
 export RWKV7_TRAINING_KERNEL_IMPL=adaptive
 
 python examples/finetune/sft_lora.py \
@@ -106,13 +108,20 @@ python evaluation/validate_finetune_runs.py \
 The callback records last routes at optimizer-bearing forwards, while a
 versioned process-wide counter preserves every optional leaf that actually
 executed. The latter matters for DPO, whose differentiable policy pass is
-followed by a no-grad reference pass. Dense BF16 training has a separate
-leaf-autograd gate. The canonical LoRA target set
-wraps the ChannelMix `key`/`value` modules, so the whole-model training probe
-must report the adapter-aware reference autograd fallback; this is intentional
-and prevents a fused implementation from silently ignoring trainable adapter
-weights. The readable HF model loop therefore remains active while aligned,
-fully active BF16 batches may use the factorized recurrent and flattened
-linear leaves; masked or unaligned batches use the exact matrix recurrent and
-reference linears. Finite loss/gradients, changed parameters and adapter
-save/reload are still mandatory.
+followed by a no-grad reference pass. Standard HF training always retains the
+readable `torch-reference-model-v1` layer loop; there is no whole-model
+training dispatch. This keeps PEFT/TRL wrappers, hooks, gradient checkpointing,
+masking and the ordinary autograd graph visible to the framework.
+
+Acceleration happens only at three explicit tensor boundaries. Supported,
+aligned BF16 work may select
+`native-nvidia-rwkv7-factorized-recurrent-training-v1`,
+`torch-cuda-rwkv7-flattened-linear-training-v1`, and
+`native-nvidia-rwkv7-mix6-training-v1`. Exact matrix recurrence and reference
+linear/Mix6 math remain the fail-closed alternatives for unsupported requests.
+The model route plus each executed leaf route is recorded independently; a
+requested selector is never counted as execution evidence. Finite
+loss/gradients, changed parameters and adapter save/reload are still mandatory.
+Formal release bundles also record and require all four environment values
+shown above, so a stale inference or historical whole-model selector cannot be
+silently promoted as adaptive HF training evidence.

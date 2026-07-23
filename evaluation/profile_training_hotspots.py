@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile RWKV-7 whole-model training hotspots with one model-provided CE.
+"""Profile RWKV-7 readable-HF training with independently dispatched leaves.
 
 The tool deliberately reuses the three training lanes from
 ``benchmark_backend_v2``.  It is an evaluation utility rather than a runtime
@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 import torch
 
 from benchmark_backend_v2 import (
-    last_route,
+    last_training_routes,
     load_model,
     training_route_mode,
 )
@@ -28,9 +28,17 @@ from common import environment, git_revision, model_fingerprint, sha256_file
 from fla_common import activate_fla_source, write_json
 
 
-SCHEMA = "rwkv7-training-hotspot-profile-v1"
+SCHEMA = "rwkv7-training-hotspot-profile-v2"
 LANES = ("reference", "optimized", "fla")
-SELECTED_OPERATORS = ("aten::mm", "aten::addmm", "aten::copy_", "aten::cat")
+SELECTED_OPERATORS = (
+    "aten::mm",
+    "aten::addmm",
+    "aten::copy_",
+    "aten::cat",
+    "aten::item",
+    "aten::_local_scalar_dense",
+)
+TOP_EVENT_COUNT = 25
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -71,8 +79,8 @@ def validate_arguments(args: argparse.Namespace) -> None:
         raise ValueError("batch and tokens must be positive")
     if any(value < 2 for value in tokens):
         raise ValueError("training profiles require at least two tokens")
-    if "optimized" in lanes and any(value % 16 for value in tokens):
-        raise ValueError("optimized native training tokens must be divisible by 16")
+    if "optimized" in lanes and args.dtype != "bf16":
+        raise ValueError("optimized clean-leaf profiling requires --dtype bf16")
     if "fla" in lanes and args.fla_source is None:
         raise ValueError("--fla-source is required when profiling the FLA lane")
 
@@ -130,8 +138,64 @@ def _is_backward(name: str) -> bool:
     return "backward" in lowered or "autograd" in lowered
 
 
+def _matches_any(name: str, markers: tuple[str, ...]) -> bool:
+    lowered = name.lower()
+    return any(marker in lowered for marker in markers)
+
+
+def _category_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate the non-GEMM families needed for an actionable profile."""
+
+    categories = {
+        "mix6": ("mix6", "tmix_mix6"),
+        "causal_loss": (
+            "cross_entropy",
+            "nll_loss",
+            "log_softmax",
+            "l2wrap",
+        ),
+        "normalization": (
+            "layer_norm",
+            "group_norm",
+            "native_layer_norm",
+            "native_group_norm",
+        ),
+        "allocation_or_zeroing": (
+            "aten::zero_",
+            "aten::zeros",
+            "aten::empty",
+            "aten::fill_",
+        ),
+        "copy_or_layout": (
+            "aten::copy_",
+            "aten::contiguous",
+            "aten::clone",
+            "aten::cat",
+        ),
+        "host_synchronization": (
+            "aten::item",
+            "aten::_local_scalar_dense",
+            "cudaDeviceSynchronize",
+            "cudaStreamSynchronize",
+            "cudaMemcpy",
+        ),
+    }
+    result = {}
+    for category, markers in categories.items():
+        matching = [row for row in rows if _matches_any(row["name"], markers)]
+        result[category] = {
+            "aggregate": _sum_event_rows(matching),
+            "events": sorted(
+                matching,
+                key=lambda row: row["self_device_time_us"],
+                reverse=True,
+            ),
+        }
+    return result
+
+
 def summarize_events(events: Iterable[Any]) -> dict[str, Any]:
-    """Summarize launch-heavy linear ops and recurrent forward/backward rows."""
+    """Summarize recurrent, launch-heavy, and top self-time profiler rows."""
 
     rows = [event_row(event) for event in events]
     by_name = {row["name"]: row for row in rows}
@@ -152,12 +216,18 @@ def summarize_events(events: Iterable[Any]) -> dict[str, Any]:
         for name in SELECTED_OPERATORS
     }
     recurrent_rows = [row for row in rows if _is_recurrent(row["name"])]
-    recurrent_backward = [
-        row for row in recurrent_rows if _is_backward(row["name"])
-    ]
-    recurrent_forward = [
-        row for row in recurrent_rows if not _is_backward(row["name"])
-    ]
+    recurrent_backward = [row for row in recurrent_rows if _is_backward(row["name"])]
+    recurrent_forward = [row for row in recurrent_rows if not _is_backward(row["name"])]
+    top_self_device_time = sorted(
+        rows,
+        key=lambda row: row["self_device_time_us"],
+        reverse=True,
+    )[:TOP_EVENT_COUNT]
+    top_launch_count = sorted(
+        rows,
+        key=lambda row: row["count"],
+        reverse=True,
+    )[:TOP_EVENT_COUNT]
     return {
         "selected_operators": selected,
         "recurrent": {
@@ -170,6 +240,10 @@ def summarize_events(events: Iterable[Any]) -> dict[str, Any]:
                 "events": recurrent_backward,
             },
         },
+        "categories": _category_rows(rows),
+        "top_self_device_time": top_self_device_time,
+        "top_launch_count": top_launch_count,
+        "total_operator_calls": sum(row["count"] for row in rows),
         "event_count": len(rows),
     }
 
@@ -190,19 +264,54 @@ def _peak_memory(device: torch.device) -> int:
     return 0
 
 
-def expected_route(lane: str, route: dict[str, Any] | None) -> bool:
+def expected_route(
+    lane: str,
+    route: dict[str, Any] | None,
+    *,
+    batch: int = 1,
+    tokens: int = 128,
+) -> bool:
     if lane == "fla":
         return route is None
     route = route or {}
+    model = route.get("model") or {}
+    recurrent = route.get("recurrent") or {}
+    linear = route.get("linear") or {}
+    mix6 = route.get("mix6") or {}
     if lane == "reference":
         return (
-            route.get("selected") == "reference"
-            and route.get("implementation") == "torch-reference-model-v1"
+            model.get("selected") == "reference"
+            and model.get("implementation") == "torch-reference-model-v1"
+            and recurrent.get("selected") == "reference"
+            and recurrent.get("implementation") == "torch-reference-v1"
+            and linear.get("selected") == "reference"
+            and linear.get("implementation") == "torch-reference-linear-v1"
+            and mix6.get("selected") == "reference"
+            and mix6.get("implementation") == "torch-reference-mix6-v1"
         )
-    return (
-        route.get("selected") == "optimized"
-        and route.get("implementation")
-        == "native-nvidia-train-temp-autograd-v2"
+    aligned = tokens > 0 and tokens % 16 == 0
+    recurrent_implementation = (
+        "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+        if aligned
+        else "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+    )
+    linear_optimized = aligned and batch * tokens >= 128
+    linear_passed = (
+        linear.get("selected") == "optimized"
+        and linear.get("implementation")
+        == "torch-cuda-rwkv7-flattened-linear-training-v1"
+        if linear_optimized
+        else linear.get("selected") == "reference"
+        and linear.get("implementation") == "torch-reference-linear-v1"
+    )
+    return bool(
+        model.get("selected") == "reference"
+        and model.get("implementation") == "torch-reference-model-v1"
+        and recurrent.get("selected") == "optimized"
+        and recurrent.get("implementation") == recurrent_implementation
+        and linear_passed
+        and mix6.get("selected") == "optimized"
+        and mix6.get("implementation") == "native-nvidia-rwkv7-mix6-training-v1"
     )
 
 
@@ -214,7 +323,7 @@ def profile_training_case(
     lane: str,
     warmup: int,
     active: int,
-    route_getter: Callable[[str], dict[str, Any] | None] = last_route,
+    route_getter: Callable[[str], dict[str, Any] | None] = last_training_routes,
     profiler_factory: Callable[..., Any] = torch.profiler.profile,
 ) -> dict[str, Any]:
     """Profile one shape, using ``output.loss`` exactly once per step."""
@@ -273,11 +382,20 @@ def profile_training_case(
             "finite": all(math.isfinite(value) for value in active_losses),
             "last": active_losses[-1],
         },
-        "wall_time_ms": elapsed_ms,
-        "wall_time_per_active_step_ms": elapsed_ms / active,
+        # This interval deliberately encloses profiler collection. It is useful
+        # only as profile provenance and must never be presented as benchmark
+        # latency; benchmark_backend_v2 supplies unprofiled CUDA-event timing.
+        "profiled_wall_time_ms": elapsed_ms,
+        "profiled_wall_time_per_active_step_ms": elapsed_ms / active,
+        "profiled_wall_time_includes_profiler_overhead": True,
         "peak_memory_bytes": _peak_memory(device),
         "route": route,
-        "route_passed": expected_route(lane, route),
+        "route_passed": expected_route(
+            lane,
+            route,
+            batch=int(ids.shape[0]),
+            tokens=int(ids.shape[1]),
+        ),
         "hotspots": summarize_events(profiler.key_averages()),
     }
 
@@ -341,14 +459,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     cases: dict[str, Any] = {}
     for lane in lanes:
         model = load_model(lane, path, dtype, training=True)
-        training_route_mode(lane, "native")
+        training_route_mode(lane, "adaptive")
         vocab = int(model.config.vocab_size)
         for batch in batches:
             for tokens_per_sample in tokens:
                 generator = torch.Generator(device="cuda").manual_seed(
-                    args.seed
-                    + batch * 1_000
-                    + tokens_per_sample
+                    args.seed + batch * 1_000 + tokens_per_sample
                 )
                 ids = torch.randint(
                     1,
@@ -380,7 +496,10 @@ def main(argv: list[str] | None = None) -> int:
     write_json(args.output, report)
     print(
         json.dumps(
-            {"output": str(args.output.expanduser().resolve()), "status": report["status"]}
+            {
+                "output": str(args.output.expanduser().resolve()),
+                "status": report["status"],
+            }
         )
     )
     return 0 if report["status"] == "passed" else 1

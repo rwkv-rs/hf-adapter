@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <c10/cuda/CUDAException.h>
 #include <cuda_runtime.h>
 
 #ifdef _FP32_
@@ -93,9 +94,10 @@ __global__ void forward_kernel_preload(int T,int H,F_ r_,const float* __restrict
         // before any thread overwrites the shared preload buffers.
     }
 }
-void cuda_forward_v3(int B,int T,int H,bf*r,float*decay,bf*k,bf*v,bf*a,bf*b,bf*y,float*s,float*sa)
+void cuda_forward_v3(int B,int T,int H,bf*r,float*decay,bf*k,bf*v,bf*a,bf*b,bf*y,float*s,float*sa,cudaStream_t stream)
 {
-    forward_kernel_preload<_N_><<<dim3(H,B),dim3(_N_)>>>(T,H,r,decay,k,v,a,b,y,s,sa);
+    forward_kernel_preload<_N_><<<dim3(H,B),dim3(_N_),0,stream>>>(T,H,r,decay,k,v,a,b,y,s,sa);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
 //######################################################################################################
@@ -212,8 +214,9 @@ __global__ void backward_kernel_preload(int T, int H, F_ r_, const float* __rest
     }
 }
 
-void cuda_backward_v3(int B, int T, int H, bf*r, float*decay,bf*k,bf*v,bf*a,bf*b,bf*dy,float*s,float*sa,bf*dr,float*ddecay,bf*dk,bf*dv,bf*da,bf*db)
+void cuda_backward_v3(int B, int T, int H, bf*r, float*decay,bf*k,bf*v,bf*a,bf*b,bf*dy,float*s,float*sa,bf*dr,float*ddecay,bf*dk,bf*dv,bf*da,bf*db,cudaStream_t stream)
 {
     assert(T%_CHUNK_LEN_ == 0);
-    backward_kernel_preload<_N_,16><<<dim3(H,B), dim3(_N_)>>>(T,H,r,decay,k,v,a,b,dy,s,sa,dr,ddecay,dk,dv,da,db);
+    backward_kernel_preload<_N_,16><<<dim3(H,B),dim3(_N_),0,stream>>>(T,H,r,decay,k,v,a,b,dy,s,sa,dr,ddecay,dk,dv,da,db);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

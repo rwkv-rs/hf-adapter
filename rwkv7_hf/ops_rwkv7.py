@@ -6,6 +6,7 @@ installed :mod:`rwkv7_kernels` wheel may replace stateless training linears,
 recurrence, or the complete layer loop; model structure, cache semantics, and
 Hugging Face APIs stay here.
 """
+
 from __future__ import annotations
 
 from contextvars import ContextVar
@@ -35,6 +36,9 @@ _last_model_route: ContextVar[dict[str, str] | None] = ContextVar(
 )
 _last_linear_route: ContextVar[dict[str, str] | None] = ContextVar(
     "rwkv7_last_linear_route", default=None
+)
+_last_mix6_route: ContextVar[dict[str, str] | None] = ContextVar(
+    "rwkv7_last_mix6_route", default=None
 )
 _training_batch_fully_active: ContextVar[bool | None] = ContextVar(
     "rwkv7_training_batch_fully_active", default=None
@@ -114,9 +118,7 @@ def rwkv7_recurrent_reference(
             # the accumulated recurrent state and decay are FP32. Casting every
             # operand to the state dtype would define a different FP16 model.
             r_t = receptance[batch_idx : batch_idx + 1, token_idx]
-            w_t = decay[batch_idx : batch_idx + 1, token_idx].to(
-                dtype=state.dtype
-            )
+            w_t = decay[batch_idx : batch_idx + 1, token_idx].to(dtype=state.dtype)
             k_t = key[batch_idx : batch_idx + 1, token_idx]
             v_t = value[batch_idx : batch_idx + 1, token_idx]
             a_t = a[batch_idx : batch_idx + 1, token_idx]
@@ -134,9 +136,7 @@ def rwkv7_recurrent_reference(
                 + vk.to(dtype=state.dtype)
             )
             candidate = candidate_vk.transpose(-1, -2)
-            output = (
-                candidate_vk.to(dtype=r_t.dtype) @ r_t.unsqueeze(-1)
-            ).squeeze(-1)
+            output = (candidate_vk.to(dtype=r_t.dtype) @ r_t.unsqueeze(-1)).squeeze(-1)
 
             if sample_mask is not None:
                 active = sample_mask[:, token_idx]
@@ -159,8 +159,10 @@ def rwkv7_recurrent_reference(
 
 def _backend_mode(value: str | None) -> str:
     normalized = (
-        os.environ.get(_BACKEND_ENV, "auto") if value is None else value
-    ).strip().lower()
+        (os.environ.get(_BACKEND_ENV, "auto") if value is None else value)
+        .strip()
+        .lower()
+    )
     if normalized not in _BACKEND_MODES:
         choices = ", ".join(_BACKEND_MODES)
         raise ValueError(f"RWKV7 backend must be one of {choices}; got {value!r}")
@@ -201,11 +203,19 @@ def get_last_linear_route() -> dict[str, str] | None:
     return None if route is None else dict(route)
 
 
+def get_last_mix6_route() -> dict[str, str] | None:
+    """Return the route taken by the latest six-way token-mix leaf."""
+
+    route = _last_mix6_route.get()
+    return None if route is None else dict(route)
+
+
 def set_training_batch_context(
     attention_mask: torch.Tensor,
     *,
     training: bool,
-) -> None:
+    fully_active: bool | None = None,
+) -> bool:
     """Expose batch-shape semantics to optional stateless training leaves.
 
     The clean model owns padding semantics.  This context carries only whether
@@ -216,18 +226,22 @@ def set_training_batch_context(
     or optimizer object.
     """
 
-    fully_active = None
+    if fully_active is None:
+        fully_active = bool(attention_mask.to(dtype=torch.bool).all().detach().cpu())
+    elif not isinstance(fully_active, bool):
+        raise TypeError("fully_active must be a bool or None")
+
+    training_fully_active = None
     token_aligned = None
     if training:
-        fully_active = bool(
-            attention_mask.to(dtype=torch.bool).all().detach().cpu()
-        )
+        training_fully_active = fully_active
         token_aligned = bool(
             attention_mask.ndim == 2
             and int(attention_mask.shape[1]) % _TRAINING_TOKEN_CHUNK_LENGTH == 0
         )
-    _training_batch_fully_active.set(fully_active)
+    _training_batch_fully_active.set(training_fully_active)
     _training_batch_token_aligned.set(token_aligned)
+    return fully_active
 
 
 def _load_kernel_module() -> ModuleType | None:
@@ -243,8 +257,7 @@ def _load_kernel_module() -> ModuleType | None:
     version = getattr(module, "RWKV7_KERNEL_API_VERSION", None)
     if version != _KERNEL_API_VERSION:
         _kernel_import_error = (
-            "kernel API mismatch: "
-            f"package={version!r}, adapter={_KERNEL_API_VERSION}"
+            f"kernel API mismatch: package={version!r}, adapter={_KERNEL_API_VERSION}"
         )
         return None
     _kernel_module = module
@@ -262,6 +275,7 @@ def _reset_kernel_discovery_for_tests() -> None:
     _last_recurrent_route.set(None)
     _last_model_route.set(None)
     _last_linear_route.set(None)
+    _last_mix6_route.set(None)
     _training_batch_fully_active.set(None)
     _training_batch_token_aligned.set(None)
 
@@ -364,7 +378,11 @@ def maybe_model_forward(
         raise ValueError("model_kind must be 'base' or 'causal_lm'")
 
     hidden = request.get("hidden_states")
-    fallback_phase = "training" if bool(request.get("training")) else "prefill"
+    fallback_phase = (
+        "training"
+        if bool(request.get("training")) or bool(request.get("grad_enabled"))
+        else "prefill"
+    )
     if (
         fallback_phase != "training"
         and isinstance(hidden, torch.Tensor)
@@ -391,6 +409,21 @@ def maybe_model_forward(
             "reference",
             "torch-reference-model-v1",
             "reference backend was explicitly requested",
+        )
+        return None
+
+    if fallback_phase == "training":
+        # Training always keeps the readable HF block/layer/loss program. The
+        # strict optional recurrent, linear, and Mix6 tensor leaves are probed
+        # inside that loop. Returning before package discovery also prevents a
+        # whole-model probe, model traversal, and device-to-host mask sync on
+        # every ordinary Trainer/TRL step.
+        record(
+            "reference",
+            "torch-reference-model-v1",
+            "readable HF training loop owns structure; optional tensor leaves "
+            "dispatch independently",
+            "training",
         )
         return None
 
@@ -499,24 +532,41 @@ def maybe_linear_training(
         record("reference", "torch-reference-linear-v1", reason)
         return None
 
+    execute = getattr(module, "execute_linear_training_v1", None)
     probe = getattr(module, "probe_linear_training_v1", None)
     run = getattr(module, "linear_training_v1", None)
-    if not callable(probe) or not callable(run):
+    if not callable(execute) and (not callable(probe) or not callable(run)):
         failure: Exception = RuntimeError(
             "rwkv7_kernels does not implement linear-training-v1"
         )
     else:
         try:
-            supported, implementation, reason = _probe_fields(
-                probe(
+            hints = {
+                "fully_active": _training_batch_fully_active.get(),
+                "token_aligned": _training_batch_token_aligned.get(),
+            }
+            if callable(execute):
+                execution = execute(
                     value,
                     weight,
                     bias,
-                    fully_active=_training_batch_fully_active.get(),
-                    token_aligned=_training_batch_token_aligned.get(),
-                ),
-                probe_name="probe_linear_training_v1",
-            )
+                    **hints,
+                )
+                supported, implementation, reason = _probe_fields(
+                    execution,
+                    probe_name="execute_linear_training_v1",
+                )
+                if not isinstance(execution, dict) or "output" not in execution:
+                    raise TypeError(
+                        "execute_linear_training_v1() result is missing: output"
+                    )
+                result = execution["output"]
+            else:
+                supported, implementation, reason = _probe_fields(
+                    probe(value, weight, bias, **hints),
+                    probe_name="probe_linear_training_v1",
+                )
+                result = None
             if not supported:
                 if requested == "optimized":
                     raise RuntimeError(
@@ -525,15 +575,15 @@ def maybe_linear_training(
                     )
                 record("reference", "torch-reference-linear-v1", reason)
                 return None
-            result = run(
-                value,
-                weight,
-                bias,
-                fully_active=_training_batch_fully_active.get(),
-                token_aligned=_training_batch_token_aligned.get(),
-            )
+            if not callable(execute):
+                result = run(value, weight, bias, **hints)
             if not isinstance(result, torch.Tensor):
-                raise TypeError("linear_training_v1() must return a tensor")
+                function_name = (
+                    "execute_linear_training_v1() output"
+                    if callable(execute)
+                    else "linear_training_v1()"
+                )
+                raise TypeError(f"{function_name} must be a tensor")
             expected = (*value.shape[:-1], int(weight.shape[0]))
             if tuple(result.shape) != expected:
                 raise ValueError(
@@ -558,6 +608,129 @@ def maybe_linear_training(
     return None
 
 
+def maybe_mix6_training(
+    value: torch.Tensor,
+    shifted: torch.Tensor,
+    mixes: tuple[torch.Tensor, ...],
+    *,
+    training: bool,
+    backend: str | None = None,
+) -> tuple[torch.Tensor, ...] | None:
+    """Try the stateless six-way token-shift leaf used during training.
+
+    The readable model continues to own the shift state and the six parameter
+    tensors.  The optional package receives only tensors and returns six mixed
+    tensors; unsupported shapes, masks, adapters, devices, or missing wheels
+    fall back to the explicit PyTorch equations in :class:`RWKV7TimeMix`.
+    """
+
+    if not training:
+        return None
+    if len(mixes) != 6:
+        raise ValueError("RWKV7 Mix6 requires exactly six parameter tensors")
+    requested = _backend_mode(backend)
+
+    def record(selected: str, implementation: str, reason: str) -> None:
+        _last_mix6_route.set(
+            {
+                "requested": requested,
+                "selected": selected,
+                "implementation": implementation,
+                "reason": reason,
+            }
+        )
+
+    if requested == "reference":
+        record(
+            "reference",
+            "torch-reference-mix6-v1",
+            "reference backend was explicitly requested",
+        )
+        return None
+
+    module = _load_kernel_module()
+    if module is None:
+        reason = _kernel_import_error or "rwkv7_kernels is not installed"
+        if requested == "optimized":
+            raise RuntimeError(f"optimized RWKV7 backend is unavailable: {reason}")
+        record("reference", "torch-reference-mix6-v1", reason)
+        return None
+
+    execute = getattr(module, "execute_mix6_training_v1", None)
+    probe = getattr(module, "probe_mix6_training_v1", None)
+    run = getattr(module, "mix6_training_v1", None)
+    if not callable(execute) and (not callable(probe) or not callable(run)):
+        failure: Exception = RuntimeError(
+            "rwkv7_kernels does not implement mix6-training-v1"
+        )
+    else:
+        try:
+            hints = {
+                "fully_active": _training_batch_fully_active.get(),
+                "token_aligned": _training_batch_token_aligned.get(),
+            }
+            if callable(execute):
+                execution = execute(
+                    value,
+                    shifted,
+                    *mixes,
+                    **hints,
+                )
+                supported, implementation, reason = _probe_fields(
+                    execution,
+                    probe_name="execute_mix6_training_v1",
+                )
+                if not isinstance(execution, dict) or "result" not in execution:
+                    raise TypeError(
+                        "execute_mix6_training_v1() result is missing: result"
+                    )
+                result = execution["result"]
+            else:
+                supported, implementation, reason = _probe_fields(
+                    probe(value, shifted, *mixes, **hints),
+                    probe_name="probe_mix6_training_v1",
+                )
+                result = None
+            if not supported:
+                if requested == "optimized":
+                    raise RuntimeError(
+                        "optimized RWKV7 backend does not support this request: "
+                        f"{reason}"
+                    )
+                record("reference", "torch-reference-mix6-v1", reason)
+                return None
+            if not callable(execute):
+                result = run(value, shifted, *mixes, **hints)
+            if not isinstance(result, tuple) or len(result) != 6:
+                raise TypeError("mix6_training_v1() must return six tensors")
+            if any(
+                not isinstance(item, torch.Tensor)
+                or tuple(item.shape) != tuple(value.shape)
+                or item.dtype != value.dtype
+                or item.device != value.device
+                for item in result
+            ):
+                raise ValueError(
+                    "mix6_training_v1() outputs must match input shape, dtype, and device"
+                )
+        except Exception as exc:
+            if requested == "optimized":
+                raise RuntimeError(
+                    "optimized RWKV7 mix6-training-v1 execution failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            failure = exc
+        else:
+            record("optimized", implementation, reason)
+            return result
+
+    reason = f"optional kernel failure: {type(failure).__name__}: {failure}"
+    if requested == "optimized":
+        raise RuntimeError(reason) from failure
+    record("reference", "torch-reference-mix6-v1", reason)
+    return None
+
+
 def rwkv7_recurrent(
     receptance: torch.Tensor,
     decay: torch.Tensor,
@@ -570,6 +743,7 @@ def rwkv7_recurrent(
     *,
     backend: str | None = None,
     training: bool = False,
+    initial_state_zero: bool | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run recurrent semantics through reference or optional protocol v1.
 
@@ -580,6 +754,9 @@ def rwkv7_recurrent(
     keep it on the readable path while an explicitly selected candidate is
     compared against the same canonical recurrent boundary.
     """
+
+    if initial_state_zero is not None and not isinstance(initial_state_zero, bool):
+        raise TypeError("initial_state_zero must be a bool or None")
 
     requested = _backend_mode(backend)
     if requested == "reference":
@@ -624,13 +801,13 @@ def rwkv7_recurrent(
         )
 
     protocol = "recurrent-training-v1" if training else "recurrent-v1"
-    probe_name = (
-        "probe_recurrent_training_v1" if training else "probe_recurrent_v1"
-    )
+    probe_name = "probe_recurrent_training_v1" if training else "probe_recurrent_v1"
     run_name = "recurrent_training_v1" if training else "recurrent_v1"
+    execute_name = "execute_recurrent_training_v1" if training else None
+    execute = getattr(module, execute_name, None) if execute_name is not None else None
     probe = getattr(module, probe_name, None)
     run = getattr(module, run_name, None)
-    if not callable(probe) or not callable(run):
+    if not callable(execute) and (not callable(probe) or not callable(run)):
         failure: Exception = RuntimeError(
             f"rwkv7_kernels does not implement {protocol}"
         )
@@ -645,10 +822,38 @@ def rwkv7_recurrent(
             initial_state,
             attention_mask,
         )
+        # The readable model resolves these request semantics once per model
+        # call.  Forwarding the immutable booleans keeps an optional training
+        # dispatcher from synchronizing the CUDA mask back to the host in
+        # every layer.  Standalone calls have no context and retain the
+        # original positional-only protocol behavior.
+        training_hints: dict[str, bool] = {}
+        if training:
+            fully_active = _training_batch_fully_active.get()
+            token_aligned = _training_batch_token_aligned.get()
+            if fully_active is not None:
+                training_hints["fully_active"] = fully_active
+            if token_aligned is not None:
+                training_hints["token_aligned"] = token_aligned
+            if initial_state_zero is not None:
+                training_hints["initial_state_zero"] = initial_state_zero
         try:
-            supported, implementation, reason = _probe_fields(
-                probe(*args), probe_name=probe_name
-            )
+            if callable(execute):
+                execution = execute(*args, **training_hints)
+                supported, implementation, reason = _probe_fields(
+                    execution,
+                    probe_name="execute_recurrent_training_v1",
+                )
+                if not isinstance(execution, dict) or "result" not in execution:
+                    raise TypeError(
+                        "execute_recurrent_training_v1() result is missing: result"
+                    )
+                candidate = execution["result"]
+            else:
+                supported, implementation, reason = _probe_fields(
+                    probe(*args, **training_hints), probe_name=probe_name
+                )
+                candidate = None
             if not supported:
                 if requested == "optimized":
                     raise RuntimeError(
@@ -662,8 +867,12 @@ def rwkv7_recurrent(
                     reason=reason,
                 )
                 return rwkv7_recurrent_reference(*args)
+            if not callable(execute):
+                candidate = run(*args, **training_hints)
             result = _validate_kernel_result(
-                run(*args), value=value, initial_state=initial_state
+                candidate,
+                value=value,
+                initial_state=initial_state,
             )
         except Exception as exc:
             if requested == "optimized":
@@ -704,9 +913,11 @@ def rwkv7_recurrent(
 
 __all__ = [
     "get_last_linear_route",
+    "get_last_mix6_route",
     "get_last_model_route",
     "get_last_recurrent_route",
     "maybe_linear_training",
+    "maybe_mix6_training",
     "maybe_model_forward",
     "rwkv7_recurrent",
     "rwkv7_recurrent_reference",

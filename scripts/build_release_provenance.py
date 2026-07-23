@@ -18,6 +18,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from evaluation.build_backend_v2_compact_bundle import validate_bundle  # noqa: E402
+from scripts.release_route_contract import (  # noqa: E402
+    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    validate_actual_routes,
+)
 from scripts.verify_release_assets import (  # noqa: E402
     DEVICE_ORDER,
     DEVICES,
@@ -41,15 +45,6 @@ REQUIRED_GATES = (
     "dpo",
     "grpo",
 )
-REQUIRED_ROUTE_PHASES = ("prefill", "decode", "training", "quantization")
-SELECTOR_ONLY_ROUTES = {
-    "auto",
-    "graph",
-    "native",
-    "optimized",
-    "reference",
-    "triton",
-}
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -106,20 +101,6 @@ def artifact_identities(root: Path, version: str) -> dict[str, dict[str, Any]]:
     return artifacts
 
 
-def route_values(value: Any) -> list[str]:
-    if isinstance(value, str):
-        values = [value]
-    elif isinstance(value, list) and all(isinstance(item, str) for item in value):
-        values = value
-    else:
-        raise ValueError("actual route evidence must be a string or list of strings")
-    if not values or any(not item.strip() for item in values):
-        raise ValueError("actual route evidence must not be empty")
-    if any(item.strip().lower() in SELECTOR_ONLY_ROUTES for item in values):
-        raise ValueError("requested selector is not actual route evidence")
-    return values
-
-
 def aware_datetime(value: Any, *, label: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(str(value))
@@ -174,14 +155,18 @@ def read_device_report(
     for gate in REQUIRED_GATES:
         if report.get(f"{gate}_status") != "passed":
             raise ValueError(f"{gate} gate did not pass: {device}")
+    if report.get("training_policy") != "adaptive":
+        raise ValueError(f"formal adaptive training policy is missing: {device}")
+    if (
+        report.get("training_backend_environment")
+        != FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT
+    ):
+        raise ValueError(f"formal adaptive training environment differs: {device}")
 
-    routes = report.get("actual_routes")
-    if not isinstance(routes, dict):
-        raise ValueError(f"actual route evidence is missing: {device}")
-    for phase in REQUIRED_ROUTE_PHASES:
-        if phase not in routes:
-            raise ValueError(f"actual {phase} route evidence is missing: {device}")
-        route_values(routes[phase])
+    try:
+        routes = validate_actual_routes(report.get("actual_routes"))
+    except ValueError as exc:
+        raise ValueError(f"invalid actual route evidence for {device}: {exc}") from exc
 
     run_path = bundle / DEVICE_RUN_REPORT
     if not run_path.is_file() or run_path.is_symlink():
@@ -201,7 +186,9 @@ def read_device_report(
         ("release_validation_sha256", sha256_file(report_path)),
     ):
         if run.get(field) != expected:
-            raise ValueError(f"device acceptance run identity mismatch: {device}/{field}")
+            raise ValueError(
+                f"device acceptance run identity mismatch: {device}/{field}"
+            )
     started_at = aware_datetime(run.get("started_at"), label=f"{device} start")
     completed_at = aware_datetime(run.get("completed_at"), label=f"{device} completion")
     if completed_at <= started_at:
@@ -215,6 +202,8 @@ def read_device_report(
         "harness_sha": harness_sha,
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
+        "training_policy": "adaptive",
+        "training_backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
         **{f"{gate}_status": "passed" for gate in REQUIRED_GATES},
         "compact_bundle_manifest_sha256": manifest_sha,
         "acceptance_started_at": started_at.isoformat(),

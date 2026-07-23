@@ -16,6 +16,44 @@ import urllib.error
 import urllib.request
 
 
+MIGRATION_MANIFEST = (
+    Path(__file__).resolve().parents[1]
+    / "kernels"
+    / "rwkv7_kernels"
+    / "nvidia"
+    / "MIGRATION_MANIFEST.json"
+)
+EXPECTED_MIGRATION_TRANSFER_SUMMARY = {
+    "total": 102,
+    "byte_identical": 89,
+    "adapted_clean_boundary": 13,
+}
+
+
+def migration_transfer_summary(path: Path = MIGRATION_MANIFEST) -> dict[str, int]:
+    """Derive the public migration denominator from its machine-readable source."""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    files = payload.get("files") or []
+    if not isinstance(files, list):
+        raise ValueError("NVIDIA migration manifest files must be a list")
+    result = {"total": len(files), "byte_identical": 0, "adapted_clean_boundary": 0}
+    for row in files:
+        transfer = str((row or {}).get("transfer", ""))
+        if transfer not in {"byte_identical", "adapted_clean_boundary"}:
+            raise ValueError(f"unexpected NVIDIA migration transfer class: {transfer}")
+        result[transfer] += 1
+    if result != EXPECTED_MIGRATION_TRANSFER_SUMMARY:
+        raise ValueError(
+            "NVIDIA migration manifest canonical transfer counts differ: "
+            f"expected={EXPECTED_MIGRATION_TRANSFER_SUMMARY} actual={result}"
+        )
+    return result
+
+
+MIGRATION_TRANSFER_SUMMARY = migration_transfer_summary()
+
+
 REQUIRED_ISSUE_TERMS = (
     "144",
     "lm_eval",
@@ -58,7 +96,13 @@ REQUIRED_ISSUE_TERMS = (
     "torchao",
     "autograd",
     "153",
-    "100",
+    "102-file",
+    f"{MIGRATION_TRANSFER_SUMMARY['byte_identical']} are byte-identical",
+    (
+        f"{MIGRATION_TRANSFER_SUMMARY['adapted_clean_boundary']} are declared "
+        "clean-boundary adaptations"
+    ),
+    "migration manifest",
     "source scope",
     "clean-boundary",
     "byte-identical",
@@ -181,6 +225,10 @@ def audit(
     get_asset: Callable[[str], dict[str, Any]],
 ) -> dict[str, Any]:
     failures: list[str] = []
+    if MIGRATION_TRANSFER_SUMMARY["total"] != 102:
+        failures.append(
+            "NVIDIA migration manifest does not contain the required 102 files"
+        )
     root = args.release_dir.expanduser().resolve()
     repo_api = f"{args.api_url.rstrip('/')}/repos/{args.repo}"
     tag_commit, tag_chain = resolve_tag_commit(
@@ -299,6 +347,7 @@ def audit(
             "state": issue.get("state"),
             "title": issue.get("title"),
             "missing_terms": missing_terms,
+            "migration_transfer_summary": dict(MIGRATION_TRANSFER_SUMMARY),
         },
         "failures": failures,
     }

@@ -393,13 +393,15 @@ def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
     torch.testing.assert_close(cache.recurrent_state[0], detached)
 
 
-def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
+def test_private_training_diagnostic_uses_direct_layer_loop_without_monkeypatch(
     tiny_config, monkeypatch
 ):
     _load_dense_backend(monkeypatch)
     runtime = importlib.import_module("rwkv7_kernels.nvidia.training_runtime")
     train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
-    monkeypatch.setattr(train_temp, "load_train_temp_cuda_extension", lambda: None)
+    monkeypatch.setattr(
+        train_temp, "load_training_runtime_cuda_extensions", lambda: None
+    )
 
     def attention_forward(module, hidden, v_first, *, native_lora_math):
         del native_lora_math
@@ -416,7 +418,14 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
             batch, module.hidden_size, dtype=hidden.dtype, device=hidden.device
         )
         mask = torch.ones(batch, tokens, dtype=torch.bool, device=hidden.device)
-        output, _state, _shift, v_first = module(hidden, state, shift, v_first, mask)
+        output, _state, _shift, v_first = module(
+            hidden,
+            state,
+            shift,
+            v_first,
+            mask,
+            mask_fully_active=True,
+        )
         return output, v_first
 
     monkeypatch.setattr(train_temp, "_train_temp_attention_forward", attention_forward)
@@ -430,7 +439,7 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
     labels[0, 2] = -100
 
     expected = reference(input_ids=ids, labels=labels, use_cache=False)
-    actual = runtime.run_training(
+    actual = runtime._run_training_diagnostic(
         migrated,
         {
             "model_kind": "causal_lm",
@@ -457,6 +466,28 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
     assert "full_logits = module_linear(owner.lm_head, hidden_states)" in source
     assert "layer.ffn(" not in source
     assert "train_temp._CMix.apply(" not in source
+
+
+def test_training_runtime_loader_compiles_only_accepted_leaf_set(monkeypatch):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    calls = []
+    monkeypatch.setattr(
+        train_temp,
+        "load_mix6_training_cuda_extension",
+        lambda **kwargs: calls.append(("mix6", kwargs)),
+    )
+    monkeypatch.setattr(
+        train_temp,
+        "load_recurrent_training_cuda_extension",
+        lambda **kwargs: calls.append(("recurrent", kwargs)),
+    )
+
+    train_temp.load_training_runtime_cuda_extensions(verbose=True)
+
+    assert calls == [
+        ("mix6", {"verbose": True}),
+        ("recurrent", {"verbose": True}),
+    ]
 
 
 def test_native_training_causal_loss_avoids_shifted_logits_copy(monkeypatch):
@@ -511,9 +542,7 @@ def test_native_training_math_matches_clean_fixed_row_contract(
     projection = model.model.layers[0].attn.r_proj
 
     expected = projection(value)
-    actual = training_math.fixed_row_linear(
-        value, projection.weight, projection.bias
-    )
+    actual = training_math.fixed_row_linear(value, projection.weight, projection.bias)
     repeated = training_math.fixed_row_linear(
         value.repeat(3, 1, 1), projection.weight, projection.bias
     )
@@ -561,7 +590,7 @@ def test_native_training_channel_mix_does_not_reenter_linear_dispatch(
     value = torch.randn(2, 9, tiny_config.hidden_size)
     mask = torch.ones(2, 9, dtype=torch.bool)
     shift = torch.zeros(2, tiny_config.hidden_size)
-    expected, _ = channel(value, shift, mask)
+    expected, _ = channel(value, shift, mask, mask_fully_active=True)
 
     def reject_nested_dispatch(*_args, **_kwargs):
         raise AssertionError("native training recursively called RWKV7Linear.forward")
@@ -660,9 +689,7 @@ def test_recurrent_training_mask_compaction_preserves_padding_and_gradients(
     monkeypatch,
 ):
     _load_dense_backend(monkeypatch)
-    training = importlib.import_module(
-        "rwkv7_kernels.recurrent.training_factorized"
-    )
+    training = importlib.import_module("rwkv7_kernels.recurrent.training_factorized")
     torch.manual_seed(79)
     shape = (2, 5, 2, 4)
     base = [torch.randn(shape, dtype=torch.float64) * 0.1 for _ in range(6)]
@@ -706,6 +733,37 @@ def test_recurrent_training_mask_compaction_preserves_padding_and_gradients(
     assert runner_calls == [(2, 16, 2, 4)]
 
 
+def test_recurrent_training_dense_hints_avoid_mask_scalar_sync(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    training = importlib.import_module("rwkv7_kernels.recurrent.training_factorized")
+    shape = (2, 16, 2, 4)
+    recurrent_inputs = [torch.randn(shape) for _ in range(6)]
+    state = torch.zeros(2, 2, 4, 4)
+    mask = torch.ones(2, 16, dtype=torch.bool)
+    runner_calls = []
+
+    def runner(*args):
+        runner_calls.append(tuple(args[0].shape))
+        return args[3], args[-1]
+
+    def reject_scalar_sync(*_args, **_kwargs):
+        raise AssertionError("dense request must not reduce the device mask")
+
+    monkeypatch.setattr(torch.Tensor, "all", reject_scalar_sync)
+    output, final_state = training._run_masked_training(
+        recurrent_inputs,
+        state,
+        mask,
+        runner=runner,
+        fully_active=True,
+        token_aligned=True,
+    )
+
+    assert runner_calls == [(2, 16, 2, 4)]
+    assert output is recurrent_inputs[3]
+    assert final_state is state
+
+
 def test_train_temp_mix6_backward_matches_canonical_token_mix():
     train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
     torch.manual_seed(127)
@@ -727,12 +785,12 @@ def test_train_temp_mix6_backward_matches_canonical_token_mix():
         torch.testing.assert_close(candidate, reference)
 
 
-def test_train_temp_mix6_normal_backward_calls_native_operator(monkeypatch):
+def test_train_temp_mix6_large_backward_calls_native_operator(monkeypatch):
     train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
     torch.manual_seed(131)
-    x = torch.randn(2, 8, 5).transpose(1, 2)
+    x = torch.randn(4, 8, 8).transpose(1, 2)
     mixes = [torch.randn(16)[::2] for _ in range(6)]
-    output_grads = [torch.randn(2, 8, 5).transpose(1, 2) for _ in range(6)]
+    output_grads = [torch.randn(4, 8, 8).transpose(1, 2) for _ in range(6)]
     native_results = (torch.randn_like(x), *(torch.randn_like(mix) for mix in mixes))
     calls = []
 
@@ -764,6 +822,40 @@ def test_train_temp_mix6_normal_backward_calls_native_operator(monkeypatch):
         torch.testing.assert_close(candidate, expected)
 
 
+def test_train_temp_mix6_small_backward_replays_canonical_math(monkeypatch):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    torch.manual_seed(133)
+    x = torch.randn(1, 16, 8, requires_grad=True)
+    mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
+    output_grads = [torch.randn_like(x) for _ in range(6)]
+
+    def reject_native_backward(*_args):
+        raise AssertionError("small Mix6 backward must use canonical replay")
+
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "backward",
+        reject_native_backward,
+        raising=False,
+    )
+
+    shifted = torch.cat((torch.zeros_like(x[:, :1]), x[:, :-1]), dim=1)
+    canonical_outputs = tuple(x + (shifted - x) * mix.view(1, 1, -1) for mix in mixes)
+    expected = torch.autograd.grad(
+        canonical_outputs,
+        (x, *mixes),
+        output_grads,
+    )
+
+    class Context:
+        saved_tensors = (x.detach(), *(mix.detach() for mix in mixes))
+
+    with torch.no_grad():
+        actual = train_temp._Mix6.backward(Context(), *output_grads)
+    for candidate, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(candidate, reference)
+
+
 def test_train_temp_mix6_double_backward_retains_canonical_graph(monkeypatch):
     train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
     torch.manual_seed(137)
@@ -772,13 +864,10 @@ def test_train_temp_mix6_double_backward_retains_canonical_graph(monkeypatch):
     output_grads = [torch.randn_like(x) for _ in range(6)]
 
     def canonical_forward(value, *parameters):
-        shifted = torch.cat(
-            (torch.zeros_like(value[:, :1]), value[:, :-1]), dim=1
-        )
+        shifted = torch.cat((torch.zeros_like(value[:, :1]), value[:, :-1]), dim=1)
         delta = shifted - value
         return tuple(
-            value + delta * parameter.view(1, 1, -1)
-            for parameter in parameters
+            value + delta * parameter.view(1, 1, -1) for parameter in parameters
         )
 
     def reject_native_backward(*_args):
@@ -813,7 +902,7 @@ def test_train_temp_mix6_double_backward_retains_canonical_graph(monkeypatch):
 
 
 def test_train_temp_mix6_cuda_backward_has_fixed_reduction_order():
-    source = (
+    cuda_source = (
         ROOT
         / "kernels"
         / "rwkv7_kernels"
@@ -822,11 +911,36 @@ def test_train_temp_mix6_cuda_backward_has_fixed_reduction_order():
         / "train_temp"
         / "rwkv7_tmix_mix6_bf16_v5.cu"
     ).read_text()
+    cpp_source = (
+        ROOT
+        / "kernels"
+        / "rwkv7_kernels"
+        / "nvidia"
+        / "csrc"
+        / "train_temp"
+        / "rwkv7_tmix_mix6_bf16_v5.cpp"
+    ).read_text()
 
-    assert "tmix_mix6_backward_deterministic_kernel_v5" in source
-    assert "for (int64_t bt = 0; bt < bt_size; ++bt)" in source
-    assert "atomicAdd" not in source
-    assert "blockIdx.y" not in source
-    assert "torch::zeros" not in source
-    assert source.count("at::cuda::getCurrentCUDAStream()") == 2
-    assert "grad_x_r.data_ptr<at::BFloat16>()" in source
+    assert "tmix_mix6_backward_deterministic_kernel_v5" in cuda_source
+    assert "for (int64_t bt = 0; bt < bt_size; ++bt)" in cuda_source
+    assert "atomicAdd" not in cuda_source
+    assert "blockIdx.y" not in cuda_source
+    assert "torch::zeros" not in cuda_source
+    assert cuda_source.count("at::cuda::getCurrentCUDAStream(x.get_device())") == 2
+    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK()") == 2
+    assert "grad_x_r.data_ptr<at::BFloat16>()" in cuda_source
+    assert cpp_source.count("c10::cuda::CUDAGuard device_guard(x.device())") == 2
+    assert cpp_source.count("check_same_device(*item.first, x, item.second)") == 3
+
+
+def test_train_temp_clampw_uses_checked_tensor_device_and_current_stream():
+    root = ROOT / "kernels" / "rwkv7_kernels" / "nvidia" / "csrc" / "train_temp"
+    cpp_source = (root / "rwkv7_clampw_v3.cpp").read_text()
+    cuda_source = (root / "rwkv7_clampw_v3_for_h100.cu").read_text()
+
+    assert "check_common_inputs(r, decay, k, v, a, b, s, sa)" in cpp_source
+    assert "value.device() == reference.device()" in cpp_source
+    assert cpp_source.count("c10::cuda::CUDAGuard device_guard(r.device())") == 2
+    assert cpp_source.count("at::cuda::getCurrentCUDAStream(r.get_device())") == 2
+    assert cuda_source.count(",0,stream>>>") == 2
+    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK()") == 2

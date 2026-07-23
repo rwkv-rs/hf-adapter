@@ -13,6 +13,12 @@ from evaluation.build_backend_v2_device_validation import (
     REPORT_SCHEMAS,
     build,
 )
+from scripts.release_route_contract import (
+    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
+    READABLE_TRAINING_MODEL_ROUTE,
+    REQUIRED_TRAINING_LEAF_ROUTES,
+)
 
 
 SOURCE_SHA = "a" * 40
@@ -44,6 +50,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         "gpu": "NVIDIA GeForce RTX 4080",
         "torch": "2.11.0+cu130",
         "cuda": "13.0",
+        "backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
         "cuda_toolkit": {
             "cuda_home": "/toolkit",
             "torch_extensions_dir": "/extensions/backend-v2",
@@ -75,16 +82,20 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         },
         "hf_ecosystem": {
             "stages": [{"passed": True}],
-            "training_expectation": {"mode": "native"},
+            "training_expectation": {"mode": "adaptive"},
         },
         "training": {
-            "settings": {"candidate_route": "native"},
+            "settings": {"candidate_route": "adaptive"},
             "cases": [
                 {
-                    "route": {
+                    "model_route": {
                         "phase": "training",
-                        "implementation": "native-nvidia-train-temp-autograd-v2",
-                    }
+                        "implementation": READABLE_TRAINING_MODEL_ROUTE,
+                    },
+                    "leaf_routes": [
+                        {"implementation": route}
+                        for route in sorted(REQUIRED_TRAINING_LEAF_ROUTES)
+                    ],
                 }
             ],
         },
@@ -103,7 +114,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         "fla": {"fla": {"commit": EXPECTED_FLA_COMMIT}},
         "speed": {
             "fla": {"commit": EXPECTED_FLA_COMMIT},
-            "training": {"mode": "native"},
+            "training": {"mode": "adaptive"},
         },
     }
     paths = {}
@@ -132,10 +143,22 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                 "backend_routes": [
                     {
                         "phase": "training",
-                        "implementation": "torch-reference-model-v1",
-                        "reason": "adapter modules require reference autograd",
-                    }
+                        "implementation": READABLE_TRAINING_MODEL_ROUTE,
+                        "reason": "training preserves the readable HF layer loop",
+                    },
+                    *[
+                        {"phase": "training", "implementation": route}
+                        for route in sorted(REQUIRED_TRAINING_LEAF_ROUTES)
+                    ],
                 ],
+                "kernel_route_trace": {
+                    "schema": "rwkv7-kernel-route-trace-v2",
+                    "requested_training_policy": "adaptive",
+                    "actual_model_calls": {},
+                    "actual_recurrent_calls": {},
+                    "actual_linear_calls": {},
+                    "actual_mix6_calls": {},
+                },
             }
             for name in ("sft", "dpo", "grpo")
         },
@@ -192,6 +215,8 @@ def test_device_builder_consolidates_all_gates_and_actual_routes(tmp_path: Path)
     assert report["hf_wheel_sha256"] == hf_sha
     assert report["kernel_wheel_sha256"] == kernel_sha
     assert report["lm_eval_units"] == 144
+    assert report["training_policy"] == "adaptive"
+    assert report["training_backend_environment"] == FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT
     assert report["actual_routes"]["prefill"]
     assert report["actual_routes"]["decode"]
     assert report["actual_routes"]["training"]
@@ -223,7 +248,59 @@ def test_device_builder_rejects_missing_actual_route(tmp_path: Path):
     payload = json.loads(paths["correctness"].read_text())
     payload["models"] = []
     write_json(paths["correctness"], payload)
-    with pytest.raises(ValueError, match="prefill report lacks actual route"):
+    with pytest.raises(ValueError, match="actual prefill route evidence is missing"):
+        build(args)
+
+
+def test_device_builder_rejects_non_release_v100_target(tmp_path: Path):
+    args, _, _, _ = setup_reports(tmp_path)
+    args.device = "tesla-v100"
+    with pytest.raises(ValueError, match="unexpected release device"):
+        build(args)
+
+
+def test_device_builder_rejects_non_adaptive_formal_environment(tmp_path: Path):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["training"].read_text())
+    payload["environment"]["backend_environment"]["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+    write_json(paths["training"], payload)
+    with pytest.raises(ValueError, match="formal adaptive backend environment differs"):
+        build(args)
+
+
+def test_device_builder_rejects_historical_primary_training_route(tmp_path: Path):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["training"].read_text())
+    payload["cases"][0]["leaf_routes"].append(
+        {"implementation": HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE}
+    )
+    write_json(paths["training"], payload)
+    with pytest.raises(ValueError, match="historical whole-model train-temp"):
+        build(args)
+
+
+def test_device_builder_rejects_finetune_without_clean_leaf_matrix(tmp_path: Path):
+    args, _, _, _ = setup_reports(tmp_path)
+    payload = json.loads(args.finetune_report.read_text())
+    payload["runs"]["sft"]["backend_routes"] = [
+        {
+            "phase": "training",
+            "implementation": READABLE_TRAINING_MODEL_ROUTE,
+        }
+    ]
+    write_json(args.finetune_report, payload)
+    with pytest.raises(ValueError, match="sft report has invalid training routes"):
+        build(args)
+
+
+def test_device_builder_rejects_historical_finetune_execution(tmp_path: Path):
+    args, _, _, _ = setup_reports(tmp_path)
+    payload = json.loads(args.finetune_report.read_text())
+    payload["runs"]["dpo"]["kernel_route_trace"]["actual_model_calls"] = {
+        HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE: 1
+    }
+    write_json(args.finetune_report, payload)
+    with pytest.raises(ValueError, match="historical whole-model diagnostic"):
         build(args)
 
 
@@ -236,7 +313,7 @@ def test_device_builder_rejects_unpinned_fla(tmp_path: Path):
         build(args)
 
 
-def test_device_builder_rejects_native_training_without_compiler_identity(
+def test_device_builder_rejects_training_leaves_without_compiler_identity(
     tmp_path: Path,
 ):
     args, paths, _, _ = setup_reports(tmp_path)
@@ -247,7 +324,7 @@ def test_device_builder_rejects_native_training_without_compiler_identity(
         build(args)
 
 
-def test_device_builder_rejects_native_training_with_mismatched_compiler(
+def test_device_builder_rejects_training_leaves_with_mismatched_compiler(
     tmp_path: Path,
 ):
     args, paths, _, _ = setup_reports(tmp_path)

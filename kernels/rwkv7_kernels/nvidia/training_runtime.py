@@ -1,9 +1,12 @@
-"""Direct whole-model training runtime for vendored train_temp autograd ops.
+"""Private whole-model training diagnostic for vendored train_temp ops.
 
-Unlike the historical adapter, this runtime never replaces ``forward`` methods
-or adds backend flags to model/config/cache objects. The clean HF model invokes
-it once through the versioned model-forward protocol.
+This module is retained as migration evidence and a focused kernel-development
+diagnostic.  It is deliberately not imported by the public model-forward
+protocol and is not an HF training route.  Standard training always executes
+the readable ``modeling_rwkv7.py`` layer loop, where recurrent, linear, and
+Mix6 tensor leaves may be replaced independently.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -45,10 +48,13 @@ def causal_cross_entropy(
     return loss_sum / valid_tokens.to(dtype=loss_sum.dtype)
 
 
-def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
-    """Execute dense BF16 forward/backward-capable RWKV-7 training math."""
+def _run_training_diagnostic(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
+    """Exercise the historical dense BF16 runtime outside the public HF route."""
 
-    train_temp.load_train_temp_cuda_extension()
+    # Only Mix6 and ClampW are used by this accepted route. Experimental fused
+    # gates and the optional L2Wrap loss remain separately loadable diagnostics
+    # and must not inflate ordinary HF training cold start.
+    train_temp.load_training_runtime_cuda_extensions()
     input_ids = request.get("input_ids")
     inputs_embeds = request.get("inputs_embeds")
     if input_ids is not None:
@@ -61,9 +67,7 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     v_first = hidden_states.new_zeros(1)
 
     def run_layer(layer, hidden, first_value):
-        residual = (
-            layer.pre_norm(hidden) if hasattr(layer, "pre_norm") else hidden
-        )
+        residual = layer.pre_norm(hidden) if hasattr(layer, "pre_norm") else hidden
         attention_input = layer.attn_norm(residual)
         attention_output, first_value = train_temp._train_temp_attention_forward(
             layer.attn,
@@ -82,9 +86,7 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     for layer in owner.model.layers:
         if checkpointing:
             hidden_states, v_first = train_temp._train_temp_checkpoint(
-                lambda hidden, first, current=layer: run_layer(
-                    current, hidden, first
-                ),
+                lambda hidden, first, current=layer: run_layer(current, hidden, first),
                 hidden_states,
                 v_first,
             )
@@ -119,4 +121,4 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["IMPLEMENTATION", "causal_cross_entropy", "run_training"]
+__all__: list[str] = []

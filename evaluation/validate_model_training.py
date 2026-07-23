@@ -2,10 +2,10 @@
 """Validate full-model RWKV-7 training with replaceable leaf operators.
 
 The Hugging Face ``modeling_rwkv7.py`` layer loop remains identical in the
-reference and candidate lanes. Only stateless linears and the canonical
-recurrent boundary may be selected differently. A pinned FLA checkout is
-loaded as an independent mathematical comparison; it is never imported by
-either runtime package.
+reference and candidate lanes. Only the explicit-shift Mix6, stateless linear,
+and canonical recurrent tensor boundaries may be selected differently. A
+pinned FLA checkout is loaded as an independent mathematical comparison; it is
+never imported by either runtime package.
 """
 
 from __future__ import annotations
@@ -30,18 +30,26 @@ from fla_common import (
     tensor_metric,
     write_json,
 )
+from training_metrics import (
+    MODEL_GRADIENT_COSINE_MIN,
+    MODEL_GRADIENT_RELATIVE_L2_MAX,
+    MODEL_LOGITS_COSINE_MIN,
+    MODEL_LOSS_MAX_ABS,
+    global_gradient_metric,
+    global_gradient_passed,
+    gradient_parameter_summary,
+)
 
 
 DTYPE = torch.bfloat16
-MATRIX_RECURRENT_IMPLEMENTATION = "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+MATRIX_RECURRENT_IMPLEMENTATION = (
+    "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+)
 FACTORIZED_RECURRENT_IMPLEMENTATION = (
     "native-nvidia-rwkv7-factorized-recurrent-training-v1"
 )
 FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
-MODEL_LOGITS_COSINE_MIN = 0.9999
-MODEL_LOSS_MAX_ABS = 0.01
-MODEL_GRADIENT_COSINE_MIN = 0.9995
-MODEL_GRADIENT_RELATIVE_L2_MAX = 0.025
+MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
 CUDA_LINEAR_MIN_ROWS = 128
 
 
@@ -92,8 +100,8 @@ def select_lane(lane: str, *, candidate: str) -> None:
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
     elif lane == "candidate":
         # Whole-model auto deliberately declines training.  The readable HF
-        # layer loop then calls the explicitly requested recurrent leaf.  The
-        # factorized policy may also select its stateless linear leaf.
+        # layer loop then calls the explicitly requested recurrent, linear,
+        # and explicit-shift Mix6 leaves independently.
         os.environ["RWKV7_BACKEND"] = "auto"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = candidate
     else:
@@ -122,11 +130,15 @@ def fla_model(path: Path, *, checkpointing: bool):
     config.fuse_cross_entropy = False
     config.fuse_linear_cross_entropy = False
     config.use_l2warp = False
-    model = RWKV7ForCausalLM.from_pretrained(
-        path,
-        config=config,
-        torch_dtype=DTYPE,
-    ).cuda().train()
+    model = (
+        RWKV7ForCausalLM.from_pretrained(
+            path,
+            config=config,
+            torch_dtype=DTYPE,
+        )
+        .cuda()
+        .train()
+    )
     if checkpointing:
         model.gradient_checkpointing_enable()
     else:
@@ -174,9 +186,7 @@ def model_logits(
     rows = []
     batch, tokens = ids.shape
     for batch_idx in range(batch):
-        active = torch.nonzero(
-            attention_mask[batch_idx], as_tuple=False
-        ).flatten()
+        active = torch.nonzero(attention_mask[batch_idx], as_tuple=False).flatten()
         compact_ids = ids[batch_idx : batch_idx + 1].index_select(1, active)
         compact_logits = model(
             input_ids=compact_ids,
@@ -284,16 +294,19 @@ def collect_lane(
     }
     recurrent_route = None
     linear_route = None
+    mix6_route = None
     model_route = None
     if lane != "fla":
         from rwkv7_hf.ops_rwkv7 import (
             get_last_linear_route,
+            get_last_mix6_route,
             get_last_model_route,
             get_last_recurrent_route,
         )
 
         recurrent_route = get_last_recurrent_route()
         linear_route = get_last_linear_route()
+        mix6_route = get_last_mix6_route()
         model_route = get_last_model_route()
 
     performance = None
@@ -313,6 +326,7 @@ def collect_lane(
         "gradients": gradients,
         "recurrent_route": recurrent_route,
         "linear_route": linear_route,
+        "mix6_route": mix6_route,
         "model_route": model_route,
         "performance": performance,
         "padding_contract": (
@@ -347,11 +361,7 @@ def compare_lane(candidate: dict[str, Any], reference: dict[str, Any]):
         and logits["cosine"] >= MODEL_LOGITS_COSINE_MIN
         and loss["finite"]
         and loss["max_abs"] <= MODEL_LOSS_MAX_ABS
-        and global_gradient["finite"]
-        and not global_gradient["candidate_only"]
-        and not global_gradient["reference_only"]
-        and global_gradient["cosine"] >= MODEL_GRADIENT_COSINE_MIN
-        and global_gradient["relative_l2"] <= MODEL_GRADIENT_RELATIVE_L2_MAX
+        and global_gradient_passed(global_gradient)
     )
     return {
         "passed": passed,
@@ -361,101 +371,6 @@ def compare_lane(candidate: dict[str, Any], reference: dict[str, Any]):
         "gradients": gradients,
         "global_gradient": global_gradient,
         "gradient_parameter_summary": parameter_summary,
-    }
-
-
-def global_gradient_metric(
-    candidate: dict[str, torch.Tensor],
-    reference: dict[str, torch.Tensor],
-) -> dict[str, Any]:
-    """Compare the complete optimizer update without concatenating tensors."""
-
-    candidate_only = sorted(set(candidate) - set(reference))
-    reference_only = sorted(set(reference) - set(candidate))
-    common = sorted(set(candidate) & set(reference))
-    dot = torch.zeros((), dtype=torch.float64)
-    candidate_square = torch.zeros((), dtype=torch.float64)
-    reference_square = torch.zeros((), dtype=torch.float64)
-    delta_square = torch.zeros((), dtype=torch.float64)
-    max_abs = 0.0
-    finite = True
-    elements = 0
-    for name in common:
-        left = candidate[name].detach().float().reshape(-1)
-        right = reference[name].detach().float().reshape(-1)
-        delta = left - right
-        finite = finite and bool(
-            torch.isfinite(left).all()
-            and torch.isfinite(right).all()
-            and torch.isfinite(delta).all()
-        )
-        dot += (left * right).sum(dtype=torch.float64)
-        candidate_square += (left * left).sum(dtype=torch.float64)
-        reference_square += (right * right).sum(dtype=torch.float64)
-        delta_square += (delta * delta).sum(dtype=torch.float64)
-        if delta.numel():
-            max_abs = max(max_abs, float(delta.abs().max()))
-        elements += int(delta.numel())
-    denominator = candidate_square.sqrt() * reference_square.sqrt()
-    cosine = (
-        1.0
-        if float(denominator) == 0.0
-        and float(candidate_square + reference_square) == 0.0
-        else float(dot / denominator.clamp_min(1.0e-30))
-    )
-    return {
-        "finite": finite,
-        "candidate_only": candidate_only,
-        "reference_only": reference_only,
-        "parameter_count": len(common),
-        "element_count": elements,
-        "cosine": cosine,
-        "relative_l2": float(
-            delta_square.sqrt() / reference_square.sqrt().clamp_min(1.0e-30)
-        ),
-        "candidate_to_reference_norm": float(
-            candidate_square.sqrt()
-            / reference_square.sqrt().clamp_min(1.0e-30)
-        ),
-        "max_abs": max_abs,
-    }
-
-
-def gradient_parameter_summary(report: dict[str, Any]) -> dict[str, Any]:
-    """Summarize named-gradient spread while retaining every row in JSON."""
-
-    rows = report["parameters"]
-    if not rows:
-        return {
-            "parameter_count": 0,
-            "strict_parameter_count": 0,
-            "strict_parameter_fraction": 0.0,
-        }
-    strict = [
-        name
-        for name, row in rows.items()
-        if row["finite"]
-        and row["cosine"] >= 0.999
-        and row["relative_l2"] <= 0.02
-    ]
-    relative = sorted(float(row["relative_l2"]) for row in rows.values())
-    cosine = sorted(float(row["cosine"]) for row in rows.values())
-
-    def percentile(values: list[float], fraction: float) -> float:
-        index = round((len(values) - 1) * fraction)
-        return values[index]
-
-    return {
-        "parameter_count": len(rows),
-        "strict_parameter_count": len(strict),
-        "strict_parameter_fraction": len(strict) / len(rows),
-        "relative_l2_median": percentile(relative, 0.5),
-        "relative_l2_p95": percentile(relative, 0.95),
-        "relative_l2_p99": percentile(relative, 0.99),
-        "relative_l2_max": relative[-1],
-        "cosine_min": cosine[0],
-        "cosine_p01": percentile(cosine, 0.01),
-        "cosine_median": percentile(cosine, 0.5),
     }
 
 
@@ -469,6 +384,7 @@ def candidate_route_passed(
 ) -> bool:
     recurrent = row["recurrent_route"]
     linear = row["linear_route"]
+    mix6 = row["mix6_route"]
     model = row["model_route"]
     exact_route = candidate == "matrix" or (
         candidate == "adaptive" and (padding != "none" or tokens % 16 != 0)
@@ -480,10 +396,8 @@ def candidate_route_passed(
             and linear.get("selected") == "reference"
             and linear.get("implementation") == "torch-reference-linear-v1"
             and (
-                "accelerates only the recurrent leaf"
-                in str(linear.get("reason", ""))
-                or "retains reference linears"
-                in str(linear.get("reason", ""))
+                "accelerates only the recurrent leaf" in str(linear.get("reason", ""))
+                or "retains reference linears" in str(linear.get("reason", ""))
             )
         )
     else:
@@ -492,8 +406,7 @@ def candidate_route_passed(
             linear_passed = bool(
                 linear
                 and linear.get("selected") == "optimized"
-                and linear.get("implementation")
-                == FLATTENED_LINEAR_IMPLEMENTATION
+                and linear.get("implementation") == FLATTENED_LINEAR_IMPLEMENTATION
             )
         else:
             # Small projections keep the fixed-row reference accumulation
@@ -505,11 +418,28 @@ def candidate_route_passed(
                 and f"at least {CUDA_LINEAR_MIN_ROWS} flattened rows"
                 in str(linear.get("reason", ""))
             )
+    # The readable model has already resolved masking and shift-state semantics
+    # into the explicit ``shifted`` tensor.  Mix6 therefore has no padding or
+    # 16-token recurrence-chunk restriction.
+    mix6_expected = candidate in {"adaptive", "factorized"}
+    if mix6_expected:
+        mix6_passed = bool(
+            mix6
+            and mix6.get("selected") == "optimized"
+            and mix6.get("implementation") == MIX6_IMPLEMENTATION
+        )
+    else:
+        mix6_passed = bool(
+            mix6
+            and mix6.get("selected") == "reference"
+            and mix6.get("implementation") == "torch-reference-mix6-v1"
+        )
     return bool(
         recurrent
         and recurrent.get("selected") == "optimized"
         and recurrent.get("implementation") == expected_recurrent
         and linear_passed
+        and mix6_passed
         and model
         and model.get("selected") == "reference"
         and model.get("implementation") == "torch-reference-model-v1"
@@ -523,6 +453,7 @@ def compact_lane(row: dict[str, Any]) -> dict[str, Any]:
         "gradient_parameter_count": len(row["gradients"]),
         "recurrent_route": row["recurrent_route"],
         "linear_route": row["linear_route"],
+        "mix6_route": row["mix6_route"],
         "model_route": row["model_route"],
         "performance": row["performance"],
         "padding_contract": row["padding_contract"],
@@ -642,9 +573,7 @@ def main() -> int:
                         candidate_ms = lanes["candidate"]["performance"][
                             "median_milliseconds"
                         ]
-                        fla_ms = lanes["fla"]["performance"][
-                            "median_milliseconds"
-                        ]
+                        fla_ms = lanes["fla"]["performance"]["median_milliseconds"]
                         performance = {
                             "candidate_speedup_vs_reference": (
                                 reference_ms / candidate_ms
@@ -663,14 +592,11 @@ def main() -> int:
                             args.candidate in {"adaptive", "factorized"}
                             and padding == "none"
                             and (
-                                args.candidate == "factorized"
-                                or token_count % 16 == 0
+                                args.candidate == "factorized" or token_count % 16 == 0
                             )
                             and batch * token_count >= CUDA_LINEAR_MIN_ROWS
                         ),
-                        "candidate_not_worse_than_fla": (
-                            candidate_not_worse_than_fla
-                        ),
+                        "candidate_not_worse_than_fla": (candidate_not_worse_than_fla),
                         "lanes": {
                             name: compact_lane(lane) for name, lane in lanes.items()
                         },
@@ -686,8 +612,7 @@ def main() -> int:
     report = {
         "schema": "rwkv7-model-training-leaves-validation-v2",
         "status": "passed" if not failures else "failed",
-        "code_sha": args.code_sha
-        or git_revision(Path(__file__).resolve().parents[1]),
+        "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "environment": environment(),
         "model": model_fingerprint(path),
         "fla": fla,
@@ -704,12 +629,11 @@ def main() -> int:
             "seed": args.seed,
             "cuda_linear_min_flattened_rows": CUDA_LINEAR_MIN_ROWS,
             "release_thresholds": {
+                "gradient_acceptance_basis": ("complete-optimizer-gradient-vector"),
                 "logits_cosine_min": MODEL_LOGITS_COSINE_MIN,
                 "loss_max_abs": MODEL_LOSS_MAX_ABS,
                 "global_gradient_cosine_min": MODEL_GRADIENT_COSINE_MIN,
-                "global_gradient_relative_l2_max": (
-                    MODEL_GRADIENT_RELATIVE_L2_MAX
-                ),
+                "global_gradient_relative_l2_max": (MODEL_GRADIENT_RELATIVE_L2_MAX),
             },
         },
         "fla_comparison_status": {
@@ -717,7 +641,7 @@ def main() -> int:
                 int(row["comparisons"]["fla"]["passed"]) for row in cases
             ),
             "total_cases": len(cases),
-            "release_gate": "informational comparison only",
+            "release_gate": ("required candidate-not-worse-than-fla numerical guard"),
             "masked_padding_contract": "per-sample-compact-scatter",
         },
         "cases": cases,

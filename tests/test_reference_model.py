@@ -130,6 +130,116 @@ def test_left_and_right_padding_do_not_update_state(tiny_config):
         torch.testing.assert_close(right_state, expected)
 
 
+def _parameter_gradients(model):
+    return {
+        name: None if parameter.grad is None else parameter.grad.detach().clone()
+        for name, parameter in model.named_parameters()
+    }
+
+
+def _assert_gradients_close(actual, expected):
+    assert actual.keys() == expected.keys()
+    for name in actual:
+        if expected[name] is None:
+            assert actual[name] is None, name
+        else:
+            assert actual[name] is not None, name
+            torch.testing.assert_close(actual[name], expected[name])
+
+
+def _assert_caches_close(actual, expected, *, compare_sequence_length=True):
+    if compare_sequence_length:
+        assert actual.get_seq_length() == expected.get_seq_length()
+    for field in ("recurrent_state", "attention_shift", "ffn_shift"):
+        for actual_state, expected_state in zip(
+            getattr(actual, field),
+            getattr(expected, field),
+        ):
+            torch.testing.assert_close(actual_state, expected_state)
+
+
+def test_missing_and_all_one_masks_have_identical_forward_and_gradients(tiny_config):
+    torch.manual_seed(23)
+    model = RWKV7ForCausalLM(tiny_config).train()
+    ids = torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8]])
+
+    without_mask = model(input_ids=ids, labels=ids, use_cache=False)
+    without_mask.loss.backward()
+    expected_gradients = _parameter_gradients(model)
+
+    model.zero_grad(set_to_none=True)
+    with_ones = model(
+        input_ids=ids,
+        attention_mask=torch.ones_like(ids),
+        labels=ids,
+        use_cache=False,
+    )
+    with_ones.loss.backward()
+
+    torch.testing.assert_close(with_ones.logits, without_mask.logits)
+    torch.testing.assert_close(with_ones.loss, without_mask.loss)
+    _assert_gradients_close(_parameter_gradients(model), expected_gradients)
+
+    model.eval()
+    with torch.inference_mode():
+        without_mask_cache = model(input_ids=ids, use_cache=True)
+        with_ones_cache = model(
+            input_ids=ids,
+            attention_mask=torch.ones_like(ids),
+            use_cache=True,
+        )
+    torch.testing.assert_close(with_ones_cache.logits, without_mask_cache.logits)
+    _assert_caches_close(
+        with_ones_cache.past_key_values,
+        without_mask_cache.past_key_values,
+    )
+
+
+@pytest.mark.parametrize(
+    ("padded_ids", "mask", "valid_slice"),
+    [
+        (
+            torch.tensor([[0, 0, 11, 12, 13]]),
+            torch.tensor([[0, 0, 1, 1, 1]]),
+            slice(2, None),
+        ),
+        (
+            torch.tensor([[11, 12, 13, 0, 0]]),
+            torch.tensor([[1, 1, 1, 0, 0]]),
+            slice(None, 3),
+        ),
+    ],
+    ids=("left", "right"),
+)
+def test_padding_preserves_selected_forward_gradients_and_cache(
+    tiny_config,
+    padded_ids,
+    mask,
+    valid_slice,
+):
+    torch.manual_seed(29)
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    core = torch.tensor([[11, 12, 13]])
+
+    plain = model(input_ids=core, use_cache=True)
+    plain.logits.square().sum().backward()
+    expected_gradients = _parameter_gradients(model)
+
+    model.zero_grad(set_to_none=True)
+    padded = model(input_ids=padded_ids, attention_mask=mask, use_cache=True)
+    padded.logits[:, valid_slice].square().sum().backward()
+
+    torch.testing.assert_close(padded.logits[:, valid_slice], plain.logits)
+    _assert_gradients_close(_parameter_gradients(model), expected_gradients)
+    # Cache sequence length records positions consumed, including padding; the
+    # recurrent and shift tensors are the state whose masked semantics match.
+    _assert_caches_close(
+        padded.past_key_values,
+        plain.past_key_values,
+        compare_sequence_length=False,
+    )
+
+
 def test_loss_gradient_inputs_embeds_and_unsupported_attentions(tiny_config):
     torch.manual_seed(11)
     model = RWKV7ForCausalLM(tiny_config).train()
@@ -169,9 +279,7 @@ def test_causal_loss_shifts_targets_without_copying_logits():
             [0, 0, 1, 1, 1, 1, 1],
         ]
     )
-    expected_labels = labels[:, 1:].contiguous().masked_fill(
-        ~mask[:, 1:].bool(), -100
-    )
+    expected_labels = labels[:, 1:].contiguous().masked_fill(~mask[:, 1:].bool(), -100)
     expected = torch.nn.functional.cross_entropy(
         expected_logits[:, :-1].contiguous().reshape(-1, 23),
         expected_labels.reshape(-1),
@@ -223,9 +331,9 @@ def test_checkpoint_recomputation_republishes_training_batch_context(
     calls = []
     original = modeling.set_training_batch_context
 
-    def record_context(mask, *, training):
-        calls.append((bool(mask.all()), bool(training)))
-        original(mask, training=training)
+    def record_context(mask, *, training, fully_active=None):
+        calls.append((bool(mask.all()), bool(training), fully_active))
+        return original(mask, training=training, fully_active=fully_active)
 
     monkeypatch.setattr(modeling, "set_training_batch_context", record_context)
     model = RWKV7ForCausalLM(tiny_config).train()
@@ -234,4 +342,30 @@ def test_checkpoint_recomputation_republishes_training_batch_context(
     model(input_ids=ids, labels=ids, use_cache=False).loss.backward()
 
     assert len(calls) >= tiny_config.num_hidden_layers + 1
-    assert all(call == (True, True) for call in calls)
+    assert all(call == (True, True, True) for call in calls)
+
+
+def test_model_computes_mask_activity_once_outside_layer_shift_math():
+    import inspect
+
+    from rwkv7_hf.modeling_rwkv7 import _masked_token_shift
+
+    source = inspect.getsource(_masked_token_shift)
+    assert ".all(" not in source
+    assert "fully_active" in source
+
+
+def test_all_active_mask_writes_are_guarded_in_readable_model_source():
+    import inspect
+
+    time_mix_source = inspect.getsource(RWKV7TimeMix.forward)
+    channel_mix_source = inspect.getsource(RWKV7ChannelMix.forward)
+    block_source = inspect.getsource(RWKV7Block.forward)
+    model_source = inspect.getsource(RWKV7Model.forward)
+
+    assert "if mask_fully_active:\n                v_first = value" in time_mix_source
+    assert "if not mask_fully_active:" in time_mix_source
+    assert "if not mask_fully_active:" in channel_mix_source
+    assert "if not mask_fully_active:" in block_source
+    assert model_source.count("if not mask_fully_active:") == 2
+    assert "v_first = torch.empty(" in model_source

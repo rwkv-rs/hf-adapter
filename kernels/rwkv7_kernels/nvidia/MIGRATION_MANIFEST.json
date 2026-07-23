@@ -211,17 +211,17 @@
       "transfer": "byte_identical"
     },
     {
-      "adaptation": "adapted the historical BF16 raw-decay ABI to accept canonical FP32 decay values and return FP32 decay gradients without changing the public HF model",
+      "adaptation": "adapted the historical BF16 raw-decay ABI to accept canonical FP32 decay values and return FP32 decay gradients without changing the public HF model; added complete shape, dtype, contiguity, and same-device validation plus a tensor-device CUDA guard and explicit PyTorch current-stream handoff",
       "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3.cpp",
-      "destination_sha256": "af534188b3e69105ba37528001057d94b633f7f4ed1c0d21a99c6cb9b10d0b5f",
+      "destination_sha256": "2c77146767058bf813c89a20ec5a01b43b6ec5c0a514ff6dc2f3ae66dbea0a29",
       "git_blob": "702966078c410e8ff8338c025790aeb77399739e",
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3.cpp",
       "transfer": "adapted_clean_boundary"
     },
     {
-      "adaptation": "adapted the historical raw-decay transform to consume canonical FP32 decay, retain FP32 state, and reproduce the clean BF16 outer-product and output rounding contract on SM80+",
+      "adaptation": "adapted the historical raw-decay transform to consume canonical FP32 decay, retain FP32 state, and reproduce the clean BF16 outer-product and output rounding contract on SM80+; launches forward and backward on the supplied PyTorch current stream with immediate CUDA launch checks",
       "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
-      "destination_sha256": "38940b46678e163e3194457d7ad0cfc5df21122b806f7e949bb53db99b0f2f4b",
+      "destination_sha256": "30c7c728cf799e2133421163c405a72cad74cac676c61e04182ca5d1cad2cc65",
       "git_blob": "677ff81399fad6a1ede38ee25a87562716473323",
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
       "transfer": "adapted_clean_boundary"
@@ -299,17 +299,17 @@
       "transfer": "byte_identical"
     },
     {
-      "adaptation": "adapted the backward boundary to validate rank-three input, even channels, and all six mix-vector shapes before launching the deterministic CUDA reduction",
+      "adaptation": "adapted the forward and backward boundaries to validate non-empty rank-three input, even channels, all gradient/vector shapes, contiguity, dtype, and same-device ownership before entering a tensor-device CUDA guard",
       "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
-      "destination_sha256": "1d4fdb580a73be2104b368aa1b2ae57e9623bdebe25b8cf7bba9e16b5ce4dbe2",
+      "destination_sha256": "1f6e5b34c7b65523e9428422d48add4542ad0abc9a38b4db854a5a6567377493",
       "git_blob": "857deb512db766665a67be4ba17b43f2c6d68a14",
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
       "transfer": "adapted_clean_boundary"
     },
     {
-      "adaptation": "replaced architecture-dependent atomic parameter-gradient accumulation with one current-stream deterministic channel-pair reduction in canonical flattened batch/token order, removing FP32 scratch and cast launches while retaining the BF16 ABI",
+      "adaptation": "replaced architecture-dependent atomic parameter-gradient accumulation with one deterministic channel-pair reduction in canonical flattened batch/token order, removing FP32 scratch and cast launches while retaining the BF16 ABI; uses the input tensor device current stream and checks both CUDA launches immediately",
       "destination": "kernels/rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
-      "destination_sha256": "6281469cc81cd865f6324a3a1dff7d5dbbe8aadb1ccba56477dc0367e8fe8dcb",
+      "destination_sha256": "d451b86313953fd361ae35ad1b6391efeecf052229e97c04cbe511f703959fc9",
       "git_blob": "56642f0cf92dc0ece37672028290a551abe07ca9",
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
       "transfer": "adapted_clean_boundary"
@@ -343,11 +343,12 @@
       "transfer": "byte_identical"
     },
     {
+      "adaptation": "extended process-safe CUDA build helpers for the clean stateless Mix6 training leaf; model and kernel math ownership remain unchanged",
       "destination": "kernels/rwkv7_kernels/nvidia/extension_build.py",
-      "destination_sha256": "67e446b39311b838835ae4e71ace17eef6d2a360380ccf1cefcbb280d400c8a2",
+      "destination_sha256": "ebe65d8076a490607b6d60c9715c3cfdb27ec32f9b6e1af3ea139a3e6d1c8eff",
       "git_blob": "6d46a8771faf685f16db0dc7e121373218b36691",
       "source": "rwkv7_hf/extension_build.py",
-      "transfer": "byte_identical"
+      "transfer": "adapted_clean_boundary"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/fused_attention_projection.py",
@@ -705,9 +706,9 @@
       "transfer": "byte_identical"
     },
     {
-      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF projection/value/a/key/GroupNorm/direct/gate math around the fused recurrence without recursively entering leaf dispatch, compile the recurrent operator independently without FMA contraction, use native CUDA backward for standard detached-state training, route ordinary Mix6 gradients through the deterministic native CUDA backward while retaining canonical replay only for higher-order derivatives, replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers",
+      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF projection/value/a/key/GroupNorm/direct/gate math around the fused recurrence without recursively entering leaf dispatch, compile the recurrent operator independently without FMA contraction, use native CUDA backward for standard detached-state training, route ordinary Mix6 gradients through the deterministic native CUDA backward while retaining canonical replay only for higher-order derivatives, replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers, use deterministic native Mix6 backward only from 32 flattened rows while replaying canonical autograd for smaller or higher-order requests",
       "destination": "kernels/rwkv7_kernels/nvidia/train_temp_cuda.py",
-      "destination_sha256": "138d83cf5bff69c6a61875a9e3bb2f545d71b4589a615206ca13f17d515f2dee",
+      "destination_sha256": "f43ff23ad8f2f90935f9d89dd658a89955419f35260c12256097d6c6b11da5d7",
       "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
       "source": "rwkv7_hf/train_temp_cuda.py",
       "transfer": "adapted_clean_boundary"

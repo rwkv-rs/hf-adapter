@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise backend-v2 through standard HF, Accelerate, PEFT, and TRL APIs.
+"""Exercise clean RWKV-7 tensor leaves through HF, Accelerate, PEFT, and TRL.
 
-The plain BF16 training stages must execute the native train-temp route. LoRA
-stages deliberately require the clean PyTorch fallback because adapter-wrapped
-Linear modules must never be bypassed by packed native operands.
-
-For SM70, ``--training-mode reference-fallback --training-dtype fp16`` records
-the hardware limitation explicitly and requires ordinary HF training to remain
-fully functional. It is not reported as native optimized training.
+Training always executes the readable ``modeling_rwkv7.py`` layer loop.  The
+adaptive BF16 lane independently selects recurrent, linear, and explicit-shift
+Mix6 leaves; PEFT/TRL adapters remain ordinary modules around those stateless
+boundaries.  The reference lane keeps every training operation in PyTorch.
 """
 
 from __future__ import annotations
@@ -25,8 +22,25 @@ import torch
 from common import environment, git_revision, model_fingerprint, sha256_file
 
 
-NATIVE_TRAINING = "native-nvidia-train-temp-autograd-v2"
 REFERENCE_MODEL = "torch-reference-model-v1"
+MATRIX_RECURRENT = "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+FACTORIZED_RECURRENT = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+FLATTENED_LINEAR = "torch-cuda-rwkv7-flattened-linear-training-v1"
+MIX6 = "native-nvidia-rwkv7-mix6-training-v1"
+
+
+def canonical_training_mode(value: str) -> str:
+    aliases = {
+        "adaptive": "adaptive",
+        "native": "adaptive",
+        "reference": "reference",
+        "reference-fallback": "reference",
+        "auto": "reference",
+    }
+    try:
+        return aliases[value]
+    except KeyError as exc:  # pragma: no cover - argparse validates the CLI
+        raise ValueError(f"unknown training mode: {value}") from exc
 
 
 def arguments() -> argparse.Namespace:
@@ -36,8 +50,13 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--training-mode",
-        choices=("native", "reference-fallback"),
-        default="native",
+        choices=("adaptive", "reference", "native", "reference-fallback"),
+        default="adaptive",
+        help=(
+            "adaptive selects independent clean-loop tensor leaves; reference "
+            "keeps pure PyTorch training. native/reference-fallback are "
+            "deprecated aliases."
+        ),
     )
     parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--code-sha")
@@ -46,13 +65,23 @@ def arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def backend_environment() -> None:
-    # ``auto`` is required at the HF boundary so unsupported adapter-wrapped
-    # training falls back. The package selector stays explicit until the full
-    # release gate promotes production model auto.
-    os.environ["RWKV7_BACKEND"] = "auto"
+def inference_backend_environment() -> None:
+    os.environ["RWKV7_BACKEND"] = "optimized"
     os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native"
     os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+
+
+def training_backend_environment(training_mode: str) -> None:
+    training_mode = canonical_training_mode(training_mode)
+    os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
+    if training_mode == "adaptive":
+        os.environ["RWKV7_BACKEND"] = "auto"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "adaptive"
+    else:
+        os.environ["RWKV7_BACKEND"] = "reference"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
 
 
 def last_route() -> dict[str, Any] | None:
@@ -61,32 +90,66 @@ def last_route() -> dict[str, Any] | None:
     return get_last_model_route()
 
 
-def native_training_route(route: dict[str, Any] | None) -> bool:
-    return bool(
-        route
-        and route.get("selected") == "optimized"
-        and route.get("phase") == "training"
-        and route.get("implementation") == NATIVE_TRAINING
+def last_training_routes() -> dict[str, Any]:
+    from rwkv7_hf.ops_rwkv7 import (
+        get_last_linear_route,
+        get_last_mix6_route,
+        get_last_model_route,
+        get_last_recurrent_route,
     )
 
-
-def reference_training_route(route: dict[str, Any] | None) -> bool:
-    return bool(
-        route
-        and route.get("selected") == "reference"
-        and route.get("phase") == "training"
-        and route.get("implementation") == REFERENCE_MODEL
-        and route.get("reason")
-    )
+    return {
+        "model": get_last_model_route(),
+        "recurrent": get_last_recurrent_route(),
+        "linear": get_last_linear_route(),
+        "mix6": get_last_mix6_route(),
+    }
 
 
 def expected_dense_training_route(
-    route: dict[str, Any] | None, training_mode: str
+    routes: dict[str, Any] | None,
+    training_mode: str,
+    *,
+    batch: int = 1,
+    tokens: int = 16,
 ) -> bool:
-    return (
-        native_training_route(route)
-        if training_mode == "native"
-        else reference_training_route(route)
+    training_mode = canonical_training_mode(training_mode)
+    routes = routes or {}
+    model = routes.get("model") or {}
+    recurrent = routes.get("recurrent") or {}
+    linear = routes.get("linear") or {}
+    mix6 = routes.get("mix6") or {}
+    if not (
+        model.get("selected") == "reference"
+        and model.get("phase") == "training"
+        and model.get("implementation") == REFERENCE_MODEL
+    ):
+        return False
+    if training_mode == "reference":
+        return bool(
+            recurrent.get("selected") == "reference"
+            and recurrent.get("implementation") == "torch-reference-v1"
+            and linear.get("selected") == "reference"
+            and linear.get("implementation") == "torch-reference-linear-v1"
+            and mix6.get("selected") == "reference"
+            and mix6.get("implementation") == "torch-reference-mix6-v1"
+        )
+    aligned = tokens > 0 and tokens % 16 == 0
+    expected_recurrent = FACTORIZED_RECURRENT if aligned else MATRIX_RECURRENT
+    linear_optimized = aligned and batch * tokens >= 128
+    linear_passed = (
+        linear.get("selected") == "optimized"
+        and linear.get("implementation") == FLATTENED_LINEAR
+        if linear_optimized
+        else linear.get("selected") == "reference"
+        and linear.get("implementation") == "torch-reference-linear-v1"
+    )
+    return bool(
+        recurrent.get("selected") == "optimized"
+        and recurrent.get("implementation") == expected_recurrent
+        and linear_passed
+        and mix6.get("selected") == "optimized"
+        and mix6.get("implementation") == MIX6
     )
 
 
@@ -101,26 +164,6 @@ def training_parameter_dtype(name: str) -> torch.dtype:
     # autocast. Loading FP16 parameters and then enabling GradScaler makes
     # both libraries correctly reject the run while unscaling gradients.
     return torch.bfloat16 if name == "bf16" else torch.float32
-
-
-def adapter_fallback_route(route: dict[str, Any] | None) -> bool:
-    # A PEFT-wrapped causal LM first rejects the native whole-model training
-    # path because its FFN modules are adapters.  The readable fallback then
-    # enters the nested base-model boundary, whose (also reference) route is
-    # the last route visible through the public diagnostic accessor.  Accept
-    # either explanatory reason, but still require an explicit training-phase
-    # reference route; parameter-change and save/reload checks below prove the
-    # adapter itself stayed active.
-    return bool(
-        route
-        and route.get("selected") == "reference"
-        and route.get("phase") == "training"
-        and route.get("implementation") == REFERENCE_MODEL
-        and (
-            "adapter" in str(route.get("reason", "")).lower()
-            or "causal-lm boundary" in str(route.get("reason", "")).lower()
-        )
-    )
 
 
 def finite_nonzero_gradients(model) -> tuple[bool, int]:
@@ -337,7 +380,7 @@ def run_accelerate(
             tracked_parameter.detach().reshape(-1)[tracked_index],
         )
     )
-    route = last_route()
+    route = last_training_routes()
     passed = bool(
         torch.isfinite(output.loss)
         and gradients_finite
@@ -406,7 +449,7 @@ def run_trainer(
             data_collator=DefaultDataCollator(),
         )
         result = trainer.train()
-    route = last_route()
+    route = last_training_routes()
     loss = float(result.training_loss)
     passed = bool(
         result.global_step == 1
@@ -463,7 +506,7 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
         not torch.equal(old, parameter.detach())
         for old, parameter in zip(before, trainable)
     )
-    route = last_route()
+    route = last_training_routes()
     probe_ids = batch["input_ids"][:, :8]
     model.eval()
     with torch.inference_mode():
@@ -480,7 +523,12 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
         torch.isfinite(output.loss)
         and gradients_finite
         and changed
-        and adapter_fallback_route(route)
+        and expected_dense_training_route(
+            route,
+            canonical_training_mode(
+                os.environ.get("RWKV7_TRAINING_KERNEL_IMPL", "reference")
+            ),
+        )
         and reload_equal
     )
     row = {
@@ -546,13 +594,18 @@ def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
             for name, parameter in trainer.model.named_parameters()
             if parameter.requires_grad
         )
-    route = last_route()
+    route = last_training_routes()
     loss = float(result.training_loss)
     passed = bool(
         result.global_step == max_steps
         and torch.isfinite(torch.tensor(loss))
         and changed
-        and adapter_fallback_route(route)
+        and expected_dense_training_route(
+            route,
+            canonical_training_mode(
+                os.environ.get("RWKV7_TRAINING_KERNEL_IMPL", "reference")
+            ),
+        )
     )
     row = {
         "passed": passed,
@@ -580,42 +633,46 @@ def main() -> int:
     args = arguments()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
-    backend_environment()
-    if args.training_mode == "native" and args.training_dtype != "bf16":
-        raise ValueError("native train-temp ecosystem acceptance requires BF16")
-    if args.training_mode == "reference-fallback" and args.training_dtype != "fp16":
-        raise ValueError("SM70 ecosystem fallback acceptance requires FP16")
+    training_mode = canonical_training_mode(args.training_mode)
+    if training_mode == "adaptive" and args.training_dtype != "bf16":
+        raise ValueError("adaptive clean-leaf ecosystem acceptance requires BF16")
     torch.manual_seed(args.seed)
     path = args.model.expanduser().resolve()
+    inference_backend_environment()
     stages = [
-        execute("auto-model-save-generation", lambda: run_auto_model(path, args.seed)),
-        execute(
-            f"accelerate-{args.training_mode}",
-            lambda: run_accelerate(
-                path,
-                args.seed + 1,
-                args.training_dtype,
-                args.training_mode,
-            ),
-        ),
-        execute(
-            f"trainer-{args.training_mode}",
-            lambda: run_trainer(
-                path,
-                args.seed + 2,
-                args.training_dtype,
-                args.training_mode,
-            ),
-        ),
-        execute(
-            "peft-lora-fallback",
-            lambda: run_peft(path, args.seed + 3, args.training_dtype),
-        ),
-        execute(
-            "trl-sft-lora-fallback",
-            lambda: run_trl_sft(path, args.seed + 4, args.training_dtype),
-        ),
+        execute("auto-model-save-generation", lambda: run_auto_model(path, args.seed))
     ]
+    training_backend_environment(training_mode)
+    stages.extend(
+        [
+            execute(
+                f"accelerate-{training_mode}",
+                lambda: run_accelerate(
+                    path,
+                    args.seed + 1,
+                    args.training_dtype,
+                    training_mode,
+                ),
+            ),
+            execute(
+                f"trainer-{training_mode}",
+                lambda: run_trainer(
+                    path,
+                    args.seed + 2,
+                    args.training_dtype,
+                    training_mode,
+                ),
+            ),
+            execute(
+                "peft-lora-fallback",
+                lambda: run_peft(path, args.seed + 3, args.training_dtype),
+            ),
+            execute(
+                "trl-sft-lora-fallback",
+                lambda: run_trl_sft(path, args.seed + 4, args.training_dtype),
+            ),
+        ]
+    )
     wheels = {}
     for name, wheel in (
         ("rwkv7_hf", args.hf_wheel),
@@ -628,17 +685,18 @@ def main() -> int:
             }
     passed = all(row.get("passed") for row in stages)
     report = {
-        "schema": "rwkv7-backend-v2-hf-ecosystem-v1",
+        "schema": "rwkv7-backend-v2-hf-ecosystem-v2",
         "status": "passed" if passed else "failed",
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "environment": environment(),
         "model": model_fingerprint(path),
         "wheels": wheels,
         "training_expectation": {
-            "mode": args.training_mode,
+            "mode": training_mode,
+            "requested_mode": args.training_mode,
             "dtype": args.training_dtype,
             "parameter_dtype": str(training_parameter_dtype(args.training_dtype)),
-            "native_supported": args.training_mode == "native",
+            "optimized_leaves_requested": training_mode == "adaptive",
         },
         "backend_environment": {
             name: os.environ.get(name)
@@ -646,6 +704,7 @@ def main() -> int:
                 "RWKV7_BACKEND",
                 "RWKV7_MODEL_KERNEL_IMPL",
                 "RWKV7_KERNEL_IMPL",
+                "RWKV7_TRAINING_KERNEL_IMPL",
             )
         },
         "stages": stages,

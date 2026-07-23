@@ -11,6 +11,12 @@ from conftest import write_valid_hf_wheel, write_valid_kernel_wheel, write_valid
 from evaluation.build_backend_v2_compact_bundle import build_bundle
 from scripts.build_release_provenance import DEVICE_REPORT, REQUIRED_GATES, build
 from scripts.build_release_provenance import DEVICE_RUN_REPORT
+from scripts.release_route_contract import (
+    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
+    READABLE_TRAINING_MODEL_ROUTE,
+    REQUIRED_TRAINING_LEAF_ROUTES,
+)
 from scripts.verify_release_assets import (
     DEVICES,
     FLA_COMMIT,
@@ -68,11 +74,16 @@ def device_report(device: str, identities: dict[str, str]) -> dict:
         "kernel_wheel_sha256": identities[f"rwkv7_kernels-{VERSION}-py3-none-any.whl"],
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
+        "training_policy": "adaptive",
+        "training_backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
         **{f"{gate}_status": "passed" for gate in REQUIRED_GATES},
         "actual_routes": {
             "prefill": ["native-self-chunk-prefill-v2"],
             "decode": ["native-fused-token-decode-v2"],
-            "training": ["native-nvidia-train-temp-autograd-v2"],
+            "training": [
+                READABLE_TRAINING_MODEL_ROUTE,
+                *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
+            ],
             "quantization": ["native-w8-linear-v1", "torchao-int4-v1"],
         },
     }
@@ -199,6 +210,22 @@ def test_builder_rejects_missing_gate(tmp_path: Path):
         build(args)
 
 
+def test_builder_rejects_non_adaptive_training_provenance(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["training_backend_environment"].__setitem__(
+            "RWKV7_TRAINING_KERNEL_IMPL", "auto"
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="adaptive training environment differs"):
+        build(args)
+
+
 def test_builder_rejects_different_wheel(tmp_path: Path):
     args, bundles, _ = setup_release(tmp_path)
     device = "rtx-4090"
@@ -241,6 +268,54 @@ def test_builder_rejects_requested_selector_as_actual_route(tmp_path: Path):
         build(args)
 
 
+def test_builder_rejects_historical_whole_model_training_route(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training", [HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE]
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="historical whole-model train-temp"):
+        build(args)
+
+
+def test_builder_requires_all_clean_training_boundaries(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training", [READABLE_TRAINING_MODEL_ROUTE]
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="independent kernel leaves"):
+        build(args)
+
+
+def test_builder_requires_readable_model_training_boundary(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training", sorted(REQUIRED_TRAINING_LEAF_ROUTES)
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="readable HF model loop"):
+        build(args)
+
+
 def test_builder_rejects_overlapping_device_acceptance(tmp_path: Path):
     args, bundles, _ = setup_release(tmp_path)
     device = "rtx-4090"
@@ -252,7 +327,9 @@ def test_builder_rejects_overlapping_device_acceptance(tmp_path: Path):
     run = json.loads((source / DEVICE_RUN_REPORT).read_text())
     run["started_at"] = "2026-08-28T00:30:00+00:00"
     (source / DEVICE_RUN_REPORT).write_text(json.dumps(run) + "\n")
-    replacement = build_bundle(compact_args(source, tmp_path / "overlap-bundle", device))
+    replacement = build_bundle(
+        compact_args(source, tmp_path / "overlap-bundle", device)
+    )
     replace_arg(args, device, replacement)
     with pytest.raises(ValueError, match="overlap or violate required order"):
         build(args)

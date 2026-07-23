@@ -18,6 +18,11 @@ from scripts.verify_release_assets import (
     expected_artifacts,
     verify,
 )
+from scripts.release_route_contract import (
+    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    READABLE_TRAINING_MODEL_ROUTE,
+    REQUIRED_TRAINING_LEAF_ROUTES,
+)
 
 
 def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Namespace:
@@ -61,6 +66,8 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             "harness_sha": harness_sha,
             "lm_eval_units": 144,
             "lm_eval_status": "passed",
+            "training_policy": "adaptive",
+            "training_backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
             "correctness_status": "passed",
             "hf_ecosystem_status": "passed",
             "training_status": "passed",
@@ -84,7 +91,10 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             "actual_routes": {
                 "prefill": ["native-self-chunk-prefill-v2"],
                 "decode": ["native-fused-token-decode-v2"],
-                "training": ["native-nvidia-train-temp-autograd-v2"],
+                "training": [
+                    READABLE_TRAINING_MODEL_ROUTE,
+                    *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
+                ],
                 "quantization": ["native-w8-linear-v1"],
             },
         }
@@ -131,9 +141,9 @@ def test_release_asset_verifier_rejects_overlapping_device_order(tmp_path: Path)
     args = write_release(tmp_path)
     path = tmp_path / "release-provenance.json"
     provenance = json.loads(path.read_text())
-    provenance["validation"]["devices"]["rtx-4090"][
-        "acceptance_started_at"
-    ] = "2026-08-28T00:30:00+00:00"
+    provenance["validation"]["devices"]["rtx-4090"]["acceptance_started_at"] = (
+        "2026-08-28T00:30:00+00:00"
+    )
     path.write_text(json.dumps(provenance) + "\n")
     sums = (tmp_path / "SHA256SUMS").read_text().splitlines()
     sums[-1] = f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"

@@ -22,6 +22,16 @@ EXPECTED_DATASETS = {
     ),
 }
 EXPECTED_TARGETS = ["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"]
+READABLE_MODEL_IMPLEMENTATION = "torch-reference-model-v1"
+MATRIX_RECURRENT_IMPLEMENTATION = (
+    "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+)
+FACTORIZED_RECURRENT_IMPLEMENTATION = (
+    "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+)
+FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
+MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
+HISTORICAL_WHOLE_MODEL_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
 
 
 def read(path: Path) -> dict:
@@ -129,23 +139,18 @@ def validate_run(
             failures.append("missing rwkv7-hf wheel SHA256")
         if not artifacts.get("rwkv7_kernels", {}).get("sha256"):
             failures.append("missing rwkv7-kernels wheel SHA256")
-        adapter_fallback = any(
+        readable_model = any(
             row.get("event") == "pre_optimizer_step"
+            and row.get("boundary") == "model"
             and row.get("selected") == "reference"
             and row.get("phase") == "training"
-            and row.get("implementation") == "torch-reference-model-v1"
-            and (
-                "adapter" in str(row.get("reason", "")).lower()
-                or "causal-lm boundary" in str(row.get("reason", "")).lower()
-            )
+            and row.get("implementation") == READABLE_MODEL_IMPLEMENTATION
             for row in routes
         )
-        if not adapter_fallback or not checks.get("adapter_reference_fallback"):
-            failures.append("LoRA training did not prove adapter reference fallback")
-        if checks.get("native_training"):
-            failures.append(
-                "LoRA unexpectedly bypassed adapters through native training"
-            )
+        if not readable_model or not checks.get("readable_model_loop"):
+            failures.append("training did not prove the readable HF model loop")
+        if checks.get("historical_whole_model_diagnostic") is not False:
+            failures.append("historical whole-model diagnostic route is not false")
     if require_training_candidate is not None:
         if kernel_trace.get("schema") != "rwkv7-kernel-route-trace-v2":
             failures.append("missing versioned process-wide kernel route trace")
@@ -156,12 +161,12 @@ def validate_run(
             and row.get("boundary") == "model"
             and row.get("selected") == "reference"
             and row.get("phase") == "training"
-            and row.get("implementation") == "torch-reference-model-v1"
+            and row.get("implementation") == READABLE_MODEL_IMPLEMENTATION
             for row in routes
         )
         recurrent_implementations = {
-            "matrix": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
-            "factorized": "native-nvidia-rwkv7-factorized-recurrent-training-v1",
+            "matrix": MATRIX_RECURRENT_IMPLEMENTATION,
+            "factorized": FACTORIZED_RECURRENT_IMPLEMENTATION,
         }
         expected_recurrents = (
             set(recurrent_implementations.values())
@@ -185,42 +190,44 @@ def validate_run(
         }
         observed_recurrents.update(traced_recurrents)
         recurrent_candidate = bool(observed_recurrents)
-        matrix_recurrent = any(
-            row.get("event") == "pre_optimizer_step"
-            and row.get("boundary") == "recurrent"
-            and row.get("selected") == "optimized"
-            and row.get("implementation") == recurrent_implementations["matrix"]
-            for row in routes
-        ) or int(
-            kernel_trace.get("actual_recurrent_calls", {}).get(
-                recurrent_implementations["matrix"], 0
+        matrix_recurrent = (
+            any(
+                row.get("event") == "pre_optimizer_step"
+                and row.get("boundary") == "recurrent"
+                and row.get("selected") == "optimized"
+                and row.get("implementation") == recurrent_implementations["matrix"]
+                for row in routes
             )
-        ) > 0
-        factorized_recurrent = any(
-            row.get("event") == "pre_optimizer_step"
-            and row.get("boundary") == "recurrent"
-            and row.get("selected") == "optimized"
-            and row.get("implementation")
-            == recurrent_implementations["factorized"]
-            for row in routes
-        ) or int(
-            kernel_trace.get("actual_recurrent_calls", {}).get(
-                recurrent_implementations["factorized"], 0
+            or int(
+                kernel_trace.get("actual_recurrent_calls", {}).get(
+                    recurrent_implementations["matrix"], 0
+                )
             )
-        ) > 0
-        if not model_reference or not checks.get("model_reference_training"):
+            > 0
+        )
+        factorized_recurrent = (
+            any(
+                row.get("event") == "pre_optimizer_step"
+                and row.get("boundary") == "recurrent"
+                and row.get("selected") == "optimized"
+                and row.get("implementation") == recurrent_implementations["factorized"]
+                for row in routes
+            )
+            or int(
+                kernel_trace.get("actual_recurrent_calls", {}).get(
+                    recurrent_implementations["factorized"], 0
+                )
+            )
+            > 0
+        )
+        if not model_reference or not checks.get("readable_model_loop"):
             failures.append("training did not retain the readable HF layer loop")
         recurrent_check = bool(
-            (matrix_recurrent and checks.get("matrix_recurrent_training"))
-            or (
-                factorized_recurrent
-                and checks.get("factorized_recurrent_training")
-            )
+            (matrix_recurrent and checks.get("matrix_recurrent_leaf"))
+            or (factorized_recurrent and checks.get("factorized_recurrent_leaf"))
         )
         if not recurrent_candidate or not recurrent_check:
-            failures.append(
-                "training did not execute the requested recurrent boundary"
-            )
+            failures.append("training did not execute the requested recurrent boundary")
         linear_reference = any(
             row.get("event") == "pre_optimizer_step"
             and row.get("boundary") == "linear"
@@ -228,40 +235,78 @@ def validate_run(
             and row.get("implementation") == "torch-reference-linear-v1"
             for row in routes
         )
-        flattened_linear = any(
-            row.get("event") == "pre_optimizer_step"
-            and row.get("boundary") == "linear"
-            and row.get("selected") == "optimized"
-            and row.get("implementation")
-            == "torch-cuda-rwkv7-flattened-linear-training-v1"
-            for row in routes
-        ) or int(
-            kernel_trace.get("actual_linear_calls", {}).get(
-                "torch-cuda-rwkv7-flattened-linear-training-v1", 0
+        flattened_linear = (
+            any(
+                row.get("event") == "pre_optimizer_step"
+                and row.get("boundary") == "linear"
+                and row.get("selected") == "optimized"
+                and row.get("implementation") == FLATTENED_LINEAR_IMPLEMENTATION
+                for row in routes
             )
-        ) > 0
+            or int(
+                kernel_trace.get("actual_linear_calls", {}).get(
+                    FLATTENED_LINEAR_IMPLEMENTATION, 0
+                )
+            )
+            > 0
+        )
+        reference_mix6 = any(
+            row.get("event") == "pre_optimizer_step"
+            and row.get("boundary") == "mix6"
+            and row.get("selected") == "reference"
+            and row.get("implementation") == "torch-reference-mix6-v1"
+            for row in routes
+        )
+        optimized_mix6 = (
+            any(
+                row.get("event") == "pre_optimizer_step"
+                and row.get("boundary") == "mix6"
+                and row.get("selected") == "optimized"
+                and row.get("implementation") == MIX6_IMPLEMENTATION
+                for row in routes
+            )
+            or int(
+                kernel_trace.get("actual_mix6_calls", {}).get(MIX6_IMPLEMENTATION, 0)
+            )
+            > 0
+        )
         if require_training_candidate == "matrix":
             if not linear_reference:
                 failures.append("matrix training did not retain reference linears")
+            if not reference_mix6:
+                failures.append("matrix training did not retain reference Mix6")
         elif require_training_candidate == "factorized":
-            if not flattened_linear or not checks.get(
-                "flattened_linear_training"
-            ):
+            if not flattened_linear or not checks.get("flattened_linear_leaf"):
                 failures.append(
                     "factorized CUDA training did not execute the flattened linear boundary"
+                )
+            if not optimized_mix6 or not checks.get("mix6_leaf"):
+                failures.append(
+                    "factorized CUDA training did not execute the Mix6 boundary"
                 )
         else:
             if matrix_recurrent and not linear_reference:
                 failures.append(
                     "adaptive matrix fallback did not retain reference linears"
                 )
-            if factorized_recurrent and not (
-                flattened_linear or linear_reference
-            ):
+            if factorized_recurrent and not (flattened_linear or linear_reference):
                 failures.append(
                     "adaptive factorized route did not record a linear boundary"
                 )
-        if checks.get("native_training"):
+            if not optimized_mix6 or not checks.get("mix6_leaf"):
+                failures.append("adaptive training did not execute the Mix6 boundary")
+        if factorized_recurrent and flattened_linear and optimized_mix6:
+            if not checks.get("clean_leaf_training"):
+                failures.append("clean accelerated training leaves were not reconciled")
+        historical_trace_count = int(
+            kernel_trace.get("actual_model_calls", {}).get(
+                HISTORICAL_WHOLE_MODEL_IMPLEMENTATION, 0
+            )
+        )
+        if (
+            checks.get("historical_whole_model_diagnostic") is not False
+            or historical_trace_count
+        ):
             failures.append("whole-model diagnostic training unexpectedly executed")
     if name == "grpo" and not any(
         float(row.get("reward_std", 0.0)) > 0.0 for row in metrics

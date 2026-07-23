@@ -84,7 +84,9 @@ def verify_reference_checkout(root: Path, source_sha: str) -> None:
 
     head = git_sha(root)
     if source_sha != head or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
-        raise ValueError(f"source SHA {source_sha!r} does not equal checkout HEAD {head}")
+        raise ValueError(
+            f"source SHA {source_sha!r} does not equal checkout HEAD {head}"
+        )
     for name in REFERENCE_FILES:
         disk = (root / "rwkv7_hf" / name).read_bytes()
         committed = subprocess.check_output(
@@ -202,11 +204,14 @@ training.  Reproducible examples and evaluation manifests are in
 ## Optional optimized execution
 
 The checked-in model code is always the readable correctness path. Installing
-the separately versioned `rwkv7-kernels` package may replace the recurrence or
-the single whole-layer-loop operator boundary on supported NVIDIA devices. It
-does not replace the model/config/cache classes, checkpoint keys, or HF
-forward/generation contract. Unsupported devices, dtypes, shapes and adapter
-training stay on the reference implementation.
+the separately versioned `rwkv7-kernels` package may replace recurrence or an
+inference-only whole-model boundary on supported NVIDIA devices. Training
+always retains the readable HF layer loop and may accelerate only independent
+recurrent, linear and Mix6 tensor leaves.
+It does not replace the model/config/cache classes, checkpoint keys, or HF
+forward/generation contract. Unsupported
+devices, dtypes and shapes fail closed to the corresponding reference tensor
+operation.
 
 ```bash
 python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
@@ -216,9 +221,9 @@ Equivalent: `python -m pip install "rwkv7-hf[kernels]==1.0.0"`.
 
 The optional package includes recurrent, fused prefill/decode, projection,
 norm, FFN/LoRA, CUDA Graph/state-pool, SM70/Ada/Blackwell, quantization and
-training operator families. Exact supported routes and required-device evidence
-are recorded in the source repository; requested environment settings alone
-are not accepted as proof that an optimized route executed.
+training-leaf operator families. Exact supported routes and required-device
+evidence are recorded in the source repository; requested environment settings
+alone are not accepted as proof that an optimized route executed.
 
 ## Model and provenance
 

@@ -1,5 +1,8 @@
 #include <torch/extension.h>
 
+#include <c10/cuda/CUDAGuard.h>
+
+#include <utility>
 #include <vector>
 
 std::vector<torch::Tensor> tmix_mix6_forward_v5_cuda(
@@ -39,6 +42,16 @@ void check_vec(const torch::Tensor& x, int64_t c, const char* name) {
     TORCH_CHECK(x.size(0) == c, name, " shape mismatch");
 }
 
+void check_same_device(
+    const torch::Tensor& value,
+    const torch::Tensor& reference,
+    const char* name) {
+    TORCH_CHECK(
+        value.device() == reference.device(),
+        name,
+        " must share x's CUDA device");
+}
+
 } // namespace
 
 std::vector<torch::Tensor> forward(
@@ -57,14 +70,22 @@ std::vector<torch::Tensor> forward(
     check_bf16_cuda(x_a, "x_a");
     check_bf16_cuda(x_g, "x_g");
     TORCH_CHECK(x.dim() == 3, "x must have shape [B, T, C]");
+    TORCH_CHECK(
+        x.size(0) > 0 && x.size(1) > 0 && x.size(2) > 0,
+        "x requires non-empty batch, time, and channel dimensions");
     int64_t c = x.size(2);
     TORCH_CHECK((c % 2) == 0, "tmix_mix6_v5 currently requires even C");
-    check_vec(x_r, c, "x_r");
-    check_vec(x_w, c, "x_w");
-    check_vec(x_k, c, "x_k");
-    check_vec(x_v, c, "x_v");
-    check_vec(x_a, c, "x_a");
-    check_vec(x_g, c, "x_g");
+    for (const auto& item : {
+             std::pair<const torch::Tensor*, const char*>(&x_r, "x_r"),
+             std::pair<const torch::Tensor*, const char*>(&x_w, "x_w"),
+             std::pair<const torch::Tensor*, const char*>(&x_k, "x_k"),
+             std::pair<const torch::Tensor*, const char*>(&x_v, "x_v"),
+             std::pair<const torch::Tensor*, const char*>(&x_a, "x_a"),
+             std::pair<const torch::Tensor*, const char*>(&x_g, "x_g")}) {
+        check_vec(*item.first, c, item.second);
+        check_same_device(*item.first, x, item.second);
+    }
+    const c10::cuda::CUDAGuard device_guard(x.device());
     return tmix_mix6_forward_v5_cuda(x, x_r, x_w, x_k, x_v, x_a, x_g);
 }
 
@@ -96,20 +117,32 @@ std::vector<torch::Tensor> backward(
     check_bf16_cuda(x_a, "x_a");
     check_bf16_cuda(x_g, "x_g");
     TORCH_CHECK(x.dim() == 3, "x must have shape [B, T, C]");
-    TORCH_CHECK(grad_r.sizes() == x.sizes(), "grad_r shape mismatch");
-    TORCH_CHECK(grad_w.sizes() == x.sizes(), "grad_w shape mismatch");
-    TORCH_CHECK(grad_k.sizes() == x.sizes(), "grad_k shape mismatch");
-    TORCH_CHECK(grad_v.sizes() == x.sizes(), "grad_v shape mismatch");
-    TORCH_CHECK(grad_a.sizes() == x.sizes(), "grad_a shape mismatch");
-    TORCH_CHECK(grad_g.sizes() == x.sizes(), "grad_g shape mismatch");
+    TORCH_CHECK(
+        x.size(0) > 0 && x.size(1) > 0 && x.size(2) > 0,
+        "x requires non-empty batch, time, and channel dimensions");
+    for (const auto& item : {
+             std::pair<const torch::Tensor*, const char*>(&grad_r, "grad_r"),
+             std::pair<const torch::Tensor*, const char*>(&grad_w, "grad_w"),
+             std::pair<const torch::Tensor*, const char*>(&grad_k, "grad_k"),
+             std::pair<const torch::Tensor*, const char*>(&grad_v, "grad_v"),
+             std::pair<const torch::Tensor*, const char*>(&grad_a, "grad_a"),
+             std::pair<const torch::Tensor*, const char*>(&grad_g, "grad_g")}) {
+        TORCH_CHECK(item.first->sizes() == x.sizes(), item.second, " shape mismatch");
+        check_same_device(*item.first, x, item.second);
+    }
     int64_t c = x.size(2);
     TORCH_CHECK((c % 2) == 0, "tmix_mix6_v5 currently requires even C");
-    check_vec(x_r, c, "x_r");
-    check_vec(x_w, c, "x_w");
-    check_vec(x_k, c, "x_k");
-    check_vec(x_v, c, "x_v");
-    check_vec(x_a, c, "x_a");
-    check_vec(x_g, c, "x_g");
+    for (const auto& item : {
+             std::pair<const torch::Tensor*, const char*>(&x_r, "x_r"),
+             std::pair<const torch::Tensor*, const char*>(&x_w, "x_w"),
+             std::pair<const torch::Tensor*, const char*>(&x_k, "x_k"),
+             std::pair<const torch::Tensor*, const char*>(&x_v, "x_v"),
+             std::pair<const torch::Tensor*, const char*>(&x_a, "x_a"),
+             std::pair<const torch::Tensor*, const char*>(&x_g, "x_g")}) {
+        check_vec(*item.first, c, item.second);
+        check_same_device(*item.first, x, item.second);
+    }
+    const c10::cuda::CUDAGuard device_guard(x.device());
     return tmix_mix6_backward_v5_cuda(grad_r, grad_w, grad_k, grad_v, grad_a, grad_g, x, x_r, x_w, x_k, x_v, x_a, x_g);
 }
 

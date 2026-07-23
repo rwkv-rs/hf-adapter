@@ -1,6 +1,7 @@
 #include <torch/extension.h>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
@@ -231,7 +232,7 @@ std::vector<torch::Tensor> tmix_mix6_forward_v5_cuda(
     const int threads = 256;
     const int64_t bt_size = x.size(0) * x.size(1);
     const int64_t c_size = x.size(2);
-    auto stream = at::cuda::getCurrentCUDAStream();
+    auto stream = at::cuda::getCurrentCUDAStream(x.get_device());
 
     const int64_t total_pairs = bt_size * (c_size / 2);
     const int blocks = static_cast<int>(ceil_div(total_pairs, static_cast<int64_t>(threads)));
@@ -280,7 +281,7 @@ std::vector<torch::Tensor> tmix_mix6_backward_v5_cuda(
 
     const int64_t bt_size = x.size(0) * x.size(1);
     const int64_t c_size = x.size(2);
-    auto stream = at::cuda::getCurrentCUDAStream();
+    auto stream = at::cuda::getCurrentCUDAStream(x.get_device());
 
     const int blocks = static_cast<int>(
         ceil_div(c_size / 2, static_cast<int64_t>(TMIX_PARAM_THREADS)));

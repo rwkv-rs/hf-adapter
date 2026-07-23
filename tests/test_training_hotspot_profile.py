@@ -94,8 +94,22 @@ def test_profile_case_uses_only_model_loss_and_records_route_and_shape():
         ]
     )
     route = {
-        "selected": "optimized",
-        "implementation": "native-nvidia-train-temp-autograd-v2",
+        "model": {
+            "selected": "reference",
+            "implementation": "torch-reference-model-v1",
+        },
+        "recurrent": {
+            "selected": "optimized",
+            "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+        },
+        "linear": {
+            "selected": "reference",
+            "implementation": "torch-reference-linear-v1",
+        },
+        "mix6": {
+            "selected": "optimized",
+            "implementation": "native-nvidia-rwkv7-mix6-training-v1",
+        },
     }
     ids = torch.tensor([[1, 2, 3, 4], [4, 3, 2, 1]])
     labels = ids.clone()
@@ -129,6 +143,9 @@ def test_profile_case_uses_only_model_loss_and_records_route_and_shape():
     assert row["hotspots"]["selected_operators"]["aten::cat"]["count"] == 0
     assert row["hotspots"]["recurrent"]["forward"]["aggregate"]["count"] == 2
     assert row["hotspots"]["recurrent"]["backward"]["aggregate"]["count"] == 2
+    assert row["profiled_wall_time_includes_profiler_overhead"] is True
+    assert "wall_time_ms" not in row
+    assert row["hotspots"]["top_self_device_time"][0]["name"] == "aten::mm"
 
 
 def test_event_summary_has_stable_operator_and_recurrent_schema():
@@ -137,7 +154,15 @@ def test_event_summary_has_stable_operator_and_recurrent_schema():
             FakeEvent("aten::addmm", count=3, cpu=2.0, device=4.0),
             FakeEvent("aten::copy_", count=5, cpu=1.0, device=6.0),
             FakeEvent("ChunkDPLRFunction", count=7, device=8.0),
-            FakeEvent("autograd::engine::evaluate_function: ChunkDPLRBackward", count=7),
+            FakeEvent(
+                "autograd::engine::evaluate_function: ChunkDPLRBackward", count=7
+            ),
+            FakeEvent("rwkv7_tmix_mix6_bf16_v5::backward", count=2, device=9.0),
+            FakeEvent("aten::cross_entropy_loss", count=1, device=3.0),
+            FakeEvent("aten::native_group_norm", count=4, device=2.0),
+            FakeEvent("aten::zero_", count=13, device=1.0),
+            FakeEvent("aten::item", count=11, cpu=0.5),
+            FakeEvent("aten::_local_scalar_dense", count=9, cpu=0.5),
         ]
     )
 
@@ -146,6 +171,13 @@ def test_event_summary_has_stable_operator_and_recurrent_schema():
     assert report["selected_operators"]["aten::copy_"]["count"] == 5
     assert report["recurrent"]["forward"]["aggregate"]["count"] == 7
     assert report["recurrent"]["backward"]["aggregate"]["count"] == 7
+    assert report["categories"]["mix6"]["aggregate"]["count"] == 2
+    assert report["categories"]["causal_loss"]["aggregate"]["count"] == 1
+    assert report["categories"]["normalization"]["aggregate"]["count"] == 4
+    assert report["categories"]["allocation_or_zeroing"]["aggregate"]["count"] == 13
+    assert report["categories"]["host_synchronization"]["aggregate"]["count"] == 20
+    assert report["top_launch_count"][0]["name"] == "aten::zero_"
+    assert report["total_operator_calls"] == 62
 
 
 def test_build_report_writes_json_with_provenance(monkeypatch, tmp_path):
@@ -196,18 +228,22 @@ def test_build_report_writes_json_with_provenance(monkeypatch, tmp_path):
     assert loaded["environment"] == {"gpu": "mock"}
 
 
-def test_arguments_validate_fla_and_native_shapes(tmp_path):
+def test_arguments_validate_fla_and_clean_leaf_dtype(tmp_path):
     base = {
         "lane": ["fla"],
         "batch": [1],
         "tokens": [128],
         "warmup": 0,
         "active": 1,
+        "dtype": "bf16",
         "fla_source": None,
     }
     with pytest.raises(ValueError, match="fla-source"):
         hotspots.validate_arguments(SimpleNamespace(**base))
 
     base.update(lane=["optimized"], tokens=[17], fla_source=tmp_path)
-    with pytest.raises(ValueError, match="divisible by 16"):
+    hotspots.validate_arguments(SimpleNamespace(**base))
+
+    base.update(dtype="fp16")
+    with pytest.raises(ValueError, match="requires --dtype bf16"):
         hotspots.validate_arguments(SimpleNamespace(**base))

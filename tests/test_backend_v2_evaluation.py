@@ -15,15 +15,17 @@ sys.path.insert(0, str(EVALUATION))
 import benchmark_backend_v2 as benchmark  # noqa: E402
 from benchmark_backend_v2 import add_speedups, percentile, routes_passed  # noqa: E402
 from validate_backend_v2_ecosystem import (  # noqa: E402
-    adapter_fallback_route,
     expected_dense_training_route,
-    native_training_route,
-    reference_training_route,
     training_parameter_dtype,
 )
 from validate_backend_v2_training import (  # noqa: E402
     candidate_route_passed,
     tensor_metric as training_tensor_metric,
+)
+from validate_model_training import select_lane as select_model_training_lane  # noqa: E402
+from training_metrics import (  # noqa: E402
+    global_gradient_metric,
+    global_gradient_passed,
 )
 from validate_backend_v2_fla_sm70 import (  # noqa: E402
     optimized_route_passed as sm70_fla_route_passed,
@@ -102,6 +104,83 @@ def test_gradient_report_rejects_missing_and_accepts_close_rows():
     assert not gradient_rows_passed(report, torch.bfloat16)
 
 
+def test_global_gradient_gate_accepts_complete_vector_when_tiny_named_row_fails():
+    reference = {
+        "dominant.weight": torch.tensor([1000.0, -1000.0]),
+        "tiny.bias": torch.tensor([1.0e-6]),
+    }
+    candidate = {
+        "dominant.weight": reference["dominant.weight"].clone(),
+        "tiny.bias": torch.zeros(1),
+    }
+
+    named_report = gradient_metrics(candidate, reference)
+    assert not gradient_rows_passed(named_report, torch.bfloat16)
+    assert named_report["parameters"]["tiny.bias"]["relative_l2"] == pytest.approx(1.0)
+
+    global_metric = global_gradient_metric(candidate, reference)
+    assert global_metric["candidate_only"] == []
+    assert global_metric["reference_only"] == []
+    assert global_metric["parameter_count"] == 2
+    assert global_metric["element_count"] == 3
+    assert global_gradient_passed(global_metric)
+
+
+def test_global_gradient_gate_rejects_and_reports_missing_parameter_set():
+    reference = {
+        "dominant.weight": torch.tensor([1000.0, -1000.0]),
+        "missing.bias": torch.tensor([1.0e-6]),
+    }
+    candidate = {"dominant.weight": reference["dominant.weight"].clone()}
+
+    global_metric = global_gradient_metric(candidate, reference)
+    assert global_metric["candidate_only"] == []
+    assert global_metric["reference_only"] == ["missing.bias"]
+    # The common portion is numerically exact, but an incomplete optimizer
+    # update must never satisfy the formal release gate.
+    assert global_metric["cosine"] == pytest.approx(1.0)
+    assert global_metric["relative_l2"] == 0.0
+    assert not global_gradient_passed(global_metric)
+
+
+def test_global_gradient_metric_handles_zero_vector_boundaries():
+    both_zero = global_gradient_metric(
+        {"weight": torch.zeros(4)},
+        {"weight": torch.zeros(4)},
+    )
+    assert both_zero["finite"]
+    assert both_zero["cosine"] == 1.0
+    assert both_zero["relative_l2"] == 0.0
+    assert both_zero["max_abs"] == 0.0
+    assert global_gradient_passed(both_zero)
+
+    candidate_zero = global_gradient_metric(
+        {"weight": torch.zeros(4)},
+        {"weight": torch.ones(4)},
+    )
+    assert candidate_zero["finite"]
+    assert candidate_zero["cosine"] == 0.0
+    assert candidate_zero["relative_l2"] == 1.0
+    assert not global_gradient_passed(candidate_zero)
+
+    no_gradients = global_gradient_metric({}, {})
+    assert no_gradients["parameter_count"] == 0
+    assert no_gradients["element_count"] == 0
+    assert not global_gradient_passed(no_gradients)
+
+
+def test_global_gradient_gate_rejects_named_shape_mismatch():
+    metric = global_gradient_metric(
+        {"weight": torch.ones(2, 2)},
+        {"weight": torch.ones(4)},
+    )
+    assert metric["shape_mismatch"] == {
+        "weight": {"candidate": [2, 2], "reference": [4]}
+    }
+    assert metric["parameter_count"] == 0
+    assert not global_gradient_passed(metric)
+
+
 def test_speed_report_and_actual_route_gate():
     prefill_route = {
         "selected": "optimized",
@@ -147,23 +226,45 @@ def test_speed_report_and_actual_route_gate():
 
 def test_speed_route_gate_distinguishes_v100_training_fallback():
     fallback = {
-        "selected": "reference",
-        "phase": "training",
-        "implementation": "torch-reference-model-v1",
-        "reason": "native training requires BF16 and sm80 or newer",
+        "model": {
+            "selected": "reference",
+            "phase": "training",
+            "implementation": "torch-reference-model-v1",
+        },
+        "recurrent": {
+            "selected": "reference",
+            "implementation": "torch-reference-v1",
+        },
+        "linear": {
+            "selected": "reference",
+            "implementation": "torch-reference-linear-v1",
+        },
+        "mix6": {
+            "selected": "reference",
+            "implementation": "torch-reference-mix6-v1",
+        },
     }
     report = {
         "models": {},
         "training": {
-            "mode": "reference-fallback",
-            "lanes": {"optimized": {"b1-t16": {"route": fallback}}},
+            "mode": "reference",
+            "lanes": {
+                "optimized": {
+                    "b1-t16": {
+                        "shape": {"batch": 1, "tokens": 16},
+                        "route": fallback,
+                    }
+                }
+            },
         },
     }
     assert routes_passed(report)
     report["training"]["lanes"]["optimized"]["b1-t16"]["route"] = {
-        "selected": "optimized",
-        "phase": "training",
-        "implementation": "native-nvidia-train-temp-autograd-v2",
+        "model": {
+            "selected": "optimized",
+            "phase": "training",
+            "implementation": "native-nvidia-train-temp-autograd-v2",
+        }
     }
     assert not routes_passed(report)
 
@@ -183,8 +284,58 @@ def test_speed_route_gate_accepts_explicit_not_applicable_training():
     assert not routes_passed(report)
 
 
+def test_speed_route_gate_accepts_clean_adaptive_leaf_bundle():
+    routes = clean_training_routes(adaptive=True)
+    routes["recurrent"] = {
+        "selected": "optimized",
+        "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
+    }
+    report = {
+        "models": {},
+        "training": {
+            "mode": "adaptive",
+            "lanes": {
+                "optimized": {
+                    "b4-t17": {
+                        "shape": {"batch": 4, "tokens": 17},
+                        "route": routes,
+                    }
+                }
+            },
+        },
+    }
+    assert routes_passed(report)
+    report["training"]["lanes"]["optimized"]["b4-t17"]["route"]["mix6"] = {
+        "selected": "reference",
+        "implementation": "torch-reference-mix6-v1",
+    }
+    assert not routes_passed(report)
+
+
 def test_percentile_uses_nearest_rank():
     assert percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.95) == 5.0
+
+
+@pytest.mark.parametrize("spelling", ("adaptive", "native"))
+def test_formal_adaptive_training_uses_auto_outer_and_independent_leaf_policy(
+    monkeypatch, spelling
+):
+    for name in (
+        "RWKV7_BACKEND",
+        "RWKV7_KERNEL_IMPL",
+        "RWKV7_MODEL_KERNEL_IMPL",
+        "RWKV7_TRAINING_KERNEL_IMPL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    benchmark.training_route_mode("optimized", spelling)
+    assert benchmark.os.environ["RWKV7_BACKEND"] == "auto"
+    assert benchmark.os.environ["RWKV7_MODEL_KERNEL_IMPL"] == "auto"
+    assert benchmark.os.environ["RWKV7_TRAINING_KERNEL_IMPL"] == "adaptive"
+
+    select_model_training_lane("candidate", candidate="adaptive")
+    assert benchmark.os.environ["RWKV7_BACKEND"] == "auto"
+    assert benchmark.os.environ["RWKV7_MODEL_KERNEL_IMPL"] == "auto"
+    assert benchmark.os.environ["RWKV7_TRAINING_KERNEL_IMPL"] == "adaptive"
 
 
 def test_timed_training_uses_model_loss_once_and_preserves_sync_order(monkeypatch):
@@ -354,7 +505,7 @@ def test_training_lanes_share_the_same_loss_mode(monkeypatch, legacy_double_ce):
     monkeypatch.setattr(benchmark.torch, "Generator", Generator)
     monkeypatch.setattr(benchmark.torch, "randint", randint)
     monkeypatch.setattr(benchmark, "timed_training", timed_training)
-    monkeypatch.setattr(benchmark, "last_route", lambda kind: {"kind": kind})
+    monkeypatch.setattr(benchmark, "last_training_routes", lambda kind: {"kind": kind})
     monkeypatch.setattr(benchmark.gc, "collect", lambda: None)
     monkeypatch.setattr(benchmark.torch.cuda, "empty_cache", lambda: None)
 
@@ -363,7 +514,7 @@ def test_training_lanes_share_the_same_loss_mode(monkeypatch, legacy_double_ce):
             kind,
             Path("/checkpoint"),
             torch.bfloat16,
-            "native",
+            "adaptive",
             (1,),
             (16,),
             2,
@@ -373,9 +524,9 @@ def test_training_lanes_share_the_same_loss_mode(monkeypatch, legacy_double_ce):
         )
 
     assert route_calls == [
-        ("reference", "native"),
-        ("optimized", "native"),
-        ("fla", "native"),
+        ("reference", "adaptive"),
+        ("optimized", "adaptive"),
+        ("fla", "adaptive"),
     ]
     assert [call["kind"] for call in calls] == ["reference", "optimized", "fla"]
     for call in calls:
@@ -389,29 +540,45 @@ def test_training_lanes_share_the_same_loss_mode(monkeypatch, legacy_double_ce):
         assert call["labels"][0, 8].item() == -100
 
 
-def test_ecosystem_route_gates_distinguish_native_and_adapter_fallback():
-    native = {
-        "selected": "optimized",
-        "phase": "training",
-        "implementation": "native-nvidia-train-temp-autograd-v2",
+def clean_training_routes(*, adaptive: bool) -> dict:
+    return {
+        "model": {
+            "selected": "reference",
+            "phase": "training",
+            "implementation": "torch-reference-model-v1",
+        },
+        "recurrent": {
+            "selected": "optimized" if adaptive else "reference",
+            "implementation": (
+                "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+                if adaptive
+                else "torch-reference-v1"
+            ),
+        },
+        "linear": {
+            "selected": "reference",
+            "implementation": "torch-reference-linear-v1",
+        },
+        "mix6": {
+            "selected": "optimized" if adaptive else "reference",
+            "implementation": (
+                "native-nvidia-rwkv7-mix6-training-v1"
+                if adaptive
+                else "torch-reference-mix6-v1"
+            ),
+        },
     }
-    fallback = {
-        "selected": "reference",
-        "phase": "training",
-        "implementation": "torch-reference-model-v1",
-        "reason": "adapter-wrapped FFN modules use reference autograd",
-    }
-    nested_fallback = {
-        "selected": "reference",
-        "phase": "training",
-        "implementation": "torch-reference-model-v1",
-        "reason": "native prefill requires the causal-LM boundary",
-    }
-    assert native_training_route(native)
-    assert not adapter_fallback_route(native)
-    assert adapter_fallback_route(fallback)
-    assert adapter_fallback_route(nested_fallback)
-    assert not native_training_route(fallback)
+
+
+def test_ecosystem_route_gates_require_readable_model_and_actual_leafs():
+    adaptive = clean_training_routes(adaptive=True)
+    reference = clean_training_routes(adaptive=False)
+    assert expected_dense_training_route(adaptive, "adaptive")
+    assert expected_dense_training_route(adaptive, "native")
+    assert not expected_dense_training_route(adaptive, "reference")
+    assert expected_dense_training_route(reference, "reference")
+    assert expected_dense_training_route(reference, "reference-fallback")
+    assert not expected_dense_training_route(reference, "adaptive")
 
 
 def test_ecosystem_fp16_uses_fp32_master_parameters():
@@ -434,15 +601,19 @@ def test_sm70_fla_gate_requires_actual_optimized_recurrent_route():
     )
 
 
-def test_sm70_training_fallback_is_explicit_and_not_native():
-    fallback = {
-        "selected": "reference",
-        "phase": "training",
-        "implementation": "torch-reference-model-v1",
-        "reason": "native training requires a BF16 checkpoint",
+def test_reference_training_is_explicit_and_not_adaptive():
+    reference = clean_training_routes(adaptive=False)
+    assert expected_dense_training_route(reference, "reference")
+    assert not expected_dense_training_route(reference, "adaptive")
+    assert candidate_route_passed(reference, "reference")
+    assert candidate_route_passed(reference, "reference-fallback")
+    assert not candidate_route_passed(reference, "adaptive")
+
+
+def test_adaptive_route_uses_matrix_fallback_but_keeps_mix6_for_unaligned_tokens():
+    routes = clean_training_routes(adaptive=True)
+    routes["recurrent"] = {
+        "selected": "optimized",
+        "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
     }
-    assert reference_training_route(fallback)
-    assert expected_dense_training_route(fallback, "reference-fallback")
-    assert not expected_dense_training_route(fallback, "native")
-    assert candidate_route_passed(fallback, "reference-fallback")
-    assert not candidate_route_passed(fallback, "native")
+    assert candidate_route_passed(routes, "adaptive", batch=4, tokens=17)
