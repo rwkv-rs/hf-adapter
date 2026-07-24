@@ -1,0 +1,33 @@
+{
+  "axis": "huawei_ascend_hf_real_7p2b",
+  "status": "pass",
+  "model_source": "fla-hub/rwkv7-7.2B-g0a",
+  "model_parameters": 7199141888,
+  "device": "Ascend910B3",
+  "cann": "8.5.0",
+  "dtype": "bfloat16",
+  "backend": "eager",
+  "auto_config": "NativeRWKV7Config",
+  "auto_tokenizer": "RwkvTokenizer",
+  "auto_model": "NativeRWKV7ForCausalLM",
+  "load_cpu_s": 6.1577809397131205,
+  "to_npu_s": 17.12092003505677,
+  "forward_s": 7.794904706068337,
+  "prompt_tokens": 4,
+  "generated_tokens": 2,
+  "generate_s": 0.502507702447474,
+  "chunked_prefill_cosine": 1.0,
+  "cache_seen_tokens": 5,
+  "greedy_ids": [
+    [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  ],
+  "npu_allocated_bytes": 14709526528,
+  "npu_peak_allocated_bytes": 14799196672
+}

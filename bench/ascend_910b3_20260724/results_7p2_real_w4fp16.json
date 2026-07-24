@@ -1,0 +1,56 @@
+{
+  "axis": "huawei_ascend_hf_real_7p2b_w4fp16",
+  "status": "fail_gate",
+  "model_source": "fla-hub/rwkv7-7.2B-g0a",
+  "device": "Ascend910B3",
+  "dtype": "float16",
+  "backend": "eager",
+  "policy": "candidate_ffn_key_value_g128",
+  "replaced_count": 64,
+  "quantize_s": 49.257698769681156,
+  "dense_model_bytes": 14398283776,
+  "quant_model_bytes": 8090050624,
+  "model_payload_ratio": 0.5618760367457839,
+  "dense_npu_allocated_bytes": 14523451392,
+  "quant_npu_allocated_bytes": 8349403136,
+  "allocated_ratio": 0.5748911130448737,
+  "dense_decode_s": 2.3472427632659674,
+  "quant_decode_s": 2.3989802142605186,
+  "decode_speedup": 0.9784335649427192,
+  "dense_decode_repeats_s": [
+    2.3472427632659674,
+    2.364174916408956,
+    2.3146249316632748
+  ],
+  "quant_decode_repeats_s": [
+    2.3989802142605186,
+    2.390025689266622,
+    2.4362135734409094
+  ],
+  "trace_steps": 8,
+  "min_logit_cosine": 0.9858257174491882,
+  "dense_tokens": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    258,
+    12,
+    13
+  ],
+  "quant_tokens": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    12,
+    13
+  ],
+  "greedy_equal": false,
+  "npu_peak_allocated_bytes": 17747822080,
+  "quality_gate_pass": false,
+  "speed_gate_pass": false
+}

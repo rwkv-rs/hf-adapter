@@ -1,0 +1,15 @@
+{
+  "hidden_size": 4096,
+  "intermediate_size": 16384,
+  "num_hidden_layers": 32,
+  "head_dim": 64,
+  "num_heads": 64,
+  "torch_dtype": "bfloat16",
+  "source_config_repair": {
+    "num_heads": {
+      "source": 32,
+      "inferred_from": "model.layers.0.attn.r_k",
+      "value": 64
+    }
+  }
+}

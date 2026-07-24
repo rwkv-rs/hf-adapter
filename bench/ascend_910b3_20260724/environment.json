@@ -1,0 +1,22 @@
+{
+  "date": "2026-07-24",
+  "platform": "Linux-5.15.0-25-generic-aarch64-with-glibc2.38",
+  "machine": "aarch64",
+  "python": "3.11.14",
+  "torch": "2.9.0+cpu",
+  "torch_npu": "2.9.0",
+  "transformers": "4.57.6",
+  "safetensors": "0.8.0",
+  "cann": "/usr/local/Ascend/cann-8.5.0",
+  "device_count": 1,
+  "device_name": "Ascend910B3",
+  "git_commit": "d967d1b7c83c1f837626259693a953158e5e10b1",
+  "git_branch": "wangyue/ascend-hf-production",
+  "model_fixture": {
+    "kind": "random_tiny",
+    "layers": 2,
+    "hidden_size": 16,
+    "vocab_size": 320
+  },
+  "claim_scope": "HF compatibility smoke only"
+}

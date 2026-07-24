@@ -1,0 +1,201 @@
+{
+  "attention_mask": [
+    [
+      1,
+      1,
+      1
+    ],
+    [
+      0,
+      0,
+      1
+    ]
+  ],
+  "axis": "huawei_ascend_hf_real_7p2b_b2_ragged_gate",
+  "checkpoint_files_sha256": {
+    "config.json": "309b9eac6a4948c927d8ce62e533c777050ed5d2e45b607bf88da0726459e46c",
+    "model-00001-of-00003.safetensors": "68b42441667378b2709e0de134c1851216f9bd1eb482bf3a8bf1b2f13a3e41aa",
+    "model-00002-of-00003.safetensors": "7fca283c35c77173af3ca6de598167cbf34acfc86f2808915f496cd035b0258f",
+    "model-00003-of-00003.safetensors": "cd5c4b8dc1028fddf5e7cf6f52e8667e762daa06903463a56081b03fb5a6d7c4",
+    "model.safetensors.index.json": "0b209368afda04594706c38e1151c811dd4ccee0398d789e34c4d8f3d0f75d2c"
+  },
+  "command": "scripts/smoke_ascend_hf_ragged_b2.py --model <native-view> --reference-json <reference.json> --output <result.json>",
+  "compact_input_token_ids": [
+    [
+      [
+        33155,
+        45,
+        308
+      ]
+    ],
+    [
+      [
+        33155
+      ]
+    ]
+  ],
+  "continuation_input_token_ids": [
+    459,
+    45
+  ],
+  "continuation_output_argmax": [
+    332,
+    308
+  ],
+  "evidence_sha256": "5935df3bddf1352e68fe504985f0d3283bfd6fb0bf387c9ee9432a4fbf59dbbc",
+  "fla_source": {
+    "commit": "d1ce07369d581813553f30a750af3b6b5f9af6a9",
+    "files_sha256": {
+      "fla/layers/rwkv7.py": "de4109b25df8162810f8b45abfc48cc8149b93a02a06cfb51ea3b36717404ffa",
+      "fla/models/rwkv7/modeling_rwkv7.py": "9475cb196b820fbd8ad9ab6f8cf31e53976feda17c2c48fb7cce1cbd78cdc537",
+      "fla/ops/rwkv7/fused_recurrent.py": "0a2e76abc14e35aa2a479757d1a1f7549f2876c3980709bb4be0a1fcb4dfddff"
+    },
+    "repository": "https://github.com/fla-org/flash-linear-attention.git"
+  },
+  "gates": {
+    "cache_continuation_logits": true,
+    "cache_continuation_state": true,
+    "chunk_split_logits": true,
+    "chunk_split_state": true,
+    "finite": true,
+    "overall": true,
+    "prefill_compact_logits": true,
+    "prefill_compact_state": true
+  },
+  "input_token_ids": [
+    [
+      33155,
+      45,
+      308
+    ],
+    [
+      0,
+      0,
+      33155
+    ]
+  ],
+  "memory": {
+    "allocated_bytes": 14810368512,
+    "peak_allocated_bytes": 14947112448,
+    "peak_reserved_bytes": 14977859584,
+    "reserved_bytes": 14977859584
+  },
+  "metrics": {
+    "chunk_logits": {
+      "argmax_exact": true,
+      "cosine": 1.0,
+      "normalized_rmse": 0.0
+    },
+    "chunk_state": [
+      {
+        "max_normalized_rmse": 0.0,
+        "max_normalized_rmse_tensor": "recurrent.00",
+        "min_cosine": 0.9999997615814209,
+        "min_cosine_tensor": "recurrent.05",
+        "tensor_count": 97
+      },
+      {
+        "max_normalized_rmse": 0.0,
+        "max_normalized_rmse_tensor": "recurrent.00",
+        "min_cosine": 0.9999997615814209,
+        "min_cosine_tensor": "recurrent.02",
+        "tensor_count": 97
+      }
+    ],
+    "continuation_logits": [
+      {
+        "argmax_exact": true,
+        "cosine": 0.9999998807907104,
+        "normalized_rmse": 0.0
+      },
+      {
+        "argmax_exact": true,
+        "cosine": 1.0,
+        "normalized_rmse": 0.0
+      }
+    ],
+    "continuation_state": [
+      {
+        "max_normalized_rmse": 0.0,
+        "max_normalized_rmse_tensor": "recurrent.00",
+        "min_cosine": 0.9999998211860657,
+        "min_cosine_tensor": "attn_shift.17",
+        "tensor_count": 97
+      },
+      {
+        "max_normalized_rmse": 0.0,
+        "max_normalized_rmse_tensor": "recurrent.00",
+        "min_cosine": 0.9999997019767761,
+        "min_cosine_tensor": "recurrent.17",
+        "tensor_count": 97
+      }
+    ],
+    "global_logits_max_normalized_rmse": 0.0,
+    "global_logits_min_cosine": 0.9999998807907104,
+    "global_state_max_normalized_rmse": 0.0,
+    "global_state_min_cosine": 0.9999997019767761,
+    "prefill_logits": [
+      {
+        "argmax_exact": true,
+        "cosine": 1.0,
+        "normalized_rmse": 0.0
+      },
+      {
+        "argmax_exact": true,
+        "cosine": 1.0,
+        "normalized_rmse": 0.0
+      }
+    ],
+    "prefill_state": [
+      {
+        "max_normalized_rmse": 0.0,
+        "max_normalized_rmse_tensor": "recurrent.00",
+        "min_cosine": 0.9999997615814209,
+        "min_cosine_tensor": "recurrent.05",
+        "tensor_count": 97
+      },
+      {
+        "max_normalized_rmse": 0.0,
+        "max_normalized_rmse_tensor": "recurrent.00",
+        "min_cosine": 0.9999997615814209,
+        "min_cosine_tensor": "recurrent.02",
+        "tensor_count": 97
+      }
+    ]
+  },
+  "return_code": 0,
+  "runtime": {
+    "allow_unvalidated": false,
+    "available": true,
+    "backend": "eager",
+    "cann_version": "8.5.0",
+    "device": "npu:0",
+    "device_count": 1,
+    "device_name": "Ascend910B3",
+    "dtype": "bfloat16",
+    "load_cpu_s": 0.9098084019497037,
+    "move_npu_s": 13.874142728745937,
+    "python_version": "3.11.14",
+    "torch_npu_version": "2.9.0",
+    "torch_version": "2.9.0+cpu",
+    "transformers_version": "4.57.6",
+    "validated_stack": true,
+    "validation_reason": "exact validated Ascend 910B3 software stack",
+    "validation_status": "validated"
+  },
+  "status": "pass",
+  "thresholds": {
+    "greedy_token_ids_exact": true,
+    "logits_max_normalized_rmse": 0.02,
+    "logits_min_cosine": 0.999,
+    "state_max_normalized_rmse": 0.02,
+    "state_min_cosine": 0.999
+  },
+  "timings": {
+    "compact_b1_row0_prefill_s": 0.24991849903017282,
+    "compact_b1_row1_prefill_s": 0.08337370958179235,
+    "ragged_b2_chunk1_s": 0.2407588353380561,
+    "ragged_b2_continuation_s": 0.07352075539529324,
+    "ragged_b2_prefill_s": 8.141523426398635
+  }
+}

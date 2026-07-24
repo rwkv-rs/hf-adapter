@@ -1,0 +1,36 @@
+{
+  "axis": "huawei_ascend_hf_vs_independent_cpu_oracle",
+  "candidate_capture_sha256": "8b83cb5af96a250565c713a5dd9f9a3ad0dff7d123659f00fc59fb86d6fe4cbf",
+  "comparison": {
+    "gates": {
+      "complete_capture": true,
+      "finite": true,
+      "greedy_token_ids_exact": true,
+      "input_and_state_metadata_exact": true,
+      "logits_cosine": true,
+      "logits_normalized_rmse": true,
+      "overall": true,
+      "state_cosine": true,
+      "state_normalized_rmse": true
+    },
+    "metrics": {
+      "logits_max_normalized_rmse": 0.007904274389147758,
+      "logits_min_cosine": 0.9999663829803467,
+      "state_max_normalized_rmse": 0.017714854329824448,
+      "state_min_cosine": 0.9998444318771362
+    },
+    "missing_tensors": [],
+    "shape_or_dtype_mismatch": [],
+    "status": "pass",
+    "thresholds": {
+      "greedy_token_ids_exact": true,
+      "logits_max_normalized_rmse": 0.02,
+      "logits_min_cosine": 0.999,
+      "state_max_normalized_rmse": 0.02,
+      "state_min_cosine": 0.999
+    }
+  },
+  "failures": [],
+  "reference_capture_sha256": "35f24f1e0116fcbee548c69ee38652b897f14e6a09dedfad79753a0380e324f9",
+  "status": "pass"
+}

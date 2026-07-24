@@ -1,0 +1,89 @@
+{
+  "axis": "huawei_ascend_hf_real_7p2b_w4fp16_value_only",
+  "status": "fail_gate",
+  "model_source": "fla-hub/rwkv7-7.2B-g0a",
+  "device": "Ascend910B3",
+  "dtype": "float16",
+  "backend": "eager_cached_fastpath",
+  "policy": "candidate_ffn_value_g128",
+  "replaced_count": 32,
+  "quantize_s": 13.834594544023275,
+  "dense_model_bytes": 14398283776,
+  "quant_model_bytes": 11244167200,
+  "model_payload_ratio": 0.7809380183728919,
+  "dense_single_npu_allocated_bytes": 14523467776,
+  "quant_single_npu_allocated_bytes": 11435655168,
+  "allocated_ratio": 0.7873915062418768,
+  "two_dense_allocated_bytes": 29046130176,
+  "paired": [
+    {
+      "group": 0,
+      "order": "dense-quant",
+      "dense_s": 2.505542933009565,
+      "quant_s": 2.5878537064418197,
+      "speedup": 0.9681934209699093
+    },
+    {
+      "group": 1,
+      "order": "quant-dense",
+      "dense_s": 2.4269876619800925,
+      "quant_s": 2.514364894479513,
+      "speedup": 0.9652487860090379
+    },
+    {
+      "group": 2,
+      "order": "dense-quant",
+      "dense_s": 2.4259390998631716,
+      "quant_s": 2.5648663882166147,
+      "speedup": 0.9458344929811174
+    },
+    {
+      "group": 3,
+      "order": "quant-dense",
+      "dense_s": 2.5190368071198463,
+      "quant_s": 2.5352601958438754,
+      "speedup": 0.9936008979470334
+    },
+    {
+      "group": 4,
+      "order": "dense-quant",
+      "dense_s": 2.616799956187606,
+      "quant_s": 2.4983658473938704,
+      "speedup": 1.0474046300774076
+    }
+  ],
+  "dense_decode_median_s": 2.505542933009565,
+  "quant_decode_median_s": 2.5352601958438754,
+  "decode_speedup": 0.988278416991271,
+  "trace_steps": 8,
+  "min_logit_cosine": 0.9865803718566895,
+  "max_kl_divergence": 2.904656171798706,
+  "mean_kl_divergence": 0.40019421619945206,
+  "min_top20_overlap": 0.4,
+  "mean_top20_overlap": 0.85,
+  "dense_tokens": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    258,
+    12,
+    13
+  ],
+  "quant_tokens": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    12,
+    13
+  ],
+  "greedy_equal": false,
+  "npu_peak_allocated_bytes": 31061497856,
+  "quality_gate_pass": false,
+  "speed_gate_pass": false,
+  "memory_gate_pass": true
+}

@@ -23,6 +23,25 @@ try:
 except ImportError:
     RWKV7Tokenizer = None
 
+from .ascend_runtime import (
+    AscendRuntimeInfo,
+    ascend_available,
+    configure_ascend_defaults,
+    enable_ascend,
+)
+from .ascend_quant_w4 import AscendW4A16Linear, quantize_ascend_w4a16_candidate
+from .ascend_w4_cle import (
+    W4CLECandidate,
+    apply_sqrelu_channel_equalization,
+    calibrate_sqrelu_value_w4,
+)
+from .ascend_quant import (
+    AscendQuantDecision,
+    AscendW8A16Linear,
+    ascend_w8a16_decision,
+    quantize_ascend_w8a16,
+)
+
 def __getattr__(name):
     """Load the historical FLA wrapper only through explicit reference names."""
 
@@ -87,6 +106,19 @@ __all__ = [
     "RWKV7Model",
     "RWKV7StateCache",
     "RWKV7Tokenizer",
+    "AscendRuntimeInfo",
+    "ascend_available",
+    "configure_ascend_defaults",
+    "enable_ascend",
+    "AscendQuantDecision",
+    "AscendW8A16Linear",
+    "ascend_w8a16_decision",
+    "quantize_ascend_w8a16",
+    "AscendW4A16Linear",
+    "quantize_ascend_w4a16_candidate",
+    "W4CLECandidate",
+    "apply_sqrelu_channel_equalization",
+    "calibrate_sqrelu_value_w4",
     "NativeRWKV7Config",
     "NativeRWKV7ForCausalLM",
     "NativeRWKV7Model",
