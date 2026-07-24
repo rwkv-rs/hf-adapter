@@ -29,16 +29,16 @@ def source_kernel_package(monkeypatch):
     unload_kernel_package()
 
 
-def cpu_inputs(tokens: int = 2):
-    shape = (1, tokens, 1, 64)
+def cpu_inputs(tokens: int = 2, batch: int = 1):
+    shape = (batch, tokens, 1, 64)
     values = [torch.randn(shape, dtype=torch.float16) for _ in range(6)]
-    state = torch.randn(1, 1, 64, 64, dtype=torch.float32)
+    state = torch.randn(batch, 1, 64, 64, dtype=torch.float32)
     return (*values, state, None)
 
 
 def test_public_kernel_surface_is_versioned_and_small():
     kernels = importlib.import_module("rwkv7_kernels")
-    assert kernels.RWKV7_KERNEL_API_VERSION == 2
+    assert kernels.RWKV7_KERNEL_API_VERSION == 3
     assert kernels.__all__ == [
         "__version__",
         "RWKV7_KERNEL_API_VERSION",
@@ -53,6 +53,7 @@ def test_public_kernel_surface_is_versioned_and_small():
         "probe_model_forward_v1",
         "probe_recurrent_v1",
         "probe_recurrent_training_v1",
+        "probe_training_program_v1",
         "recurrent_v1",
         "recurrent_training_v1",
     ]
@@ -350,7 +351,7 @@ def test_factorized_recurrent_probe_fails_closed_on_malformed_public_inputs():
 
 def test_training_adaptive_policy_reports_the_actual_recurrent_leaf(monkeypatch):
     dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
-    inputs = list(cpu_inputs(tokens=16))
+    inputs = list(cpu_inputs(tokens=128, batch=4))
     for value in inputs[:-2]:
         value.requires_grad_(True)
     monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
@@ -386,6 +387,16 @@ def test_training_adaptive_policy_reports_the_actual_recurrent_leaf(monkeypatch)
     )
     assert "without model-proven zero initial-state provenance" in standalone["reason"]
 
+    checkpoint_replay = dispatcher.probe_recurrent_training_v1(
+        *inputs,
+        fully_active=True,
+        initial_state_zero=True,
+        token_aligned=True,
+        force_reference_recurrent=True,
+    )
+    assert checkpoint_replay["supported"] is False
+    assert "pinned checkpoint forward and replay" in checkpoint_replay["reason"]
+
     dense = dispatcher.probe_recurrent_training_v1(
         *inputs,
         fully_active=True,
@@ -397,7 +408,8 @@ def test_training_adaptive_policy_reports_the_actual_recurrent_leaf(monkeypatch)
     )
     assert factorized_probe_kwargs == [{"initial_state_zero": True}]
 
-    inputs[-1] = torch.tensor([[False, *([True] * 15)]])
+    inputs[-1] = torch.ones(4, 128, dtype=torch.bool)
+    inputs[-1][:, 0] = False
     masked = dispatcher.probe_recurrent_training_v1(
         *inputs,
         fully_active=False,
@@ -438,7 +450,7 @@ def test_training_adaptive_policy_reports_the_actual_recurrent_leaf(monkeypatch)
 def test_training_recurrent_hints_reach_only_the_factorized_leaf(monkeypatch):
     dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
     monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
-    inputs = list(cpu_inputs(tokens=16))
+    inputs = list(cpu_inputs(tokens=128, batch=4))
     for value in inputs[:-2]:
         value.requires_grad_(True)
     probe_kwargs = []
@@ -506,7 +518,7 @@ def test_training_recurrent_atomic_fallback_probes_each_candidate_once(monkeypat
     monkeypatch.setattr(dispatcher, "_probe_matrix", matrix_probe)
     monkeypatch.setattr(dispatcher, "_run_matrix", matrix_run)
     execution = dispatcher.execute_recurrent_training_v1(
-        *cpu_inputs(tokens=16),
+        *cpu_inputs(tokens=128, batch=4),
         fully_active=True,
         initial_state_zero=True,
         token_aligned=True,
@@ -541,7 +553,7 @@ def test_training_recurrent_atomic_execution_error_does_not_reprobe(monkeypatch)
     monkeypatch.setattr(dispatcher, "_run_factorized", run)
     with pytest.raises(RuntimeError, match="recurrent execution failed"):
         dispatcher.recurrent_training_v1(
-            *cpu_inputs(tokens=16),
+            *cpu_inputs(tokens=128, batch=4),
             fully_active=True,
             initial_state_zero=True,
             token_aligned=True,
@@ -550,14 +562,194 @@ def test_training_recurrent_atomic_execution_error_does_not_reprobe(monkeypatch)
 
 
 @pytest.mark.parametrize(
+    (
+        "batch",
+        "tokens",
+        "fully_active",
+        "initial_state_zero",
+        "token_aligned",
+        "expected",
+    ),
+    [
+        (4, 128, True, True, True, True),
+        (1, 128, True, True, True, False),
+        (4, 16, True, True, True, False),
+        (8, 128, True, True, True, False),
+        (4, 256, True, True, True, False),
+        (4, 128, False, True, True, False),
+        (4, 128, True, False, True, False),
+        (4, 128, True, True, False, False),
+    ],
+)
+def test_training_adaptive_fast_domain_is_conservative(
+    batch,
+    tokens,
+    fully_active,
+    initial_state_zero,
+    token_aligned,
+    expected,
+):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    assert (
+        dispatcher.adaptive_training_fast_domain_v1(
+            batch=batch,
+            tokens=tokens,
+            fully_active=fully_active,
+            initial_state_zero=initial_state_zero,
+            token_aligned=token_aligned,
+        )
+        is expected
+    )
+
+
+def test_training_program_preflight_rejects_frozen_or_reentrant_input(monkeypatch):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
+    hidden = torch.randn(4, 128, 64)
+    mask = torch.ones(4, 128, dtype=torch.bool)
+
+    result = dispatcher.probe_training_program_v1(
+        hidden,
+        mask,
+        training=True,
+        fully_active=True,
+        initial_state_zero=True,
+        token_aligned=True,
+        autograd_leaf_eligible=False,
+        head_dim=64,
+    )
+
+    assert result["supported"] is False
+    assert result["implementation"] == (
+        "native-nvidia-rwkv7-adaptive-training-program-v1"
+    )
+    assert "gradient-bearing inputs" in result["reason"]
+
+
+def test_forged_adaptive_bool_does_not_bypass_recurrent_runtime_preflight(monkeypatch):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
+    captured = []
+
+    def probe(*_args, **kwargs):
+        captured.append(dict(kwargs))
+        return {
+            "supported": True,
+            "implementation": ("native-nvidia-rwkv7-factorized-recurrent-training-v1"),
+            "reason": "runtime-preflight capture",
+        }
+
+    monkeypatch.setattr(dispatcher, "_probe_factorized", probe)
+    result = dispatcher.probe_recurrent_training_v1(
+        *cpu_inputs(tokens=128, batch=4),
+        adaptive_fast_program=True,
+        fully_active=True,
+        initial_state_zero=True,
+        token_aligned=True,
+    )
+
+    assert result["supported"] is True
+    assert captured == [{"initial_state_zero": True}]
+
+
+def test_recurrent_runtime_certificate_is_bound_to_exact_device():
+    certificates = importlib.import_module("rwkv7_kernels._runtime_preflight")
+    certificates._reset_for_tests()
+    certificates._certify_recurrent_runtime(torch.device("cuda:1"))
+
+    assert certificates.recurrent_runtime_certified(torch.device("cuda:1")) is True
+    assert certificates.recurrent_runtime_certified(torch.device("cuda:0")) is False
+    assert certificates.recurrent_runtime_certified(torch.device("cpu")) is False
+    certificates._reset_for_tests()
+
+
+def test_certified_recurrent_device_skips_capability_and_loader(monkeypatch):
+    certificates = importlib.import_module("rwkv7_kernels._runtime_preflight")
+    factorized = importlib.import_module("rwkv7_kernels.recurrent.training_factorized")
+
+    class FakeCudaTensor(torch.Tensor):
+        @staticmethod
+        def __new__(cls, value, device_index=0):
+            result = torch.Tensor._make_subclass(cls, value, value.requires_grad)
+            result._device_index = device_index
+            return result
+
+        @property
+        def is_cuda(self):
+            return True
+
+        @property
+        def device(self):
+            return torch.device("cuda", self._device_index)
+
+    def fake_cuda(value, *, requires_grad=False):
+        return FakeCudaTensor(value.requires_grad_(requires_grad))
+
+    shape = (4, 128, 1, 64)
+    vectors = [
+        fake_cuda(torch.zeros(shape, dtype=torch.bfloat16), requires_grad=True),
+        fake_cuda(torch.zeros(shape, dtype=torch.float32), requires_grad=True),
+        *[
+            fake_cuda(torch.zeros(shape, dtype=torch.bfloat16), requires_grad=True)
+            for _ in range(4)
+        ],
+    ]
+    state = fake_cuda(torch.zeros(4, 1, 64, 64, dtype=torch.float32))
+    mask = fake_cuda(torch.ones(4, 128, dtype=torch.bool))
+    certificates._reset_for_tests()
+    certificates._certify_recurrent_runtime(torch.device("cuda:0"))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_capability",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("certified device repeated capability probing")
+        ),
+    )
+
+    support = factorized.probe_recurrent_training_v1(
+        *vectors,
+        state,
+        mask,
+        initial_state_zero=True,
+    )
+
+    assert support["supported"] is True
+    assert "preflight" in support["reason"]
+    certificates._reset_for_tests()
+
+
+def test_mix6_capability_probe_is_cached_per_device(monkeypatch):
+    mix6 = importlib.import_module("rwkv7_kernels.time_mix.training_mix6")
+    calls = []
+    with mix6._CAPABILITY_LOCK:
+        mix6._CAPABILITY_DEVICES.clear()
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_capability",
+        lambda device: calls.append(torch.device(device)) or (8, 9),
+    )
+
+    assert mix6._bf16_capability_available(torch.device("cuda:0")) is True
+    assert mix6._bf16_capability_available(torch.device("cuda:0")) is True
+    assert mix6._bf16_capability_available(torch.device("cuda:1")) is True
+
+    assert calls == [torch.device("cuda:0"), torch.device("cuda:1")]
+    with mix6._CAPABILITY_LOCK:
+        mix6._CAPABILITY_DEVICES.clear()
+
+
+@pytest.mark.parametrize(
     ("batch", "tokens", "fully_active", "initial_state_zero", "expected"),
     [
-        (1, 16, True, True, "factorized"),
-        (4, 16, True, True, "factorized"),
+        (1, 16, True, True, "matrix"),
+        (4, 16, True, True, "matrix"),
         (1, 17, True, True, "matrix"),
         (4, 17, True, True, "matrix"),
-        (1, 128, True, True, "factorized"),
+        (1, 128, True, True, "matrix"),
         (4, 128, True, True, "factorized"),
+        (8, 128, True, True, "matrix"),
+        (4, 256, True, True, "matrix"),
         (1, 16, False, True, "matrix"),
         (4, 128, False, True, "matrix"),
         (1, 16, True, False, "matrix"),
@@ -614,6 +806,54 @@ def test_training_adaptive_recurrent_route_matrix(
     assert support["implementation"] == implementations[expected]
 
 
+def test_preflight_certified_recurrent_decline_does_not_mix_with_matrix(
+    monkeypatch,
+):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
+    matrix_calls = []
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_factorized",
+        lambda *_args, **_kwargs: {
+            "supported": False,
+            "implementation": ("native-nvidia-rwkv7-factorized-recurrent-training-v1"),
+            "reason": "simulated late decline",
+        },
+    )
+
+    def matrix(*_args, **_kwargs):
+        matrix_calls.append(True)
+        return {
+            "supported": True,
+            "implementation": ("torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"),
+            "reason": "must not be selected after coupled preflight",
+        }
+
+    monkeypatch.setattr(dispatcher, "_probe_matrix", matrix)
+    shape = (4, 128, 1, 64)
+    values = [torch.randn(shape, dtype=torch.float16) for _ in range(6)]
+    state = torch.zeros(4, 1, 64, 64, dtype=torch.float32)
+    mask = torch.ones(4, 128, dtype=torch.bool)
+
+    support = dispatcher.probe_recurrent_training_v1(
+        *values,
+        state,
+        mask,
+        adaptive_fast_program=True,
+        fully_active=True,
+        initial_state_zero=True,
+        token_aligned=True,
+    )
+
+    assert not support["supported"]
+    assert support["implementation"] == (
+        "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+    )
+    assert "preflight-certified" in support["reason"]
+    assert not matrix_calls
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [
@@ -644,7 +884,9 @@ def test_training_adaptive_policy_keeps_masked_linears_on_reference(monkeypatch)
         value,
         weight,
         None,
+        adaptive_fast_program=False,
         fully_active=False,
+        initial_state_zero=True,
         token_aligned=True,
     )
     assert not masked["supported"]
@@ -659,11 +901,27 @@ def test_training_adaptive_policy_keeps_masked_linears_on_reference(monkeypatch)
             "reason": "dense test request",
         },
     )
-    dense = dispatcher.probe_linear_training_v1(
+    outside_domain = dispatcher.probe_linear_training_v1(
         value,
         weight,
         None,
+        adaptive_fast_program=True,
         fully_active=True,
+        initial_state_zero=True,
+        token_aligned=True,
+    )
+    assert not outside_domain["supported"]
+    assert outside_domain["implementation"] == "torch-reference-linear-v1"
+    assert "outside the certified adaptive fast domain" in outside_domain["reason"]
+
+    fast_value = torch.randn(4, 128, 4, requires_grad=True)
+    dense = dispatcher.probe_linear_training_v1(
+        fast_value,
+        weight,
+        None,
+        adaptive_fast_program=True,
+        fully_active=True,
+        initial_state_zero=True,
         token_aligned=True,
     )
     assert dense["supported"]
@@ -673,12 +931,27 @@ def test_training_adaptive_policy_keeps_masked_linears_on_reference(monkeypatch)
         value,
         weight,
         None,
+        adaptive_fast_program=True,
         fully_active=True,
+        initial_state_zero=True,
         token_aligned=False,
     )
     assert not unaligned["supported"]
     assert unaligned["implementation"] == "torch-reference-linear-v1"
     assert "token-length-unaligned" in unaligned["reason"]
+
+    stateful = dispatcher.probe_linear_training_v1(
+        fast_value,
+        weight,
+        None,
+        adaptive_fast_program=True,
+        fully_active=True,
+        initial_state_zero=False,
+        token_aligned=True,
+    )
+    assert not stateful["supported"]
+    assert stateful["implementation"] == "torch-reference-linear-v1"
+    assert "stateful" in stateful["reason"]
 
 
 def test_training_linear_atomic_execute_probes_once_on_success(monkeypatch):
@@ -893,7 +1166,7 @@ def test_training_atomic_trace_records_recurrent_and_mix6_once(monkeypatch, tmp_
     )
 
     recurrent = dispatcher.execute_recurrent_training_v1(
-        *cpu_inputs(tokens=16),
+        *cpu_inputs(tokens=128, batch=4),
         fully_active=True,
         initial_state_zero=True,
         token_aligned=True,

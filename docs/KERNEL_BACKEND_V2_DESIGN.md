@@ -26,7 +26,7 @@ prefill, one-token decode, generation graph replay, and fused training without
 adding a new public entry point for every kernel.
 
 ```python
-RWKV7_KERNEL_API_VERSION = 2
+RWKV7_KERNEL_API_VERSION = 3
 
 probe_recurrent_v1(...canonical tensors...) -> Support
 recurrent_v1(...canonical tensors...) -> (output, canonical_state)

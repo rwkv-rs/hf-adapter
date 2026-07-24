@@ -14,6 +14,7 @@ from evaluation.build_backend_v2_device_validation import (
     build,
 )
 from scripts.release_route_contract import (
+    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
     FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
     HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
     READABLE_TRAINING_MODEL_ROUTE,
@@ -92,6 +93,10 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                         "phase": "training",
                         "implementation": READABLE_TRAINING_MODEL_ROUTE,
                     },
+                    "program_route": {
+                        "phase": "training",
+                        "implementation": ADAPTIVE_TRAINING_PROGRAM_ROUTE,
+                    },
                     "leaf_routes": [
                         {"implementation": route}
                         for route in sorted(REQUIRED_TRAINING_LEAF_ROUTES)
@@ -145,6 +150,10 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                         "phase": "training",
                         "implementation": READABLE_TRAINING_MODEL_ROUTE,
                         "reason": "training preserves the readable HF layer loop",
+                    },
+                    {
+                        "phase": "training",
+                        "implementation": ADAPTIVE_TRAINING_PROGRAM_ROUTE,
                     },
                     *[
                         {"phase": "training", "implementation": route}

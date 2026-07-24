@@ -17,6 +17,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 from scripts.release_route_contract import (  # noqa: E402
+    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
     FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
     READABLE_TRAINING_MODEL_ROUTE,
     REQUIRED_TRAINING_LEAF_ROUTES,
@@ -60,6 +61,7 @@ def fixtures():
             "decode": ["native-nvidia-fused-decode-v2[cuda_graph]"],
             "training": [
                 READABLE_TRAINING_MODEL_ROUTE,
+                ADAPTIVE_TRAINING_PROGRAM_ROUTE,
                 *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
             ],
             "quantization": ["native-w8-mm8-v1"],
@@ -180,6 +182,7 @@ def test_release_issue_is_rendered_from_complete_speed_and_eval_matrices():
     assert "Formal lm_eval accuracy/NLL/PPL matrix" in body
     assert "native-nvidia-prefill-v2[self_chunk]" in body
     assert READABLE_TRAINING_MODEL_ROUTE in body
+    assert ADAPTIVE_TRAINING_PROGRAM_ROUTE in body
     assert all(route in body for route in REQUIRED_TRAINING_LEAF_ROUTES)
     assert "not an admissible formal HF training route" in body
     assert "| same | same |" in body

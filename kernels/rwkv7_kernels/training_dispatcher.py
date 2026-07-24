@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 
+from ._runtime_preflight import _certify_recurrent_runtime
 from .linear.training_flattened import flattened_linear as _run_flattened
 from .linear.training_flattened import (
     probe_linear_training_v1 as _probe_flattened,
@@ -38,9 +39,175 @@ _MATRIX_IMPLEMENTATION = "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
 _FACTORIZED_IMPLEMENTATION = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
 _FLATTENED_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 _MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
+_PROGRAM_IMPLEMENTATION = "native-nvidia-rwkv7-adaptive-training-program-v1"
 _RECURRENT_HINT_NAMES = frozenset(
-    ("fully_active", "initial_state_zero", "token_aligned")
+    (
+        "adaptive_fast_program",
+        "fully_active",
+        "initial_state_zero",
+        "token_aligned",
+        "force_reference_recurrent",
+    )
 )
+_ADAPTIVE_FAST_DOMAIN_BATCH = 4
+_ADAPTIVE_FAST_DOMAIN_TOKENS = 128
+
+
+def adaptive_training_fast_domain_v1(
+    *,
+    batch: int,
+    tokens: int,
+    fully_active: bool,
+    initial_state_zero: bool,
+    token_aligned: bool,
+) -> bool:
+    """Return the currently certified dense adaptive training envelope.
+
+    This policy is shared by recurrent and flattened-linear dispatch so a
+    model forward cannot combine an exact recurrent fallback with a different
+    projection accumulation program.  It is intentionally limited to the
+    one large dense shape that has passed the strict multi-lane model gate;
+    explicit ``factorized`` remains available for isolated experimentation.
+    """
+
+    return bool(
+        fully_active
+        and initial_state_zero
+        and token_aligned
+        and batch == _ADAPTIVE_FAST_DOMAIN_BATCH
+        and tokens == _ADAPTIVE_FAST_DOMAIN_TOKENS
+    )
+
+
+def probe_training_program_v1(
+    hidden_states: torch.Tensor,
+    attention_mask: torch.Tensor,
+    *,
+    training: bool,
+    fully_active: bool,
+    initial_state_zero: bool | None,
+    token_aligned: bool,
+    autograd_leaf_eligible: bool,
+    head_dim: int | None,
+) -> dict[str, Any]:
+    """Certify the coupled adaptive recurrent/linear program before use."""
+
+    if _requested_implementation() != "adaptive":
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the coupled program is selected only by adaptive training",
+        }
+    if not all(
+        isinstance(value, bool)
+        for value in (
+            training,
+            fully_active,
+            token_aligned,
+            autograd_leaf_eligible,
+        )
+    ):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": (
+                "training, fully_active, token_aligned, and "
+                "autograd_leaf_eligible must be booleans"
+            ),
+        }
+    if initial_state_zero is not None and not isinstance(initial_state_zero, bool):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "initial_state_zero must be a bool or None",
+        }
+    if not training or not torch.is_grad_enabled():
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the coupled program requires enabled autograd training",
+        }
+    if not autograd_leaf_eligible:
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": (
+                "the coupled program requires gradient-bearing inputs and a "
+                "non-reentrant checkpoint forward"
+            ),
+        }
+    if not isinstance(hidden_states, torch.Tensor) or hidden_states.ndim != 3:
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "hidden_states must be a [B,T,C] tensor",
+        }
+    batch, tokens, _channels = tuple(hidden_states.shape)
+    if not adaptive_training_fast_domain_v1(
+        batch=batch,
+        tokens=tokens,
+        fully_active=fully_active,
+        initial_state_zero=initial_state_zero is True,
+        token_aligned=token_aligned,
+    ):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "request is outside the certified adaptive fast domain",
+        }
+    if head_dim != 64:
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the factorized recurrent program requires head_dim=64",
+        }
+    if (
+        not torch.cuda.is_available()
+        or not hidden_states.is_cuda
+        or hidden_states.dtype != torch.bfloat16
+    ):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the coupled program requires BF16 CUDA hidden states",
+        }
+    if not isinstance(attention_mask, torch.Tensor) or tuple(attention_mask.shape) != (
+        batch,
+        tokens,
+    ):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "attention_mask must be a [B,T] tensor",
+        }
+    if not attention_mask.is_cuda or attention_mask.device != hidden_states.device:
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "attention_mask must share the hidden-state CUDA device",
+        }
+    if torch.cuda.get_device_capability(hidden_states.device) < (8, 0):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the BF16 training program requires sm80 or newer",
+        }
+    from .nvidia.train_temp_cuda import recurrent_training_cuda_available
+
+    if not recurrent_training_cuda_available(build=True):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the native recurrent extension is not loaded",
+        }
+    # This is the only runtime-certificate signer. It runs only after the
+    # complete device-capability and extension-load preflight above succeeds.
+    _certify_recurrent_runtime(hidden_states.device)
+    return {
+        "supported": True,
+        "implementation": _PROGRAM_IMPLEMENTATION,
+        "reason": "coupled B4/T128 adaptive training program is available",
+    }
 
 
 def _requested_implementation() -> str:
@@ -118,6 +285,16 @@ def _invalid_recurrent_hint(kwargs: dict[str, Any]) -> str | None:
     return None
 
 
+def _linear_leaf_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Remove model-owned coupled-program hints from leaf calls."""
+
+    return {
+        name: value
+        for name, value in kwargs.items()
+        if name not in {"adaptive_fast_program", "initial_state_zero"}
+    }
+
+
 def _validated_recurrent_probe(probe, *args: Any, **kwargs: Any) -> dict[str, Any]:
     result = validate_support_result(
         probe(
@@ -146,6 +323,7 @@ def _adaptive_recurrent_probe(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """Use the fast dense leaf only where its accepted contract applies."""
 
     initial_state_zero = kwargs.get("initial_state_zero") is True
+    adaptive_fast_program = kwargs.get("adaptive_fast_program")
     # Without model-owned cache provenance, adaptive must select the exact
     # matrix leaf.  Check this before inspecting the mask so standalone calls
     # do not pay a device-to-host scalar copy merely to fail closed.
@@ -157,13 +335,34 @@ def _adaptive_recurrent_probe(*args: Any, **kwargs: Any) -> dict[str, Any]:
         if initial_state_zero
         else True
     )
-    if fully_active and token_aligned and initial_state_zero:
+    shape = _recurrent_shape(args, kwargs)
+    fast_domain = bool(
+        initial_state_zero
+        and adaptive_fast_program is not False
+        and shape is not None
+        and len(shape) == 4
+        and adaptive_training_fast_domain_v1(
+            batch=shape[0],
+            tokens=shape[1],
+            fully_active=fully_active,
+            initial_state_zero=initial_state_zero,
+            token_aligned=token_aligned,
+        )
+    )
+    if fast_domain:
         factorized = _validated_recurrent_probe(
             _probe_factorized,
             *args,
             **kwargs,
         )
         if factorized["supported"]:
+            return factorized
+        if adaptive_fast_program is True:
+            factorized = dict(factorized)
+            factorized["reason"] = (
+                "the preflight-certified adaptive program declined during "
+                f"atomic recurrent execution: {factorized['reason']}"
+            )
             return factorized
         matrix = _validated_recurrent_probe(_probe_matrix, *args, **kwargs)
         if matrix["supported"]:
@@ -183,10 +382,18 @@ def _adaptive_recurrent_probe(*args: Any, **kwargs: Any) -> dict[str, Any]:
             )
         elif not fully_active:
             request_kind = "a masked recurrent request"
-        else:
+        elif not token_aligned:
             request_kind = (
                 "an unaligned recurrent request; the factorized leaf requires "
                 f"token lengths divisible by {TOKEN_CHUNK_LENGTH}"
+            )
+        elif adaptive_fast_program is False:
+            request_kind = "a request whose coupled fast-program preflight declined"
+        else:
+            request_kind = (
+                "a dense request outside the certified adaptive fast domain "
+                f"B={_ADAPTIVE_FAST_DOMAIN_BATCH}, "
+                f"T={_ADAPTIVE_FAST_DOMAIN_TOKENS}"
             )
         matrix["reason"] = (
             f"adaptive exact route for {request_kind}; {matrix['reason']}"
@@ -209,6 +416,14 @@ def probe_recurrent_training_v1(*args: Any, **kwargs: Any):
             "supported": False,
             "implementation": implementation,
             "reason": f"invalid recurrent request hint: {invalid_hint}",
+        }
+    if kwargs.get("force_reference_recurrent") is True:
+        return {
+            "supported": False,
+            "implementation": _MATRIX_IMPLEMENTATION,
+            "reason": (
+                "the model pinned checkpoint forward and replay to reference recurrence"
+            ),
         }
     if requested == "auto":
         return {
@@ -235,6 +450,7 @@ def execute_recurrent_training_v1(
     initial_state: torch.Tensor,
     attention_mask: torch.Tensor | None,
     *,
+    adaptive_fast_program: bool | None = None,
     fully_active: bool | None = None,
     initial_state_zero: bool | None = None,
     token_aligned: bool | None = None,
@@ -252,6 +468,7 @@ def execute_recurrent_training_v1(
         attention_mask,
     )
     hints = {
+        "adaptive_fast_program": adaptive_fast_program,
         "fully_active": fully_active,
         "initial_state_zero": initial_state_zero,
         "token_aligned": token_aligned,
@@ -291,8 +508,24 @@ def probe_linear_training_v1(*args: Any, **kwargs: Any):
     """Report an exact or flattened projection for the selected candidate."""
 
     requested = _requested_implementation()
+    for name in (
+        "adaptive_fast_program",
+        "fully_active",
+        "initial_state_zero",
+        "token_aligned",
+    ):
+        hint = kwargs.get(name)
+        if hint is not None and not isinstance(hint, bool):
+            return {
+                "supported": False,
+                "implementation": _FLATTENED_IMPLEMENTATION,
+                "reason": f"{name} must be a bool or None",
+            }
     fully_active = kwargs.get("fully_active")
+    adaptive_fast_program = kwargs.get("adaptive_fast_program")
+    initial_state_zero = kwargs.get("initial_state_zero")
     token_aligned = kwargs.get("token_aligned")
+    value = kwargs.get("value", args[0] if args else None)
     if requested == "auto":
         return {
             "supported": False,
@@ -311,14 +544,38 @@ def probe_linear_training_v1(*args: Any, **kwargs: Any):
                 "linears retain the readable reference accumulation contract"
             ),
         }
-    if requested == "adaptive" and (
-        fully_active is not True or token_aligned is not True
-    ):
-        request_kind = (
-            "masked or standalone"
-            if fully_active is not True
-            else "token-length-unaligned"
+    if requested == "adaptive":
+        shape = tuple(value.shape) if isinstance(value, torch.Tensor) else ()
+        fast_domain = bool(
+            len(shape) == 3
+            and adaptive_fast_program is True
+            and adaptive_training_fast_domain_v1(
+                batch=shape[0],
+                tokens=shape[1],
+                fully_active=fully_active is True,
+                initial_state_zero=initial_state_zero is True,
+                token_aligned=token_aligned is True,
+            )
         )
+        if fast_domain:
+            return validate_support_result(
+                _probe_flattened(*args, **_linear_leaf_kwargs(kwargs)),
+                probe_name="probe_linear_training_v1",
+            )
+        if adaptive_fast_program is not True:
+            request_kind = "request without a coupled fast-program certificate"
+        elif initial_state_zero is not True:
+            request_kind = "stateful or standalone"
+        elif fully_active is not True:
+            request_kind = "masked or standalone"
+        elif token_aligned is not True:
+            request_kind = "token-length-unaligned"
+        else:
+            request_kind = (
+                "dense request outside the certified adaptive fast domain "
+                f"B={_ADAPTIVE_FAST_DOMAIN_BATCH}, "
+                f"T={_ADAPTIVE_FAST_DOMAIN_TOKENS}"
+            )
         return {
             "supported": False,
             "implementation": "torch-reference-linear-v1",
@@ -328,7 +585,7 @@ def probe_linear_training_v1(*args: Any, **kwargs: Any):
             ),
         }
     return validate_support_result(
-        _probe_flattened(*args, **kwargs),
+        _probe_flattened(*args, **_linear_leaf_kwargs(kwargs)),
         probe_name="probe_linear_training_v1",
     )
 
@@ -338,7 +595,9 @@ def execute_linear_training_v1(
     weight: torch.Tensor,
     bias: torch.Tensor | None,
     *,
+    adaptive_fast_program: bool | None = None,
     fully_active: bool | None = None,
+    initial_state_zero: bool | None = None,
     token_aligned: bool | None = None,
 ) -> dict[str, Any]:
     """Validate and execute one projection as one call-local transaction.
@@ -352,7 +611,9 @@ def execute_linear_training_v1(
         value,
         weight,
         bias,
+        adaptive_fast_program=adaptive_fast_program,
         fully_active=fully_active,
+        initial_state_zero=initial_state_zero,
         token_aligned=token_aligned,
     )
     if not support["supported"]:
@@ -464,6 +725,7 @@ def mix6_training_v1(
 
 
 __all__ = [
+    "adaptive_training_fast_domain_v1",
     "execute_linear_training_v1",
     "execute_mix6_training_v1",
     "execute_recurrent_training_v1",
@@ -472,5 +734,6 @@ __all__ = [
     "probe_linear_training_v1",
     "probe_mix6_training_v1",
     "probe_recurrent_training_v1",
+    "probe_training_program_v1",
     "recurrent_training_v1",
 ]

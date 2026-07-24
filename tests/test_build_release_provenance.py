@@ -12,6 +12,7 @@ from evaluation.build_backend_v2_compact_bundle import build_bundle
 from scripts.build_release_provenance import DEVICE_REPORT, REQUIRED_GATES, build
 from scripts.build_release_provenance import DEVICE_RUN_REPORT
 from scripts.release_route_contract import (
+    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
     FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
     HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
     READABLE_TRAINING_MODEL_ROUTE,
@@ -82,6 +83,7 @@ def device_report(device: str, identities: dict[str, str]) -> dict:
             "decode": ["native-fused-token-decode-v2"],
             "training": [
                 READABLE_TRAINING_MODEL_ROUTE,
+                ADAPTIVE_TRAINING_PROGRAM_ROUTE,
                 *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
             ],
             "quantization": ["native-w8-linear-v1", "torchao-int4-v1"],
@@ -308,11 +310,29 @@ def test_builder_requires_readable_model_training_boundary(tmp_path: Path):
         device=device,
         bundle=bundles[device],
         mutate=lambda report: report["actual_routes"].__setitem__(
-            "training", sorted(REQUIRED_TRAINING_LEAF_ROUTES)
+            "training",
+            [ADAPTIVE_TRAINING_PROGRAM_ROUTE, *sorted(REQUIRED_TRAINING_LEAF_ROUTES)],
         ),
     )
     replace_arg(args, device, replacement)
     with pytest.raises(ValueError, match="readable HF model loop"):
+        build(args)
+
+
+def test_builder_requires_atomic_adaptive_training_program(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training",
+            [READABLE_TRAINING_MODEL_ROUTE, *sorted(REQUIRED_TRAINING_LEAF_ROUTES)],
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="atomic adaptive program route"):
         build(args)
 
 

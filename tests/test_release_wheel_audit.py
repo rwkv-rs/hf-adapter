@@ -36,6 +36,11 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert audit_hf_wheel(hf)["tool_files"] == 5
     report = audit_kernel_wheel(kernel)
     assert report["status"] == "passed"
+    assert report["public_protocol"] == {
+        "status": "passed",
+        "api_version": 3,
+        "training_program_probe": "probe_training_program_v1",
+    }
     assert report["migrated_files"] == 102
     assert report["transfers"] == EXPECTED_MIGRATION_TRANSFERS
     assert sum(report["transfers"].values()) == 102
@@ -46,6 +51,52 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["recurrent_source_scope"]["historical_files"] == 3
     assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
     assert report["dependencies"] == ["ninja", "numpy", "packaging", "torch"]
+
+
+def test_kernel_wheel_audit_rejects_inventory_protocol_api_mismatch(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    protocol = root / "kernels/rwkv7_kernels/protocol.py"
+    source = protocol.read_text(encoding="utf-8")
+    payload = source.replace(
+        "RWKV7_KERNEL_API_VERSION = 3",
+        "RWKV7_KERNEL_API_VERSION = 2",
+    )
+    assert payload != source
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={"rwkv7_kernels/protocol.py": payload.encode()},
+    )
+    with pytest.raises(ValueError, match="kernel protocol API version must be 3"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_requires_public_training_program_probe(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    init_path = root / "kernels/rwkv7_kernels/__init__.py"
+    source = init_path.read_text(encoding="utf-8")
+    payload = source.replace(
+        '    "probe_training_program_v1",\n',
+        "",
+    )
+    assert payload != source
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={"rwkv7_kernels/__init__.py": payload.encode()},
+    )
+    with pytest.raises(ValueError, match="publicly export probe_training_program_v1"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_requires_runtime_preflight(tmp_path: Path):
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        omit="rwkv7_kernels/_runtime_preflight.py",
+    )
+    with pytest.raises(ValueError, match="missing runtime files"):
+        audit_kernel_wheel(kernel)
 
 
 def test_kernel_wheel_audit_rejects_incomplete_direct_dependencies(tmp_path: Path):

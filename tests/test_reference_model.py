@@ -327,22 +327,34 @@ def test_checkpoint_recomputation_republishes_training_batch_context(
     """Checkpoint replay must select the same optional linear program."""
 
     import rwkv7_hf.modeling_rwkv7 as modeling
+    from contextlib import contextmanager
 
     calls = []
-    original = modeling.set_training_batch_context
+    original = modeling.training_batch_context
 
-    def record_context(mask, *, training, fully_active=None):
-        calls.append((bool(mask.all()), bool(training), fully_active))
-        return original(mask, training=training, fully_active=fully_active)
+    @contextmanager
+    def record_context(context):
+        calls.append(
+            (
+                context.fully_active,
+                context.token_aligned,
+                context.initial_state_zero,
+                context.adaptive_fast_program,
+            )
+        )
+        with original(context) as published:
+            yield published
 
-    monkeypatch.setattr(modeling, "set_training_batch_context", record_context)
+    monkeypatch.setattr(modeling, "training_batch_context", record_context)
     model = RWKV7ForCausalLM(tiny_config).train()
     model.gradient_checkpointing_enable()
     ids = torch.tensor([[1, 2, 3, 4]])
     model(input_ids=ids, labels=ids, use_cache=False).loss.backward()
 
-    assert len(calls) >= tiny_config.num_hidden_layers + 1
-    assert all(call == (True, True, True) for call in calls)
+    # One head scope plus both the original checkpoint forward and backward
+    # recomputation for every layer.
+    assert len(calls) >= 2 * tiny_config.num_hidden_layers + 1
+    assert all(call == (True, False, True, False) for call in calls)
 
 
 def test_model_computes_mask_activity_once_outside_layer_shift_math():

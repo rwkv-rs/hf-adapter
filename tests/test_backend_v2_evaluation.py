@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,9 +15,13 @@ sys.path.insert(0, str(EVALUATION))
 
 import benchmark_backend_v2 as benchmark  # noqa: E402
 from benchmark_backend_v2 import add_speedups, percentile, routes_passed  # noqa: E402
+from common import input_ids_sha256, training_case_seed  # noqa: E402
 from validate_backend_v2_ecosystem import (  # noqa: E402
+    base_model_backend_environment,
     expected_dense_training_route,
+    training_mixed_precision,
     training_parameter_dtype,
+    training_smoke_learning_rate,
 )
 from validate_backend_v2_training import (  # noqa: E402
     candidate_route_passed,
@@ -24,6 +29,9 @@ from validate_backend_v2_training import (  # noqa: E402
 )
 from validate_model_training import select_lane as select_model_training_lane  # noqa: E402
 from training_metrics import (  # noqa: E402
+    adaptive_fast_domain_expected,
+    candidate_numerics_not_worse_than_fla,
+    checkpoint_input_hash_gate,
     global_gradient_metric,
     global_gradient_passed,
 )
@@ -242,6 +250,10 @@ def test_speed_route_gate_distinguishes_v100_training_fallback():
         "mix6": {
             "selected": "reference",
             "implementation": "torch-reference-mix6-v1",
+        },
+        "program": {
+            "selected": "reference",
+            "implementation": "torch-reference-training-program-v1",
         },
     }
     report = {
@@ -540,7 +552,7 @@ def test_training_lanes_share_the_same_loss_mode(monkeypatch, legacy_double_ce):
         assert call["labels"][0, 8].item() == -100
 
 
-def clean_training_routes(*, adaptive: bool) -> dict:
+def clean_training_routes(*, adaptive: bool, fast_domain: bool = False) -> dict:
     return {
         "model": {
             "selected": "reference",
@@ -551,13 +563,19 @@ def clean_training_routes(*, adaptive: bool) -> dict:
             "selected": "optimized" if adaptive else "reference",
             "implementation": (
                 "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+                if adaptive and fast_domain
+                else "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
                 if adaptive
                 else "torch-reference-v1"
             ),
         },
         "linear": {
-            "selected": "reference",
-            "implementation": "torch-reference-linear-v1",
+            "selected": "optimized" if adaptive and fast_domain else "reference",
+            "implementation": (
+                "torch-cuda-rwkv7-flattened-linear-training-v1"
+                if adaptive and fast_domain
+                else "torch-reference-linear-v1"
+            ),
         },
         "mix6": {
             "selected": "optimized" if adaptive else "reference",
@@ -567,14 +585,35 @@ def clean_training_routes(*, adaptive: bool) -> dict:
                 else "torch-reference-mix6-v1"
             ),
         },
+        "program": {
+            "selected": "optimized" if adaptive and fast_domain else "reference",
+            "implementation": (
+                "native-nvidia-rwkv7-adaptive-training-program-v1"
+                if adaptive
+                else "torch-reference-training-program-v1"
+            ),
+        },
     }
 
 
 def test_ecosystem_route_gates_require_readable_model_and_actual_leafs():
     adaptive = clean_training_routes(adaptive=True)
+    adaptive_fast = clean_training_routes(adaptive=True, fast_domain=True)
     reference = clean_training_routes(adaptive=False)
     assert expected_dense_training_route(adaptive, "adaptive")
     assert expected_dense_training_route(adaptive, "native")
+    assert expected_dense_training_route(
+        adaptive_fast,
+        "adaptive",
+        batch=4,
+        tokens=128,
+    )
+    assert not expected_dense_training_route(
+        adaptive_fast,
+        "adaptive",
+        batch=1,
+        tokens=128,
+    )
     assert not expected_dense_training_route(adaptive, "reference")
     assert expected_dense_training_route(reference, "reference")
     assert expected_dense_training_route(reference, "reference-fallback")
@@ -584,6 +623,27 @@ def test_ecosystem_route_gates_require_readable_model_and_actual_leafs():
 def test_ecosystem_fp16_uses_fp32_master_parameters():
     assert training_parameter_dtype("fp16") is torch.float32
     assert training_parameter_dtype("bf16") is torch.bfloat16
+    assert training_mixed_precision("fp16") == "fp16"
+    assert training_mixed_precision("bf16") == "no"
+    assert training_smoke_learning_rate("fp16") == 1.0e-5
+    assert training_smoke_learning_rate("bf16") == 1.0e-3
+
+
+def test_base_auto_model_uses_fail_closed_fallback_environment(monkeypatch):
+    for name in (
+        "RWKV7_BACKEND",
+        "RWKV7_MODEL_KERNEL_IMPL",
+        "RWKV7_KERNEL_IMPL",
+        "RWKV7_TRAINING_KERNEL_IMPL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    base_model_backend_environment()
+
+    assert os.environ["RWKV7_BACKEND"] == "auto"
+    assert os.environ["RWKV7_MODEL_KERNEL_IMPL"] == "native"
+    assert os.environ["RWKV7_KERNEL_IMPL"] == "auto"
+    assert os.environ["RWKV7_TRAINING_KERNEL_IMPL"] == "auto"
 
 
 def test_sm70_fla_gate_requires_actual_optimized_recurrent_route():
@@ -612,8 +672,85 @@ def test_reference_training_is_explicit_and_not_adaptive():
 
 def test_adaptive_route_uses_matrix_fallback_but_keeps_mix6_for_unaligned_tokens():
     routes = clean_training_routes(adaptive=True)
-    routes["recurrent"] = {
-        "selected": "optimized",
-        "implementation": "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
-    }
     assert candidate_route_passed(routes, "adaptive", batch=4, tokens=17)
+
+
+def test_adaptive_route_uses_both_fast_leaves_only_in_certified_domain():
+    routes = clean_training_routes(adaptive=True, fast_domain=True)
+    assert candidate_route_passed(routes, "adaptive", batch=4, tokens=128)
+    assert not candidate_route_passed(routes, "adaptive", batch=1, tokens=128)
+
+
+def test_adaptive_fast_domain_evaluator_oracle_is_conservative():
+    assert adaptive_fast_domain_expected(batch=4, tokens=128)
+    assert not adaptive_fast_domain_expected(batch=1, tokens=128)
+    assert not adaptive_fast_domain_expected(batch=4, tokens=16)
+    assert not adaptive_fast_domain_expected(batch=8, tokens=128)
+    assert not adaptive_fast_domain_expected(batch=4, tokens=256)
+    assert not adaptive_fast_domain_expected(
+        batch=4,
+        tokens=128,
+        fully_active=False,
+    )
+
+
+def test_training_case_provenance_is_order_independent_and_hashes_exact_ids():
+    seed = training_case_seed(42, batch=4, tokens=128, padding="none")
+    assert 0 <= seed < 2**63
+    assert seed == training_case_seed(42, batch=4, tokens=128, padding="none")
+    assert seed != training_case_seed(42, batch=4, tokens=128, padding="left")
+    assert seed != training_case_seed(
+        42,
+        batch=4,
+        tokens=128,
+        padding="none",
+        sample_index=1,
+    )
+    assert training_case_seed(42, batch=1, tokens=2000) != training_case_seed(
+        42, batch=2, tokens=1000
+    )
+
+    ids = torch.tensor([[1, 2], [3, 4]], dtype=torch.long)
+    digest = input_ids_sha256(ids)
+    assert digest == input_ids_sha256(ids.clone())
+    assert digest != input_ids_sha256(ids.reshape(1, 4))
+    changed = ids.clone()
+    changed[0, 0] = 5
+    assert digest != input_ids_sha256(changed)
+
+
+def test_candidate_not_worse_than_fla_includes_same_input_loss():
+    fla = {
+        "logits": {"cosine": 0.9999},
+        "loss": {"max_abs": 0.01},
+        "global_gradient": {"cosine": 0.999, "relative_l2": 0.02},
+    }
+    candidate = {
+        "logits": {"cosine": 1.0},
+        "loss": {"max_abs": 0.009},
+        "global_gradient": {"cosine": 0.9995, "relative_l2": 0.01},
+    }
+    assert candidate_numerics_not_worse_than_fla(candidate, fla)
+    candidate["loss"]["max_abs"] = 0.011
+    assert not candidate_numerics_not_worse_than_fla(candidate, fla)
+
+
+def test_checkpoint_input_hash_gate_requires_both_modes_and_one_exact_hash():
+    rows = [
+        {
+            "batch": 4,
+            "tokens": 128,
+            "checkpointing": mode,
+            "input_ids_sha256": "same",
+        }
+        for mode in (False, True)
+    ]
+    assert checkpoint_input_hash_gate(rows, key_fields=("batch", "tokens"))["passed"]
+
+    rows[1]["input_ids_sha256"] = "different"
+    assert not checkpoint_input_hash_gate(rows, key_fields=("batch", "tokens"))[
+        "passed"
+    ]
+    assert not checkpoint_input_hash_gate(rows[:1], key_fields=("batch", "tokens"))[
+        "passed"
+    ]

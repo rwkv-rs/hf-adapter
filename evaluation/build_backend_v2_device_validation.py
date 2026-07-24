@@ -37,7 +37,7 @@ PRIMARY_REPORTS = (
 REPORT_SCHEMAS = {
     "correctness": "rwkv7-backend-v2-inference-validation-v1",
     "hf_ecosystem": "rwkv7-backend-v2-hf-ecosystem-v2",
-    "training": "rwkv7-backend-v2-training-validation-v2",
+    "training": "rwkv7-backend-v2-training-validation-v3",
     "quantization": "rwkv7-backend-v2-quantization-validation-v1",
     "fla": "rwkv7-backend-v2-three-way-parity-v2",
     "speed": "rwkv7-backend-v2-three-way-speed-v1",

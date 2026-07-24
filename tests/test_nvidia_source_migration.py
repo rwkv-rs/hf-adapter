@@ -95,7 +95,7 @@ def test_nvidia_capability_inventory_maps_every_migrated_byte_once():
     manifest = json.loads((NVIDIA / "MIGRATION_MANIFEST.json").read_text())
     inventory = json.loads((NVIDIA / "CAPABILITY_INVENTORY.json").read_text())
     assert inventory["schema"] == "rwkv7-nvidia-capability-inventory-v1"
-    assert inventory["kernel_api_version"] == 2
+    assert inventory["kernel_api_version"] == 3
     assert inventory["production_auto"].startswith("disabled")
 
     migrated = {

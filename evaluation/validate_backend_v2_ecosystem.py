@@ -10,6 +10,7 @@ boundaries.  The reference lane keeps every training operation in PyTorch.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import gc
 import json
 import os
@@ -20,6 +21,7 @@ from typing import Any, Callable
 import torch
 
 from common import environment, git_revision, model_fingerprint, sha256_file
+from training_metrics import adaptive_fast_domain_expected
 
 
 REFERENCE_MODEL = "torch-reference-model-v1"
@@ -27,6 +29,7 @@ MATRIX_RECURRENT = "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
 FACTORIZED_RECURRENT = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
 FLATTENED_LINEAR = "torch-cuda-rwkv7-flattened-linear-training-v1"
 MIX6 = "native-nvidia-rwkv7-mix6-training-v1"
+PROGRAM = "native-nvidia-rwkv7-adaptive-training-program-v1"
 
 
 def canonical_training_mode(value: str) -> str:
@@ -72,6 +75,15 @@ def inference_backend_environment() -> None:
     os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
 
 
+def base_model_backend_environment() -> None:
+    """Select the fail-closed base-model path without weakening native LM."""
+
+    os.environ["RWKV7_BACKEND"] = "auto"
+    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native"
+    os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+
+
 def training_backend_environment(training_mode: str) -> None:
     training_mode = canonical_training_mode(training_mode)
     os.environ["RWKV7_KERNEL_IMPL"] = "auto"
@@ -96,6 +108,7 @@ def last_training_routes() -> dict[str, Any]:
         get_last_mix6_route,
         get_last_model_route,
         get_last_recurrent_route,
+        get_last_training_program_route,
     )
 
     return {
@@ -103,6 +116,7 @@ def last_training_routes() -> dict[str, Any]:
         "recurrent": get_last_recurrent_route(),
         "linear": get_last_linear_route(),
         "mix6": get_last_mix6_route(),
+        "program": get_last_training_program_route(),
     }
 
 
@@ -119,6 +133,7 @@ def expected_dense_training_route(
     recurrent = routes.get("recurrent") or {}
     linear = routes.get("linear") or {}
     mix6 = routes.get("mix6") or {}
+    program = routes.get("program") or {}
     if not (
         model.get("selected") == "reference"
         and model.get("phase") == "training"
@@ -133,14 +148,15 @@ def expected_dense_training_route(
             and linear.get("implementation") == "torch-reference-linear-v1"
             and mix6.get("selected") == "reference"
             and mix6.get("implementation") == "torch-reference-mix6-v1"
+            and program.get("selected") == "reference"
+            and program.get("implementation") == "torch-reference-training-program-v1"
         )
-    aligned = tokens > 0 and tokens % 16 == 0
-    expected_recurrent = FACTORIZED_RECURRENT if aligned else MATRIX_RECURRENT
-    linear_optimized = aligned and batch * tokens >= 128
+    fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
+    expected_recurrent = FACTORIZED_RECURRENT if fast_domain else MATRIX_RECURRENT
     linear_passed = (
         linear.get("selected") == "optimized"
         and linear.get("implementation") == FLATTENED_LINEAR
-        if linear_optimized
+        if fast_domain
         else linear.get("selected") == "reference"
         and linear.get("implementation") == "torch-reference-linear-v1"
     )
@@ -150,6 +166,8 @@ def expected_dense_training_route(
         and linear_passed
         and mix6.get("selected") == "optimized"
         and mix6.get("implementation") == MIX6
+        and program.get("selected") == ("optimized" if fast_domain else "reference")
+        and program.get("implementation") == PROGRAM
     )
 
 
@@ -164,6 +182,18 @@ def training_parameter_dtype(name: str) -> torch.dtype:
     # autocast. Loading FP16 parameters and then enabling GradScaler makes
     # both libraries correctly reject the run while unscaling gradients.
     return torch.bfloat16 if name == "bf16" else torch.float32
+
+
+def training_mixed_precision(name: str) -> str:
+    """Return AMP policy for the ecosystem lane's parameter-dtype contract."""
+
+    return "no" if name == "bf16" else "fp16"
+
+
+def training_smoke_learning_rate(name: str) -> float:
+    """Choose an update large enough to be observable in the parameter dtype."""
+
+    return 1.0e-3 if name == "bf16" else 1.0e-5
 
 
 def finite_nonzero_gradients(model) -> tuple[bool, int]:
@@ -220,6 +250,12 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
         try:
             config = AutoConfig.from_pretrained(path, trust_remote_code=True)
             tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+            # The whole-model NVIDIA route is intentionally a causal-LM
+            # boundary: it owns the language-model head as well as the RWKV
+            # stack.  Base AutoModel must remain usable through the ordinary
+            # fail-closed ``auto`` fallback rather than weakening a forced
+            # native request to hide that contract.
+            base_model_backend_environment()
             base = (
                 AutoModel.from_pretrained(
                     path, torch_dtype=torch.float16, trust_remote_code=True
@@ -240,9 +276,16 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
             base_ok = bool(
                 torch.isfinite(base_output.last_hidden_state).all()
                 and base_output.past_key_values is not None
+                and base_route
+                and base_route.get("selected") == "reference"
+                and base_route.get("implementation") == "torch-reference-model-v1"
             )
             release(base, base_output)
 
+            # Causal-LM inference is the strict optimized ecosystem gate.  A
+            # failure below is surfaced rather than silently accepted as a
+            # reference result.
+            inference_backend_environment()
             model = (
                 AutoModelForCausalLM.from_pretrained(
                     path, torch_dtype=torch.float16, trust_remote_code=True
@@ -343,14 +386,22 @@ def run_accelerate(
     model = RWKV7ForCausalLM.from_pretrained(
         path, torch_dtype=training_parameter_dtype(dtype_name)
     ).train()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-5)
+    # A 1e-5 direct update is commonly below one BF16 ULP at unit-scale model
+    # parameters.  This smoke deliberately uses a representable BF16 update;
+    # it is an integration check, not a training-quality hyperparameter.
+    learning_rate = training_smoke_learning_rate(dtype_name)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     scaler_kwargs = (
         [GradScalerKwargs(init_scale=128.0, growth_interval=2000)]
         if dtype_name == "fp16"
         else []
     )
     accelerator = Accelerator(
-        mixed_precision=dtype_name,
+        # Native BF16 parameters already provide BF16 compute.  Wrapping the
+        # readable loop in a second BF16 autocast promotes selected norm/math
+        # outputs to FP32 and correctly makes the homogeneous-dtype CUDA leaves
+        # decline.  FP16 retains conventional FP32 masters plus AMP.
+        mixed_precision=training_mixed_precision(dtype_name),
         kwargs_handlers=scaler_kwargs,
     )
     model, optimizer = accelerator.prepare(model, optimizer)
@@ -393,6 +444,9 @@ def run_accelerate(
         "finite_nonzero_gradients": gradients_finite,
         "gradient_tensor_count": gradient_count,
         "parameters_changed": parameter_changed,
+        "learning_rate": learning_rate,
+        "mixed_precision": training_mixed_precision(dtype_name),
+        "parameter_dtype": str(training_parameter_dtype(dtype_name)),
         "route": route,
         "device": str(accelerator.device),
     }
@@ -434,7 +488,9 @@ def run_trainer(
             max_steps=1,
             per_device_train_batch_size=1,
             learning_rate=1.0e-5,
-            bf16=dtype_name == "bf16",
+            # Direct BF16 parameters must not be wrapped in redundant AMP;
+            # see the Accelerate lane above.  FP16 keeps standard AMP masters.
+            bf16=False,
             fp16=dtype_name == "fp16",
             save_strategy="no",
             report_to="none",
@@ -495,7 +551,7 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     autocast = (
         torch.autocast(device_type="cuda", dtype=torch.float16)
         if dtype_name == "fp16"
-        else torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        else nullcontext()
     )
     with autocast:
         output = model(**batch, use_cache=False, logits_to_keep=0)
@@ -565,7 +621,9 @@ def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
             max_steps=max_steps,
             per_device_train_batch_size=1,
             learning_rate=1.0e-3,
-            bf16=dtype_name == "bf16",
+            # The BF16 checkpoint is already in its compute dtype.  Avoid a
+            # second AMP policy so optional leaf inputs retain one dtype.
+            bf16=False,
             fp16=dtype_name == "fp16",
             save_strategy="no",
             report_to="none",
@@ -664,11 +722,11 @@ def main() -> int:
                 ),
             ),
             execute(
-                "peft-lora-fallback",
+                f"peft-lora-{training_mode}",
                 lambda: run_peft(path, args.seed + 3, args.training_dtype),
             ),
             execute(
-                "trl-sft-lora-fallback",
+                f"trl-sft-lora-{training_mode}",
                 lambda: run_trl_sft(path, args.seed + 4, args.training_dtype),
             ),
         ]

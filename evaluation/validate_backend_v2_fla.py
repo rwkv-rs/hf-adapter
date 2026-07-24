@@ -31,6 +31,7 @@ from fla_common import (
     tensor_metric,
     write_json,
 )
+from training_metrics import adaptive_fast_domain_expected
 
 
 def arguments() -> argparse.Namespace:
@@ -116,6 +117,7 @@ def last_training_routes() -> dict[str, Any]:
         get_last_mix6_route,
         get_last_model_route,
         get_last_recurrent_route,
+        get_last_training_program_route,
     )
 
     return {
@@ -123,6 +125,7 @@ def last_training_routes() -> dict[str, Any]:
         "recurrent": get_last_recurrent_route(),
         "linear": get_last_linear_route(),
         "mix6": get_last_mix6_route(),
+        "program": get_last_training_program_route(),
     }
 
 
@@ -642,18 +645,18 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
     recurrent_route = routes.get("recurrent") or {}
     linear_route = routes.get("linear") or {}
     mix6_route = routes.get("mix6") or {}
-    aligned = tokens > 0 and tokens % 16 == 0
+    program_route = routes.get("program") or {}
+    fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
     recurrent_implementation = (
         "native-nvidia-rwkv7-factorized-recurrent-training-v1"
-        if aligned
+        if fast_domain
         else "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
     )
-    linear_optimized = aligned and batch * tokens >= 128
     linear_route_passed = (
         linear_route.get("selected") == "optimized"
         and linear_route.get("implementation")
         == "torch-cuda-rwkv7-flattened-linear-training-v1"
-        if linear_optimized
+        if fast_domain
         else linear_route.get("selected") == "reference"
         and linear_route.get("implementation") == "torch-reference-linear-v1"
     )
@@ -666,6 +669,10 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
         and linear_route_passed
         and mix6_route.get("selected") == "optimized"
         and mix6_route.get("implementation") == "native-nvidia-rwkv7-mix6-training-v1"
+        and program_route.get("selected")
+        == ("optimized" if fast_domain else "reference")
+        and program_route.get("implementation")
+        == "native-nvidia-rwkv7-adaptive-training-program-v1"
     )
     for lane in lanes.values():
         lane.pop("logits")

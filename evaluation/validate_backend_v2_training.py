@@ -19,7 +19,14 @@ from typing import Any
 
 import torch
 
-from common import environment, git_revision, model_fingerprint, sha256_file
+from common import (
+    environment,
+    git_revision,
+    input_ids_sha256,
+    model_fingerprint,
+    sha256_file,
+    training_case_seed,
+)
 from training_metrics import (
     MODEL_GRADIENT_COSINE_MIN,
     MODEL_GRADIENT_RELATIVE_L2_MAX,
@@ -27,6 +34,8 @@ from training_metrics import (
     MODEL_LOSS_MAX_ABS,
     NAMED_GRADIENT_COSINE_MIN_DIAGNOSTIC,
     NAMED_GRADIENT_RELATIVE_L2_MAX_DIAGNOSTIC,
+    adaptive_fast_domain_expected,
+    checkpoint_input_hash_gate,
     global_gradient_metric,
     global_gradient_passed,
     gradient_parameter_summary,
@@ -41,7 +50,7 @@ FACTORIZED_RECURRENT_IMPLEMENTATION = (
 )
 FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
-CUDA_LINEAR_MIN_ROWS = 128
+PROGRAM_IMPLEMENTATION = "native-nvidia-rwkv7-adaptive-training-program-v1"
 
 
 def canonical_candidate_route(value: str) -> str:
@@ -106,6 +115,7 @@ def candidate_route_passed(
     recurrent = routes.get("recurrent") or {}
     linear = routes.get("linear") or {}
     mix6 = routes.get("mix6") or {}
+    program = routes.get("program") or {}
     if not (
         model.get("selected") == "reference"
         and model.get("phase") == "training"
@@ -120,19 +130,20 @@ def candidate_route_passed(
             and linear.get("implementation") == "torch-reference-linear-v1"
             and mix6.get("selected") == "reference"
             and mix6.get("implementation") == "torch-reference-mix6-v1"
+            and program.get("selected") == "reference"
+            and program.get("implementation") == "torch-reference-training-program-v1"
         )
 
-    aligned = tokens > 0 and tokens % 16 == 0
+    fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
     recurrent_implementation = (
         FACTORIZED_RECURRENT_IMPLEMENTATION
-        if aligned
+        if fast_domain
         else MATRIX_RECURRENT_IMPLEMENTATION
     )
-    linear_optimized = aligned and batch * tokens >= CUDA_LINEAR_MIN_ROWS
     linear_passed = (
         linear.get("selected") == "optimized"
         and linear.get("implementation") == FLATTENED_LINEAR_IMPLEMENTATION
-        if linear_optimized
+        if fast_domain
         else linear.get("selected") == "reference"
         and linear.get("implementation") == "torch-reference-linear-v1"
     )
@@ -142,6 +153,8 @@ def candidate_route_passed(
         and linear_passed
         and mix6.get("selected") == "optimized"
         and mix6.get("implementation") == MIX6_IMPLEMENTATION
+        and program.get("selected") == ("optimized" if fast_domain else "reference")
+        and program.get("implementation") == PROGRAM_IMPLEMENTATION
     )
 
 
@@ -177,6 +190,7 @@ def run_once(
         get_last_mix6_route,
         get_last_model_route,
         get_last_recurrent_route,
+        get_last_training_program_route,
     )
 
     route(candidate, candidate_route)
@@ -202,6 +216,7 @@ def run_once(
             "recurrent": get_last_recurrent_route(),
             "linear": get_last_linear_route(),
             "mix6": get_last_mix6_route(),
+            "program": get_last_training_program_route(),
         },
         "elapsed_seconds": elapsed,
         "peak_memory_bytes": int(torch.cuda.max_memory_allocated()),
@@ -223,7 +238,6 @@ def main() -> int:
     vocab = int(model.config.vocab_size)
     batches = tuple(args.batch or (1, 4))
     tokens = tuple(args.tokens or (16, 128))
-    generator = torch.Generator(device="cuda").manual_seed(args.seed)
     cases = []
     failures = []
     for checkpointing in (False, True):
@@ -233,8 +247,14 @@ def main() -> int:
             model.gradient_checkpointing_disable()
         for batch in batches:
             for sequence in tokens:
+                case_seed = training_case_seed(
+                    args.seed,
+                    batch=batch,
+                    tokens=sequence,
+                )
+                generator = torch.Generator(device="cuda").manual_seed(case_seed)
                 ids = torch.randint(
-                    0,
+                    1,
                     vocab,
                     (batch, sequence),
                     generator=generator,
@@ -295,6 +315,12 @@ def main() -> int:
                 # contract as the clean-loop/FLA training validator.
                 gradient_passed = global_gradient_passed(global_gradient)
                 actual_route = candidate["route"]
+                route_passed = candidate_route_passed(
+                    actual_route,
+                    candidate_route,
+                    batch=batch,
+                    tokens=sequence,
+                )
                 passed = bool(
                     logits["finite"]
                     and logits["cosine"] >= MODEL_LOGITS_COSINE_MIN
@@ -302,12 +328,7 @@ def main() -> int:
                     and abs(float(candidate["loss"] - reference["loss"]))
                     <= MODEL_LOSS_MAX_ABS
                     and gradient_passed
-                    and candidate_route_passed(
-                        actual_route,
-                        candidate_route,
-                        batch=batch,
-                        tokens=sequence,
-                    )
+                    and route_passed
                 )
                 row = {
                     "case": (
@@ -315,6 +336,11 @@ def main() -> int:
                         f"checkpointing-{str(checkpointing).lower()}"
                     ),
                     "passed": passed,
+                    "batch": batch,
+                    "tokens": sequence,
+                    "checkpointing": checkpointing,
+                    "case_seed": case_seed,
+                    "input_ids_sha256": input_ids_sha256(ids),
                     "logits": logits,
                     "loss": loss,
                     "loss_reference": float(reference["loss"]),
@@ -328,6 +354,7 @@ def main() -> int:
                         strict_named_parameter_gate
                     ),
                     "gradient_passed": gradient_passed,
+                    "route_passed": route_passed,
                     "route": actual_route,
                     "reference_elapsed_seconds": reference["elapsed_seconds"],
                     "candidate_elapsed_seconds": candidate["elapsed_seconds"],
@@ -347,9 +374,15 @@ def main() -> int:
     ):
         if wheel is not None:
             wheels[name] = {"path": str(wheel), "sha256": sha256_file(wheel)}
+    checkpoint_input_gate = checkpoint_input_hash_gate(
+        cases,
+        key_fields=("batch", "tokens"),
+    )
     report = {
-        "schema": "rwkv7-backend-v2-training-validation-v2",
-        "status": "passed" if not failures else "failed",
+        "schema": "rwkv7-backend-v2-training-validation-v3",
+        "status": (
+            "passed" if not failures and checkpoint_input_gate["passed"] else "failed"
+        ),
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "environment": environment(),
         "model": model_fingerprint(path),
@@ -361,6 +394,10 @@ def main() -> int:
             "batches": batches,
             "tokens": tokens,
             "seed": args.seed,
+            "case_seed_contract": (
+                "order-independent by batch/tokens; checkpoint modes reuse "
+                "identical input IDs"
+            ),
             "gradient_thresholds": {
                 "acceptance_basis": "complete-optimizer-gradient-vector",
                 "global_cosine_min": MODEL_GRADIENT_COSINE_MIN,
@@ -376,6 +413,7 @@ def main() -> int:
             "loss_max_abs": MODEL_LOSS_MAX_ABS,
         },
         "cases": cases,
+        "checkpoint_input_hash_gate": checkpoint_input_gate,
         "failures": failures,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

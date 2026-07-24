@@ -14,6 +14,8 @@ from typing import Any
 
 import torch
 
+from .._runtime_preflight import recurrent_runtime_certified
+
 
 IMPLEMENTATION = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
 TOKEN_CHUNK_LENGTH = 16
@@ -79,9 +81,19 @@ def probe_recurrent_training_v1(
             return _unsupported("attention_mask must be shaped [B,T]")
         if not attention_mask.is_cuda:
             return _unsupported("attention_mask must share the CUDA device")
+        if attention_mask.device != receptance.device:
+            return _unsupported("attention_mask must share the recurrent CUDA device")
+    if any(item.device != receptance.device for item in tensors):
+        return _unsupported("all recurrent tensors must share one CUDA device")
     if not any(item.requires_grad for item in tensors):
         return _unsupported("the native training kernel requires an autograd request")
 
+    if recurrent_runtime_certified(receptance.device):
+        return {
+            "supported": True,
+            "implementation": IMPLEMENTATION,
+            "reason": "coupled runtime preflight and tensor-local checks passed",
+        }
     capability = torch.cuda.get_device_capability(receptance.device)
     if capability < (8, 0):
         return _unsupported("the BF16 training kernel requires sm80 or newer")
@@ -191,13 +203,16 @@ def _run_factorized_recurrent(
     initial_state_zero: bool | None = None,
     token_aligned: bool | None = None,
 ):
-    from ..nvidia.train_temp_cuda import rwkv7_training_recurrent
+    # Every public caller probes before execution.  That probe loads the
+    # extension once; call the custom-autograd edge directly so each model
+    # layer does not repeat runtime/toolchain discovery after certification.
+    from ..nvidia.train_temp_cuda import _ClampW
 
     return _run_masked_training(
         (receptance, decay, key, value, a, b),
         initial_state,
         attention_mask,
-        runner=rwkv7_training_recurrent,
+        runner=_ClampW.apply,
         fully_active=fully_active,
         token_aligned=token_aligned,
     )

@@ -19,6 +19,80 @@ MODEL_GRADIENT_RELATIVE_L2_MAX = 0.025
 NAMED_GRADIENT_COSINE_MIN_DIAGNOSTIC = 0.999
 NAMED_GRADIENT_RELATIVE_L2_MAX_DIAGNOSTIC = 0.02
 
+# Keep the independent evaluator oracle deliberately small until additional
+# dense shapes have passed the same multi-seed full-model gate.  The runtime
+# owns a matching policy in ``rwkv7_kernels.training_dispatcher``; validators
+# do not ask the implementation under test which route they should expect.
+ADAPTIVE_FAST_DOMAIN_BATCH = 4
+ADAPTIVE_FAST_DOMAIN_TOKENS = 128
+
+
+def adaptive_fast_domain_expected(
+    *,
+    batch: int,
+    tokens: int,
+    fully_active: bool = True,
+    initial_state_zero: bool = True,
+    token_aligned: bool | None = None,
+) -> bool:
+    """Return the independently declared adaptive fast-route envelope."""
+
+    if token_aligned is None:
+        token_aligned = tokens > 0 and tokens % 16 == 0
+    return bool(
+        fully_active
+        and initial_state_zero
+        and token_aligned
+        and batch == ADAPTIVE_FAST_DOMAIN_BATCH
+        and tokens == ADAPTIVE_FAST_DOMAIN_TOKENS
+    )
+
+
+def candidate_numerics_not_worse_than_fla(
+    candidate: dict[str, Any],
+    fla: dict[str, Any],
+) -> bool:
+    """Compare all same-input model numerics without hiding loss drift."""
+
+    return bool(
+        candidate["logits"]["cosine"] >= fla["logits"]["cosine"]
+        and candidate["loss"]["max_abs"] <= fla["loss"]["max_abs"]
+        and candidate["global_gradient"]["cosine"] >= fla["global_gradient"]["cosine"]
+        and candidate["global_gradient"]["relative_l2"]
+        <= fla["global_gradient"]["relative_l2"]
+    )
+
+
+def checkpoint_input_hash_gate(
+    cases: list[dict[str, Any]],
+    *,
+    key_fields: tuple[str, ...],
+) -> dict[str, Any]:
+    """Prove checkpoint-on/off cases consumed byte-identical token IDs."""
+
+    groups: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in cases:
+        key = tuple(row[field] for field in key_fields)
+        group = groups.setdefault(key, {"hashes": set(), "modes": set()})
+        group["hashes"].add(str(row["input_ids_sha256"]))
+        group["modes"].add(bool(row["checkpointing"]))
+    rows = []
+    for key, group in sorted(groups.items(), key=lambda item: repr(item[0])):
+        hashes = sorted(group["hashes"])
+        modes = sorted(group["modes"])
+        rows.append(
+            {
+                "key": dict(zip(key_fields, key, strict=True)),
+                "hashes": hashes,
+                "checkpointing_modes": modes,
+                "passed": len(hashes) == 1 and modes == [False, True],
+            }
+        )
+    return {
+        "passed": bool(rows) and all(row["passed"] for row in rows),
+        "groups": rows,
+    }
+
 
 def global_gradient_metric(
     candidate: dict[str, torch.Tensor],
@@ -148,12 +222,17 @@ def gradient_parameter_summary(report: dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "ADAPTIVE_FAST_DOMAIN_BATCH",
+    "ADAPTIVE_FAST_DOMAIN_TOKENS",
     "MODEL_GRADIENT_COSINE_MIN",
     "MODEL_GRADIENT_RELATIVE_L2_MAX",
     "MODEL_LOGITS_COSINE_MIN",
     "MODEL_LOSS_MAX_ABS",
     "NAMED_GRADIENT_COSINE_MIN_DIAGNOSTIC",
     "NAMED_GRADIENT_RELATIVE_L2_MAX_DIAGNOSTIC",
+    "adaptive_fast_domain_expected",
+    "candidate_numerics_not_worse_than_fla",
+    "checkpoint_input_hash_gate",
     "global_gradient_metric",
     "global_gradient_passed",
     "gradient_parameter_summary",

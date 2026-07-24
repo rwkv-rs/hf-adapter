@@ -5,12 +5,13 @@ classes.  The Hugging Face package owns model objects and public cache/output
 semantics; this companion package may execute an accepted request and returns
 plain tensors/mappings only.
 """
+
 from __future__ import annotations
 
 from typing import Any, TypedDict
 
 
-RWKV7_KERNEL_API_VERSION = 2
+RWKV7_KERNEL_API_VERSION = 3
 
 
 class KernelSupport(TypedDict):
@@ -59,7 +60,9 @@ def support_result(
     return result  # type: ignore[return-value]
 
 
-def validate_support_result(value: Any, *, probe_name: str = "kernel probe") -> KernelSupport:
+def validate_support_result(
+    value: Any, *, probe_name: str = "kernel probe"
+) -> KernelSupport:
     """Validate a public probe response before dispatch."""
 
     if not isinstance(value, dict):

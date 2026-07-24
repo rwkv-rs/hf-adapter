@@ -24,6 +24,7 @@ import torch.nn.functional as F
 
 from common import environment, git_revision, model_fingerprint, sha256_file
 from fla_common import activate_fla_source, write_json
+from training_metrics import adaptive_fast_domain_expected
 
 
 MATRIX_RECURRENT_IMPLEMENTATION = (
@@ -34,7 +35,7 @@ FACTORIZED_RECURRENT_IMPLEMENTATION = (
 )
 FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
-CUDA_LINEAR_MIN_ROWS = 128
+PROGRAM_IMPLEMENTATION = "native-nvidia-rwkv7-adaptive-training-program-v1"
 
 
 def canonical_training_mode(value: str) -> str:
@@ -151,6 +152,7 @@ def last_training_routes(kind: str) -> dict[str, Any] | None:
         get_last_mix6_route,
         get_last_model_route,
         get_last_recurrent_route,
+        get_last_training_program_route,
     )
 
     return {
@@ -158,6 +160,7 @@ def last_training_routes(kind: str) -> dict[str, Any] | None:
         "recurrent": get_last_recurrent_route(),
         "linear": get_last_linear_route(),
         "mix6": get_last_mix6_route(),
+        "program": get_last_training_program_route(),
     }
 
 
@@ -745,6 +748,7 @@ def routes_passed(report: dict[str, Any]) -> bool:
             recurrent_route = routes.get("recurrent") or {}
             linear_route = routes.get("linear") or {}
             mix6_route = routes.get("mix6") or {}
+            program_route = routes.get("program") or {}
             if not (
                 model_route.get("selected") == "reference"
                 and model_route.get("phase") == "training"
@@ -760,6 +764,9 @@ def routes_passed(report: dict[str, Any]) -> bool:
                     == "torch-reference-linear-v1"
                     and mix6_route.get("selected") == "reference"
                     and mix6_route.get("implementation") == "torch-reference-mix6-v1"
+                    and program_route.get("selected") == "reference"
+                    and program_route.get("implementation")
+                    == "torch-reference-training-program-v1"
                 ):
                     return False
                 continue
@@ -767,10 +774,10 @@ def routes_passed(report: dict[str, Any]) -> bool:
             shape = row.get("shape") or {}
             batch = int(shape.get("batch", 0))
             tokens = int(shape.get("tokens", 0))
-            aligned = tokens > 0 and tokens % 16 == 0
+            fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
             recurrent_implementation = (
                 FACTORIZED_RECURRENT_IMPLEMENTATION
-                if aligned
+                if fast_domain
                 else MATRIX_RECURRENT_IMPLEMENTATION
             )
             if not (
@@ -778,8 +785,7 @@ def routes_passed(report: dict[str, Any]) -> bool:
                 and recurrent_route.get("implementation") == recurrent_implementation
             ):
                 return False
-            linear_is_optimized = aligned and batch * tokens >= CUDA_LINEAR_MIN_ROWS
-            if linear_is_optimized:
+            if fast_domain:
                 if not (
                     linear_route.get("selected") == "optimized"
                     and linear_route.get("implementation")
@@ -794,6 +800,12 @@ def routes_passed(report: dict[str, Any]) -> bool:
             if not (
                 mix6_route.get("selected") == "optimized"
                 and mix6_route.get("implementation") == MIX6_IMPLEMENTATION
+            ):
+                return False
+            if not (
+                program_route.get("selected")
+                == ("optimized" if fast_domain else "reference")
+                and program_route.get("implementation") == PROGRAM_IMPLEMENTATION
             ):
                 return False
     return True

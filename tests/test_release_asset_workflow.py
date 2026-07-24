@@ -19,6 +19,7 @@ from scripts.verify_release_assets import (
     verify,
 )
 from scripts.release_route_contract import (
+    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
     FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
     READABLE_TRAINING_MODEL_ROUTE,
     REQUIRED_TRAINING_LEAF_ROUTES,
@@ -93,6 +94,7 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
                 "decode": ["native-fused-token-decode-v2"],
                 "training": [
                     READABLE_TRAINING_MODEL_ROUTE,
+                    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
                     *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
                 ],
                 "quantization": ["native-w8-linear-v1"],

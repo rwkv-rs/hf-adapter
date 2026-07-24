@@ -367,3 +367,7 @@ def test_clean_model_passes_masked_shift_tensor_to_mix6_boundary():
         in source
     )
     assert "hidden_states + delta * self.x_r" in source
+    dispatch = source.index("mixed_inputs = maybe_mix6_training(")
+    fallback = source.index("if mixed_inputs is None:", dispatch)
+    delta = source.index("delta = shifted - hidden_states", dispatch)
+    assert dispatch < fallback < delta

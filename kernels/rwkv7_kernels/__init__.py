@@ -14,6 +14,7 @@ from .training_dispatcher import (
     probe_linear_training_v1,
     probe_mix6_training_v1,
     probe_recurrent_training_v1,
+    probe_training_program_v1,
     recurrent_training_v1,
 )
 
@@ -36,6 +37,7 @@ __all__ = [
     "probe_model_forward_v1",
     "probe_recurrent_v1",
     "probe_recurrent_training_v1",
+    "probe_training_program_v1",
     "recurrent_v1",
     "recurrent_training_v1",
 ]

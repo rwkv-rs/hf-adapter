@@ -1,10 +1,11 @@
 """Release-time contract for actual optional-backend route evidence.
 
 The training model boundary is intentionally not an optimized whole-model
-forward.  Standard Hugging Face training executes the readable layer loop and
-may accelerate only the three independent tensor leaves named below.  Keeping
-this rule in one release helper prevents provenance, asset verification, and
-the generated public Issue from drifting to different interpretations.
+forward. Standard Hugging Face training executes the readable layer loop and
+may accelerate only after the atomic adaptive program preflight certifies the
+three independent tensor leaves named below. Keeping this rule in one release
+helper prevents provenance, asset verification, and the generated public Issue
+from drifting to different interpretations.
 """
 
 from __future__ import annotations
@@ -25,12 +26,17 @@ SELECTOR_ONLY_ROUTES = frozenset(
 )
 
 READABLE_TRAINING_MODEL_ROUTE = "torch-reference-model-v1"
+ADAPTIVE_TRAINING_PROGRAM_ROUTE = "native-nvidia-rwkv7-adaptive-training-program-v1"
 REQUIRED_TRAINING_LEAF_ROUTES = frozenset(
     {
         "native-nvidia-rwkv7-factorized-recurrent-training-v1",
         "torch-cuda-rwkv7-flattened-linear-training-v1",
         "native-nvidia-rwkv7-mix6-training-v1",
     }
+)
+REQUIRED_TRAINING_PROGRAM_ROUTES = frozenset({ADAPTIVE_TRAINING_PROGRAM_ROUTE})
+REQUIRED_TRAINING_ROUTES = (
+    REQUIRED_TRAINING_LEAF_ROUTES | REQUIRED_TRAINING_PROGRAM_ROUTES
 )
 HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE = "native-nvidia-train-temp-autograd-v2"
 TRAINING_FALLBACK_ROUTES = frozenset(
@@ -90,9 +96,15 @@ def validate_training_routes(value: Any) -> list[str]:
             "training route evidence lacks required independent kernel leaves: "
             f"{missing_leaves}"
         )
+    missing_programs = sorted(REQUIRED_TRAINING_PROGRAM_ROUTES - training)
+    if missing_programs:
+        raise ValueError(
+            "training route evidence lacks the required atomic adaptive program "
+            f"route: {missing_programs}"
+        )
     allowed = {
         READABLE_TRAINING_MODEL_ROUTE,
-        *REQUIRED_TRAINING_LEAF_ROUTES,
+        *REQUIRED_TRAINING_ROUTES,
         *TRAINING_FALLBACK_ROUTES,
     }
     unknown = sorted(training - allowed)
@@ -121,10 +133,11 @@ def validate_formal_adaptive_environment(environment: Any) -> dict[str, str]:
 def validate_actual_routes(routes: Any) -> dict[str, list[str]]:
     """Validate and normalize the complete release route matrix.
 
-    Training evidence must prove the readable model boundary and every clean
-    accelerated leaf.  The historical whole-model train-temp runtime remains
-    useful for archived diagnostics, but it is not an admissible HF release
-    route and must never be promoted by provenance.
+    Training evidence must prove the readable model boundary, the atomic
+    adaptive program route, and every clean accelerated leaf. The historical
+    whole-model train-temp runtime remains useful for archived diagnostics,
+    but it is not an admissible HF release route and must never be promoted by
+    provenance.
     """
 
     if not isinstance(routes, dict):

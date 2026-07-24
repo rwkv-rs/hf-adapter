@@ -193,7 +193,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 
 - [x] Freeze the complete model-forward ABI and migration inventory before
       moving implementation code.
-- [x] Add the kernel API v2 request/result envelope, explicit diagnostic probe,
+- [x] Add the kernel API v3 request/result envelope, explicit diagnostic probe,
       and the single early clean-model hook; production auto stays disabled.
 - [ ] Complete every `probe_model_forward_v1` / `model_forward_v1` phase and
       enable production auto only after the unified wheel passes.
@@ -229,6 +229,14 @@ relabelled as evidence for this candidate.
       recurrent, flattened-linear, and explicit-shift Mix6 as independent
       tensor leaves. The historical whole-model runtime remains a private
       diagnostic and is not eligible for formal HF training evidence.
+- [x] Advance the optional-package protocol to API v3 and bind one versioned
+      request/result boundary to the adaptive training-program preflight.
+- [x] Make the adaptive preflight atomic: certify recurrent, flattened-linear,
+      and Mix6 support once before the first accelerated projection, or run the
+      complete exact reference program without entering a partial fast path.
+- [x] Report `native-nvidia-rwkv7-adaptive-training-program-v1` separately
+      from the readable model-loop and tensor-leaf routes, and require all of
+      them in release provenance.
 - [x] Preserve the fixed-row readable reference projection contract while the
       optional flattened-linear leaf presents one `[B*T,C]` GEMM to PyTorch.
 - [x] Remove the benchmark's second causal cross-entropy calculation without
@@ -242,12 +250,22 @@ relabelled as evidence for this candidate.
 - [x] Replace Mix6 parameter-gradient atomics and FP32 scratch/cast launches
       with a deterministic, parallel, current-stream two-stage reduction;
       retain canonical replay for small and higher-order requests.
+- [x] Fail closed for PEFT/frozen-input and reentrant-checkpoint forwards when
+      no valid certificate can be consumed; never mix certified and
+      uncertified leaves inside one training program.
+- [x] Derive each formal training case seed from an order-independent SHA256
+      identity and record the exact input-id dtype/shape/bytes hash; require
+      checkpoint-on/off runs to reproduce the same input hash.
 - [x] Add a reproducible profiler that records actual routes, selected
       operator counts/times, recurrence time, peak memory, environment,
-      command, code identity, and wheel identity.
+      command, code identity, and wheel identity. Schema v3 also records the
+      process peak RSS (Linux `VmHWM`, with `getrusage` fallback) so allocator
+      and whole-process memory evidence are not conflated.
 - [x] Pass the complete local Python test/lint/hash gate on the final source
       candidate: full pytest, Ruff on changed first-party Python, diff check,
-      102/102 migration hashes, and source-scope/capability audits.
+      102/102 migration hashes, and source-scope/capability audits. The current
+      source candidate completed **347 tests**; any later byte change requires
+      another full rerun before this count is release evidence.
 - [ ] Build one immutable HF/kernel wheel pair and compile the changed Mix6
       extension on RTX 4080 from that exact pair.
 - [ ] Pass Mix6 output/first-gradient parity, repeated-run determinism, and

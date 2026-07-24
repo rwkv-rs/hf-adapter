@@ -30,6 +30,25 @@ NATIVE_BACKWARD_MIN_ROWS = 32
 _LOAD_LOCK = threading.Lock()
 _LOADED = False
 _LOAD_ERROR: BaseException | None = None
+_CAPABILITY_LOCK = threading.Lock()
+_CAPABILITY_DEVICES: set[tuple[str, int | None]] = set()
+
+
+def _device_key(device: torch.device) -> tuple[str, int | None]:
+    device = torch.device(device)
+    return device.type, device.index
+
+
+def _bf16_capability_available(device: torch.device) -> bool:
+    key = _device_key(device)
+    with _CAPABILITY_LOCK:
+        if key in _CAPABILITY_DEVICES:
+            return True
+    if torch.cuda.get_device_capability(device) < (8, 0):
+        return False
+    with _CAPABILITY_LOCK:
+        _CAPABILITY_DEVICES.add(key)
+    return True
 
 
 def _unsupported(reason: str) -> dict[str, Any]:
@@ -151,7 +170,7 @@ def probe_mix6_training_v1(
         return _unsupported("native Mix6 requires BF16 tensors")
     if not torch.cuda.is_available():
         return _unsupported("native Mix6 requires an available CUDA runtime")
-    if torch.cuda.get_device_capability(value.device) < (8, 0):
+    if not _bf16_capability_available(value.device):
         return _unsupported("native BF16 Mix6 requires sm80 or newer")
     return {
         "supported": True,

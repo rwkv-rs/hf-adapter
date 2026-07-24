@@ -12,6 +12,7 @@ optimizer definitions.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import math
@@ -37,11 +38,13 @@ try:
     from .cache_rwkv7 import RWKV7Cache
     from .configuration_rwkv7 import RWKV7Config
     from .ops_rwkv7 import (
+        get_last_training_batch_context,
         maybe_linear_training,
         maybe_mix6_training,
         maybe_model_forward,
+        resolve_training_batch_context,
         rwkv7_recurrent,
-        set_training_batch_context,
+        training_batch_context,
     )
 except ModuleNotFoundError:
     # Transformers < 5 does not sanitize dots in Hub repository names when it
@@ -67,11 +70,13 @@ except ModuleNotFoundError:
     RWKV7Cache = _load_remote_sibling("cache_rwkv7").RWKV7Cache
     RWKV7Config = _load_remote_sibling("configuration_rwkv7").RWKV7Config
     _remote_ops = _load_remote_sibling("ops_rwkv7")
+    get_last_training_batch_context = _remote_ops.get_last_training_batch_context
     maybe_linear_training = _remote_ops.maybe_linear_training
     maybe_mix6_training = _remote_ops.maybe_mix6_training
     maybe_model_forward = _remote_ops.maybe_model_forward
+    resolve_training_batch_context = _remote_ops.resolve_training_batch_context
     rwkv7_recurrent = _remote_ops.rwkv7_recurrent
-    set_training_batch_context = _remote_ops.set_training_batch_context
+    training_batch_context = _remote_ops.training_batch_context
 
 
 # Mathematically equivalent form used by the official NumPy reference.
@@ -427,8 +432,6 @@ class RWKV7TimeMix(nn.Module):
             attention_mask,
             fully_active=mask_fully_active,
         )
-        delta = shifted - hidden_states
-
         mixed_inputs = maybe_mix6_training(
             hidden_states,
             shifted,
@@ -436,6 +439,11 @@ class RWKV7TimeMix(nn.Module):
             training=self.training,
         )
         if mixed_inputs is None:
+            # The optional Mix6 leaf consumes ``hidden_states`` and ``shifted``
+            # directly.  Form their difference only for the readable fallback
+            # so a successful optimized dispatch does not allocate and launch
+            # the same B*T*C subtraction twice.
+            delta = shifted - hidden_states
             xr = hidden_states + delta * self.x_r
             xw = hidden_states + delta * self.x_w
             xk = hidden_states + delta * self.x_k
@@ -760,30 +768,25 @@ class RWKV7Model(RWKV7PreTrainedModel):
         ffn_shift: torch.Tensor,
         v_first: torch.Tensor,
         attention_mask: torch.Tensor,
-        mask_fully_active: bool,
+        batch_context,
         initial_state_zero: bool,
     ):
         def custom_forward(hidden, state, attn_shift, channel_shift, first_value):
             # Autograd may recompute a checkpoint on a worker context that
             # does not inherit Python ContextVars from the outer model call.
-            # Re-publish mask semantics and zero-state provenance here so
-            # optional leaves select the same mathematical program in both
-            # passes.
-            set_training_batch_context(
-                attention_mask,
-                training=self.training,
-                fully_active=mask_fully_active,
-            )
-            return layer(
-                hidden,
-                state,
-                attn_shift,
-                channel_shift,
-                first_value,
-                attention_mask,
-                mask_fully_active,
-                initial_state_zero,
-            )
+            # Re-publish the exact preflight result here so forward and replay
+            # cannot select different linear/recurrent programs.
+            with training_batch_context(batch_context):
+                return layer(
+                    hidden,
+                    state,
+                    attn_shift,
+                    channel_shift,
+                    first_value,
+                    attention_mask,
+                    batch_context.fully_active,
+                    initial_state_zero,
+                )
 
         checkpoint_fn = getattr(self, "_gradient_checkpointing_func", None)
         if checkpoint_fn is not None:
@@ -806,6 +809,25 @@ class RWKV7Model(RWKV7PreTrainedModel):
             v_first,
             use_reentrant=False,
         )
+
+    def _uses_reentrant_gradient_checkpointing(self) -> bool:
+        """Return whether the configured checkpoint function runs forward in no-grad."""
+
+        if not (self.gradient_checkpointing and self.training):
+            return False
+        checkpoint_fn = getattr(self, "_gradient_checkpointing_func", None)
+        if checkpoint_fn is None:
+            # The local fallback in ``_checkpointed_layer`` is explicitly
+            # non-reentrant.  Transformers installs a functools.partial when
+            # callers select another checkpoint policy.
+            return False
+        keywords = getattr(checkpoint_fn, "keywords", None)
+        if isinstance(keywords, dict) and keywords.get("use_reentrant") is False:
+            return False
+        # PyTorch's historical/default checkpoint behavior is reentrant.  A
+        # custom callable with no inspectable keyword is therefore treated
+        # conservatively rather than granting an invalid fast-program token.
+        return True
 
     def forward(
         self,
@@ -849,6 +871,7 @@ class RWKV7Model(RWKV7PreTrainedModel):
             raise ValueError("RWKV7 requires a non-empty batch and sequence")
 
         supplied_attention_mask = attention_mask
+        batch_initial_state_zero = past_key_values is None
         mask = _normalize_attention_mask(
             attention_mask,
             int(batch_size),
@@ -860,11 +883,22 @@ class RWKV7Model(RWKV7PreTrainedModel):
         # layer, serializing the CUDA queue dozens of times at large batch.
         # A missing mask is known to be fully active without touching the GPU;
         # an explicit mask pays at most one synchronization here.
-        mask_fully_active = set_training_batch_context(
+        reentrant_checkpoint = self._uses_reentrant_gradient_checkpointing()
+        batch_context = resolve_training_batch_context(
             mask,
             training=self.training,
             fully_active=(True if supplied_attention_mask is None else None),
+            initial_state_zero=batch_initial_state_zero,
+            autograd_leaf_eligible=bool(
+                torch.is_grad_enabled()
+                and inputs_embeds.requires_grad
+                and not reentrant_checkpoint
+            ),
+            force_reference_recurrent=reentrant_checkpoint,
+            hidden_states=inputs_embeds,
+            head_dim=int(self.config.head_dim),
         )
+        mask_fully_active = batch_context.fully_active
         hidden_states = inputs_embeds
         if not mask_fully_active:
             hidden_states = hidden_states * mask.unsqueeze(-1).to(
@@ -942,60 +976,73 @@ class RWKV7Model(RWKV7PreTrainedModel):
             dtype=hidden_states.dtype,
         )
 
-        for layer_idx, layer in enumerate(self.layers):
-            # Cache provenance is a Python-side fact.  Only a missing layer,
-            # for which `_layer_state` allocates fresh zeros, may claim the
-            # factorized leaf's zero-state contract. Existing tensors are not
-            # reduced or guessed to be zero.
-            initial_state_zero = any(
-                collection[layer_idx] is None
-                for collection in (
-                    working_cache.recurrent_state,
-                    working_cache.attention_shift,
-                    working_cache.ffn_shift,
+        checkpointing_active = bool(self.gradient_checkpointing and self.training)
+        # Ordinary training publishes one immutable context around the entire
+        # readable layer loop instead of setting four ContextVars per layer.
+        # Checkpointed layers republish inside their closure because replay may
+        # run in another Python context. Inference needs no training context.
+        layer_context = (
+            training_batch_context(batch_context)
+            if self.training and not checkpointing_active
+            else nullcontext()
+        )
+        with layer_context:
+            for layer_idx, layer in enumerate(self.layers):
+                # Cache provenance is a Python-side fact.  Only a missing layer,
+                # for which `_layer_state` allocates fresh zeros, may claim the
+                # factorized leaf's zero-state contract. Existing tensors are not
+                # reduced or guessed to be zero.
+                initial_state_zero = any(
+                    collection[layer_idx] is None
+                    for collection in (
+                        working_cache.recurrent_state,
+                        working_cache.attention_shift,
+                        working_cache.ffn_shift,
+                    )
                 )
-            )
-            recurrent, attention_shift, ffn_shift = self._layer_state(
-                working_cache, layer_idx, hidden_states
-            )
-            v_first = v_first.to(device=hidden_states.device, dtype=hidden_states.dtype)
-            layer_mask = mask.to(device=hidden_states.device)
-            if self.gradient_checkpointing and self.training:
-                outputs = self._checkpointed_layer(
-                    layer,
+                recurrent, attention_shift, ffn_shift = self._layer_state(
+                    working_cache, layer_idx, hidden_states
+                )
+                v_first = v_first.to(
+                    device=hidden_states.device, dtype=hidden_states.dtype
+                )
+                layer_mask = mask.to(device=hidden_states.device)
+                if checkpointing_active:
+                    outputs = self._checkpointed_layer(
+                        layer,
+                        hidden_states,
+                        recurrent,
+                        attention_shift,
+                        ffn_shift,
+                        v_first,
+                        layer_mask,
+                        batch_context,
+                        initial_state_zero,
+                    )
+                else:
+                    outputs = layer(
+                        hidden_states,
+                        recurrent,
+                        attention_shift,
+                        ffn_shift,
+                        v_first,
+                        layer_mask,
+                        mask_fully_active,
+                        initial_state_zero,
+                    )
+                (
                     hidden_states,
                     recurrent,
                     attention_shift,
                     ffn_shift,
                     v_first,
-                    layer_mask,
-                    mask_fully_active,
-                    initial_state_zero,
-                )
-            else:
-                outputs = layer(
-                    hidden_states,
-                    recurrent,
-                    attention_shift,
-                    ffn_shift,
-                    v_first,
-                    layer_mask,
-                    mask_fully_active,
-                    initial_state_zero,
-                )
-            (
-                hidden_states,
-                recurrent,
-                attention_shift,
-                ffn_shift,
-                v_first,
-            ) = outputs
-            if use_cache:
-                working_cache.set_layer(
-                    layer_idx, recurrent, attention_shift, ffn_shift
-                )
-            if output_hidden_states and layer_idx + 1 < len(self.layers):
-                all_hidden_states += (hidden_states,)
+                ) = outputs
+                if use_cache:
+                    working_cache.set_layer(
+                        layer_idx, recurrent, attention_shift, ffn_shift
+                    )
+                if output_hidden_states and layer_idx + 1 < len(self.layers):
+                    all_hidden_states += (hidden_states,)
 
         hidden_states = self.norm(hidden_states)
         if not mask_fully_active:
@@ -1211,7 +1258,16 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
             cache_position=cache_position,
             **kwargs,
         )
-        full_logits = self.lm_head(outputs.last_hidden_state)
+        head_context = get_last_training_batch_context()
+        if head_context is None:
+            raise RuntimeError(
+                "RWKV7 base model did not resolve a training batch context"
+            )
+        if self.training:
+            with training_batch_context(head_context):
+                full_logits = self.lm_head(outputs.last_hidden_state)
+        else:
+            full_logits = self.lm_head(outputs.last_hidden_state)
 
         loss = None
         if labels is not None:

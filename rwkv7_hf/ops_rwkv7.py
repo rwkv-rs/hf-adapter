@@ -9,16 +9,18 @@ Hugging Face APIs stay here.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 import importlib
 import os
 from types import ModuleType
-from typing import Any
+from typing import Any, Iterator
 
 import torch
 
 
-_KERNEL_API_VERSION = 2
+_KERNEL_API_VERSION = 3
 _BACKEND_ENV = "RWKV7_BACKEND"
 _BACKEND_MODES = ("auto", "reference", "optimized")
 # The optional training protocol defines a 16-token chunk. Keeping the value
@@ -45,6 +47,34 @@ _training_batch_fully_active: ContextVar[bool | None] = ContextVar(
 )
 _training_batch_token_aligned: ContextVar[bool | None] = ContextVar(
     "rwkv7_training_batch_token_aligned", default=None
+)
+_training_batch_initial_state_zero: ContextVar[bool | None] = ContextVar(
+    "rwkv7_training_batch_initial_state_zero", default=None
+)
+_training_batch_adaptive_fast_program: ContextVar[bool | None] = ContextVar(
+    "rwkv7_training_batch_adaptive_fast_program", default=None
+)
+_training_batch_force_reference_recurrent: ContextVar[bool] = ContextVar(
+    "rwkv7_training_batch_force_reference_recurrent", default=False
+)
+
+
+@dataclass(frozen=True)
+class RWKV7TrainingBatchContext:
+    """Immutable model-owned facts shared by independent training leaves."""
+
+    fully_active: bool
+    token_aligned: bool | None
+    initial_state_zero: bool | None
+    autograd_leaf_eligible: bool | None
+    force_reference_recurrent: bool
+    adaptive_fast_program: bool | None
+    program_implementation: str
+    program_reason: str
+
+
+_last_training_batch_context: ContextVar[RWKV7TrainingBatchContext | None] = ContextVar(
+    "rwkv7_last_training_batch_context", default=None
 )
 
 
@@ -230,38 +260,203 @@ def get_last_mix6_route() -> dict[str, str] | None:
     return None if route is None else dict(route)
 
 
-def set_training_batch_context(
+def get_last_training_batch_context() -> RWKV7TrainingBatchContext | None:
+    """Return the latest resolved context for the enclosing causal-LM head."""
+
+    return _last_training_batch_context.get()
+
+
+def get_last_training_program_route() -> dict[str, Any] | None:
+    """Return the coupled adaptive-program decision and its model-owned facts."""
+
+    context = _last_training_batch_context.get()
+    if context is None:
+        return None
+    if context.adaptive_fast_program is None:
+        selected = "not-applicable"
+    else:
+        selected = "optimized" if context.adaptive_fast_program else "reference"
+    return {
+        "selected": selected,
+        "implementation": context.program_implementation,
+        "reason": context.program_reason,
+        "facts": {
+            "fully_active": context.fully_active,
+            "token_aligned": context.token_aligned,
+            "initial_state_zero": context.initial_state_zero,
+            "autograd_leaf_eligible": context.autograd_leaf_eligible,
+            "force_reference_recurrent": context.force_reference_recurrent,
+        },
+    }
+
+
+def resolve_training_batch_context(
     attention_mask: torch.Tensor,
     *,
     training: bool,
     fully_active: bool | None = None,
-) -> bool:
-    """Expose batch-shape semantics to optional stateless training leaves.
+    initial_state_zero: bool | None = None,
+    autograd_leaf_eligible: bool | None = None,
+    force_reference_recurrent: bool = False,
+    hidden_states: torch.Tensor | None = None,
+    head_dim: int | None = None,
+) -> RWKV7TrainingBatchContext:
+    """Resolve one immutable training program before any layer leaf executes.
 
-    The clean model owns padding semantics.  This context carries only whether
-    every position is active and whether its sequence length matches the
-    optional protocol's 16-token chunk. This lets a linear leaf retain the
-    same reference program whenever the recurrent leaf takes its exact
-    fallback. It contains no hardware route, model state, parameter, cache,
-    or optimizer object.
+    The clean model owns padding and cache semantics.  The returned value says
+    only whether
+    every position is active, whether its sequence length matches the optional
+    protocol's 16-token chunk, and whether the model created a fresh empty
+    cache for this call.  The optional package may additionally certify the
+    coupled adaptive recurrent/linear program before the first projection.
+    No model, parameter, cache, or optimizer object crosses that probe.
     """
 
     if fully_active is None:
         fully_active = bool(attention_mask.to(dtype=torch.bool).all().detach().cpu())
     elif not isinstance(fully_active, bool):
         raise TypeError("fully_active must be a bool or None")
+    if initial_state_zero is not None and not isinstance(initial_state_zero, bool):
+        raise TypeError("initial_state_zero must be a bool or None")
+    if not isinstance(force_reference_recurrent, bool):
+        raise TypeError("force_reference_recurrent must be a bool")
 
-    training_fully_active = None
     token_aligned = None
+    adaptive_fast_program = None
+    program_implementation = "torch-reference-training-program-v1"
+    program_reason = "model is not executing a training program"
     if training:
-        training_fully_active = fully_active
+        if autograd_leaf_eligible is None:
+            autograd_leaf_eligible = bool(
+                torch.is_grad_enabled()
+                and isinstance(hidden_states, torch.Tensor)
+                and hidden_states.requires_grad
+            )
+        elif not isinstance(autograd_leaf_eligible, bool):
+            raise TypeError("autograd_leaf_eligible must be a bool or None")
         token_aligned = bool(
             attention_mask.ndim == 2
             and int(attention_mask.shape[1]) % _TRAINING_TOKEN_CHUNK_LENGTH == 0
         )
-    _training_batch_fully_active.set(training_fully_active)
-    _training_batch_token_aligned.set(token_aligned)
-    return fully_active
+        adaptive_fast_program = False
+        backend_mode = _backend_mode(None)
+        module = _load_kernel_module() if backend_mode != "reference" else None
+        if backend_mode == "reference":
+            program_reason = "reference backend was explicitly requested"
+        elif module is None:
+            program_reason = _kernel_import_error or "rwkv7_kernels is not installed"
+        probe = (
+            getattr(module, "probe_training_program_v1", None)
+            if module is not None
+            else None
+        )
+        if callable(probe) and isinstance(hidden_states, torch.Tensor):
+            try:
+                supported, implementation, reason = _probe_fields(
+                    probe(
+                        hidden_states,
+                        attention_mask,
+                        training=True,
+                        fully_active=fully_active,
+                        initial_state_zero=initial_state_zero,
+                        token_aligned=token_aligned,
+                        autograd_leaf_eligible=autograd_leaf_eligible,
+                        head_dim=head_dim,
+                    ),
+                    probe_name="probe_training_program_v1",
+                )
+            except Exception as exc:
+                if _is_checkpoint_control_flow(exc):
+                    raise
+                program_reason = (
+                    "coupled adaptive-program probe failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            else:
+                adaptive_fast_program = supported
+                program_implementation = implementation
+                program_reason = reason
+        elif module is not None and not callable(probe):
+            program_reason = (
+                "rwkv7_kernels does not implement probe_training_program_v1"
+            )
+        elif module is not None:
+            program_reason = "hidden_states is unavailable for coupled preflight"
+    context = RWKV7TrainingBatchContext(
+        fully_active=fully_active,
+        token_aligned=token_aligned,
+        initial_state_zero=(initial_state_zero if training else None),
+        autograd_leaf_eligible=(autograd_leaf_eligible if training else None),
+        force_reference_recurrent=bool(training and force_reference_recurrent),
+        adaptive_fast_program=adaptive_fast_program,
+        program_implementation=program_implementation,
+        program_reason=program_reason,
+    )
+    _last_training_batch_context.set(context)
+    return context
+
+
+def _publish_training_batch_context(context: RWKV7TrainingBatchContext):
+    if not isinstance(context, RWKV7TrainingBatchContext):
+        raise TypeError("context must be an RWKV7TrainingBatchContext")
+    return (
+        _training_batch_fully_active.set(context.fully_active),
+        _training_batch_token_aligned.set(context.token_aligned),
+        _training_batch_initial_state_zero.set(context.initial_state_zero),
+        _training_batch_adaptive_fast_program.set(context.adaptive_fast_program),
+        _training_batch_force_reference_recurrent.set(
+            context.force_reference_recurrent
+        ),
+    )
+
+
+@contextmanager
+def training_batch_context(
+    context: RWKV7TrainingBatchContext,
+) -> Iterator[RWKV7TrainingBatchContext]:
+    """Publish one batch context for a layer and restore the caller exactly."""
+
+    tokens = _publish_training_batch_context(context)
+    try:
+        yield context
+    finally:
+        _training_batch_force_reference_recurrent.reset(tokens[4])
+        _training_batch_adaptive_fast_program.reset(tokens[3])
+        _training_batch_initial_state_zero.reset(tokens[2])
+        _training_batch_token_aligned.reset(tokens[1])
+        _training_batch_fully_active.reset(tokens[0])
+
+
+def set_training_batch_context(
+    attention_mask: torch.Tensor,
+    *,
+    training: bool,
+    fully_active: bool | None = None,
+    initial_state_zero: bool | None = None,
+    autograd_leaf_eligible: bool | None = None,
+    force_reference_recurrent: bool = False,
+    hidden_states: torch.Tensor | None = None,
+    head_dim: int | None = None,
+) -> bool:
+    """Publish a context for standalone protocol tests and return mask status.
+
+    Model execution uses :func:`training_batch_context`, whose lexical scope
+    restores every ContextVar.  This setter is intentionally low level for
+    direct leaf callers that own the surrounding context lifetime.
+    """
+
+    context = resolve_training_batch_context(
+        attention_mask,
+        training=training,
+        fully_active=fully_active,
+        initial_state_zero=initial_state_zero,
+        autograd_leaf_eligible=autograd_leaf_eligible,
+        force_reference_recurrent=force_reference_recurrent,
+        hidden_states=hidden_states,
+        head_dim=head_dim,
+    )
+    _publish_training_batch_context(context)
+    return context.fully_active
 
 
 def _load_kernel_module() -> ModuleType | None:
@@ -296,8 +491,12 @@ def _reset_kernel_discovery_for_tests() -> None:
     _last_model_route.set(None)
     _last_linear_route.set(None)
     _last_mix6_route.set(None)
+    _last_training_batch_context.set(None)
     _training_batch_fully_active.set(None)
     _training_batch_token_aligned.set(None)
+    _training_batch_initial_state_zero.set(None)
+    _training_batch_adaptive_fast_program.set(None)
+    _training_batch_force_reference_recurrent.set(False)
 
 
 def _probe_fields(
@@ -527,6 +726,7 @@ def maybe_linear_training(
     if not training:
         return None
     requested = _backend_mode(backend)
+    atomic_fast_program = _training_batch_adaptive_fast_program.get() is True
 
     def record(selected: str, implementation: str, reason: str) -> None:
         _last_linear_route.set(
@@ -549,7 +749,7 @@ def maybe_linear_training(
     module = _load_kernel_module()
     if module is None:
         reason = _kernel_import_error or "rwkv7_kernels is not installed"
-        if requested == "optimized":
+        if requested == "optimized" or atomic_fast_program:
             raise RuntimeError(f"optimized RWKV7 backend is unavailable: {reason}")
         record("reference", "torch-reference-linear-v1", reason)
         return None
@@ -564,7 +764,9 @@ def maybe_linear_training(
     else:
         try:
             hints = {
+                "adaptive_fast_program": (_training_batch_adaptive_fast_program.get()),
                 "fully_active": _training_batch_fully_active.get(),
+                "initial_state_zero": _training_batch_initial_state_zero.get(),
                 "token_aligned": _training_batch_token_aligned.get(),
             }
             if callable(execute):
@@ -590,9 +792,10 @@ def maybe_linear_training(
                 )
                 result = None
             if not supported:
-                if requested == "optimized":
+                if requested == "optimized" or atomic_fast_program:
                     raise RuntimeError(
-                        "optimized RWKV7 backend does not support this request: "
+                        "atomic adaptive RWKV7 training program does not support "
+                        "this projection request: "
                         f"{reason}"
                     )
                 record("reference", "torch-reference-linear-v1", reason)
@@ -615,9 +818,9 @@ def maybe_linear_training(
         except Exception as exc:
             if _is_checkpoint_control_flow(exc):
                 raise
-            if requested == "optimized":
+            if requested == "optimized" or atomic_fast_program:
                 raise RuntimeError(
-                    "optimized RWKV7 linear-training-v1 execution failed: "
+                    "atomic adaptive RWKV7 linear-training-v1 execution failed: "
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
             failure = exc
@@ -626,7 +829,7 @@ def maybe_linear_training(
             return result
 
     reason = f"optional kernel failure: {type(failure).__name__}: {failure}"
-    if requested == "optimized":
+    if requested == "optimized" or atomic_fast_program:
         raise RuntimeError(reason) from failure
     record("reference", "torch-reference-linear-v1", reason)
     return None
@@ -653,6 +856,7 @@ def maybe_mix6_training(
     if len(mixes) != 6:
         raise ValueError("RWKV7 Mix6 requires exactly six parameter tensors")
     requested = _backend_mode(backend)
+    atomic_fast_program = _training_batch_adaptive_fast_program.get() is True
 
     def record(selected: str, implementation: str, reason: str) -> None:
         _last_mix6_route.set(
@@ -675,7 +879,7 @@ def maybe_mix6_training(
     module = _load_kernel_module()
     if module is None:
         reason = _kernel_import_error or "rwkv7_kernels is not installed"
-        if requested == "optimized":
+        if requested == "optimized" or atomic_fast_program:
             raise RuntimeError(f"optimized RWKV7 backend is unavailable: {reason}")
         record("reference", "torch-reference-mix6-v1", reason)
         return None
@@ -716,9 +920,10 @@ def maybe_mix6_training(
                 )
                 result = None
             if not supported:
-                if requested == "optimized":
+                if requested == "optimized" or atomic_fast_program:
                     raise RuntimeError(
-                        "optimized RWKV7 backend does not support this request: "
+                        "atomic adaptive RWKV7 training program does not support "
+                        "this Mix6 request: "
                         f"{reason}"
                     )
                 record("reference", "torch-reference-mix6-v1", reason)
@@ -740,9 +945,9 @@ def maybe_mix6_training(
         except Exception as exc:
             if _is_checkpoint_control_flow(exc):
                 raise
-            if requested == "optimized":
+            if requested == "optimized" or atomic_fast_program:
                 raise RuntimeError(
-                    "optimized RWKV7 mix6-training-v1 execution failed: "
+                    "atomic adaptive RWKV7 mix6-training-v1 execution failed: "
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
             failure = exc
@@ -751,7 +956,7 @@ def maybe_mix6_training(
             return result
 
     reason = f"optional kernel failure: {type(failure).__name__}: {failure}"
-    if requested == "optimized":
+    if requested == "optimized" or atomic_fast_program:
         raise RuntimeError(reason) from failure
     record("reference", "torch-reference-mix6-v1", reason)
     return None
@@ -785,6 +990,30 @@ def rwkv7_recurrent(
         raise TypeError("initial_state_zero must be a bool or None")
 
     requested = _backend_mode(backend)
+    atomic_fast_program = bool(
+        training and _training_batch_adaptive_fast_program.get() is True
+    )
+    if training and _training_batch_force_reference_recurrent.get():
+        reason = (
+            "reentrant checkpoint forward and replay are pinned to the readable "
+            "recurrent program"
+        )
+        _record_route(
+            requested=requested,
+            selected="reference",
+            implementation="torch-reference-v1",
+            reason=reason,
+        )
+        return rwkv7_recurrent_reference(
+            receptance,
+            decay,
+            key,
+            value,
+            a,
+            b,
+            initial_state,
+            attention_mask,
+        )
     if requested == "reference":
         reason = "reference backend was explicitly requested"
         _record_route(
@@ -807,7 +1036,7 @@ def rwkv7_recurrent(
     module = _load_kernel_module()
     if module is None:
         reason = _kernel_import_error or "rwkv7_kernels is not installed"
-        if requested == "optimized":
+        if requested == "optimized" or atomic_fast_program:
             raise RuntimeError(f"optimized RWKV7 backend is unavailable: {reason}")
         _record_route(
             requested=requested,
@@ -857,12 +1086,23 @@ def rwkv7_recurrent(
         if training:
             fully_active = _training_batch_fully_active.get()
             token_aligned = _training_batch_token_aligned.get()
+            batch_initial_state_zero = _training_batch_initial_state_zero.get()
+            adaptive_fast_program = _training_batch_adaptive_fast_program.get()
             if fully_active is not None:
                 training_hints["fully_active"] = fully_active
             if token_aligned is not None:
                 training_hints["token_aligned"] = token_aligned
+            if adaptive_fast_program is not None:
+                training_hints["adaptive_fast_program"] = adaptive_fast_program
             if initial_state_zero is not None:
-                training_hints["initial_state_zero"] = initial_state_zero
+                training_hints["initial_state_zero"] = bool(
+                    initial_state_zero
+                    and (
+                        batch_initial_state_zero
+                        if batch_initial_state_zero is not None
+                        else True
+                    )
+                )
         try:
             if callable(execute):
                 execution = execute(*args, **training_hints)
@@ -881,9 +1121,10 @@ def rwkv7_recurrent(
                 )
                 candidate = None
             if not supported:
-                if requested == "optimized":
+                if requested == "optimized" or atomic_fast_program:
                     raise RuntimeError(
-                        "optimized RWKV7 backend does not support this request: "
+                        "atomic adaptive RWKV7 recurrent program does not support "
+                        "this request: "
                         f"{reason}"
                     )
                 _record_route(
@@ -903,9 +1144,9 @@ def rwkv7_recurrent(
         except Exception as exc:
             if _is_checkpoint_control_flow(exc):
                 raise
-            if requested == "optimized":
+            if requested == "optimized" or atomic_fast_program:
                 raise RuntimeError(
-                    f"optimized RWKV7 {protocol} execution failed: "
+                    f"atomic adaptive RWKV7 {protocol} execution failed: "
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
             failure = exc
@@ -919,7 +1160,7 @@ def rwkv7_recurrent(
             return result
 
     reason = f"optional kernel failure: {type(failure).__name__}: {failure}"
-    if requested == "optimized":
+    if requested == "optimized" or atomic_fast_program:
         raise RuntimeError(reason) from failure
     _record_route(
         requested=requested,
@@ -940,14 +1181,19 @@ def rwkv7_recurrent(
 
 
 __all__ = [
+    "RWKV7TrainingBatchContext",
     "get_last_linear_route",
     "get_last_mix6_route",
     "get_last_model_route",
     "get_last_recurrent_route",
+    "get_last_training_batch_context",
+    "get_last_training_program_route",
     "maybe_linear_training",
     "maybe_mix6_training",
     "maybe_model_forward",
     "rwkv7_recurrent",
     "rwkv7_recurrent_reference",
+    "resolve_training_batch_context",
     "set_training_batch_context",
+    "training_batch_context",
 ]

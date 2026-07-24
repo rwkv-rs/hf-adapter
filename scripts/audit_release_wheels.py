@@ -44,6 +44,7 @@ HF_FORBIDDEN = {
 }
 KERNEL_REQUIRED = {
     "rwkv7_kernels/__init__.py",
+    "rwkv7_kernels/_runtime_preflight.py",
     "rwkv7_kernels/dispatcher.py",
     "rwkv7_kernels/linear/__init__.py",
     "rwkv7_kernels/linear/training_flattened.py",
@@ -78,6 +79,9 @@ KERNEL_FORBIDDEN = {
     "native_model.py",
     "tokenization_rwkv7.py",
 }
+KERNEL_INIT = "rwkv7_kernels/__init__.py"
+KERNEL_PROTOCOL = "rwkv7_kernels/protocol.py"
+KERNEL_API_VERSION = 3
 MIGRATION_MANIFEST = "rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
 CAPABILITY_INVENTORY = "rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
 SOURCE_SCOPE = "rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
@@ -288,6 +292,93 @@ def kernel_policy_fields(archive: zipfile.ZipFile) -> set[str]:
     raise ValueError("kernel wheel has no KernelPolicy declaration")
 
 
+def module_tree(archive: zipfile.ZipFile, member: str) -> ast.Module:
+    """Parse one Python wheel member without importing untrusted wheel code."""
+
+    try:
+        source = archive.read(member).decode("utf-8")
+        return ast.parse(source, filename=member)
+    except (KeyError, UnicodeDecodeError, SyntaxError) as exc:
+        raise ValueError(
+            f"kernel wheel has an unreadable Python module: {member}"
+        ) from exc
+
+
+def literal_assignment(tree: ast.Module, name: str, *, member: str) -> Any:
+    """Return one literal module assignment, rejecting ambiguity or code."""
+
+    values: list[ast.expr] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            values.append(node.value)
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+            and node.value is not None
+        ):
+            values.append(node.value)
+    if len(values) != 1:
+        raise ValueError(f"{member} must define exactly one literal {name}")
+    try:
+        return ast.literal_eval(values[0])
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{member} {name} must be a literal") from exc
+
+
+def audit_kernel_protocol(
+    archive: zipfile.ZipFile,
+    members: set[str],
+) -> dict[str, Any]:
+    """Bind the executable public protocol to the advertised API inventory."""
+
+    missing = sorted({KERNEL_INIT, KERNEL_PROTOCOL} - members)
+    if missing:
+        raise ValueError(f"kernel wheel is missing public protocol files: {missing}")
+
+    protocol_tree = module_tree(archive, KERNEL_PROTOCOL)
+    api_version = literal_assignment(
+        protocol_tree,
+        "RWKV7_KERNEL_API_VERSION",
+        member=KERNEL_PROTOCOL,
+    )
+    if api_version != KERNEL_API_VERSION:
+        raise ValueError(
+            "kernel protocol API version must be "
+            f"{KERNEL_API_VERSION}; got {api_version!r}"
+        )
+
+    init_tree = module_tree(archive, KERNEL_INIT)
+    public_name = "probe_training_program_v1"
+    imported = any(
+        isinstance(node, ast.ImportFrom)
+        and node.level == 1
+        and node.module == "training_dispatcher"
+        and any(
+            alias.name == public_name and alias.asname in (None, public_name)
+            for alias in node.names
+        )
+        for node in init_tree.body
+    )
+    exports = literal_assignment(init_tree, "__all__", member=KERNEL_INIT)
+    if not isinstance(exports, (list, tuple)) or not all(
+        isinstance(value, str) for value in exports
+    ):
+        raise ValueError(f"{KERNEL_INIT} __all__ must be a literal string sequence")
+    if not imported or public_name not in exports:
+        raise ValueError(
+            f"kernel wheel does not publicly export {public_name} from training_dispatcher"
+        )
+    return {
+        "status": "passed",
+        "api_version": api_version,
+        "training_program_probe": public_name,
+    }
+
+
 def historical_tree_oid(
     rows: list[dict[str, Any]],
     source_subtree: str = "rwkv7_hf",
@@ -372,8 +463,10 @@ def audit_capability_inventory(
     inventory = json.loads(archive.read(CAPABILITY_INVENTORY))
     if inventory.get("schema") != "rwkv7-nvidia-capability-inventory-v1":
         raise ValueError("unexpected NVIDIA capability inventory schema")
-    if inventory.get("kernel_api_version") != 2:
-        raise ValueError("capability inventory must bind kernel API version 2")
+    if inventory.get("kernel_api_version") != KERNEL_API_VERSION:
+        raise ValueError(
+            f"capability inventory must bind kernel API version {KERNEL_API_VERSION}"
+        )
     rows = inventory.get("capabilities")
     if not isinstance(rows, list):
         raise ValueError("capability inventory must contain a capabilities list")
@@ -789,6 +882,7 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
             names,
             migrated,
         )
+        protocol_report = audit_kernel_protocol(archive, names)
         source_scope_report = audit_source_scope(archive, names, manifest)
         recurrent_source_scope_report = audit_recurrent_source_scope(
             archive,
@@ -796,6 +890,7 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
         )
         return {
             "status": "passed",
+            "public_protocol": protocol_report,
             "capability_inventory": capability_report,
             "source_scope": source_scope_report,
             "recurrent_source_scope": recurrent_source_scope_report,

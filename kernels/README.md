@@ -13,7 +13,7 @@ reference operation order and is bit-exact; the decode route stays within the
 published FP16 gate with identical greedy tokens. V1 is inference-only;
 autograd requests automatically retain the readable path.
 
-Backend API v2 adds one whole-model capability boundary around the same public
+Backend API v3 adds one whole-model capability boundary around the same public
 model. Its internal implementations cover fused sequence prefill, fused cached
 decode, package-owned CUDA Graph/state pools, SM70/Ada/Blackwell policies, and
 native and external W8/W4/A8W8 adapters. Public cache state remains canonical
@@ -72,10 +72,21 @@ python your_hf_training_program.py
 ```
 
 `adaptive` selects the factorized recurrent and flattened linear leaves only
-for a fully active batch whose token length is divisible by 16. A masked,
-unaligned, stateful, unsupported-dtype, or unsupported-device request selects
-the exact matrix recurrence and reference linears instead. The actual leaf
-name, never the `adaptive` selector, is reported in evidence.
+in the currently certified fully active, zero-state `B=4,T=128` domain. A
+masked, unaligned, stateful, differently shaped, unsupported-dtype, or
+unsupported-device request selects the exact matrix recurrence and reference
+linears instead. The actual leaf name, never the `adaptive` selector, is
+reported in evidence. The domain can expand only after the new shape passes
+the same full-model numerical gate.
+
+Before the first projection, API v3 certifies that the recurrent extension and
+the coupled flattened-linear program are both available. Every layer and a
+checkpoint replay receives that same immutable certificate. A late leaf
+decline aborts the candidate forward instead of silently mixing an uncertified
+flattened-linear result with matrix/reference recurrence.
+Frozen-input adapter steps and explicitly reentrant checkpoint forwards do not
+receive that certificate; they retain the exact recurrent/reference-linear
+program instead of failing after a partial fast-path execution.
 `RWKV7_TRAINING_KERNEL_IMPL=matrix` and
 `RWKV7_TRAINING_KERNEL_IMPL=factorized` isolate either program without
 compatibility aliases.

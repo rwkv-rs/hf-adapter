@@ -301,7 +301,7 @@ def render_issue(
             "not an admissible formal HF training route.",
             "The later v0.10 recurrent wheel is independently covered: its complete "
             "three-file package subtree is reconstructed and its Graph/Triton "
-            "implementations remain byte-identical behind API v2.",
+            "implementations remain byte-identical behind API v3.",
             "",
             "## Actual routes",
             "",

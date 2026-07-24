@@ -23,6 +23,7 @@ class FakeEvent:
         count: int,
         cpu: float = 0.0,
         device: float = 0.0,
+        input_shapes=None,
     ) -> None:
         self.key = key
         self.count = count
@@ -32,6 +33,7 @@ class FakeEvent:
         self.device_time_total = device + 1.0
         self.cpu_memory_usage = 11
         self.device_memory_usage = 22
+        self.input_shapes = input_shapes
 
 
 class FakeProfiler:
@@ -39,6 +41,7 @@ class FakeProfiler:
         self.events = events
         self.steps = 0
         self.kwargs = None
+        self.key_average_kwargs = None
 
     def factory(self, **kwargs):
         self.kwargs = kwargs
@@ -53,8 +56,54 @@ class FakeProfiler:
     def step(self) -> None:
         self.steps += 1
 
-    def key_averages(self) -> list[FakeEvent]:
+    def key_averages(self, **kwargs) -> list[FakeEvent]:
+        self.key_average_kwargs = kwargs
         return self.events
+
+
+def optimized_route(*, fast_domain: bool) -> dict:
+    return {
+        "model": {
+            "selected": "reference",
+            "implementation": "torch-reference-model-v1",
+        },
+        "recurrent": {
+            "selected": "optimized",
+            "implementation": (
+                "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+                if fast_domain
+                else "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+            ),
+        },
+        "linear": {
+            "selected": "optimized" if fast_domain else "reference",
+            "implementation": (
+                "torch-cuda-rwkv7-flattened-linear-training-v1"
+                if fast_domain
+                else "torch-reference-linear-v1"
+            ),
+        },
+        "mix6": {
+            "selected": "optimized",
+            "implementation": "native-nvidia-rwkv7-mix6-training-v1",
+        },
+        "program": {
+            "selected": "optimized" if fast_domain else "reference",
+            "implementation": "native-nvidia-rwkv7-adaptive-training-program-v1",
+        },
+    }
+
+
+def test_profile_route_oracle_matches_certified_adaptive_domain():
+    assert hotspots.expected_route(
+        "optimized", optimized_route(fast_domain=True), batch=4, tokens=128
+    )
+    assert hotspots.expected_route(
+        "optimized", optimized_route(fast_domain=False), batch=1, tokens=128
+    )
+    assert not hotspots.expected_route(
+        "optimized", optimized_route(fast_domain=True), batch=1, tokens=128
+    )
 
 
 def test_profile_case_uses_only_model_loss_and_records_route_and_shape():
@@ -110,6 +159,10 @@ def test_profile_case_uses_only_model_loss_and_records_route_and_shape():
             "selected": "optimized",
             "implementation": "native-nvidia-rwkv7-mix6-training-v1",
         },
+        "program": {
+            "selected": "reference",
+            "implementation": "native-nvidia-rwkv7-adaptive-training-program-v1",
+        },
     }
     ids = torch.tensor([[1, 2, 3, 4], [4, 3, 2, 1]])
     labels = ids.clone()
@@ -132,12 +185,22 @@ def test_profile_case_uses_only_model_loss_and_records_route_and_shape():
     assert all(call["use_cache"] is False for call in model.calls)
     assert all(call["logits_to_keep"] == 0 for call in model.calls)
     assert profiler.steps == 2
-    assert profiler.kwargs["record_shapes"] is True
-    assert profiler.kwargs["profile_memory"] is True
+    assert profiler.kwargs["record_shapes"] is False
+    assert profiler.kwargs["profile_memory"] is False
+    assert profiler.key_average_kwargs == {"group_by_input_shape": False}
     assert row["loss_mode"] == "model-output-loss"
     assert row["shape"] == {"batch": 2, "tokens": 4}
     assert row["route"] == route
     assert row["route_passed"]
+    assert row["host_synchronization_passed"]
+    assert row["profiler_settings"] == {
+        "record_shapes": False,
+        "group_by_input_shape": False,
+        "profile_memory": False,
+        "profile_memory_events": False,
+        "with_stack": False,
+    }
+    assert row["process_peak_rss_bytes"] > 0
     assert row["loss"] == {"samples": [4.0, 4.0], "finite": True, "last": 4.0}
     assert row["hotspots"]["selected_operators"]["aten::mm"]["count"] == 4
     assert row["hotspots"]["selected_operators"]["aten::cat"]["count"] == 0
@@ -176,8 +239,50 @@ def test_event_summary_has_stable_operator_and_recurrent_schema():
     assert report["categories"]["normalization"]["aggregate"]["count"] == 4
     assert report["categories"]["allocation_or_zeroing"]["aggregate"]["count"] == 13
     assert report["categories"]["host_synchronization"]["aggregate"]["count"] == 20
+    assert not report["host_synchronization_gate"]["passed"]
+    assert report["host_synchronization_gate"]["exact_operators"] == list(
+        hotspots.EXACT_HOST_SYNC_OPERATORS
+    )
     assert report["top_launch_count"][0]["name"] == "aten::zero_"
     assert report["total_operator_calls"] == 62
+
+
+def test_event_summary_aggregates_duplicate_exact_names_and_keeps_shape_groups():
+    report = hotspots.summarize_events(
+        [
+            FakeEvent(
+                "aten::mm",
+                count=3,
+                cpu=2.0,
+                device=4.0,
+                input_shapes=[[4, 8], [8, 16]],
+            ),
+            FakeEvent(
+                "aten::mm",
+                count=5,
+                cpu=7.0,
+                device=11.0,
+                input_shapes=[[32, 8], [8, 16]],
+            ),
+            # These names contain sync-like terms but are deliberately not
+            # part of the exact scalar-host-sync gate.
+            FakeEvent("cudaMemcpy", count=17, cpu=3.0),
+        ],
+        include_input_shapes=True,
+    )
+
+    mm = report["selected_operators"]["aten::mm"]
+    assert mm["count"] == 8
+    assert mm["self_cpu_time_us"] == 9.0
+    assert mm["self_device_time_us"] == 15.0
+    assert [group["input_shapes"] for group in mm["input_shape_groups"]] == [
+        [[4, 8], [8, 16]],
+        [[32, 8], [8, 16]],
+    ]
+    assert report["event_count"] == 2
+    assert report["key_average_row_count"] == 3
+    assert report["total_operator_calls"] == 25
+    assert report["host_synchronization_gate"]["passed"]
 
 
 def test_build_report_writes_json_with_provenance(monkeypatch, tmp_path):
@@ -193,6 +298,8 @@ def test_build_report_writes_json_with_provenance(monkeypatch, tmp_path):
         tokens=[128],
         warmup=1,
         active=2,
+        group_by_input_shape=False,
+        profile_memory_events=False,
         dtype="bf16",
         seed=42,
         code_sha="abc123",
@@ -202,6 +309,7 @@ def test_build_report_writes_json_with_provenance(monkeypatch, tmp_path):
     case = {
         "route_passed": True,
         "loss": {"finite": True},
+        "host_synchronization_passed": True,
         "shape": {"batch": 4, "tokens": 128},
     }
     monkeypatch.setattr(hotspots, "environment", lambda: {"gpu": "mock"})
@@ -217,8 +325,16 @@ def test_build_report_writes_json_with_provenance(monkeypatch, tmp_path):
 
     assert loaded["schema"] == hotspots.SCHEMA
     assert loaded["status"] == "passed"
+    assert loaded["gates"] == {
+        "routes": True,
+        "finite_loss": True,
+        "no_profiled_scalar_host_sync": True,
+    }
     assert loaded["code_sha"] == "abc123"
     assert loaded["settings"]["loss_mode"] == "model-output-loss"
+    assert loaded["settings"]["record_shapes"] is False
+    assert loaded["settings"]["profile_memory"] is False
+    assert loaded["settings"]["profile_memory_events"] is False
     assert loaded["cases"]["optimized-b4-t128"]["shape"] == {
         "batch": 4,
         "tokens": 128,
@@ -226,6 +342,17 @@ def test_build_report_writes_json_with_provenance(monkeypatch, tmp_path):
     assert loaded["wheels"]["rwkv7_kernels"]["path"] == str(wheel)
     assert len(loaded["wheels"]["rwkv7_kernels"]["sha256"]) == 64
     assert loaded["environment"] == {"gpu": "mock"}
+
+    case["host_synchronization_passed"] = False
+    failed = hotspots.build_report(
+        args,
+        cases={"optimized-b4-t128": case},
+        fla=None,
+    )
+    assert failed["status"] == "failed"
+    assert failed["gates"]["routes"]
+    assert failed["gates"]["finite_loss"]
+    assert not failed["gates"]["no_profiled_scalar_host_sync"]
 
 
 def test_arguments_validate_fla_and_clean_leaf_dtype(tmp_path):
@@ -247,3 +374,41 @@ def test_arguments_validate_fla_and_clean_leaf_dtype(tmp_path):
     base.update(dtype="fp16")
     with pytest.raises(ValueError, match="requires --dtype bf16"):
         hotspots.validate_arguments(SimpleNamespace(**base))
+
+
+def test_arguments_default_to_one_low_memory_active_step(tmp_path):
+    args = hotspots.arguments(
+        ["--model", str(tmp_path), "--output", str(tmp_path / "out.json")]
+    )
+
+    assert args.active == 1
+    assert args.profile_memory_events is False
+    assert args.group_by_input_shape is False
+
+
+def test_process_peak_rss_prefers_linux_vmhwm(monkeypatch):
+    monkeypatch.setattr(
+        hotspots.Path,
+        "read_text",
+        lambda _self: "Name:\tpython\nVmHWM:\t123 kB\n",
+    )
+    assert hotspots._process_peak_rss_bytes() == 123 * 1024
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    (("darwin", 123), ("linux", 123 * 1024)),
+)
+def test_process_peak_rss_fallback_uses_platform_units(monkeypatch, platform, expected):
+    def unavailable(_self):
+        raise OSError("no procfs")
+
+    monkeypatch.setattr(hotspots.Path, "read_text", unavailable)
+    monkeypatch.setattr(
+        hotspots.resource,
+        "getrusage",
+        lambda _who: SimpleNamespace(ru_maxrss=123),
+    )
+    monkeypatch.setattr(hotspots.sys, "platform", platform)
+
+    assert hotspots._process_peak_rss_bytes() == expected

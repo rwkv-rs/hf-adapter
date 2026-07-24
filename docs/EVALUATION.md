@@ -179,10 +179,17 @@ Training comparison never substitutes a second model class. The reference and
 candidate lanes load the same `RWKV7ForCausalLM`; the candidate keeps the
 readable layer loop and replaces only canonical mathematical leaves.  The
 `adaptive` candidate uses the factorized recurrent and flattened linear leaves
-for fully active batches whose token length is divisible by 16. It selects the
-exact matrix recurrence and reference linears for masked or unaligned batches.
-`matrix` and `factorized` remain explicit isolation modes. FLA is loaded from
-the pinned checkout as an independent comparison lane.
+only in the currently certified fully active, zero-state `B=4,T=128` domain.
+It selects the exact matrix recurrence and reference linears for masked,
+unaligned, stateful, or differently shaped batches. `matrix` and `factorized`
+remain explicit isolation modes. FLA is loaded from the pinned checkout as an
+independent comparison lane.
+
+The optional package certifies that coupled fast program once before any
+projection. The same immutable decision is replayed under gradient
+checkpointing and used by the LM head. If a certified linear or recurrent leaf
+later declines, the forward fails instead of returning an unvalidated mixture
+of flattened projections and exact/reference recurrence.
 
 The factorized rows require a CUDA development toolkit matching
 `torch.version.cuda`. The kernel wheel installs Ninja, but it deliberately does
@@ -237,10 +244,13 @@ For the exact rows of `--candidate adaptive` (or `--candidate matrix`), the
 full-model gate requires actual recurrent route
 `torch-cuda-rwkv7-batched-matrix-recurrent-training-v1`, reference linear route
 `torch-reference-linear-v1`, and readable model route
-`torch-reference-model-v1`. For fully active, 16-token-aligned adaptive rows
-(or explicit `--candidate factorized` rows), the expected recurrent route is
-`native-nvidia-rwkv7-factorized-recurrent-training-v1`; the flattened linear
-route is required only when `batch * tokens >= 128`. The gate rejects
+`torch-reference-model-v1`. Only the fully active, fresh-zero-state
+`B=4,T=128` adaptive row is currently certified for the coupled
+`native-nvidia-rwkv7-factorized-recurrent-training-v1` plus flattened-linear
+program. Explicit `--candidate factorized` remains an isolated recurrent
+experiment, not an adaptive model-route claim. Frozen-input/PEFT requests and
+reentrant checkpoint forwards fail closed to the exact program unless their
+actual leaves have a valid autograd edge. The gate rejects
 non-finite tensors, missing gradients, loss/logit/optimizer-vector threshold
 failures, or a candidate result numerically worse than the pinned FLA lane. Named
 per-parameter diagnostics remain in JSON even when the aggregate

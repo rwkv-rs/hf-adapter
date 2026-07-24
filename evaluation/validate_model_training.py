@@ -21,7 +21,14 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from common import environment, git_revision, model_fingerprint, sha256_file
+from common import (
+    environment,
+    git_revision,
+    input_ids_sha256,
+    model_fingerprint,
+    sha256_file,
+    training_case_seed,
+)
 from fla_common import (
     activate_fla_source,
     gradient_metrics,
@@ -35,6 +42,9 @@ from training_metrics import (
     MODEL_GRADIENT_RELATIVE_L2_MAX,
     MODEL_LOGITS_COSINE_MIN,
     MODEL_LOSS_MAX_ABS,
+    adaptive_fast_domain_expected,
+    candidate_numerics_not_worse_than_fla,
+    checkpoint_input_hash_gate,
     global_gradient_metric,
     global_gradient_passed,
     gradient_parameter_summary,
@@ -50,6 +60,7 @@ FACTORIZED_RECURRENT_IMPLEMENTATION = (
 )
 FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
+PROGRAM_IMPLEMENTATION = "native-nvidia-rwkv7-adaptive-training-program-v1"
 CUDA_LINEAR_MIN_ROWS = 128
 
 
@@ -85,8 +96,9 @@ def arguments() -> argparse.Namespace:
         choices=("adaptive", "matrix", "factorized"),
         default="adaptive",
         help=(
-            "adaptive uses the factorized dense route with exact masked "
-            "fallback; matrix and factorized isolate one recurrent program"
+            "adaptive uses the fast recurrent and linear leaves only in the "
+            "certified dense zero-state B=4,T=128 domain and exact leaves "
+            "elsewhere; matrix and factorized isolate one recurrent program"
         ),
     )
     return parser.parse_args()
@@ -296,18 +308,21 @@ def collect_lane(
     linear_route = None
     mix6_route = None
     model_route = None
+    program_route = None
     if lane != "fla":
         from rwkv7_hf.ops_rwkv7 import (
             get_last_linear_route,
             get_last_mix6_route,
             get_last_model_route,
             get_last_recurrent_route,
+            get_last_training_program_route,
         )
 
         recurrent_route = get_last_recurrent_route()
         linear_route = get_last_linear_route()
         mix6_route = get_last_mix6_route()
         model_route = get_last_model_route()
+        program_route = get_last_training_program_route()
 
     performance = None
     if not checkpointing:
@@ -328,6 +343,7 @@ def collect_lane(
         "linear_route": linear_route,
         "mix6_route": mix6_route,
         "model_route": model_route,
+        "program_route": program_route,
         "performance": performance,
         "padding_contract": (
             "per-sample-compact-scatter" if compact_padding else "hf-mask"
@@ -386,8 +402,15 @@ def candidate_route_passed(
     linear = row["linear_route"]
     mix6 = row["mix6_route"]
     model = row["model_route"]
+    program = row["program_route"]
+    adaptive_fast_domain = adaptive_fast_domain_expected(
+        batch=batch,
+        tokens=tokens,
+        fully_active=padding == "none",
+        initial_state_zero=True,
+    )
     exact_route = candidate == "matrix" or (
-        candidate == "adaptive" and (padding != "none" or tokens % 16 != 0)
+        candidate == "adaptive" and not adaptive_fast_domain
     )
     if exact_route:
         expected_recurrent = MATRIX_RECURRENT_IMPLEMENTATION
@@ -444,6 +467,18 @@ def candidate_route_passed(
         and model.get("selected") == "reference"
         and model.get("implementation") == "torch-reference-model-v1"
         and model.get("phase") == "training"
+        and program
+        and program.get("selected")
+        == (
+            "optimized"
+            if candidate == "adaptive" and adaptive_fast_domain
+            else "reference"
+        )
+        and (
+            program.get("implementation") == PROGRAM_IMPLEMENTATION
+            if candidate != "reference"
+            else program.get("implementation") == "torch-reference-training-program-v1"
+        )
     )
 
 
@@ -455,6 +490,7 @@ def compact_lane(row: dict[str, Any]) -> dict[str, Any]:
         "linear_route": row["linear_route"],
         "mix6_route": row["mix6_route"],
         "model_route": row["model_route"],
+        "program_route": row["program_route"],
         "performance": row["performance"],
         "padding_contract": row["padding_contract"],
     }
@@ -500,13 +536,13 @@ def main() -> int:
                 if token_count <= 1:
                     raise ValueError("training validation requires at least two tokens")
                 for padding in padding_modes:
-                    generator = torch.Generator(device="cuda").manual_seed(
-                        args.seed
-                        + int(checkpointing) * 1_000_000
-                        + batch * 1000
-                        + token_count
-                        + {"none": 0, "left": 100_000, "right": 200_000}[padding]
+                    case_seed = training_case_seed(
+                        args.seed,
+                        batch=batch,
+                        tokens=token_count,
+                        padding=padding,
                     )
+                    generator = torch.Generator(device="cuda").manual_seed(case_seed)
                     ids = torch.randint(
                         1,
                         vocab,
@@ -552,18 +588,16 @@ def main() -> int:
                         tokens=token_count,
                         padding=padding,
                     )
-                    candidate_not_worse_than_fla = bool(
-                        comparisons["candidate"]["logits"]["cosine"]
-                        >= comparisons["fla"]["logits"]["cosine"]
-                        and comparisons["candidate"]["global_gradient"]["cosine"]
-                        >= comparisons["fla"]["global_gradient"]["cosine"]
-                        and comparisons["candidate"]["global_gradient"]["relative_l2"]
-                        <= comparisons["fla"]["global_gradient"]["relative_l2"]
+                    candidate_numerics_not_worse = (
+                        candidate_numerics_not_worse_than_fla(
+                            comparisons["candidate"],
+                            comparisons["fla"],
+                        )
                     )
                     passed = bool(
                         route_ok
                         and comparisons["candidate"]["passed"]
-                        and candidate_not_worse_than_fla
+                        and candidate_numerics_not_worse
                     )
                     performance = None
                     if not checkpointing:
@@ -586,17 +620,32 @@ def main() -> int:
                             f"checkpointing-{str(checkpointing).lower()}"
                         ),
                         "passed": passed,
+                        "batch": batch,
+                        "tokens": token_count,
+                        "padding": padding,
+                        "checkpointing": checkpointing,
+                        "case_seed": case_seed,
+                        "input_ids_sha256": input_ids_sha256(ids),
                         "route_passed": route_ok,
                         "candidate": args.candidate,
                         "linear_leaf_expected": (
-                            args.candidate in {"adaptive", "factorized"}
-                            and padding == "none"
-                            and (
-                                args.candidate == "factorized" or token_count % 16 == 0
+                            (
+                                args.candidate == "factorized"
+                                and batch * token_count >= CUDA_LINEAR_MIN_ROWS
                             )
-                            and batch * token_count >= CUDA_LINEAR_MIN_ROWS
+                            or (
+                                args.candidate == "adaptive"
+                                and adaptive_fast_domain_expected(
+                                    batch=batch,
+                                    tokens=token_count,
+                                    fully_active=padding == "none",
+                                    initial_state_zero=True,
+                                )
+                            )
                         ),
-                        "candidate_not_worse_than_fla": (candidate_not_worse_than_fla),
+                        "candidate_numerics_not_worse_than_fla": (
+                            candidate_numerics_not_worse
+                        ),
                         "lanes": {
                             name: compact_lane(lane) for name, lane in lanes.items()
                         },
@@ -609,9 +658,15 @@ def main() -> int:
                     del lanes, ids, labels, attention_mask
                     gc.collect()
 
+    checkpoint_input_gate = checkpoint_input_hash_gate(
+        cases,
+        key_fields=("batch", "tokens", "padding"),
+    )
     report = {
-        "schema": "rwkv7-model-training-leaves-validation-v2",
-        "status": "passed" if not failures else "failed",
+        "schema": "rwkv7-model-training-leaves-validation-v3",
+        "status": (
+            "passed" if not failures and checkpoint_input_gate["passed"] else "failed"
+        ),
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "environment": environment(),
         "model": model_fingerprint(path),
@@ -627,6 +682,10 @@ def main() -> int:
             "warmup": args.warmup,
             "iterations": args.iterations,
             "seed": args.seed,
+            "case_seed_contract": (
+                "order-independent by batch/tokens/padding; checkpoint modes "
+                "reuse identical input IDs"
+            ),
             "cuda_linear_min_flattened_rows": CUDA_LINEAR_MIN_ROWS,
             "release_thresholds": {
                 "gradient_acceptance_basis": ("complete-optimizer-gradient-vector"),
@@ -641,15 +700,19 @@ def main() -> int:
                 int(row["comparisons"]["fla"]["passed"]) for row in cases
             ),
             "total_cases": len(cases),
-            "release_gate": ("required candidate-not-worse-than-fla numerical guard"),
+            "release_gate": (
+                "required candidate-not-worse-than-fla logits, loss, and "
+                "complete-gradient guard"
+            ),
             "masked_padding_contract": "per-sample-compact-scatter",
         },
         "cases": cases,
+        "checkpoint_input_hash_gate": checkpoint_input_gate,
         "failures": failures,
     }
     write_json(args.output, report)
     print(json.dumps({"output": str(args.output), "status": report["status"]}))
-    return 0 if not failures else 1
+    return 0 if report["status"] == "passed" else 1
 
 
 if __name__ == "__main__":
