@@ -15,6 +15,7 @@ import gc
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 from typing import Any, Callable
 
@@ -96,10 +97,55 @@ def training_backend_environment(training_mode: str) -> None:
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
 
 
-def last_route() -> dict[str, Any] | None:
-    from rwkv7_hf.ops_rwkv7 import get_last_model_route
+def _model_route_getter(model) -> Callable[[], dict[str, Any] | None] | None:
+    """Resolve the route accessor owned by the model's modeling module.
 
-    return get_last_model_route()
+    Transformers 4.x loads ``trust_remote_code`` checkpoints into a dynamic
+    package.  Its sibling ``ops_rwkv7`` module therefore owns different
+    ContextVars from the installed ``rwkv7_hf`` package.  Resolve through the
+    actual model class and the imported ``maybe_model_forward`` function so
+    normal installed models, package-free dynamic packages, and the direct
+    sibling fallback all read the route written by their own forward pass.
+    """
+
+    pending = [model]
+    seen: set[int] = set()
+    while pending:
+        candidate = pending.pop(0)
+        if candidate is None or id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+
+        modeling_module = sys.modules.get(type(candidate).__module__)
+        maybe_forward = getattr(modeling_module, "maybe_model_forward", None)
+        ops_module = sys.modules.get(getattr(maybe_forward, "__module__", ""))
+        getter = getattr(ops_module, "get_last_model_route", None)
+        if callable(getter):
+            return getter
+
+        get_base_model = getattr(candidate, "get_base_model", None)
+        if callable(get_base_model):
+            try:
+                pending.append(get_base_model())
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        wrapped = getattr(candidate, "module", None)
+        if wrapped is not None and wrapped is not candidate:
+            pending.append(wrapped)
+        base_model = getattr(candidate, "base_model", None)
+        if base_model is not None and base_model is not candidate:
+            pending.append(base_model)
+    return None
+
+
+def last_model_route(model) -> dict[str, Any] | None:
+    """Return the route from the exact ops module used by ``model``."""
+
+    getter = _model_route_getter(model)
+    if getter is None:
+        return None
+    route = getter()
+    return dict(route) if isinstance(route, dict) else None
 
 
 def last_training_routes() -> dict[str, Any]:
@@ -272,7 +318,7 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
             )
             with torch.inference_mode():
                 base_output = base(input_ids=ids, use_cache=True)
-            base_route = last_route()
+            base_route = last_model_route(base)
             base_ok = bool(
                 torch.isfinite(base_output.last_hidden_state).all()
                 and base_output.past_key_values is not None
@@ -312,7 +358,7 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
                     pad_token_id=0,
                     eos_token_id=None,
                 )
-            generation_route = last_route()
+            generation_route = last_model_route(model)
             with tempfile.TemporaryDirectory(
                 prefix="rwkv7-backend-v2-save-"
             ) as directory:

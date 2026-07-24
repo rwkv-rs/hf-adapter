@@ -4,7 +4,7 @@ import itertools
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
@@ -19,6 +19,7 @@ from common import input_ids_sha256, training_case_seed  # noqa: E402
 from validate_backend_v2_ecosystem import (  # noqa: E402
     base_model_backend_environment,
     expected_dense_training_route,
+    last_model_route,
     training_mixed_precision,
     training_parameter_dtype,
     training_smoke_learning_rate,
@@ -653,6 +654,49 @@ def test_base_auto_model_uses_fail_closed_fallback_environment(monkeypatch):
     assert os.environ["RWKV7_MODEL_KERNEL_IMPL"] == "native"
     assert os.environ["RWKV7_KERNEL_IMPL"] == "auto"
     assert os.environ["RWKV7_TRAINING_KERNEL_IMPL"] == "auto"
+
+
+def test_ecosystem_model_route_uses_dynamic_model_ops_namespace(monkeypatch):
+    modeling_name = "transformers_modules.rwkv7_test.modeling_rwkv7"
+    ops_name = "transformers_modules.rwkv7_test.ops_rwkv7"
+    route = {
+        "selected": "optimized",
+        "implementation": "native-nvidia-fused-decode-v2[dense]",
+        "phase": "decode",
+    }
+    modeling_module = ModuleType(modeling_name)
+    ops_module = ModuleType(ops_name)
+
+    def maybe_model_forward():
+        raise AssertionError("route resolution must not execute the dispatcher")
+
+    maybe_model_forward.__module__ = ops_name
+    modeling_module.maybe_model_forward = maybe_model_forward
+    ops_module.get_last_model_route = lambda: dict(route)
+    monkeypatch.setitem(sys.modules, modeling_name, modeling_module)
+    monkeypatch.setitem(sys.modules, ops_name, ops_module)
+
+    DynamicModel = type("DynamicModel", (), {"__module__": modeling_name})
+
+    class Wrapper:
+        def get_base_model(self):
+            return DynamicModel()
+
+    assert last_model_route(Wrapper()) == route
+
+
+def test_ecosystem_model_route_uses_installed_model_ops_namespace(monkeypatch):
+    import rwkv7_hf.ops_rwkv7 as installed_ops
+    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+    route = {
+        "selected": "reference",
+        "implementation": "torch-reference-model-v1",
+        "phase": "prefill",
+    }
+    monkeypatch.setattr(installed_ops, "get_last_model_route", lambda: dict(route))
+    model = RWKV7ForCausalLM.__new__(RWKV7ForCausalLM)
+    assert last_model_route(model) == route
 
 
 def test_sm70_fla_gate_requires_actual_optimized_recurrent_route():
