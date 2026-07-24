@@ -38,6 +38,7 @@ from fla_common import (
 )
 from training_metrics import (
     adaptive_fast_domain_expected,
+    classify_candidate_and_fla_reference_results,
     full_model_reference_release_envelope,
     global_gradient_metric,
     gradient_parameter_summary,
@@ -709,24 +710,22 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
         lane.pop("logits")
         lane.pop("loss")
         lane.pop("gradients")
-    independent_reference_release_gate = {
-        "passed": all(
-            comparisons[name]["reference_release_envelope"]["passed"]
-            for name in ("optimized", "fla")
-        ),
-        "lanes": {
-            name: comparisons[name]["reference_release_envelope"]
-            for name in ("optimized", "fla")
-        },
-    }
+    numerical_roles = classify_candidate_and_fla_reference_results(
+        comparisons["optimized"], comparisons["fla"]
+    )
+    candidate_reference_release_gate = numerical_roles[
+        "candidate_reference_release_gate"
+    ]
+    fla_reference_diagnostic = numerical_roles["fla_reference_diagnostic"]
     return {
         "passed": bool(
-            optimized_route_passed and independent_reference_release_gate["passed"]
+            optimized_route_passed and candidate_reference_release_gate["passed"]
         ),
         "batch": batch,
         "tokens": tokens,
         "optimized_route_passed": optimized_route_passed,
-        "independent_reference_release_gate": independent_reference_release_gate,
+        "candidate_reference_release_gate": candidate_reference_release_gate,
+        "fla_reference_diagnostic": fla_reference_diagnostic,
         "routes": {name: row["route"] for name, row in lanes.items()},
         "comparisons": comparisons,
     }

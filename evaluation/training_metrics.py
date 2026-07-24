@@ -88,6 +88,30 @@ def full_model_reference_release_envelope(
     }
 
 
+def classify_candidate_and_fla_reference_results(
+    candidate: dict[str, Any],
+    fla: dict[str, Any],
+) -> dict[str, Any]:
+    """Separate the blocking candidate gate from the external FLA diagnostic.
+
+    Both lanes retain the same readable-reference measurements.  Only the
+    implementation under test is a release gate: pinned FLA is an independent
+    third-party comparator whose BF16 drift must remain visible but cannot
+    invalidate a candidate that satisfies the published reference envelope.
+    """
+
+    candidate_envelope = full_model_reference_release_envelope(candidate)
+    fla_envelope = full_model_reference_release_envelope(fla)
+    return {
+        "passed": candidate_envelope["passed"],
+        "candidate_reference_release_gate": candidate_envelope,
+        "fla_reference_diagnostic": {
+            **fla_envelope,
+            "role": "diagnostic-non-blocking",
+        },
+    }
+
+
 def checkpoint_input_hash_gate(
     cases: list[dict[str, Any]],
     *,
@@ -256,6 +280,7 @@ __all__ = [
     "NAMED_GRADIENT_COSINE_MIN_DIAGNOSTIC",
     "NAMED_GRADIENT_RELATIVE_L2_MAX_DIAGNOSTIC",
     "adaptive_fast_domain_expected",
+    "classify_candidate_and_fla_reference_results",
     "checkpoint_input_hash_gate",
     "full_model_reference_release_envelope",
     "global_gradient_metric",

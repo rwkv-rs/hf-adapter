@@ -33,6 +33,7 @@ from validate_model_training import (  # noqa: E402
 )
 from training_metrics import (  # noqa: E402
     adaptive_fast_domain_expected,
+    classify_candidate_and_fla_reference_results,
     checkpoint_input_hash_gate,
     full_model_reference_release_envelope,
     global_gradient_metric,
@@ -725,7 +726,7 @@ def test_training_case_provenance_is_order_independent_and_hashes_exact_ids():
     assert digest != input_ids_sha256(changed)
 
 
-def test_training_lanes_independently_use_the_fixed_reference_envelope():
+def test_candidate_gate_is_independent_from_the_external_fla_diagnostic():
     candidate = {
         "logits": {"finite": True, "cosine": 0.99996},
         "loss": {"finite": True, "max_abs": 0.0020},
@@ -756,13 +757,24 @@ def test_training_lanes_independently_use_the_fixed_reference_envelope():
     }
 
     candidate_envelope = full_model_reference_release_envelope(candidate)
-    fla_envelope = full_model_reference_release_envelope(fla)
     assert candidate_envelope["passed"]
-    assert fla_envelope["passed"]
     assert candidate["loss"]["max_abs"] > fla["loss"]["max_abs"]
 
+    # A pinned external comparator can fall outside this project's strict
+    # gradient envelope without invalidating a conforming candidate.  Its
+    # failure remains explicit and non-blocking in the classification.
+    fla["global_gradient"]["relative_l2"] = 0.04
+    classification = classify_candidate_and_fla_reference_results(candidate, fla)
+    assert classification["passed"]
+    assert classification["candidate_reference_release_gate"]["passed"]
+    assert not classification["fla_reference_diagnostic"]["passed"]
+    assert (
+        classification["fla_reference_diagnostic"]["role"] == "diagnostic-non-blocking"
+    )
+
     candidate["loss"]["max_abs"] = 0.011
-    assert not full_model_reference_release_envelope(candidate)["passed"]
+    classification = classify_candidate_and_fla_reference_results(candidate, fla)
+    assert not classification["passed"]
 
 
 def test_fla_full_model_comparison_keeps_named_gradient_gate_diagnostic():

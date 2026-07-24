@@ -47,6 +47,7 @@ from training_metrics import (
     MODEL_LOGITS_COSINE_MIN,
     MODEL_LOSS_MAX_ABS,
     adaptive_fast_domain_expected,
+    classify_candidate_and_fla_reference_results,
     checkpoint_input_hash_gate,
     full_model_reference_release_envelope,
     global_gradient_metric,
@@ -594,18 +595,21 @@ def main() -> int:
                         tokens=token_count,
                         padding=padding,
                     )
-                    independent_reference_release_gate = {
-                        "passed": all(
-                            comparisons[lane]["reference_release_envelope"]["passed"]
-                            for lane in ("candidate", "fla")
-                        ),
-                        "lanes": {
-                            lane: comparisons[lane]["reference_release_envelope"]
-                            for lane in ("candidate", "fla")
-                        },
-                    }
+                    numerical_roles = classify_candidate_and_fla_reference_results(
+                        comparisons["candidate"], comparisons["fla"]
+                    )
+                    candidate_reference_release_gate = numerical_roles[
+                        "candidate_reference_release_gate"
+                    ]
+                    fla_reference_diagnostic = numerical_roles[
+                        "fla_reference_diagnostic"
+                    ]
+                    # The optional backend is the implementation under test.
+                    # Pinned FLA is an external numerical/speed comparator and
+                    # remains fully reported, but an FLA deviation cannot turn
+                    # an otherwise valid candidate into a candidate failure.
                     passed = bool(
-                        route_ok and independent_reference_release_gate["passed"]
+                        route_ok and candidate_reference_release_gate["passed"]
                     )
                     performance = None
                     if not checkpointing:
@@ -651,9 +655,10 @@ def main() -> int:
                                 )
                             )
                         ),
-                        "independent_reference_release_gate": (
-                            independent_reference_release_gate
+                        "candidate_reference_release_gate": (
+                            candidate_reference_release_gate
                         ),
+                        "fla_reference_diagnostic": fla_reference_diagnostic,
                         "lanes": {
                             name: compact_lane(lane) for name, lane in lanes.items()
                         },
@@ -671,7 +676,7 @@ def main() -> int:
         key_fields=("batch", "tokens", "padding"),
     )
     report = {
-        "schema": "rwkv7-model-training-leaves-validation-v3",
+        "schema": "rwkv7-model-training-leaves-validation-v4",
         "status": (
             "passed" if not failures and checkpoint_input_gate["passed"] else "failed"
         ),
@@ -708,25 +713,48 @@ def main() -> int:
                 },
             },
         },
-        "independent_reference_release_status": {
-            "passed_cases": sum(
-                int(row["independent_reference_release_gate"]["passed"])
-                for row in cases
-            ),
+        "release_gate": {
+            "name": "candidate-vs-readable-reference",
+            "blocking": True,
+            "passed": not failures and checkpoint_input_gate["passed"],
+            "passed_cases": sum(int(row["passed"]) for row in cases),
             "total_cases": len(cases),
-            "lane_passed_cases": {
-                lane: sum(
-                    int(
-                        row["comparisons"][lane]["reference_release_envelope"]["passed"]
-                    )
-                    for row in cases
-                )
-                for lane in ("candidate", "fla")
-            },
+            "route_passed_cases": sum(int(row["route_passed"]) for row in cases),
+            "reference_envelope_passed_cases": sum(
+                int(row["candidate_reference_release_gate"]["passed"]) for row in cases
+            ),
             "comparison_target": "readable-reference",
             "acceptance_basis": "fixed-full-model-reference-envelope",
-            "masked_padding_contract": "per-sample-compact-scatter",
         },
+        "external_comparators": {
+            "fla_vs_readable_reference": {
+                "role": "diagnostic-non-blocking",
+                "strict_envelope_passed": all(
+                    row["fla_reference_diagnostic"]["passed"] for row in cases
+                ),
+                "passed_cases": sum(
+                    int(row["fla_reference_diagnostic"]["passed"]) for row in cases
+                ),
+                "total_cases": len(cases),
+                "failures_by_component": {
+                    component: sum(
+                        int(
+                            not row["fla_reference_diagnostic"]["components"][component]
+                        )
+                        for row in cases
+                    )
+                    for component in (
+                        "logits",
+                        "causal_loss",
+                        "optimizer_gradient_vector",
+                    )
+                },
+                "pinned_revision": fla.get("commit"),
+                "masked_padding_contract": "per-sample-compact-scatter",
+            }
+        },
+        "diagnostics_complete": len(cases)
+        == len(batches) * len(tokens) * len(padding_modes) * len(checkpointing_modes),
         "cases": cases,
         "checkpoint_input_hash_gate": checkpoint_input_gate,
         "failures": failures,
