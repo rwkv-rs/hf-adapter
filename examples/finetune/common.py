@@ -28,6 +28,9 @@ FACTORIZED_RECURRENT_IMPLEMENTATION = (
 )
 FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
+ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION = (
+    "native-nvidia-rwkv7-adaptive-training-program-v1"
+)
 HISTORICAL_WHOLE_MODEL_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
 
 
@@ -594,6 +597,7 @@ class ReproCallback(TrainerCallback):
                 ("recurrent", "get_last_recurrent_route"),
                 ("linear", "get_last_linear_route"),
                 ("mix6", "get_last_mix6_route"),
+                ("program", "get_last_training_program_route"),
             ):
                 getter = getattr(ops_module, name, None)
                 if callable(getter):
@@ -606,6 +610,7 @@ class ReproCallback(TrainerCallback):
                 get_last_mix6_route,
                 get_last_model_route,
                 get_last_recurrent_route,
+                get_last_training_program_route,
             )
 
             for boundary, getter in (
@@ -613,6 +618,7 @@ class ReproCallback(TrainerCallback):
                 ("recurrent", get_last_recurrent_route),
                 ("linear", get_last_linear_route),
                 ("mix6", get_last_mix6_route),
+                ("program", get_last_training_program_route),
             ):
                 route = getter()
                 if boundary not in routes and isinstance(route, dict):
@@ -694,6 +700,20 @@ class ReproCallback(TrainerCallback):
             and route.get("implementation") == MIX6_IMPLEMENTATION
             for route in self.backend_routes
         )
+        adaptive_fast_program = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "program"
+            and route.get("selected") == "optimized"
+            and route.get("implementation") == ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION
+            for route in self.backend_routes
+        )
+        adaptive_program_fallback = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "program"
+            and route.get("selected") == "reference"
+            and route.get("implementation") == ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION
+            for route in self.backend_routes
+        )
         status = {
             "finite_loss": self.saw_finite_loss,
             "nonzero_gradient": self.saw_nonzero_gradient,
@@ -703,6 +723,8 @@ class ReproCallback(TrainerCallback):
             "factorized_recurrent_leaf": factorized_recurrent_leaf,
             "flattened_linear_leaf": flattened_linear_leaf,
             "mix6_leaf": mix6_leaf,
+            "adaptive_fast_program": adaptive_fast_program,
+            "adaptive_program_fallback": adaptive_program_fallback,
             "clean_leaf_training": bool(
                 readable_model_loop
                 and factorized_recurrent_leaf

@@ -18,6 +18,11 @@ from pathlib import Path
 import statistics
 from typing import Any
 
+# Fix pinned FLA/TorchInductor compilation to one worker.  The default
+# 24-process pool was observed to hit its 300-second atexit TimeoutExpired
+# after the validation JSON had already been written.
+os.environ.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")
+
 import torch
 import torch.nn.functional as F
 
@@ -33,7 +38,6 @@ from fla_common import (
     activate_fla_source,
     gradient_metrics,
     gradient_rows_passed,
-    metric_passed,
     tensor_metric,
     write_json,
 )
@@ -43,10 +47,9 @@ from training_metrics import (
     MODEL_LOGITS_COSINE_MIN,
     MODEL_LOSS_MAX_ABS,
     adaptive_fast_domain_expected,
-    candidate_numerics_not_worse_than_fla,
     checkpoint_input_hash_gate,
+    full_model_reference_release_envelope,
     global_gradient_metric,
-    global_gradient_passed,
     gradient_parameter_summary,
 )
 
@@ -367,21 +370,24 @@ def compare_lane(candidate: dict[str, Any], reference: dict[str, Any]):
         reference["gradients"],
     )
     parameter_summary = gradient_parameter_summary(gradients)
-    strict_named_parameter_gate = gradient_rows_passed(gradients, DTYPE)
+    strict_named_parameter_diagnostic_passed = gradient_rows_passed(gradients, DTYPE)
     # BF16 roundoff compounds through every residual block.  The release gate
     # therefore measures the complete optimizer update as one named gradient
     # vector while retaining all per-parameter rows and their stricter result.
     # The recurrent operator itself keeps the tighter all-input leaf gate.
-    passed = bool(
-        metric_passed(logits, DTYPE, logits=True)
-        and logits["cosine"] >= MODEL_LOGITS_COSINE_MIN
-        and loss["finite"]
-        and loss["max_abs"] <= MODEL_LOSS_MAX_ABS
-        and global_gradient_passed(global_gradient)
+    release_envelope = full_model_reference_release_envelope(
+        {
+            "logits": logits,
+            "loss": loss,
+            "global_gradient": global_gradient,
+        }
     )
     return {
-        "passed": passed,
-        "strict_named_parameter_gate": strict_named_parameter_gate,
+        "passed": release_envelope["passed"],
+        "reference_release_envelope": release_envelope,
+        "strict_named_parameter_diagnostic_passed": (
+            strict_named_parameter_diagnostic_passed
+        ),
         "logits": logits,
         "loss": loss,
         "gradients": gradients,
@@ -588,16 +594,18 @@ def main() -> int:
                         tokens=token_count,
                         padding=padding,
                     )
-                    candidate_numerics_not_worse = (
-                        candidate_numerics_not_worse_than_fla(
-                            comparisons["candidate"],
-                            comparisons["fla"],
-                        )
-                    )
+                    independent_reference_release_gate = {
+                        "passed": all(
+                            comparisons[lane]["reference_release_envelope"]["passed"]
+                            for lane in ("candidate", "fla")
+                        ),
+                        "lanes": {
+                            lane: comparisons[lane]["reference_release_envelope"]
+                            for lane in ("candidate", "fla")
+                        },
+                    }
                     passed = bool(
-                        route_ok
-                        and comparisons["candidate"]["passed"]
-                        and candidate_numerics_not_worse
+                        route_ok and independent_reference_release_gate["passed"]
                     )
                     performance = None
                     if not checkpointing:
@@ -643,8 +651,8 @@ def main() -> int:
                                 )
                             )
                         ),
-                        "candidate_numerics_not_worse_than_fla": (
-                            candidate_numerics_not_worse
+                        "independent_reference_release_gate": (
+                            independent_reference_release_gate
                         ),
                         "lanes": {
                             name: compact_lane(lane) for name, lane in lanes.items()
@@ -687,23 +695,36 @@ def main() -> int:
                 "reuse identical input IDs"
             ),
             "cuda_linear_min_flattened_rows": CUDA_LINEAR_MIN_ROWS,
-            "release_thresholds": {
-                "gradient_acceptance_basis": ("complete-optimizer-gradient-vector"),
-                "logits_cosine_min": MODEL_LOGITS_COSINE_MIN,
-                "loss_max_abs": MODEL_LOSS_MAX_ABS,
-                "global_gradient_cosine_min": MODEL_GRADIENT_COSINE_MIN,
-                "global_gradient_relative_l2_max": (MODEL_GRADIENT_RELATIVE_L2_MAX),
+            "full_model_reference_release_envelope": {
+                "comparison_target": "readable-reference",
+                "acceptance_basis": "fixed-full-model-reference-envelope",
+                "thresholds": {
+                    "logits_cosine_min": MODEL_LOGITS_COSINE_MIN,
+                    "causal_loss_max_abs": MODEL_LOSS_MAX_ABS,
+                    "optimizer_gradient_cosine_min": MODEL_GRADIENT_COSINE_MIN,
+                    "optimizer_gradient_relative_l2_max": (
+                        MODEL_GRADIENT_RELATIVE_L2_MAX
+                    ),
+                },
             },
         },
-        "fla_comparison_status": {
+        "independent_reference_release_status": {
             "passed_cases": sum(
-                int(row["comparisons"]["fla"]["passed"]) for row in cases
+                int(row["independent_reference_release_gate"]["passed"])
+                for row in cases
             ),
             "total_cases": len(cases),
-            "release_gate": (
-                "required candidate-not-worse-than-fla logits, loss, and "
-                "complete-gradient guard"
-            ),
+            "lane_passed_cases": {
+                lane: sum(
+                    int(
+                        row["comparisons"][lane]["reference_release_envelope"]["passed"]
+                    )
+                    for row in cases
+                )
+                for lane in ("candidate", "fla")
+            },
+            "comparison_target": "readable-reference",
+            "acceptance_basis": "fixed-full-model-reference-envelope",
             "masked_padding_contract": "per-sample-compact-scatter",
         },
         "cases": cases,

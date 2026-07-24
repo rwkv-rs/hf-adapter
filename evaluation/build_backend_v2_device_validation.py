@@ -17,11 +17,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from evaluation.fla_common import EXPECTED_FLA_COMMIT  # noqa: E402
+from evaluation.validate_finetune_runs import (  # noqa: E402
+    validate_adaptive_finetune_route_evidence,
+)
 from scripts.release_route_contract import (  # noqa: E402
     HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
     validate_actual_routes,
     validate_formal_adaptive_environment,
-    validate_training_routes,
 )
 
 
@@ -222,41 +224,16 @@ def validate_finetune(
         }
         if actual != expected:
             raise ValueError(f"{name} report wheel identity mismatch")
-        training_routes = set(phase_routes(row.get("backend_routes"), "training"))
+        backend_routes = row.get("backend_routes") or []
         trace = row.get("kernel_route_trace") or {}
-        if trace.get("schema") != "rwkv7-kernel-route-trace-v2":
-            raise ValueError(f"{name} report lacks the versioned kernel route trace")
-        if trace.get("requested_training_policy") != "adaptive":
-            raise ValueError(f"{name} report was not run with adaptive training")
-        counters = (
-            "actual_model_calls",
-            "actual_recurrent_calls",
-            "actual_linear_calls",
-            "actual_mix6_calls",
+        route_evidence = validate_adaptive_finetune_route_evidence(
+            backend_routes, trace
         )
-        for counter in counters:
-            values = trace.get(counter) or {}
-            if not isinstance(values, dict):
-                raise ValueError(f"{name} report has invalid {counter}")
-            training_routes.update(
-                str(implementation)
-                for implementation, count in values.items()
-                if int(count) > 0
-            )
-        if int(
-            (trace.get("actual_model_calls") or {}).get(
-                HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE, 0
-            )
-        ):
+        if not route_evidence["passed"]:
             raise ValueError(
-                f"{name} report executed the historical whole-model diagnostic"
+                f"{name} report has invalid adaptive training routes: "
+                f"{route_evidence['failures']}"
             )
-        try:
-            validate_training_routes(sorted(training_routes))
-        except ValueError as exc:
-            raise ValueError(
-                f"{name} report has invalid training routes: {exc}"
-            ) from exc
         statuses[f"{name}_status"] = "passed"
     return statuses
 

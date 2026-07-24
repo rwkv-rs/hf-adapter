@@ -11,8 +11,13 @@ import pytest
 import torch
 
 from evaluation.validate_finetune_runs import (
+    ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION,
     EXPECTED_DATASETS,
     EXPECTED_TARGETS,
+    FACTORIZED_RECURRENT_IMPLEMENTATION,
+    FLATTENED_LINEAR_IMPLEMENTATION,
+    MATRIX_RECURRENT_IMPLEMENTATION,
+    MIX6_IMPLEMENTATION,
     validate_run,
 )
 
@@ -46,6 +51,9 @@ def test_optional_artifact_and_readable_model_route_provenance(tmp_path, monkeyp
     monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_recurrent_route", lambda: None)
     monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_linear_route", lambda: None)
     monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_mix6_route", lambda: None)
+    monkeypatch.setattr(
+        "rwkv7_hf.ops_rwkv7.get_last_training_program_route", lambda: None
+    )
     model = torch.nn.Linear(2, 2)
     for parameter in model.parameters():
         parameter.grad = torch.ones_like(parameter)
@@ -62,6 +70,8 @@ def test_optional_artifact_and_readable_model_route_provenance(tmp_path, monkeyp
     assert checks["factorized_recurrent_leaf"] is False
     assert checks["flattened_linear_leaf"] is False
     assert checks["mix6_leaf"] is False
+    assert checks["adaptive_fast_program"] is False
+    assert checks["adaptive_program_fallback"] is False
     assert checks["clean_leaf_training"] is False
     assert checks["historical_whole_model_diagnostic"] is False
     assert checks["nonzero_gradient"] is True
@@ -96,6 +106,11 @@ def test_remote_model_namespace_route_is_resolved(tmp_path, monkeypatch):
         "implementation": "native-nvidia-rwkv7-mix6-training-v1",
         "reason": "explicit-shift BF16 CUDA Mix6 training leaf is supported",
     }
+    program_route = {
+        "selected": "optimized",
+        "implementation": "native-nvidia-rwkv7-adaptive-training-program-v1",
+        "reason": "the coupled B4/T128 program is certified",
+    }
     modeling_module = types.ModuleType(modeling_name)
     ops_module = types.ModuleType(ops_name)
 
@@ -108,6 +123,7 @@ def test_remote_model_namespace_route_is_resolved(tmp_path, monkeypatch):
     ops_module.get_last_recurrent_route = lambda: dict(recurrent_route)
     ops_module.get_last_linear_route = lambda: dict(linear_route)
     ops_module.get_last_mix6_route = lambda: dict(mix6_route)
+    ops_module.get_last_training_program_route = lambda: dict(program_route)
     monkeypatch.setitem(sys.modules, modeling_name, modeling_module)
     monkeypatch.setitem(sys.modules, ops_name, ops_module)
 
@@ -137,12 +153,19 @@ def test_remote_model_namespace_route_is_resolved(tmp_path, monkeypatch):
             "boundary": "mix6",
             **mix6_route,
         },
+        {
+            "event": "pre_optimizer_step",
+            "boundary": "program",
+            **program_route,
+        },
     ]
     assert checks["readable_model_loop"] is True
     assert checks["matrix_recurrent_leaf"] is False
     assert checks["factorized_recurrent_leaf"] is True
     assert checks["flattened_linear_leaf"] is True
     assert checks["mix6_leaf"] is True
+    assert checks["adaptive_fast_program"] is True
+    assert checks["adaptive_program_fallback"] is False
     assert checks["clean_leaf_training"] is True
     assert checks["historical_whole_model_diagnostic"] is False
 
@@ -216,6 +239,9 @@ def test_historical_whole_model_route_is_diagnostic_and_rejected(tmp_path, monke
     monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_recurrent_route", lambda: None)
     monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_linear_route", lambda: None)
     monkeypatch.setattr("rwkv7_hf.ops_rwkv7.get_last_mix6_route", lambda: None)
+    monkeypatch.setattr(
+        "rwkv7_hf.ops_rwkv7.get_last_training_program_route", lambda: None
+    )
     model = torch.nn.Linear(2, 2)
     for parameter in model.parameters():
         parameter.grad = torch.ones_like(parameter)
@@ -259,6 +285,8 @@ def write_clean_finetune_evidence(path: Path) -> None:
             "factorized_recurrent_leaf": True,
             "flattened_linear_leaf": True,
             "mix6_leaf": True,
+            "adaptive_fast_program": True,
+            "adaptive_program_fallback": False,
             "clean_leaf_training": True,
             "historical_whole_model_diagnostic": False,
         },
@@ -314,13 +342,19 @@ def write_clean_finetune_evidence(path: Path) -> None:
                 "event": "pre_optimizer_step",
                 "boundary": "linear",
                 "selected": "optimized",
-                "implementation": ("torch-cuda-rwkv7-flattened-linear-training-v1"),
+                "implementation": FLATTENED_LINEAR_IMPLEMENTATION,
             },
             {
                 "event": "pre_optimizer_step",
                 "boundary": "mix6",
                 "selected": "optimized",
                 "implementation": "native-nvidia-rwkv7-mix6-training-v1",
+            },
+            {
+                "event": "pre_optimizer_step",
+                "boundary": "program",
+                "selected": "optimized",
+                "implementation": ("native-nvidia-rwkv7-adaptive-training-program-v1"),
             },
         ],
         "kernel_route_trace.json": {
@@ -372,3 +406,118 @@ def test_finetune_validator_accepts_only_readable_model_with_clean_leaves(tmp_pa
     )
     assert rejected["status"] == "failed"
     assert any("whole-model diagnostic" in row for row in rejected["failures"])
+
+
+def test_finetune_validator_accepts_adaptive_program_fallback(tmp_path):
+    run = tmp_path / "sft"
+    write_clean_finetune_evidence(run)
+    checks_path = run / "training_checks.json"
+    checks = json.loads(checks_path.read_text())
+    checks.update(
+        {
+            "factorized_recurrent_leaf": False,
+            "flattened_linear_leaf": False,
+            "clean_leaf_training": False,
+            "adaptive_fast_program": False,
+            "adaptive_program_fallback": True,
+        }
+    )
+    checks_path.write_text(json.dumps(checks) + "\n")
+    routes_path = run / "backend_routes.json"
+    routes = json.loads(routes_path.read_text())
+    routes = [row for row in routes if row["boundary"] == "model"]
+    routes.extend(
+        [
+            {
+                "event": "pre_optimizer_step",
+                "boundary": "recurrent",
+                "selected": "optimized",
+                "implementation": MATRIX_RECURRENT_IMPLEMENTATION,
+            },
+            {
+                "event": "pre_optimizer_step",
+                "boundary": "linear",
+                "selected": "reference",
+                "implementation": "torch-reference-linear-v1",
+            },
+            {
+                "event": "pre_optimizer_step",
+                "boundary": "mix6",
+                "selected": "optimized",
+                "implementation": MIX6_IMPLEMENTATION,
+            },
+            {
+                "event": "pre_optimizer_step",
+                "boundary": "program",
+                "selected": "reference",
+                "implementation": ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION,
+            },
+        ]
+    )
+    routes_path.write_text(json.dumps(routes) + "\n")
+    trace_path = run / "kernel_route_trace.json"
+    trace = json.loads(trace_path.read_text())
+    trace["actual_recurrent_calls"] = {MATRIX_RECURRENT_IMPLEMENTATION: 8}
+    trace["actual_linear_calls"] = {}
+    trace_path.write_text(json.dumps(trace) + "\n")
+
+    result = validate_run(
+        run,
+        "sft",
+        100,
+        require_backend_v2_routes=True,
+        require_training_candidate="adaptive",
+    )
+    assert result["status"] == "passed", result["failures"]
+    assert result["adaptive_route_evidence"]["fallback_program_observed"] is True
+
+    trace["actual_linear_calls"] = {FLATTENED_LINEAR_IMPLEMENTATION: 1}
+    trace_path.write_text(json.dumps(trace) + "\n")
+    partial_result = validate_run(
+        run,
+        "sft",
+        100,
+        require_backend_v2_routes=True,
+        require_training_candidate="adaptive",
+    )
+    assert partial_result["status"] == "failed"
+    assert any(
+        "fast training leaves were only partially observed" in failure
+        for failure in partial_result["failures"]
+    )
+
+    # Preference trainers can execute several forwards before one optimizer
+    # callback. The trace may therefore contain legal fast leaves even when the
+    # last captured program decision was a shape-driven fallback.
+    trace["actual_recurrent_calls"][FACTORIZED_RECURRENT_IMPLEMENTATION] = 2
+    trace["actual_linear_calls"] = {FLATTENED_LINEAR_IMPLEMENTATION: 2}
+    trace_path.write_text(json.dumps(trace) + "\n")
+    aggregate_result = validate_run(
+        run,
+        "sft",
+        100,
+        require_backend_v2_routes=True,
+        require_training_candidate="adaptive",
+    )
+    assert aggregate_result["status"] == "passed", aggregate_result["failures"]
+    assert aggregate_result["adaptive_route_evidence"]["fast_program_observed"]
+    assert not aggregate_result["adaptive_route_evidence"][
+        "fast_program_route_observed"
+    ]
+    assert aggregate_result["adaptive_route_evidence"][
+        "fast_program_inferred_from_complete_leaf_trace"
+    ]
+
+    trace["actual_linear_calls"] = {"unknown-training-linear": 1}
+    trace_path.write_text(json.dumps(trace) + "\n")
+    rejected = validate_run(
+        run,
+        "sft",
+        100,
+        require_backend_v2_routes=True,
+        require_training_candidate="adaptive",
+    )
+    assert rejected["status"] == "failed"
+    assert any(
+        "unknown linear implementations" in failure for failure in rejected["failures"]
+    )

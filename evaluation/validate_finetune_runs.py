@@ -31,7 +31,301 @@ FACTORIZED_RECURRENT_IMPLEMENTATION = (
 )
 FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
+ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION = (
+    "native-nvidia-rwkv7-adaptive-training-program-v1"
+)
 HISTORICAL_WHOLE_MODEL_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
+
+REFERENCE_RECURRENT_IMPLEMENTATION = "torch-reference-v1"
+REFERENCE_LINEAR_IMPLEMENTATION = "torch-reference-linear-v1"
+REFERENCE_MIX6_IMPLEMENTATION = "torch-reference-mix6-v1"
+
+
+def _positive_trace_implementations(
+    kernel_trace: dict, key: str, failures: list[str]
+) -> set[str]:
+    """Return executed implementations from one validated trace counter."""
+
+    counter = kernel_trace.get(key)
+    if not isinstance(counter, dict):
+        failures.append(f"kernel trace {key} is not an object")
+        return set()
+    implementations: set[str] = set()
+    for implementation, count in counter.items():
+        if (
+            not isinstance(implementation, str)
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+        ):
+            failures.append(f"kernel trace {key} contains an invalid counter")
+            continue
+        if count:
+            implementations.add(implementation)
+    return implementations
+
+
+def validate_adaptive_finetune_route_evidence(
+    routes: list[dict], kernel_trace: dict
+) -> dict:
+    """Validate legal adaptive routes without inventing a fast-path hit.
+
+    Canonical SFT/DPO/GRPO batches are chosen by their trainers, not by the
+    optional kernel.  They may therefore remain on the exact/reference program
+    when their shape, padding, state, or autograd provenance is outside the
+    certified B4/T128 fast domain.  This integration gate accepts every legal
+    adaptive leaf or fallback observed during the run.  The separate formal
+    training report, not a canonical finetune, proves the complete B4/T128
+    atomic fast program.
+    """
+
+    failures: list[str] = []
+    if not isinstance(routes, list) or any(not isinstance(row, dict) for row in routes):
+        return {
+            "passed": False,
+            "failures": ["backend routes are not a list of objects"],
+            "fast_program_observed": False,
+            "fast_program_route_observed": False,
+            "fast_program_inferred_from_complete_leaf_trace": False,
+            "fallback_program_observed": False,
+            "observed": {"recurrent": [], "linear": [], "mix6": []},
+        }
+    if not isinstance(kernel_trace, dict):
+        return {
+            "passed": False,
+            "failures": ["kernel route trace is not an object"],
+            "fast_program_observed": False,
+            "fast_program_route_observed": False,
+            "fast_program_inferred_from_complete_leaf_trace": False,
+            "fallback_program_observed": False,
+            "observed": {"recurrent": [], "linear": [], "mix6": []},
+        }
+    if kernel_trace.get("schema") != "rwkv7-kernel-route-trace-v2":
+        failures.append("missing versioned process-wide kernel route trace")
+    if kernel_trace.get("requested_training_policy") != "adaptive":
+        failures.append("kernel trace training policy does not match adaptive")
+
+    optimizer_routes = [
+        row
+        for row in routes
+        if row.get("event") == "pre_optimizer_step"
+        and row.get("boundary") in {"model", "program", "recurrent", "linear", "mix6"}
+    ]
+    readable_model = any(
+        row.get("boundary") == "model"
+        and row.get("selected") == "reference"
+        and row.get("phase") == "training"
+        and row.get("implementation") == READABLE_MODEL_IMPLEMENTATION
+        for row in optimizer_routes
+    )
+    if not readable_model:
+        failures.append("training did not retain the readable HF layer loop")
+    invalid_model_routes = [
+        row
+        for row in optimizer_routes
+        if row.get("boundary") == "model"
+        and not (
+            row.get("selected") == "reference"
+            and row.get("phase") == "training"
+            and row.get("implementation") == READABLE_MODEL_IMPLEMENTATION
+        )
+    ]
+    if invalid_model_routes:
+        failures.append("training recorded an invalid model route")
+
+    program_routes = [
+        row for row in optimizer_routes if row.get("boundary") == "program"
+    ]
+    invalid_program_routes = [
+        row
+        for row in program_routes
+        if row.get("implementation") != ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION
+        or row.get("selected") not in {"optimized", "reference"}
+    ]
+    if not program_routes:
+        failures.append("training did not record the adaptive program decision")
+    if invalid_program_routes:
+        failures.append("training recorded an invalid adaptive program route")
+    explicit_fast_program = any(
+        row.get("selected") == "optimized" for row in program_routes
+    )
+    fallback_program = any(row.get("selected") == "reference" for row in program_routes)
+
+    recurrent_routes = [
+        row for row in optimizer_routes if row.get("boundary") == "recurrent"
+    ]
+    linear_routes = [row for row in optimizer_routes if row.get("boundary") == "linear"]
+    mix6_routes = [row for row in optimizer_routes if row.get("boundary") == "mix6"]
+
+    allowed_routes = {
+        "recurrent": {
+            ("optimized", MATRIX_RECURRENT_IMPLEMENTATION),
+            ("optimized", FACTORIZED_RECURRENT_IMPLEMENTATION),
+            ("reference", REFERENCE_RECURRENT_IMPLEMENTATION),
+        },
+        "linear": {
+            ("optimized", FLATTENED_LINEAR_IMPLEMENTATION),
+            ("reference", REFERENCE_LINEAR_IMPLEMENTATION),
+        },
+        "mix6": {
+            ("optimized", MIX6_IMPLEMENTATION),
+            ("reference", REFERENCE_MIX6_IMPLEMENTATION),
+        },
+    }
+    for boundary, rows in (
+        ("recurrent", recurrent_routes),
+        ("linear", linear_routes),
+        ("mix6", mix6_routes),
+    ):
+        if not rows:
+            failures.append(f"training did not record a {boundary} route")
+        if any(
+            (row.get("selected"), row.get("implementation"))
+            not in allowed_routes[boundary]
+            for row in rows
+        ):
+            failures.append(f"training recorded an invalid {boundary} route")
+
+    actual_model = _positive_trace_implementations(
+        kernel_trace, "actual_model_calls", failures
+    )
+    actual_recurrent = _positive_trace_implementations(
+        kernel_trace, "actual_recurrent_calls", failures
+    )
+    actual_linear = _positive_trace_implementations(
+        kernel_trace, "actual_linear_calls", failures
+    )
+    actual_mix6 = _positive_trace_implementations(
+        kernel_trace, "actual_mix6_calls", failures
+    )
+    route_recurrent = {str(row.get("implementation")) for row in recurrent_routes}
+    route_linear = {str(row.get("implementation")) for row in linear_routes}
+    route_mix6 = {str(row.get("implementation")) for row in mix6_routes}
+    observed_recurrent = route_recurrent | actual_recurrent
+    observed_linear = route_linear | actual_linear
+    observed_mix6 = route_mix6 | actual_mix6
+
+    historical_route = any(
+        row.get("implementation") == HISTORICAL_WHOLE_MODEL_IMPLEMENTATION
+        for row in routes
+    )
+    if HISTORICAL_WHOLE_MODEL_IMPLEMENTATION in actual_model or historical_route:
+        failures.append("whole-model diagnostic training unexpectedly executed")
+
+    allowed_implementations = {
+        "recurrent": {
+            MATRIX_RECURRENT_IMPLEMENTATION,
+            FACTORIZED_RECURRENT_IMPLEMENTATION,
+            REFERENCE_RECURRENT_IMPLEMENTATION,
+        },
+        "linear": {
+            FLATTENED_LINEAR_IMPLEMENTATION,
+            REFERENCE_LINEAR_IMPLEMENTATION,
+        },
+        "mix6": {MIX6_IMPLEMENTATION, REFERENCE_MIX6_IMPLEMENTATION},
+    }
+    for boundary, observed in (
+        ("recurrent", observed_recurrent),
+        ("linear", observed_linear),
+        ("mix6", observed_mix6),
+    ):
+        if not observed:
+            failures.append(f"adaptive training did not execute a {boundary} boundary")
+        unexpected = observed - allowed_implementations[boundary]
+        if unexpected:
+            failures.append(
+                f"adaptive training executed unknown {boundary} implementations: "
+                f"{sorted(unexpected)}"
+            )
+
+    # The adaptive program is atomic.  A recorded fast decision is valid only
+    # when all three coupled optimized leaves were observed somewhere in the
+    # run.  Conversely, a run that observed only fallback decisions must not
+    # contain either fast-only recurrent or linear execution.  Finetune runs
+    # may legitimately contain both decisions across different batches, so
+    # validate each observed decision rather than forcing one global mode.
+    fast_leaf_implementations = {
+        FACTORIZED_RECURRENT_IMPLEMENTATION,
+        FLATTENED_LINEAR_IMPLEMENTATION,
+        MIX6_IMPLEMENTATION,
+    }
+    observed_fast_leaf_implementations = {
+        implementation
+        for implementation, observed in (
+            (FACTORIZED_RECURRENT_IMPLEMENTATION, observed_recurrent),
+            (FLATTENED_LINEAR_IMPLEMENTATION, observed_linear),
+            (MIX6_IMPLEMENTATION, observed_mix6),
+        )
+        if implementation in observed
+    }
+    complete_fast_leaf_trace = (
+        observed_fast_leaf_implementations == fast_leaf_implementations
+    )
+    fast_only_leaf_observed = bool(
+        observed_fast_leaf_implementations
+        & {FACTORIZED_RECURRENT_IMPLEMENTATION, FLATTENED_LINEAR_IMPLEMENTATION}
+    )
+    partial_fast_leaf_trace = fast_only_leaf_observed and not complete_fast_leaf_trace
+    # Preference trainers can run several forwards before one optimizer
+    # callback.  The callback sees the final ContextVar decision, while the
+    # process-wide leaf counters retain every executed fast boundary.  A
+    # complete three-leaf trace is therefore valid evidence that an atomic
+    # fast program ran; a partial trace is never accepted as an inference.
+    inferred_fast_program = complete_fast_leaf_trace and not explicit_fast_program
+    fast_program_observed = explicit_fast_program or inferred_fast_program
+
+    if explicit_fast_program:
+        required_fast = (
+            (
+                FACTORIZED_RECURRENT_IMPLEMENTATION,
+                observed_recurrent,
+                "factorized recurrent",
+            ),
+            (FLATTENED_LINEAR_IMPLEMENTATION, observed_linear, "flattened linear"),
+            (MIX6_IMPLEMENTATION, observed_mix6, "Mix6"),
+        )
+        for implementation, observed, label in required_fast:
+            if implementation not in observed:
+                failures.append(
+                    f"optimized adaptive program did not execute the {label} boundary"
+                )
+    elif partial_fast_leaf_trace:
+        failures.append(
+            "fast training leaves were only partially observed without an "
+            "optimized adaptive program decision"
+        )
+    if fallback_program:
+        if not observed_recurrent.intersection(
+            {MATRIX_RECURRENT_IMPLEMENTATION, REFERENCE_RECURRENT_IMPLEMENTATION}
+        ):
+            failures.append(
+                "adaptive fallback did not execute an exact/reference recurrence"
+            )
+        if REFERENCE_LINEAR_IMPLEMENTATION not in observed_linear:
+            failures.append("adaptive fallback did not retain reference linears")
+    if not fast_program_observed:
+        if FACTORIZED_RECURRENT_IMPLEMENTATION in observed_recurrent:
+            failures.append(
+                "factorized recurrent executed without an optimized adaptive program"
+            )
+        if FLATTENED_LINEAR_IMPLEMENTATION in observed_linear:
+            failures.append(
+                "flattened linear executed without an optimized adaptive program"
+            )
+
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "fast_program_observed": fast_program_observed,
+        "fast_program_route_observed": explicit_fast_program,
+        "fast_program_inferred_from_complete_leaf_trace": inferred_fast_program,
+        "fallback_program_observed": fallback_program,
+        "observed": {
+            "recurrent": sorted(observed_recurrent),
+            "linear": sorted(observed_linear),
+            "mix6": sorted(observed_mix6),
+        },
+    }
 
 
 def read(path: Path) -> dict:
@@ -105,6 +399,26 @@ def validate_run(
     }
     if name == "grpo":
         expected_config["max_completion_length"] = 64
+    adaptive_route_evidence = None
+    if require_training_candidate == "adaptive":
+        adaptive_route_evidence = validate_adaptive_finetune_route_evidence(
+            routes, kernel_trace
+        )
+        failures.extend(adaptive_route_evidence["failures"])
+        if not checks.get("readable_model_loop"):
+            failures.append("training checks did not retain the readable HF layer loop")
+        if checks.get("adaptive_fast_program") is not adaptive_route_evidence.get(
+            "fast_program_route_observed"
+        ):
+            failures.append("training checks disagree with the adaptive fast decision")
+        if checks.get("adaptive_program_fallback") is not adaptive_route_evidence.get(
+            "fallback_program_observed"
+        ):
+            failures.append(
+                "training checks disagree with the adaptive fallback decision"
+            )
+        if checks.get("historical_whole_model_diagnostic") is not False:
+            failures.append("historical whole-model diagnostic route is not false")
     if require_training_candidate is not None:
         expected_config.update(
             {
@@ -151,7 +465,10 @@ def validate_run(
             failures.append("training did not prove the readable HF model loop")
         if checks.get("historical_whole_model_diagnostic") is not False:
             failures.append("historical whole-model diagnostic route is not false")
-    if require_training_candidate is not None:
+    if (
+        require_training_candidate is not None
+        and require_training_candidate != "adaptive"
+    ):
         if kernel_trace.get("schema") != "rwkv7-kernel-route-trace-v2":
             failures.append("missing versioned process-wide kernel route trace")
         if kernel_trace.get("requested_training_policy") != require_training_candidate:
@@ -321,6 +638,7 @@ def validate_run(
         "adapter_reload_max_abs": reload.get("max_abs"),
         "backend_routes": routes,
         "kernel_route_trace": kernel_trace,
+        "adaptive_route_evidence": adaptive_route_evidence,
         "artifacts": artifacts,
         "status": "passed" if not failures else "failed",
         "failures": failures,

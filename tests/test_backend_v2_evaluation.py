@@ -27,13 +27,19 @@ from validate_backend_v2_training import (  # noqa: E402
     candidate_route_passed,
     tensor_metric as training_tensor_metric,
 )
-from validate_model_training import select_lane as select_model_training_lane  # noqa: E402
+from validate_model_training import (  # noqa: E402
+    compare_lane as compare_model_training_lane,
+    select_lane as select_model_training_lane,
+)
 from training_metrics import (  # noqa: E402
     adaptive_fast_domain_expected,
-    candidate_numerics_not_worse_than_fla,
     checkpoint_input_hash_gate,
+    full_model_reference_release_envelope,
     global_gradient_metric,
     global_gradient_passed,
+)
+from validate_backend_v2_fla import (  # noqa: E402
+    compare_full_model_training_lane,
 )
 from validate_backend_v2_fla_sm70 import (  # noqa: E402
     optimized_route_passed as sm70_fla_route_passed,
@@ -719,20 +725,89 @@ def test_training_case_provenance_is_order_independent_and_hashes_exact_ids():
     assert digest != input_ids_sha256(changed)
 
 
-def test_candidate_not_worse_than_fla_includes_same_input_loss():
+def test_training_lanes_independently_use_the_fixed_reference_envelope():
+    candidate = {
+        "logits": {"finite": True, "cosine": 0.99996},
+        "loss": {"finite": True, "max_abs": 0.0020},
+        "global_gradient": {
+            "finite": True,
+            "candidate_only": [],
+            "reference_only": [],
+            "shape_mismatch": {},
+            "parameter_count": 2,
+            "element_count": 4,
+            "cosine": 0.99992,
+            "relative_l2": 0.0124,
+        },
+    }
     fla = {
-        "logits": {"cosine": 0.9999},
-        "loss": {"max_abs": 0.01},
-        "global_gradient": {"cosine": 0.999, "relative_l2": 0.02},
+        "logits": {"finite": True, "cosine": 0.99995},
+        "loss": {"finite": True, "max_abs": 0.0003},
+        "global_gradient": {
+            "finite": True,
+            "candidate_only": [],
+            "reference_only": [],
+            "shape_mismatch": {},
+            "parameter_count": 2,
+            "element_count": 4,
+            "cosine": 0.99988,
+            "relative_l2": 0.0152,
+        },
+    }
+
+    candidate_envelope = full_model_reference_release_envelope(candidate)
+    fla_envelope = full_model_reference_release_envelope(fla)
+    assert candidate_envelope["passed"]
+    assert fla_envelope["passed"]
+    assert candidate["loss"]["max_abs"] > fla["loss"]["max_abs"]
+
+    candidate["loss"]["max_abs"] = 0.011
+    assert not full_model_reference_release_envelope(candidate)["passed"]
+
+
+def test_fla_full_model_comparison_keeps_named_gradient_gate_diagnostic():
+    reference = {
+        "logits": torch.tensor([[1.0, 2.0]]),
+        "loss": torch.tensor(1.0),
+        "gradients": {
+            "dominant.weight": torch.tensor([1000.0, -1000.0]),
+            "tiny.bias": torch.tensor([1.0e-6]),
+        },
     }
     candidate = {
-        "logits": {"cosine": 1.0},
-        "loss": {"max_abs": 0.009},
-        "global_gradient": {"cosine": 0.9995, "relative_l2": 0.01},
+        "logits": reference["logits"].clone(),
+        "loss": reference["loss"].clone(),
+        "gradients": {
+            "dominant.weight": reference["gradients"]["dominant.weight"].clone(),
+            "tiny.bias": torch.zeros(1),
+        },
     }
-    assert candidate_numerics_not_worse_than_fla(candidate, fla)
-    candidate["loss"]["max_abs"] = 0.011
-    assert not candidate_numerics_not_worse_than_fla(candidate, fla)
+
+    comparison = compare_full_model_training_lane(candidate, reference)
+    assert comparison["passed"]
+    assert comparison["reference_release_envelope"]["passed"]
+    assert not comparison["strict_named_parameter_diagnostic_passed"]
+    assert comparison["global_gradient"]["parameter_count"] == 2
+
+    model_comparison = compare_model_training_lane(candidate, reference)
+    assert model_comparison["passed"]
+    assert (
+        model_comparison["reference_release_envelope"]
+        == comparison["reference_release_envelope"]
+    )
+    assert not model_comparison["strict_named_parameter_diagnostic_passed"]
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ("validate_model_training.py", "validate_backend_v2_fla.py"),
+)
+def test_fla_training_harness_limits_inductor_workers_before_torch_import(
+    script_name: str,
+):
+    source = (EVALUATION / script_name).read_text()
+    setting = 'os.environ.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")'
+    assert source.index(setting) < source.index("\nimport torch\n")
 
 
 def test_checkpoint_input_hash_gate_requires_both_modes_and_one_exact_hash():

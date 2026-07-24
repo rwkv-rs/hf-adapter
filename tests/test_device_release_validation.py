@@ -13,6 +13,12 @@ from evaluation.build_backend_v2_device_validation import (
     REPORT_SCHEMAS,
     build,
 )
+from evaluation.validate_finetune_runs import (
+    ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION,
+    MATRIX_RECURRENT_IMPLEMENTATION,
+    MIX6_IMPLEMENTATION,
+    REFERENCE_LINEAR_IMPLEMENTATION,
+)
 from scripts.release_route_contract import (
     ADAPTIVE_TRAINING_PROGRAM_ROUTE,
     FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
@@ -147,26 +153,45 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                 "artifacts": artifacts,
                 "backend_routes": [
                     {
+                        "event": "pre_optimizer_step",
+                        "boundary": "model",
+                        "selected": "reference",
                         "phase": "training",
                         "implementation": READABLE_TRAINING_MODEL_ROUTE,
                         "reason": "training preserves the readable HF layer loop",
                     },
                     {
-                        "phase": "training",
-                        "implementation": ADAPTIVE_TRAINING_PROGRAM_ROUTE,
+                        "event": "pre_optimizer_step",
+                        "boundary": "program",
+                        "selected": "reference",
+                        "implementation": ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION,
                     },
-                    *[
-                        {"phase": "training", "implementation": route}
-                        for route in sorted(REQUIRED_TRAINING_LEAF_ROUTES)
-                    ],
+                    {
+                        "event": "pre_optimizer_step",
+                        "boundary": "recurrent",
+                        "selected": "optimized",
+                        "implementation": MATRIX_RECURRENT_IMPLEMENTATION,
+                    },
+                    {
+                        "event": "pre_optimizer_step",
+                        "boundary": "linear",
+                        "selected": "reference",
+                        "implementation": REFERENCE_LINEAR_IMPLEMENTATION,
+                    },
+                    {
+                        "event": "pre_optimizer_step",
+                        "boundary": "mix6",
+                        "selected": "optimized",
+                        "implementation": MIX6_IMPLEMENTATION,
+                    },
                 ],
                 "kernel_route_trace": {
                     "schema": "rwkv7-kernel-route-trace-v2",
                     "requested_training_policy": "adaptive",
                     "actual_model_calls": {},
-                    "actual_recurrent_calls": {},
+                    "actual_recurrent_calls": {MATRIX_RECURRENT_IMPLEMENTATION: 12},
                     "actual_linear_calls": {},
-                    "actual_mix6_calls": {},
+                    "actual_mix6_calls": {MIX6_IMPLEMENTATION: 12},
                 },
             }
             for name in ("sft", "dpo", "grpo")
@@ -288,7 +313,9 @@ def test_device_builder_rejects_historical_primary_training_route(tmp_path: Path
         build(args)
 
 
-def test_device_builder_rejects_finetune_without_clean_leaf_matrix(tmp_path: Path):
+def test_device_builder_rejects_finetune_without_adaptive_route_evidence(
+    tmp_path: Path,
+):
     args, _, _, _ = setup_reports(tmp_path)
     payload = json.loads(args.finetune_report.read_text())
     payload["runs"]["sft"]["backend_routes"] = [
@@ -298,7 +325,20 @@ def test_device_builder_rejects_finetune_without_clean_leaf_matrix(tmp_path: Pat
         }
     ]
     write_json(args.finetune_report, payload)
-    with pytest.raises(ValueError, match="sft report has invalid training routes"):
+    with pytest.raises(
+        ValueError, match="sft report has invalid adaptive training routes"
+    ):
+        build(args)
+
+
+def test_device_builder_rejects_unknown_finetune_leaf_execution(tmp_path: Path):
+    args, _, _, _ = setup_reports(tmp_path)
+    payload = json.loads(args.finetune_report.read_text())
+    payload["runs"]["grpo"]["kernel_route_trace"]["actual_linear_calls"] = {
+        "unknown-training-linear": 1
+    }
+    write_json(args.finetune_report, payload)
+    with pytest.raises(ValueError, match="unknown linear implementations"):
         build(args)
 
 
@@ -309,7 +349,7 @@ def test_device_builder_rejects_historical_finetune_execution(tmp_path: Path):
         HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE: 1
     }
     write_json(args.finetune_report, payload)
-    with pytest.raises(ValueError, match="historical whole-model diagnostic"):
+    with pytest.raises(ValueError, match="whole-model diagnostic"):
         build(args)
 
 

@@ -16,6 +16,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+# Fix pinned FLA/TorchInductor compilation to one worker.  The default
+# 24-process pool was observed to hit its 300-second atexit TimeoutExpired
+# after the validation JSON had already been written.
+os.environ.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")
+
 import torch
 import torch.nn.functional as F
 
@@ -31,7 +36,12 @@ from fla_common import (
     tensor_metric,
     write_json,
 )
-from training_metrics import adaptive_fast_domain_expected
+from training_metrics import (
+    adaptive_fast_domain_expected,
+    full_model_reference_release_envelope,
+    global_gradient_metric,
+    gradient_parameter_summary,
+)
 
 
 def arguments() -> argparse.Namespace:
@@ -611,6 +621,39 @@ def run_training_lane(kind: str, path: Path, ids: torch.Tensor, labels: torch.Te
     return row
 
 
+def compare_full_model_training_lane(
+    candidate: dict[str, Any],
+    reference: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare one lane with the shared full-model reference envelope."""
+
+    logits = tensor_metric(candidate["logits"], reference["logits"])
+    loss = tensor_metric(candidate["loss"], reference["loss"])
+    gradients = gradient_metrics(candidate["gradients"], reference["gradients"])
+    global_gradient = global_gradient_metric(
+        candidate["gradients"], reference["gradients"]
+    )
+    reference_release_envelope = full_model_reference_release_envelope(
+        {
+            "logits": logits,
+            "loss": loss,
+            "global_gradient": global_gradient,
+        }
+    )
+    return {
+        "passed": reference_release_envelope["passed"],
+        "reference_release_envelope": reference_release_envelope,
+        "strict_named_parameter_diagnostic_passed": gradient_rows_passed(
+            gradients, torch.bfloat16
+        ),
+        "logits": logits,
+        "loss": loss,
+        "gradients": gradients,
+        "global_gradient": global_gradient,
+        "gradient_parameter_summary": gradient_parameter_summary(gradients),
+    }
+
+
 def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, Any]:
     probe = clean_model(path, torch.bfloat16)
     vocab = int(probe.config.vocab_size)
@@ -624,22 +667,10 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
         name: run_training_lane(name, path, ids, labels)
         for name in ("reference", "optimized", "fla")
     }
-    comparisons = {}
-    for name in ("optimized", "fla"):
-        logits = tensor_metric(lanes[name]["logits"], lanes["reference"]["logits"])
-        loss = tensor_metric(lanes[name]["loss"], lanes["reference"]["loss"])
-        gradients = gradient_metrics(
-            lanes[name]["gradients"], lanes["reference"]["gradients"]
-        )
-        comparisons[name] = {
-            "passed": metric_passed(logits, torch.bfloat16, logits=True)
-            and loss["finite"]
-            and loss["max_abs"] <= 0.02
-            and gradient_rows_passed(gradients, torch.bfloat16),
-            "logits": logits,
-            "loss": loss,
-            "gradients": gradients,
-        }
+    comparisons = {
+        name: compare_full_model_training_lane(lanes[name], lanes["reference"])
+        for name in ("optimized", "fla")
+    }
     routes = lanes["optimized"]["route"] or {}
     model_route = routes.get("model") or {}
     recurrent_route = routes.get("recurrent") or {}
@@ -678,15 +709,24 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
         lane.pop("logits")
         lane.pop("loss")
         lane.pop("gradients")
+    independent_reference_release_gate = {
+        "passed": all(
+            comparisons[name]["reference_release_envelope"]["passed"]
+            for name in ("optimized", "fla")
+        ),
+        "lanes": {
+            name: comparisons[name]["reference_release_envelope"]
+            for name in ("optimized", "fla")
+        },
+    }
     return {
         "passed": bool(
-            optimized_route_passed
-            and comparisons["optimized"]["passed"]
-            and comparisons["fla"]["passed"]
+            optimized_route_passed and independent_reference_release_gate["passed"]
         ),
         "batch": batch,
         "tokens": tokens,
         "optimized_route_passed": optimized_route_passed,
+        "independent_reference_release_gate": independent_reference_release_gate,
         "routes": {name: row["route"] for name, row in lanes.items()},
         "comparisons": comparisons,
     }
