@@ -41,7 +41,7 @@ REPORT_SCHEMAS = {
     "hf_ecosystem": "rwkv7-backend-v2-hf-ecosystem-v2",
     "training": "rwkv7-backend-v2-training-validation-v3",
     "quantization": "rwkv7-backend-v2-quantization-validation-v1",
-    "fla": "rwkv7-backend-v2-three-way-parity-v2",
+    "fla": "rwkv7-backend-v2-three-way-validation-v3",
     "speed": "rwkv7-backend-v2-three-way-speed-v1",
 }
 REPORT_SCHEMA = "rwkv7-device-release-validation-v1"
@@ -323,6 +323,15 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         require_environment(label, report)
     require_fla_commit("fla", reports["fla"])
     require_fla_commit("speed", reports["speed"])
+    fla_report = reports["fla"]
+    if (fla_report.get("release_gates") or {}).get("role") != "blocking":
+        raise ValueError("FLA report is missing explicit blocking release gates")
+    fla_diagnostics = fla_report.get("fla_diagnostics") or {}
+    if (
+        fla_diagnostics.get("role") != "diagnostic-non-blocking"
+        or fla_diagnostics.get("complete") is not True
+    ):
+        raise ValueError("FLA report is missing complete non-blocking diagnostics")
 
     expected_training_mode = "adaptive"
     if (reports["training"].get("settings") or {}).get(

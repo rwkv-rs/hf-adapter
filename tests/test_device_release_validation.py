@@ -122,7 +122,15 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                 }
             ]
         },
-        "fla": {"fla": {"commit": EXPECTED_FLA_COMMIT}},
+        "fla": {
+            "fla": {"commit": EXPECTED_FLA_COMMIT},
+            "release_gates": {"role": "blocking", "passed": True},
+            "fla_diagnostics": {
+                "role": "diagnostic-non-blocking",
+                "complete": True,
+                "passed_strict_envelope": False,
+            },
+        },
         "speed": {
             "fla": {"commit": EXPECTED_FLA_COMMIT},
             "training": {"mode": "adaptive"},
@@ -257,6 +265,15 @@ def test_device_builder_consolidates_all_gates_and_actual_routes(tmp_path: Path)
     assert report["actual_routes"]["quantization"]
     assert all(report[f"{label}_status"] == "passed" for label in PRIMARY_REPORTS)
     assert json.loads(args.output.read_text()) == report
+
+
+def test_device_builder_requires_complete_non_blocking_fla_diagnostics(tmp_path: Path):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["fla"].read_text())
+    payload["fla_diagnostics"]["complete"] = False
+    write_json(paths["fla"], payload)
+    with pytest.raises(ValueError, match="complete non-blocking diagnostics"):
+        build(args)
 
 
 def test_device_builder_rejects_failed_primary_gate(tmp_path: Path):

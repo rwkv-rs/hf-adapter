@@ -45,6 +45,13 @@ oracle and not a runtime dependency. Its comparison lives under
 even when diagnostic thresholds are missed. Use `--require-thresholds` only in
 an explicitly performance-backend-focused job.
 
+The backend-v2 three-way report applies this consistently to operator,
+inference, and training validation. Candidate-vs-readable-reference numerical
+checks and observed candidate routes are blocking release gates. Results from
+the pinned FLA revision are retained in full as `diagnostic-non-blocking` and
+never turn a conforming candidate into a release failure. A failed FLA strict
+envelope remains a visible failed diagnostic; it is not rewritten as a pass.
+
 The first RTX 4080 diagnostic bundle is archived at
 [`benchmarks/fla/results/4080-reference-20260825`](../benchmarks/fla/results/4080-reference-20260825/README.md).
 
@@ -252,7 +259,7 @@ experiment, not an adaptive model-route claim. Frozen-input/PEFT requests and
 reentrant checkpoint forwards fail closed to the exact program unless their
 actual leaves have a valid autograd edge. The gate rejects
 non-finite tensors, missing gradients, loss/logit/optimizer-vector threshold
-failures, or a candidate result numerically worse than the pinned FLA lane. Named
+failures. The pinned FLA lane remains a complete non-blocking diagnostic. Named
 per-parameter diagnostics remain in JSON even when the aggregate
 optimizer-vector gate passes. Speed is reported only after correctness is
 evaluated and never changes the correctness result.

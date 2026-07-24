@@ -99,6 +99,34 @@ def route_mode(optimized: bool) -> None:
     os.environ["RWKV7_BACKEND"] = "optimized" if optimized else "reference"
     os.environ["RWKV7_KERNEL_IMPL"] = "auto"
     os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native" if optimized else "auto"
+    # Operator and inference validation must not inherit a training selector
+    # from the parent shell or an earlier training lane in this process.
+    os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+
+
+def three_way_validation_status(
+    *, candidate_reference_passed: bool, route_passed: bool, fla_reference_passed: bool
+) -> dict[str, Any]:
+    """Separate blocking candidate gates from the pinned FLA diagnostic."""
+
+    candidate_gate = {
+        "role": "release-gate-blocking",
+        "passed": bool(candidate_reference_passed),
+    }
+    route_gate = {
+        "role": "release-gate-blocking",
+        "passed": bool(route_passed),
+    }
+    fla_diagnostic = {
+        "role": "diagnostic-non-blocking",
+        "passed": bool(fla_reference_passed),
+    }
+    return {
+        "passed": bool(candidate_gate["passed"] and route_gate["passed"]),
+        "candidate_reference_release_gate": candidate_gate,
+        "route_release_gate": route_gate,
+        "fla_reference_diagnostic": fla_diagnostic,
+    }
 
 
 def canonical_training_mode(value: str) -> str:
@@ -284,16 +312,15 @@ def run_operator_parity(
                 gradient_lanes["fla"], gradient_lanes["reference"]
             )
             gradient_passed = gradient_rows_passed(gradients, dtype)
-            passed = bool(
-                comparisons["optimized"]["passed"]
-                and comparisons["fla"]["passed"]
-                and recurrent_route_is_optimized(optimized_route)
-                and gradient_passed
+            status = three_way_validation_status(
+                candidate_reference_passed=comparisons["optimized"]["passed"],
+                route_passed=recurrent_route_is_optimized(optimized_route),
+                fla_reference_passed=(comparisons["fla"]["passed"] and gradient_passed),
             )
             rows.append(
                 {
                     "case": f"b{batch}-t{length}",
-                    "passed": passed,
+                    **status,
                     "comparisons": comparisons,
                     "optimized_route": optimized_route,
                     "fla_vs_reference_gradients": gradients,
@@ -308,7 +335,24 @@ def run_operator_parity(
                 optimized_state,
             )
             del fla_output, fla_state, gradient_lanes
-    return {"passed": all(row["passed"] for row in rows), "cases": rows}
+    return {
+        "passed": all(row["passed"] for row in rows),
+        "candidate_reference_release_gate": {
+            "role": "release-gate-blocking",
+            "passed": all(
+                row["candidate_reference_release_gate"]["passed"] for row in rows
+            ),
+        },
+        "route_release_gate": {
+            "role": "release-gate-blocking",
+            "passed": all(row["route_release_gate"]["passed"] for row in rows),
+        },
+        "fla_reference_diagnostic": {
+            "role": "diagnostic-non-blocking",
+            "passed": all(row["fla_reference_diagnostic"]["passed"] for row in rows),
+        },
+        "cases": rows,
+    }
 
 
 def clean_model(path: Path, dtype: torch.dtype):
@@ -568,14 +612,15 @@ def run_inference_model(
     release_lane_tensors(reference)
     release_lane_tensors(optimized)
     release_lane_tensors(fla_rows)
+    status = three_way_validation_status(
+        candidate_reference_passed=optimized_comparison["passed"],
+        route_passed=optimized_routes_passed,
+        fla_reference_passed=fla_comparison["passed"],
+    )
     return {
         "label": label,
         "model": model_fingerprint(path),
-        "passed": bool(
-            optimized_comparison["passed"]
-            and optimized_routes_passed
-            and fla_comparison["passed"]
-        ),
+        **status,
         "optimized_vs_reference": optimized_comparison,
         "fla_vs_reference": fla_comparison,
         "optimized_routes_passed": optimized_routes_passed,
@@ -724,6 +769,10 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
         "batch": batch,
         "tokens": tokens,
         "optimized_route_passed": optimized_route_passed,
+        "route_release_gate": {
+            "role": "release-gate-blocking",
+            "passed": optimized_route_passed,
+        },
         "candidate_reference_release_gate": candidate_reference_release_gate,
         "fla_reference_diagnostic": fla_reference_diagnostic,
         "routes": {name: row["route"] for name, row in lanes.items()},
@@ -786,6 +835,21 @@ def main() -> int:
                 "native BF16 training leaves require sm80 or newer; the "
                 "readable HF training loop remains available"
             ),
+            "candidate_reference_release_gate": {
+                "role": "release-gate-blocking",
+                "passed": True,
+                "status": "not_applicable",
+            },
+            "route_release_gate": {
+                "role": "release-gate-blocking",
+                "passed": True,
+                "status": "not_applicable",
+            },
+            "fla_reference_diagnostic": {
+                "role": "diagnostic-non-blocking",
+                "passed": True,
+                "status": "not_applicable",
+            },
         }
     wheels = {}
     for name, path in (
@@ -800,9 +864,30 @@ def main() -> int:
         and all(row["passed"] for row in inference)
         and training["passed"]
     )
+    fla_diagnostics_passed = bool(
+        operator["fla_reference_diagnostic"]["passed"]
+        and all(row["fla_reference_diagnostic"]["passed"] for row in inference)
+        and (
+            training.get("fla_reference_diagnostic", {}).get("passed", True)
+            if training_mode == "adaptive"
+            else True
+        )
+    )
     report = {
-        "schema": "rwkv7-backend-v2-three-way-parity-v2",
+        "schema": "rwkv7-backend-v2-three-way-validation-v3",
         "status": "passed" if passed else "failed",
+        "release_gates": {
+            "role": "blocking",
+            "passed": passed,
+            "operator": operator["passed"],
+            "inference": all(row["passed"] for row in inference),
+            "training": training["passed"],
+        },
+        "fla_diagnostics": {
+            "role": "diagnostic-non-blocking",
+            "complete": True,
+            "passed_strict_envelope": fla_diagnostics_passed,
+        },
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "dtype": args.dtype,
         "fla": fla,

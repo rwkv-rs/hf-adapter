@@ -104,7 +104,10 @@ def classify_candidate_and_fla_reference_results(
     fla_envelope = full_model_reference_release_envelope(fla)
     return {
         "passed": candidate_envelope["passed"],
-        "candidate_reference_release_gate": candidate_envelope,
+        "candidate_reference_release_gate": {
+            **candidate_envelope,
+            "role": "release-gate-blocking",
+        },
         "fla_reference_diagnostic": {
             **fla_envelope,
             "role": "diagnostic-non-blocking",

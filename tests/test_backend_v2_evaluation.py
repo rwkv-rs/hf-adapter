@@ -41,6 +41,8 @@ from training_metrics import (  # noqa: E402
 )
 from validate_backend_v2_fla import (  # noqa: E402
     compare_full_model_training_lane,
+    route_mode,
+    three_way_validation_status,
 )
 from validate_backend_v2_fla_sm70 import (  # noqa: E402
     optimized_route_passed as sm70_fla_route_passed,
@@ -808,6 +810,44 @@ def test_fla_full_model_comparison_keeps_named_gradient_gate_diagnostic():
         == comparison["reference_release_envelope"]
     )
     assert not model_comparison["strict_named_parameter_diagnostic_passed"]
+
+
+def test_fla_three_way_status_keeps_external_failure_non_blocking():
+    status = three_way_validation_status(
+        candidate_reference_passed=True,
+        route_passed=True,
+        fla_reference_passed=False,
+    )
+    assert status["passed"]
+    assert status["candidate_reference_release_gate"] == {
+        "role": "release-gate-blocking",
+        "passed": True,
+    }
+    assert status["route_release_gate"]["passed"]
+    assert status["fla_reference_diagnostic"] == {
+        "role": "diagnostic-non-blocking",
+        "passed": False,
+    }
+
+    status = three_way_validation_status(
+        candidate_reference_passed=False,
+        route_passed=True,
+        fla_reference_passed=True,
+    )
+    assert not status["passed"]
+
+
+def test_fla_operator_route_mode_clears_external_training_selector(monkeypatch):
+    # ``route_mode`` intentionally mutates the process environment because the
+    # validation lanes share one interpreter. Register every touched key with
+    # pytest's monkeypatch fixture so this test cannot leak an optimized route
+    # into tests that follow it in the full suite.
+    monkeypatch.setenv("RWKV7_BACKEND", "reference")
+    monkeypatch.setenv("RWKV7_KERNEL_IMPL", "auto")
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "auto")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "factorized")
+    route_mode(True)
+    assert os.environ["RWKV7_TRAINING_KERNEL_IMPL"] == "auto"
 
 
 @pytest.mark.parametrize(
