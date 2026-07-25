@@ -10,10 +10,39 @@ import torch.nn.functional as F
 
 from rwkv7_hf.cache_rwkv7 import RWKV7Cache
 from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM, RWKV7Linear, RWKV7Model
-from rwkv7_hf.ops_rwkv7 import rwkv7_recurrent_reference
+from rwkv7_hf.ops_rwkv7 import get_last_model_route, rwkv7_recurrent_reference
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_training_forward_records_complete_reference_model_route(
+    tiny_config, monkeypatch
+):
+    monkeypatch.setenv("RWKV7_BACKEND", "auto")
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "auto")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "auto")
+    model = RWKV7ForCausalLM(tiny_config).train()
+    input_ids = torch.tensor([[1, 2, 3, 4]])
+
+    output = model(
+        input_ids=input_ids,
+        labels=input_ids,
+        use_cache=False,
+        logits_to_keep=0,
+    )
+
+    assert torch.isfinite(output.loss)
+    assert get_last_model_route() == {
+        "requested": "auto",
+        "selected": "reference",
+        "implementation": "torch-reference-model-v1",
+        "reason": (
+            "readable HF training loop owns structure; optional tensor "
+            "leaves dispatch through one explicit execution context"
+        ),
+        "phase": "training",
+    }
 
 
 def _load_dense_backend(monkeypatch):

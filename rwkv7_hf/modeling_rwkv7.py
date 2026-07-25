@@ -1082,26 +1082,38 @@ class RWKV7Model(RWKV7PreTrainedModel):
             )
 
         optimized = None
+        model_request = {
+            "model_kind": "base",
+            "hidden_states": hidden_states,
+            "attention_mask": mask,
+            "past_key_values": working_cache,
+            "training": bool(self.training),
+            "gradient_checkpointing": bool(self.gradient_checkpointing),
+            "grad_enabled": bool(torch.is_grad_enabled()),
+            "use_cache": use_cache,
+            "output_hidden_states": output_hidden_states,
+        }
         # Training and grad-enabled evaluation cannot use the inference-only
-        # whole-model shortcut.  Check that cheap fact before walking the
-        # module tree for hooks/wrappers on every decode token.
+        # whole-model shortcut.  A real ``train()`` call still crosses the
+        # public model boundary once so provenance records the complete
+        # readable program; ``maybe_model_forward`` returns before importing
+        # or executing the optional wheel in this case.  Grad-enabled eval and
+        # instrumented inference remain entirely outside that boundary.  Check
+        # the cheap inference fact before walking the module tree for
+        # hooks/wrappers on every decode token.
         model_shortcut_candidate = bool(
             not self.training and not torch.is_grad_enabled()
         )
-        if model_shortcut_candidate and not _module_has_runtime_instrumentation(self):
+        if self.training:
+            maybe_model_forward(
+                self,
+                model_request,
+                execution_context=execution_context,
+            )
+        elif model_shortcut_candidate and not _module_has_runtime_instrumentation(self):
             optimized = maybe_model_forward(
                 self,
-                {
-                    "model_kind": "base",
-                    "hidden_states": hidden_states,
-                    "attention_mask": mask,
-                    "past_key_values": working_cache,
-                    "training": bool(self.training),
-                    "gradient_checkpointing": bool(self.gradient_checkpointing),
-                    "grad_enabled": bool(torch.is_grad_enabled()),
-                    "use_cache": use_cache,
-                    "output_hidden_states": output_hidden_states,
-                },
+                model_request,
                 execution_context=execution_context,
             )
         if optimized is not None:
