@@ -8,10 +8,44 @@ plain tensors/mappings only.
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 
-RWKV7_KERNEL_API_VERSION = 3
+RWKV7_KERNEL_API_VERSION = 4
+
+
+def _require_exact_type(name: str, value: Any, expected: type) -> None:
+    if type(value) is not expected:
+        raise TypeError(
+            f"{name} must be exactly {expected.__name__}; "
+            f"got {type(value).__name__}"
+        )
+
+
+OptionalKernelKind = Literal[
+    "training_program",
+    "model_forward",
+    "linear_training",
+    "mix6_training",
+    "recurrent",
+]
+
+
+class OptionalKernelEnvelope(TypedDict):
+    """Normalized response returned by the API-v4 backend facade.
+
+    Every operation has the same outer shape.  ``result`` is deliberately
+    opaque here because tensor/result validation remains operation-specific at
+    the clean Hugging Face boundary.
+    """
+
+    api_version: int
+    kind: OptionalKernelKind
+    supported: bool
+    implementation: str
+    reason: str
+    result: Any
+    phase: str
 
 
 class KernelSupport(TypedDict):
@@ -50,14 +84,113 @@ def support_result(
 ) -> KernelSupport:
     """Build a normalized capability result."""
 
+    _require_exact_type("supported", supported, bool)
+    _require_exact_type("implementation", implementation, str)
+    _require_exact_type("reason", reason, str)
+    if phase is not None:
+        _require_exact_type("phase", phase, str)
     result: dict[str, Any] = {
-        "supported": bool(supported),
-        "implementation": str(implementation),
-        "reason": str(reason),
+        "supported": supported,
+        "implementation": implementation,
+        "reason": reason,
     }
     if phase is not None:
-        result["phase"] = str(phase)
+        result["phase"] = phase
     return result  # type: ignore[return-value]
+
+
+def optional_kernel_result(
+    *,
+    kind: OptionalKernelKind,
+    supported: bool,
+    implementation: str,
+    reason: str,
+    result: Any,
+    phase: str,
+) -> OptionalKernelEnvelope:
+    """Build the single stable execution envelope exposed by API v4."""
+
+    _require_exact_type("kind", kind, str)
+    if kind not in (
+        "training_program",
+        "model_forward",
+        "linear_training",
+        "mix6_training",
+        "recurrent",
+    ):
+        raise ValueError(f"unknown optional-kernel kind {kind!r}")
+    _require_exact_type("supported", supported, bool)
+    _require_exact_type("implementation", implementation, str)
+    _require_exact_type("reason", reason, str)
+    _require_exact_type("phase", phase, str)
+    if not supported and result is not None:
+        raise ValueError("unsupported optional-kernel results must be None")
+    return {
+        "api_version": RWKV7_KERNEL_API_VERSION,
+        "kind": kind,
+        "supported": supported,
+        "implementation": implementation,
+        "reason": reason,
+        "result": result,
+        "phase": phase,
+    }
+
+
+def validate_optional_kernel_result(
+    value: Any, *, expected_kind: OptionalKernelKind | None = None
+) -> OptionalKernelEnvelope:
+    """Validate the common API-v4 envelope without inspecting its payload."""
+
+    if not isinstance(value, dict):
+        raise TypeError("execute_optional_v4() must return a dict")
+    required = {
+        "api_version",
+        "kind",
+        "supported",
+        "implementation",
+        "reason",
+        "result",
+        "phase",
+    }
+    missing = required - set(value)
+    if missing:
+        names = ", ".join(sorted(missing))
+        raise TypeError(f"execute_optional_v4() result is missing: {names}")
+    _require_exact_type("api_version", value["api_version"], int)
+    if value["api_version"] != RWKV7_KERNEL_API_VERSION:
+        raise ValueError(
+            "execute_optional_v4() API version mismatch: "
+            f"expected {RWKV7_KERNEL_API_VERSION}, got {value['api_version']!r}"
+        )
+    kind = value["kind"]
+    _require_exact_type("kind", kind, str)
+    _require_exact_type("supported", value["supported"], bool)
+    _require_exact_type("implementation", value["implementation"], str)
+    _require_exact_type("reason", value["reason"], str)
+    _require_exact_type("phase", value["phase"], str)
+    if expected_kind is not None and kind != expected_kind:
+        raise ValueError(
+            "execute_optional_v4() kind mismatch: "
+            f"expected {expected_kind!r}, got {kind!r}"
+        )
+    if kind not in (
+        "training_program",
+        "model_forward",
+        "linear_training",
+        "mix6_training",
+        "recurrent",
+    ):
+        raise ValueError(f"execute_optional_v4() returned unknown kind {kind!r}")
+    if not value["supported"] and value["result"] is not None:
+        raise ValueError("unsupported optional-kernel results must be None")
+    return optional_kernel_result(
+        kind=kind,
+        supported=value["supported"],
+        implementation=value["implementation"],
+        reason=value["reason"],
+        result=value["result"],
+        phase=value["phase"],
+    )
 
 
 def validate_support_result(
@@ -71,11 +204,16 @@ def validate_support_result(
     if missing:
         names = ", ".join(sorted(missing))
         raise TypeError(f"{probe_name}() result is missing: {names}")
+    _require_exact_type("supported", value["supported"], bool)
+    _require_exact_type("implementation", value["implementation"], str)
+    _require_exact_type("reason", value["reason"], str)
+    if "phase" in value:
+        _require_exact_type("phase", value["phase"], str)
     return support_result(
-        supported=bool(value["supported"]),
-        implementation=str(value["implementation"]),
-        reason=str(value["reason"]),
-        phase=None if "phase" not in value else str(value["phase"]),
+        supported=value["supported"],
+        implementation=value["implementation"],
+        reason=value["reason"],
+        phase=None if "phase" not in value else value["phase"],
     )
 
 
@@ -120,9 +258,13 @@ __all__ = [
     "KernelSupport",
     "ModelForwardResult",
     "ModelForwardSupport",
+    "OptionalKernelEnvelope",
+    "OptionalKernelKind",
     "RecurrentSupport",
+    "optional_kernel_result",
     "support_result",
     "validate_model_request",
     "validate_model_result",
+    "validate_optional_kernel_result",
     "validate_support_result",
 ]

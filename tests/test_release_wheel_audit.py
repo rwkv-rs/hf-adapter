@@ -38,8 +38,8 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["status"] == "passed"
     assert report["public_protocol"] == {
         "status": "passed",
-        "api_version": 3,
-        "training_program_probe": "probe_training_program_v1",
+        "api_version": 4,
+        "optional_backend_entrypoint": "execute_optional_v4",
     }
     assert report["migrated_files"] == 102
     assert report["transfers"] == EXPECTED_MIGRATION_TRANSFERS
@@ -58,8 +58,8 @@ def test_kernel_wheel_audit_rejects_inventory_protocol_api_mismatch(tmp_path: Pa
     protocol = root / "kernels/rwkv7_kernels/protocol.py"
     source = protocol.read_text(encoding="utf-8")
     payload = source.replace(
+        "RWKV7_KERNEL_API_VERSION = 4",
         "RWKV7_KERNEL_API_VERSION = 3",
-        "RWKV7_KERNEL_API_VERSION = 2",
     )
     assert payload != source
     kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
@@ -67,16 +67,28 @@ def test_kernel_wheel_audit_rejects_inventory_protocol_api_mismatch(tmp_path: Pa
         kernel,
         extra={"rwkv7_kernels/protocol.py": payload.encode()},
     )
-    with pytest.raises(ValueError, match="kernel protocol API version must be 3"):
+    with pytest.raises(ValueError, match="kernel protocol API version must be 4"):
         audit_kernel_wheel(kernel)
 
 
-def test_kernel_wheel_audit_requires_public_training_program_probe(tmp_path: Path):
+def test_hf_wheel_audit_rejects_kernel_api_mismatch(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    ops = root / "rwkv7_hf/ops_rwkv7.py"
+    source = ops.read_text(encoding="utf-8")
+    payload = source.replace("_KERNEL_API_VERSION = 4", "_KERNEL_API_VERSION = 3")
+    assert payload != source
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(hf, extra={"rwkv7_hf/ops_rwkv7.py": payload.encode()})
+    with pytest.raises(ValueError, match="HF optional boundary kernel API version"):
+        audit_hf_wheel(hf)
+
+
+def test_kernel_wheel_audit_requires_public_optional_backend_entrypoint(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     init_path = root / "kernels/rwkv7_kernels/__init__.py"
     source = init_path.read_text(encoding="utf-8")
     payload = source.replace(
-        '    "probe_training_program_v1",\n',
+        '    "execute_optional_v4",\n',
         "",
     )
     assert payload != source
@@ -85,7 +97,43 @@ def test_kernel_wheel_audit_requires_public_training_program_probe(tmp_path: Pat
         kernel,
         extra={"rwkv7_kernels/__init__.py": payload.encode()},
     )
-    with pytest.raises(ValueError, match="publicly export probe_training_program_v1"):
+    with pytest.raises(ValueError, match="exactly the API-v4 public surface"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_extra_legacy_root_export(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    init_path = root / "kernels/rwkv7_kernels/__init__.py"
+    source = init_path.read_text(encoding="utf-8")
+    payload = source.replace(
+        '    "execute_optional_v4",\n',
+        '    "execute_optional_v4",\n    "recurrent_v1",\n',
+    )
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={"rwkv7_kernels/__init__.py": payload.encode()},
+    )
+    with pytest.raises(ValueError, match="exactly the API-v4 public surface"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_requires_backend_entrypoint_definition(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    backend_path = root / "kernels/rwkv7_kernels/backend.py"
+    source = backend_path.read_text(encoding="utf-8")
+    payload = source.replace(
+        "def execute_optional_v4(",
+        "def removed_execute_optional_v4(",
+        1,
+    )
+    assert payload != source
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={"rwkv7_kernels/backend.py": payload.encode()},
+    )
+    with pytest.raises(ValueError, match="does not define execute_optional_v4"):
         audit_kernel_wheel(kernel)
 
 

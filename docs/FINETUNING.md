@@ -83,7 +83,7 @@ are recorded with the dataset/model revisions:
 export RWKV7_BACKEND=auto
 export RWKV7_KERNEL_IMPL=auto
 export RWKV7_MODEL_KERNEL_IMPL=auto
-export RWKV7_TRAINING_KERNEL_IMPL=adaptive
+export RWKV7_TRAINING_KERNEL_IMPL=auto
 
 python examples/finetune/sft_lora.py \
   --model /models/rwkv7-0.1b-hf \
@@ -102,26 +102,28 @@ runs with:
 python evaluation/validate_finetune_runs.py \
   --result-dir results/backend-v2/finetune \
   --require-backend-v2-routes \
-  --require-training-candidate adaptive
+  --require-training-candidate reference
 ```
 
-The callback records last routes at optimizer-bearing forwards, while a
-versioned process-wide counter preserves every optional leaf that actually
-executed. The latter matters for DPO, whose differentiable policy pass is
-followed by a no-grad reference pass. Standard HF training always retains the
-readable `torch-reference-model-v1` layer loop; there is no whole-model
-training dispatch. This keeps PEFT/TRL wrappers, hooks, gradient checkpointing,
-masking and the ordinary autograd graph visible to the framework.
+One immutable `RWKV7ExecutionContext` selects the program at the differentiable
+model boundary and is passed explicitly through non-linear layer boundaries
+and checkpoint replay. Two narrow routing bridges carry the resolved value:
+one transfers decoder context to the LM head across the standard output
+boundary, while lexical `linear_execution_context` preserves the standard
+`nn.Linear`/PEFT `forward(x)` contract and republishes the same value during
+replay. Two evidence-only context-local snapshots and a versioned process-wide counter
+preserve every optional leaf that actually executed. The counter matters for
+DPO, whose differentiable policy pass is followed by a no-grad reference pass.
+Standard HF training always retains the readable
+`torch-reference-model-v1` layer loop; there is no whole-model training
+dispatch. This keeps PEFT/TRL wrappers, hooks, gradient checkpointing, masking,
+and the ordinary autograd graph visible to the framework.
 
-Acceleration happens only at three explicit tensor boundaries. Supported,
-aligned BF16 work may select
-`native-nvidia-rwkv7-factorized-recurrent-training-v1`,
-`torch-cuda-rwkv7-flattened-linear-training-v1`, and
-`native-nvidia-rwkv7-mix6-training-v1`. Exact matrix recurrence and reference
-linear/Mix6 math remain the fail-closed alternatives for unsupported requests.
-The model route plus each executed leaf route is recorded independently; a
-requested selector is never counted as execution evidence. Finite
+The optional package retains recurrent, flattened-linear, and Mix6 leaf
+adapters for isolated diagnostics. They are not currently promoted into HF
+finetuning because API v4 cannot preflight all concrete leaves before the
+layer loop. Formal SFT/DPO/GRPO therefore uses the complete readable reference
+program; strict optimized training fails at the model boundary. Finite
 loss/gradients, changed parameters and adapter save/reload are still mandatory.
-Formal release bundles also record and require all four environment values
-shown above, so a stale inference or historical whole-model selector cannot be
-silently promoted as adaptive HF training evidence.
+Historical leaf or whole-model selector results cannot be promoted as current
+HF training evidence.

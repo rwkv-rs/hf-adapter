@@ -49,6 +49,34 @@ _AUTO_NATIVE_MAX_BATCH = 8
 _AUTO_NATIVE_MAX_PREFILL_TOKENS = 2048
 
 
+def _dense_model_linears(owner: Any) -> tuple[Any, ...]:
+    """Return every projection consumed as a raw weight by dense-v2."""
+
+    projections: list[Any] = []
+    for layer in owner.layers:
+        attention = layer.attn
+        projections.extend(
+            (
+                attention.r_proj,
+                attention.k_proj,
+                attention.v_proj,
+                attention.o_proj,
+                attention.w_lora.lora[0],
+                attention.w_lora.lora[2],
+                attention.a_lora.lora[0],
+                attention.a_lora.lora[2],
+                attention.g_lora.lora[0],
+                attention.g_lora.lora[2],
+                layer.ffn.key,
+                layer.ffn.value,
+            )
+        )
+        value_lora = getattr(attention, "v_lora", None)
+        if value_lora is not None:
+            projections.extend((value_lora.lora[0], value_lora.lora[2]))
+    return tuple(projections)
+
+
 def _phase(request: dict[str, Any]) -> str:
     if bool(request["training"]) or bool(request.get("grad_enabled", False)):
         return "training"
@@ -118,6 +146,27 @@ def _probe_dense(owner: Any, request: dict[str, Any]):
             reason="owner does not expose the clean RWKV7 base-model structure",
             phase=_phase(request),
         )
+    from .nvidia.native_jit_linear import dense_linear_module
+
+    try:
+        projections = _dense_model_linears(owner)
+    except (AttributeError, IndexError, TypeError) as exc:
+        return support_result(
+            supported=False,
+            implementation=_DENSE_IMPLEMENTATION,
+            reason=f"dense-v2 cannot inspect the clean projection tree: {exc}",
+            phase=_phase(request),
+        )
+    if not all(dense_linear_module(module) for module in projections):
+        return support_result(
+            supported=False,
+            implementation=_DENSE_IMPLEMENTATION,
+            reason=(
+                "dense-v2 raw-weight packing cannot preserve a custom linear "
+                "forward; the readable model must execute this request"
+            ),
+            phase=_phase(request),
+        )
     return support_result(
         supported=True,
         implementation=_DENSE_IMPLEMENTATION,
@@ -165,13 +214,11 @@ def _effective_attention_mask(
         raise ValueError("native attention_mask must be rank 1 or 2")
     if mask.ndim == 1:
         mask = mask.unsqueeze(0)
-    if int(mask.shape[0]) not in (1, batch) or int(mask.shape[1]) < sequence:
+    if int(mask.shape[0]) != batch or int(mask.shape[1]) < sequence:
         raise ValueError(
-            "native attention_mask must broadcast to the input batch and cover "
-            "the current sequence"
+            "native attention_mask must match the input batch and cover the "
+            "current sequence"
         )
-    if int(mask.shape[0]) == 1 and batch != 1:
-        mask = mask.expand(batch, -1)
     return mask[:, -sequence:].to(device=input_ids.device, dtype=torch.bool)
 
 
@@ -551,7 +598,8 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
         logits = owner.model.embeddings.weight.new_zeros(
             batch, 1, int(owner.lm_head.out_features)
         )
-        cache.seen_tokens += 1
+        if bool(request["use_cache"]):
+            cache.seen_tokens += 1
         return {
             "output_kind": "causal_lm",
             "logits": logits,

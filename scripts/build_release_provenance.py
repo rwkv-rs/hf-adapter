@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 
 from evaluation.build_backend_v2_compact_bundle import validate_bundle  # noqa: E402
 from scripts.release_route_contract import (  # noqa: E402
-    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
     validate_actual_routes,
 )
 from scripts.verify_release_assets import (  # noqa: E402
@@ -155,13 +155,13 @@ def read_device_report(
     for gate in REQUIRED_GATES:
         if report.get(f"{gate}_status") != "passed":
             raise ValueError(f"{gate} gate did not pass: {device}")
-    if report.get("training_policy") != "adaptive":
-        raise ValueError(f"formal adaptive training policy is missing: {device}")
+    if report.get("training_policy") != "reference":
+        raise ValueError(f"formal reference training policy is missing: {device}")
     if (
         report.get("training_backend_environment")
-        != FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT
+        != FORMAL_REFERENCE_BACKEND_ENVIRONMENT
     ):
-        raise ValueError(f"formal adaptive training environment differs: {device}")
+        raise ValueError(f"formal reference training environment differs: {device}")
 
     try:
         routes = validate_actual_routes(report.get("actual_routes"))
@@ -202,8 +202,8 @@ def read_device_report(
         "harness_sha": harness_sha,
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
-        "training_policy": "adaptive",
-        "training_backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
+        "training_policy": "reference",
+        "training_backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
         **{f"{gate}_status": "passed" for gate in REQUIRED_GATES},
         "compact_bundle_manifest_sha256": manifest_sha,
         "acceptance_started_at": started_at.isoformat(),

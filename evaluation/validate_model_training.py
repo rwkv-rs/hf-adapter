@@ -65,6 +65,7 @@ FACTORIZED_RECURRENT_IMPLEMENTATION = (
 FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
 PROGRAM_IMPLEMENTATION = "native-nvidia-rwkv7-adaptive-training-program-v1"
+REFERENCE_PROGRAM_IMPLEMENTATION = "torch-reference-training-program-v1"
 CUDA_LINEAR_MIN_ROWS = 128
 
 
@@ -97,12 +98,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--kernel-wheel", type=Path)
     parser.add_argument(
         "--candidate",
-        choices=("adaptive", "matrix", "factorized"),
-        default="adaptive",
+        choices=("reference", "adaptive", "matrix", "factorized"),
+        default="reference",
         help=(
-            "adaptive uses the fast recurrent and linear leaves only in the "
-            "certified dense zero-state B=4,T=128 domain and exact leaves "
-            "elsewhere; matrix and factorized isolate one recurrent program"
+            "reference is the formal complete PyTorch program reached through "
+            "the fail-closed v4 preflight; adaptive, matrix, and factorized "
+            "remain isolated leaf diagnostics"
         ),
     )
     return parser.parse_args()
@@ -115,11 +116,10 @@ def select_lane(lane: str, *, candidate: str) -> None:
         os.environ["RWKV7_BACKEND"] = "reference"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
     elif lane == "candidate":
-        # Whole-model auto deliberately declines training.  The readable HF
-        # layer loop then calls the explicitly requested recurrent, linear,
-        # and explicit-shift Mix6 leaves independently.
         os.environ["RWKV7_BACKEND"] = "auto"
-        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = candidate
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = (
+            "auto" if candidate == "reference" else candidate
+        )
     else:
         raise ValueError(f"unknown clean-model lane: {lane}")
     os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
@@ -410,6 +410,25 @@ def candidate_route_passed(
     mix6 = row["mix6_route"]
     model = row["model_route"]
     program = row["program_route"]
+    if candidate == "reference":
+        return bool(
+            recurrent
+            and recurrent.get("selected") == "reference"
+            and recurrent.get("implementation") == "torch-reference-v1"
+            and linear
+            and linear.get("selected") == "reference"
+            and linear.get("implementation") == "torch-reference-linear-v1"
+            and mix6
+            and mix6.get("selected") == "reference"
+            and mix6.get("implementation") == "torch-reference-mix6-v1"
+            and model
+            and model.get("selected") == "reference"
+            and model.get("implementation") == "torch-reference-model-v1"
+            and model.get("phase") == "training"
+            and program
+            and program.get("selected") == "reference"
+            and program.get("implementation") == REFERENCE_PROGRAM_IMPLEMENTATION
+        )
     adaptive_fast_domain = adaptive_fast_domain_expected(
         batch=batch,
         tokens=tokens,
@@ -481,11 +500,7 @@ def candidate_route_passed(
             if candidate == "adaptive" and adaptive_fast_domain
             else "reference"
         )
-        and (
-            program.get("implementation") == PROGRAM_IMPLEMENTATION
-            if candidate != "reference"
-            else program.get("implementation") == "torch-reference-training-program-v1"
-        )
+        and program.get("implementation") == PROGRAM_IMPLEMENTATION
     )
 
 

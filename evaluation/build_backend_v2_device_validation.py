@@ -18,12 +18,12 @@ if str(ROOT) not in sys.path:
 
 from evaluation.fla_common import EXPECTED_FLA_COMMIT  # noqa: E402
 from evaluation.validate_finetune_runs import (  # noqa: E402
-    validate_adaptive_finetune_route_evidence,
+    validate_reference_finetune_route_evidence,
 )
 from scripts.release_route_contract import (  # noqa: E402
     HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
     validate_actual_routes,
-    validate_formal_adaptive_environment,
+    validate_formal_reference_environment,
 )
 
 
@@ -226,12 +226,12 @@ def validate_finetune(
             raise ValueError(f"{name} report wheel identity mismatch")
         backend_routes = row.get("backend_routes") or []
         trace = row.get("kernel_route_trace") or {}
-        route_evidence = validate_adaptive_finetune_route_evidence(
+        route_evidence = validate_reference_finetune_route_evidence(
             backend_routes, trace
         )
         if not route_evidence["passed"]:
             raise ValueError(
-                f"{name} report has invalid adaptive training routes: "
+                f"{name} report has invalid reference training routes: "
                 f"{route_evidence['failures']}"
             )
         statuses[f"{name}_status"] = "passed"
@@ -333,7 +333,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError("FLA report is missing complete non-blocking diagnostics")
 
-    expected_training_mode = "adaptive"
+    expected_training_mode = "reference"
     if (reports["training"].get("settings") or {}).get(
         "candidate_route"
     ) != expected_training_mode:
@@ -344,11 +344,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("HF ecosystem training mode does not match the release device")
     if (reports["speed"].get("training") or {}).get("mode") != expected_training_mode:
         raise ValueError("speed training mode does not match the release device")
-    require_clean_leaf_training_toolkit(reports["training"])
-    training_backend_environment = validate_formal_adaptive_environment(
+    training_backend_environment = validate_formal_reference_environment(
         reports["training"].get("environment")
     )
-    hf_backend_environment = validate_formal_adaptive_environment(
+    hf_backend_environment = validate_formal_reference_environment(
         reports["hf_ecosystem"].get("environment")
     )
     if hf_backend_environment != training_backend_environment:
@@ -407,7 +406,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
         "lm_eval_comparison_summary": lm_eval["comparison_summary"],
-        "training_policy": "adaptive",
+        "training_policy": "reference",
         "training_backend_environment": training_backend_environment,
         **{f"{label}_status": "passed" for label in PRIMARY_REPORTS},
         **finetune_statuses,

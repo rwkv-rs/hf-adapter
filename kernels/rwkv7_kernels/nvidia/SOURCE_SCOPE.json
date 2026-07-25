@@ -939,7 +939,7 @@
     {
       "adaptation": "adapted from the private cache ABI and exact nn.Linear identity checks to canonical RWKV7Cache and the clean RWKV7Linear dense contract without changing graph kernels",
       "destination": "rwkv7_kernels/nvidia/native_graph_runtime.py",
-      "destination_sha256": "09395a89405ecb3822dc9ea8500498ce2ebec320b17934f86fe9f2df94772b5f",
+      "destination_sha256": "cb1a4d98d215a91bb3fb2f9f3dd47d17ed84482486c7dac4c168c0282be4512d",
       "disposition": "adapted_protocol",
       "git_blob": "67bf1baef14e76148713679431975a2ec1213084",
       "git_mode": "100644",
@@ -993,9 +993,9 @@
       "source": "rwkv7_hf/native_jit_graph_dispatch.py"
     },
     {
-      "adaptation": "adapted exact nn.Linear checks to accept the clean RWKV7Linear subclass only when it exposes an ordinary Parameter weight; packed quantized tensor subclasses remain callable operands",
+      "adaptation": "adapted exact nn.Linear checks to accept the clean RWKV7Linear subclass only while its model-owned forward identity marker and ordinary Parameter weight remain intact; custom and packed quantized subclasses remain callable operands",
       "destination": "rwkv7_kernels/nvidia/native_jit_linear.py",
-      "destination_sha256": "f53f40bb72f4bae05d4845a5cbef4d3576548373b110a04c962338e1e63bfb79",
+      "destination_sha256": "97e0e4af3cb19985015d9fa12ed7d05a00798d773701c12820ff6135d13e09e7",
       "disposition": "adapted_protocol",
       "git_blob": "0f0b38ba0a4b8271a644f44db3f5c1689ac08dd3",
       "git_mode": "100644",
@@ -1005,9 +1005,9 @@
       "source": "rwkv7_hf/native_jit_linear.py"
     },
     {
-      "adaptation": "adapted clean RWKV7Linear operands while retaining the decay bias as FP32 in private packs; ordinary LoRA biases remain activation dtype and public model parameters are never mutated",
+      "adaptation": "adapted clean RWKV7Linear operands while retaining the decay bias as FP32 in private packs; ordinary LoRA biases remain activation dtype, Identity pre-norm modules are packed as absent, and public model parameters are never mutated",
       "destination": "rwkv7_kernels/nvidia/native_jit_packing.py",
-      "destination_sha256": "99083329c84fda294a5df8128bb4ba7adb9b8e899485527dbcb99f30ea9a226c",
+      "destination_sha256": "ca0e506d718e32edb5e85be9043c47ce6eda7aa2c5d4707108540479b09d6327",
       "disposition": "adapted_protocol",
       "git_blob": "3a284bbcaa8b50230a25aa00705644af2a7cf071",
       "git_mode": "100644",

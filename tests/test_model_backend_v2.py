@@ -42,6 +42,7 @@ def test_native_packer_recognizes_clean_linear_and_preserves_fp32_decay_bias(
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
 
     dense_packs, *_ = packing.extract_dense_packs(model, rkv_policy="linear")
+    assert [pack[4] for pack in dense_packs] == [1, 0]
     assert dense_packs[0][26].dtype == torch.float32
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
 
@@ -53,10 +54,157 @@ def test_native_packer_recognizes_clean_linear_and_preserves_fp32_decay_bias(
         graph_linear_operand=linear.graph_linear_operand,
         graph_linear_is_dense=linear.graph_linear_is_dense,
     )
+    assert [pack[4] for pack in graph_packs] == [1, 0]
     assert isinstance(graph_packs[0][24], torch.Tensor)
     assert isinstance(graph_packs[0][25], torch.Tensor)
     assert graph_packs[0][26].dtype == torch.float32
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
+
+    structural = importlib.import_module("rwkv7_kernels.model.packing")
+    structural_packs, *_ = structural.extract_dense_packs(model.model)
+    assert [pack[5] for pack in structural_packs] == [1, 0]
+
+
+def test_structural_dense_packs_follow_module_replacement_and_model_moves(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    structural = importlib.import_module("rwkv7_kernels.model.packing")
+    model = RWKV7ForCausalLM(tiny_config).half().eval()
+
+    first_packs, *_ = structural.extract_dense_packs(model.model)
+    old_projection = model.model.layers[0].attn.r_proj
+    old_weight = old_projection.weight
+    assert first_packs[0][21] is old_weight
+
+    replacement = RWKV7Linear(
+        tiny_config.hidden_size,
+        tiny_config.attention_hidden_size,
+        bias=False,
+    ).half()
+    model.model.layers[0].attn.r_proj = replacement
+    second_packs, *_ = structural.extract_dense_packs(model.model)
+    assert second_packs is not first_packs
+    assert second_packs[0][21] is replacement.weight
+    assert second_packs[0][21] is not old_weight
+
+    version = replacement.weight._version
+    with torch.no_grad():
+        replacement.weight.add_(1)
+    third_packs, *_ = structural.extract_dense_packs(model.model)
+    assert replacement.weight._version == version + 1
+    assert third_packs is not second_packs
+    assert third_packs[0][21] is replacement.weight
+
+    # Later blocks use synthetic tensors for their Identity pre-norm. They must
+    # be rebuilt on the model's current dtype/device rather than surviving from
+    # a previous structural extraction.
+    assert third_packs[1][6].dtype == torch.float16
+    model.float()
+    float_packs, *_ = structural.extract_dense_packs(model.model)
+    assert float_packs[1][6].dtype == torch.float32
+    model.to(device="meta")
+    meta_packs, *_ = structural.extract_dense_packs(model.model)
+    assert meta_packs[1][6].device.type == "meta"
+    assert meta_packs[0][-1].device.type == "meta"
+
+
+def test_native_whole_model_operands_preserve_linear_subclass_forward(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    linear = importlib.import_module("rwkv7_kernels.nvidia.native_jit_linear")
+    packing = importlib.import_module("rwkv7_kernels.nvidia.native_jit_packing")
+    native_jit = importlib.import_module("rwkv7_kernels.nvidia.native_jit")
+    graph_runtime = importlib.import_module(
+        "rwkv7_kernels.nvidia.native_graph_runtime"
+    )
+
+    class OffsetLinear(torch.nn.Linear):
+        def forward(self, value):
+            return super().forward(value) + 0.75
+
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    projection = OffsetLinear(
+        tiny_config.hidden_size,
+        tiny_config.attention_hidden_size,
+        bias=False,
+    )
+    model.model.layers[0].attn.r_proj = projection
+    assert not linear.dense_linear_module(projection)
+    assert linear.graph_linear_operand(projection) is projection
+
+    graph_packs, *_ = packing.extract_graph_packs(
+        model,
+        rkv_policy="linear",
+        sparse_ffn_low_memory_pack_enabled=lambda: False,
+        try_relayout_ffn_value_weight=lambda module: False,
+        graph_linear_operand=linear.graph_linear_operand,
+        graph_linear_is_dense=linear.graph_linear_is_dense,
+    )
+    assert graph_packs[0][20] is projection
+    hidden = torch.randn(2, tiny_config.hidden_size)
+    torch.testing.assert_close(
+        native_jit._graph_linear_call(hidden, graph_packs[0][20]),
+        projection(hidden),
+    )
+
+    head = OffsetLinear(
+        tiny_config.hidden_size,
+        tiny_config.vocab_size,
+        bias=False,
+    )
+    model.set_output_embeddings(head)
+    expected = head(hidden)
+    torch.testing.assert_close(native_jit._lm_head(model, hidden), expected)
+    destination = torch.empty_like(expected)
+    graph_runtime._head_linear_into(head, hidden, destination)
+    torch.testing.assert_close(destination, expected)
+
+    # A class-level monkeypatch of the adapter's own Linear must also revoke
+    # the marker.  Checking only the class name/boolean marker would silently
+    # bypass this forward on the whole-model route.
+    original_forward = RWKV7Linear.forward
+
+    def overridden_rwkv7_forward(self, value):
+        return original_forward(self, value) + 0.25
+
+    monkeypatch.setattr(RWKV7Linear, "forward", overridden_rwkv7_forward)
+    internal_projection = model.model.layers[1].attn.r_proj
+    assert not linear.dense_linear_module(internal_projection)
+    assert linear.graph_linear_operand(internal_projection) is internal_projection
+    torch.testing.assert_close(
+        native_jit._graph_linear_call(hidden, internal_projection),
+        internal_projection(hidden),
+    )
+
+    # The tensor-only dense-v2 diagnostic cannot call a custom projection and
+    # therefore must decline rather than silently pack its raw weight.
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
+    assert any(
+        not linear.dense_linear_module(module)
+        for module in dispatcher._dense_model_linears(model.model)
+    )
+
+    class FakeCudaTensor(torch.Tensor):
+        @property
+        def device(self):
+            return torch.device("cuda")
+
+    fake_cuda_hidden = torch.zeros(
+        1, 2, tiny_config.hidden_size, dtype=torch.float16
+    ).as_subclass(FakeCudaTensor)
+    support = dispatcher._probe_dense(
+        model.model,
+        {
+            "model_kind": "base",
+            "hidden_states": fake_cuda_hidden,
+            "training": False,
+            "grad_enabled": False,
+        },
+    )
+    assert support["supported"] is False
+    assert "custom linear forward" in support["reason"]
 
 
 def test_native_decay_projection_adds_w0_only_after_fp32_promotion(
@@ -385,6 +533,12 @@ def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
     runner.bind_cache(cache)
     torch.testing.assert_close(cache.recurrent_state[0], canonical)
     assert runner._cache_bound_to_runner(cache)
+    # A second decode token must retain the exact canonical views.  The
+    # adapter boundary is not allowed to clone/rebind the cache per token.
+    runner.copy_from_cache(cache)
+    runner.bind_cache(cache)
+    assert runner.copy_from_cache_fast_skips == 1
+    assert runner.bind_cache_fast_skips == 1
 
     runner.state[0].add_(1)
     torch.testing.assert_close(cache.recurrent_state[0], canonical + 1)

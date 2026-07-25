@@ -7,7 +7,7 @@ CMix、残差、归一化、层循环、loss 与 cache 都能直接从
 `rwkv7_hf/modeling_rwkv7.py` 看懂；WKV 递推只通过
 `rwkv7_hf/ops_rwkv7.py` 这一处明确边界。`rwkv7_hf/` 只放模型代码，转换与
 smoke 命令统一放在同级 `rwkv7_hf_tools/`。独立的 `rwkv7-kernels` 可选包通过
-两个版本化算子边界提供完整 NVIDIA 高性能实现；安装它不会替换可读模型、
+唯一稳定的 API-v4 facade 提供完整 NVIDIA 高性能实现；安装它不会替换可读模型、
 config、cache、tokenizer 或 checkpoint 布局。历史开发代码继续归档在
 `perf/native-kernels-v0.8`，用户不需要从旧分支安装。
 
@@ -59,8 +59,21 @@ python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
 模式，遇到不支持的路由会直接报错，不会静默回退。
 
 可选 wheel 负责 recurrent、融合 prefill/decode、CUDA Graph/state pool、
-SM70/Ada/Blackwell 策略、量化适配和训练 autograd；它不会向 `RWKV7Config`
-加入硬件字段，也不会改变 `RWKV7Cache` 的公开布局。W8/W4/A8W8、BN/TN、
+SM70/Ada/Blackwell 策略、量化适配和训练 autograd。它对 HF core 只公开
+`execute_optional_v4`，统一承载 `training_program`、`model_forward`、
+`linear_training`、`mix6_training` 和 `recurrent` 五种操作。能力检查明确判定不支持时
+不会产生副作用，并返回 `result=None`，`auto` 才会回到未改动的 reference 路径。
+`model_forward` 直接使用调用方的规范 cache，不复制；一旦已开始正向执行，异常或
+畸形返回都会 fail closed，即使在 `auto` 下也不会在可能已绑定或更新 CUDA Graph
+cache 后再用 reference 重算。
+当前 `training_program` 请求还不能绑定全部具体训练叶子，因此会主动返回不支持：
+HF 训练在 `auto` 下完整走 reference，严格 `optimized` 会在模型边界报错；私有训练
+叶子仅用于独立诊断。
+
+kernel 包顶层只导出
+`__version__`、`RWKV7_KERNEL_API_VERSION` 和
+`execute_optional_v4`，历史 v1 helper 仅保留为内部实现。它不会向
+`RWKV7Config` 加入硬件字段，也不会改变 `RWKV7Cache` 的公开布局。W8/W4/A8W8、BN/TN、
 BitsAndBytes、Marlin 和 TorchAO 仍由 `rwkv7_kernels.quantization` 显式选择。
 
 ## 转换官方 .pth
@@ -84,6 +97,10 @@ rwkv7-hf convert \
 - `RWKV7Cache`：每层 `[B,H,K,V]` state、TMix shift、CMix shift
 - `RWKV7TimeMix`、`RWKV7ChannelMix`、`RWKV7Block`
 - `RWKV7PreTrainedModel`、`RWKV7Model`、`RWKV7ForCausalLM`
+- 每次模型调用只解析一次的不可变 `RWKV7ExecutionContext`，显式传入可读的非线性
+  层边界和 gradient-checkpoint replay；两个窄作用域路由桥分别负责 decoder 到
+  LM head 的上下文传递，以及保持标准 `nn.Linear.forward(x)` 契约；另外两个
+  context-local 快照只记录证据，不参与路由
 - 标准 loss、cache、generation、save/reload、gradient checkpointing、PEFT、
   Trainer 与 TRL 接口
 
@@ -91,7 +108,8 @@ rwkv7-hf convert \
 
 ## 源码包
 
-- `rwkv7_hf/`：只包含 config、cache、算子边界、modeling、tokenizer 和聊天模板。
+- `rwkv7_hf/`：只包含 config、cache、reference recurrence 与最小 API-v4
+  facade、modeling、tokenizer 和聊天模板。
 - `rwkv7_hf_tools/`：包含 CLI、checkpoint 转换器、manifest 工具和模型 smoke 验证。
 - `kernels/rwkv7_kernels/`：只包含可选版本化协议、NVIDIA 实现、Graph/state
   pool、量化器和训练算子。

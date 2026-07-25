@@ -19,10 +19,8 @@ from scripts.verify_release_assets import (
     verify,
 )
 from scripts.release_route_contract import (
-    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
-    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
-    READABLE_TRAINING_MODEL_ROUTE,
-    REQUIRED_TRAINING_LEAF_ROUTES,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
+    REQUIRED_REFERENCE_TRAINING_ROUTES,
 )
 
 
@@ -67,8 +65,8 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             "harness_sha": harness_sha,
             "lm_eval_units": 144,
             "lm_eval_status": "passed",
-            "training_policy": "adaptive",
-            "training_backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
+            "training_policy": "reference",
+            "training_backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
             "correctness_status": "passed",
             "hf_ecosystem_status": "passed",
             "training_status": "passed",
@@ -92,11 +90,7 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             "actual_routes": {
                 "prefill": ["native-self-chunk-prefill-v2"],
                 "decode": ["native-fused-token-decode-v2"],
-                "training": [
-                    READABLE_TRAINING_MODEL_ROUTE,
-                    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
-                    *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
-                ],
+                "training": sorted(REQUIRED_REFERENCE_TRAINING_ROUTES),
                 "quantization": ["native-w8-linear-v1"],
             },
         }

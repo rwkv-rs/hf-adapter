@@ -7,7 +7,6 @@ from typing import Any
 
 import torch
 
-from ._runtime_preflight import _certify_recurrent_runtime
 from .linear.training_flattened import flattened_linear as _run_flattened
 from .linear.training_flattened import (
     probe_linear_training_v1 as _probe_flattened,
@@ -90,7 +89,17 @@ def probe_training_program_v1(
     autograd_leaf_eligible: bool,
     head_dim: int | None,
 ) -> dict[str, Any]:
-    """Certify the coupled adaptive recurrent/linear program before use."""
+    """Fail closed until one request can preflight every training leaf.
+
+    API v4 currently provides model-level shape and mask facts, but it does
+    not provide the concrete projection weights/biases or the six Mix6
+    parameter tensors that will be used later in the readable layer loop.
+    Consequently this function cannot prove that those leaves are supported,
+    cannot load every lazy CUDA dependency up front, and must not issue a
+    reusable program certificate.  Standalone leaf diagnostics remain
+    available through their private v1 dispatchers, but production model
+    routing stays on the complete reference program.
+    """
 
     if _requested_implementation() != "adaptive":
         return {
@@ -161,16 +170,6 @@ def probe_training_program_v1(
             "implementation": _PROGRAM_IMPLEMENTATION,
             "reason": "the factorized recurrent program requires head_dim=64",
         }
-    if (
-        not torch.cuda.is_available()
-        or not hidden_states.is_cuda
-        or hidden_states.dtype != torch.bfloat16
-    ):
-        return {
-            "supported": False,
-            "implementation": _PROGRAM_IMPLEMENTATION,
-            "reason": "the coupled program requires BF16 CUDA hidden states",
-        }
     if not isinstance(attention_mask, torch.Tensor) or tuple(attention_mask.shape) != (
         batch,
         tokens,
@@ -180,33 +179,14 @@ def probe_training_program_v1(
             "implementation": _PROGRAM_IMPLEMENTATION,
             "reason": "attention_mask must be a [B,T] tensor",
         }
-    if not attention_mask.is_cuda or attention_mask.device != hidden_states.device:
-        return {
-            "supported": False,
-            "implementation": _PROGRAM_IMPLEMENTATION,
-            "reason": "attention_mask must share the hidden-state CUDA device",
-        }
-    if torch.cuda.get_device_capability(hidden_states.device) < (8, 0):
-        return {
-            "supported": False,
-            "implementation": _PROGRAM_IMPLEMENTATION,
-            "reason": "the BF16 training program requires sm80 or newer",
-        }
-    from .nvidia.train_temp_cuda import recurrent_training_cuda_available
-
-    if not recurrent_training_cuda_available(build=True):
-        return {
-            "supported": False,
-            "implementation": _PROGRAM_IMPLEMENTATION,
-            "reason": "the native recurrent extension is not loaded",
-        }
-    # This is the only runtime-certificate signer. It runs only after the
-    # complete device-capability and extension-load preflight above succeeds.
-    _certify_recurrent_runtime(hidden_states.device)
     return {
-        "supported": True,
+        "supported": False,
         "implementation": _PROGRAM_IMPLEMENTATION,
-        "reason": "coupled B4/T128 adaptive training program is available",
+        "reason": (
+            "atomic optimized training is disabled because API v4 does not "
+            "yet carry the concrete recurrent, flattened-linear, and Mix6 "
+            "leaf plan required to preflight every leaf before execution"
+        ),
     }
 
 

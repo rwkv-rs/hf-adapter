@@ -23,7 +23,7 @@ from scripts.verify_release_assets import (  # noqa: E402
     verify as verify_release_assets,
 )
 from scripts.release_route_contract import (  # noqa: E402
-    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
     validate_actual_routes,
 )
 
@@ -142,12 +142,12 @@ def validate_inputs(
     }
     for device in DEVICE_ORDER:
         device_validation = validation["devices"][device]
-        if device_validation.get("training_policy") != "adaptive" or (
+        if device_validation.get("training_policy") != "reference" or (
             device_validation.get("training_backend_environment")
-            != FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT
+            != FORMAL_REFERENCE_BACKEND_ENVIRONMENT
         ):
             raise ValueError(
-                f"formal adaptive training provenance is incomplete: {device}"
+                f"formal reference training provenance is incomplete: {device}"
             )
         try:
             validate_actual_routes(device_validation.get("actual_routes"))
@@ -271,14 +271,14 @@ def render_issue(
             "",
             "HF coverage includes AutoModel/save-reload, state/cache, left/right padding, "
             "greedy and beam generation, Trainer, Accelerate, PEFT and TRL. Training "
-            "keeps the readable `torch-reference-model-v1` layer loop and accelerates "
-            "only the recurrent, flattened-linear and Mix6 tensor leaves. Evidence "
+            "keeps one complete readable reference program; optional recurrent, "
+            "flattened-linear and Mix6 leaves remain diagnostics. Evidence "
             "includes loss/all gradients plus SFT, DPO and GRPO. Quantization "
             "covers W8, W4, A8W8, Bn/Tn, BitsAndBytes, Marlin and TorchAO.",
             "Formal training uses `RWKV7_BACKEND=auto`, `RWKV7_KERNEL_IMPL=auto`, "
             "`RWKV7_MODEL_KERNEL_IMPL=auto` and "
-            "`RWKV7_TRAINING_KERNEL_IMPL=adaptive`; the compact provenance records "
-            "and validates that fail-closed environment in addition to actual routes.",
+            "`RWKV7_TRAINING_KERNEL_IMPL=auto`; compact provenance validates that "
+            "environment and the full reference model/program/recurrent/linear/Mix6 route.",
             "",
             "## Complete optional-kernel capability migration",
             "",

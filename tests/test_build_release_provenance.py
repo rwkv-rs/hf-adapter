@@ -13,10 +13,10 @@ from scripts.build_release_provenance import DEVICE_REPORT, REQUIRED_GATES, buil
 from scripts.build_release_provenance import DEVICE_RUN_REPORT
 from scripts.release_route_contract import (
     ADAPTIVE_TRAINING_PROGRAM_ROUTE,
-    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
     HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
     READABLE_TRAINING_MODEL_ROUTE,
-    REQUIRED_TRAINING_LEAF_ROUTES,
+    REQUIRED_REFERENCE_TRAINING_ROUTES,
 )
 from scripts.verify_release_assets import (
     DEVICES,
@@ -75,17 +75,13 @@ def device_report(device: str, identities: dict[str, str]) -> dict:
         "kernel_wheel_sha256": identities[f"rwkv7_kernels-{VERSION}-py3-none-any.whl"],
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
-        "training_policy": "adaptive",
-        "training_backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
+        "training_policy": "reference",
+        "training_backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
         **{f"{gate}_status": "passed" for gate in REQUIRED_GATES},
         "actual_routes": {
             "prefill": ["native-self-chunk-prefill-v2"],
             "decode": ["native-fused-token-decode-v2"],
-            "training": [
-                READABLE_TRAINING_MODEL_ROUTE,
-                ADAPTIVE_TRAINING_PROGRAM_ROUTE,
-                *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
-            ],
+            "training": sorted(REQUIRED_REFERENCE_TRAINING_ROUTES),
             "quantization": ["native-w8-linear-v1", "torchao-int4-v1"],
         },
     }
@@ -212,7 +208,7 @@ def test_builder_rejects_missing_gate(tmp_path: Path):
         build(args)
 
 
-def test_builder_rejects_non_adaptive_training_provenance(tmp_path: Path):
+def test_builder_rejects_non_reference_training_provenance(tmp_path: Path):
     args, bundles, _ = setup_release(tmp_path)
     device = "rtx-4080"
     replacement = rewrite_bundle(
@@ -220,11 +216,11 @@ def test_builder_rejects_non_adaptive_training_provenance(tmp_path: Path):
         device=device,
         bundle=bundles[device],
         mutate=lambda report: report["training_backend_environment"].__setitem__(
-            "RWKV7_TRAINING_KERNEL_IMPL", "auto"
+            "RWKV7_TRAINING_KERNEL_IMPL", "adaptive"
         ),
     )
     replace_arg(args, device, replacement)
-    with pytest.raises(ValueError, match="adaptive training environment differs"):
+    with pytest.raises(ValueError, match="reference training environment differs"):
         build(args)
 
 
@@ -298,7 +294,7 @@ def test_builder_requires_all_clean_training_boundaries(tmp_path: Path):
         ),
     )
     replace_arg(args, device, replacement)
-    with pytest.raises(ValueError, match="independent kernel leaves"):
+    with pytest.raises(ValueError, match="complete reference program"):
         build(args)
 
 
@@ -311,15 +307,18 @@ def test_builder_requires_readable_model_training_boundary(tmp_path: Path):
         bundle=bundles[device],
         mutate=lambda report: report["actual_routes"].__setitem__(
             "training",
-            [ADAPTIVE_TRAINING_PROGRAM_ROUTE, *sorted(REQUIRED_TRAINING_LEAF_ROUTES)],
+            sorted(
+                REQUIRED_REFERENCE_TRAINING_ROUTES
+                - {READABLE_TRAINING_MODEL_ROUTE}
+            ),
         ),
     )
     replace_arg(args, device, replacement)
-    with pytest.raises(ValueError, match="readable HF model loop"):
+    with pytest.raises(ValueError, match="complete reference program"):
         build(args)
 
 
-def test_builder_requires_atomic_adaptive_training_program(tmp_path: Path):
+def test_builder_rejects_obsolete_adaptive_training_program(tmp_path: Path):
     args, bundles, _ = setup_release(tmp_path)
     device = "rtx-4080"
     replacement = rewrite_bundle(
@@ -328,11 +327,11 @@ def test_builder_requires_atomic_adaptive_training_program(tmp_path: Path):
         bundle=bundles[device],
         mutate=lambda report: report["actual_routes"].__setitem__(
             "training",
-            [READABLE_TRAINING_MODEL_ROUTE, *sorted(REQUIRED_TRAINING_LEAF_ROUTES)],
+            [*sorted(REQUIRED_REFERENCE_TRAINING_ROUTES), ADAPTIVE_TRAINING_PROGRAM_ROUTE],
         ),
     )
     replace_arg(args, device, replacement)
-    with pytest.raises(ValueError, match="atomic adaptive program route"):
+    with pytest.raises(ValueError, match="optional diagnostic routes"):
         build(args)
 
 

@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise clean RWKV-7 tensor leaves through HF, Accelerate, PEFT, and TRL.
+"""Exercise RWKV-7 through HF, Accelerate, PEFT, and TRL.
 
-Training always executes the readable ``modeling_rwkv7.py`` layer loop.  The
-adaptive BF16 lane independently selects recurrent, linear, and explicit-shift
-Mix6 leaves; PEFT/TRL adapters remain ordinary modules around those stateless
-boundaries.  The reference lane keeps every training operation in PyTorch.
+Formal training executes one complete readable ``modeling_rwkv7.py`` program.
+Private adaptive leaves remain available only in explicit diagnostic mode.
 """
 
 from __future__ import annotations
@@ -55,11 +53,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--training-mode",
         choices=("adaptive", "reference", "native", "reference-fallback"),
-        default="adaptive",
+        default="reference",
         help=(
-            "adaptive selects independent clean-loop tensor leaves; reference "
-            "keeps pure PyTorch training. native/reference-fallback are "
-            "deprecated aliases."
+            "reference is the formal complete PyTorch training program; "
+            "adaptive remains a leaf diagnostic. native/reference-fallback "
+            "are deprecated aliases."
         ),
     )
     parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")
@@ -93,7 +91,7 @@ def training_backend_environment(training_mode: str) -> None:
         os.environ["RWKV7_BACKEND"] = "auto"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "adaptive"
     else:
-        os.environ["RWKV7_BACKEND"] = "reference"
+        os.environ["RWKV7_BACKEND"] = "auto"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
 
 

@@ -83,12 +83,12 @@ def arguments() -> argparse.Namespace:
             "native",
             "reference-fallback",
         ),
-        default="adaptive",
+        default="reference",
         help=(
-            "adaptive benchmarks the readable HF loop with independently "
-            "selected BF16 recurrent/linear/Mix6 leaves; reference benchmarks "
-            "the pure PyTorch loop; native and reference-fallback are deprecated "
-            "aliases; skip-not-applicable records a hardware limitation"
+            "reference is the formal complete PyTorch training program; "
+            "adaptive benchmarks private diagnostic leaves; native and "
+            "reference-fallback are deprecated aliases; skip-not-applicable "
+            "records a hardware limitation"
         ),
     )
     parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")
@@ -129,6 +129,9 @@ def training_route_mode(kind: str, training_mode: str) -> None:
         # must be ``auto`` rather than strict all-leaves-or-error.
         os.environ["RWKV7_BACKEND"] = "auto"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "adaptive"
+    elif kind == "optimized" and training_mode == "reference":
+        os.environ["RWKV7_BACKEND"] = "auto"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
     else:
         os.environ["RWKV7_BACKEND"] = "reference"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"

@@ -64,12 +64,14 @@ def write_valid_hf_wheel(
     extra: dict[str, bytes] | None = None,
     metadata: bytes | None = None,
 ) -> None:
+    additions = extra or {}
     with zipfile.ZipFile(path, "w") as archive:
         for member in sorted(HF_REQUIRED | HF_TOOL_REQUIRED):
             source = ROOT / member
-            archive.writestr(member, source.read_bytes())
-        for member, payload in sorted((extra or {}).items()):
-            archive.writestr(member, payload)
+            archive.writestr(member, additions.get(member, source.read_bytes()))
+        for member, payload in sorted(additions.items()):
+            if member not in HF_REQUIRED | HF_TOOL_REQUIRED:
+                archive.writestr(member, payload)
         archive.writestr(
             "rwkv7_hf-1.0.0.dist-info/METADATA",
             metadata

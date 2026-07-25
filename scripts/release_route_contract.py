@@ -1,11 +1,10 @@
 """Release-time contract for actual optional-backend route evidence.
 
-The training model boundary is intentionally not an optimized whole-model
-forward. Standard Hugging Face training executes the readable layer loop and
-may accelerate only after the atomic adaptive program preflight certifies the
-three independent tensor leaves named below. Keeping this rule in one release
-helper prevents provenance, asset verification, and the generated public Issue
-from drifting to different interpretations.
+Inference may use the optional backend. Formal Hugging Face training currently
+uses one complete readable reference program because API v4 cannot bind and
+preflight every concrete training leaf before the layer loop. Keeping this
+rule in one helper prevents provenance, asset verification, and the generated
+public Issue from promoting private leaf diagnostics as a production route.
 """
 
 from __future__ import annotations
@@ -26,32 +25,42 @@ SELECTOR_ONLY_ROUTES = frozenset(
 )
 
 READABLE_TRAINING_MODEL_ROUTE = "torch-reference-model-v1"
+REFERENCE_TRAINING_PROGRAM_ROUTE = "torch-reference-training-program-v1"
+REFERENCE_TRAINING_RECURRENT_ROUTE = "torch-reference-v1"
+REFERENCE_TRAINING_LINEAR_ROUTE = "torch-reference-linear-v1"
+REFERENCE_TRAINING_MIX6_ROUTE = "torch-reference-mix6-v1"
+REQUIRED_REFERENCE_TRAINING_ROUTES = frozenset(
+    {
+        READABLE_TRAINING_MODEL_ROUTE,
+        REFERENCE_TRAINING_PROGRAM_ROUTE,
+        REFERENCE_TRAINING_RECURRENT_ROUTE,
+        REFERENCE_TRAINING_LINEAR_ROUTE,
+        REFERENCE_TRAINING_MIX6_ROUTE,
+    }
+)
+
+# Retained solely to reject or label historical/isolated diagnostics.
 ADAPTIVE_TRAINING_PROGRAM_ROUTE = "native-nvidia-rwkv7-adaptive-training-program-v1"
-REQUIRED_TRAINING_LEAF_ROUTES = frozenset(
+DIAGNOSTIC_OPTIMIZED_TRAINING_LEAF_ROUTES = frozenset(
     {
         "native-nvidia-rwkv7-factorized-recurrent-training-v1",
         "torch-cuda-rwkv7-flattened-linear-training-v1",
         "native-nvidia-rwkv7-mix6-training-v1",
     }
 )
-REQUIRED_TRAINING_PROGRAM_ROUTES = frozenset({ADAPTIVE_TRAINING_PROGRAM_ROUTE})
-REQUIRED_TRAINING_ROUTES = (
-    REQUIRED_TRAINING_LEAF_ROUTES | REQUIRED_TRAINING_PROGRAM_ROUTES
-)
 HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE = "native-nvidia-train-temp-autograd-v2"
-TRAINING_FALLBACK_ROUTES = frozenset(
+DIAGNOSTIC_TRAINING_ROUTES = frozenset(
     {
+        ADAPTIVE_TRAINING_PROGRAM_ROUTE,
+        *DIAGNOSTIC_OPTIMIZED_TRAINING_LEAF_ROUTES,
         "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1",
-        "torch-reference-v1",
-        "torch-reference-linear-v1",
-        "torch-reference-mix6-v1",
     }
 )
-FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT = {
+FORMAL_REFERENCE_BACKEND_ENVIRONMENT = {
     "RWKV7_BACKEND": "auto",
     "RWKV7_KERNEL_IMPL": "auto",
     "RWKV7_MODEL_KERNEL_IMPL": "auto",
-    "RWKV7_TRAINING_KERNEL_IMPL": "adaptive",
+    "RWKV7_TRAINING_KERNEL_IMPL": "auto",
 }
 
 
@@ -72,7 +81,7 @@ def route_values(value: Any) -> list[str]:
 
 
 def validate_training_routes(value: Any) -> list[str]:
-    """Validate formal readable-loop training route evidence."""
+    """Require the exact complete readable training program."""
 
     normalized = route_values(value)
     training = set(normalized)
@@ -88,44 +97,37 @@ def validate_training_routes(value: Any) -> list[str]:
             "historical whole-model train-temp route is not formal HF training "
             f"evidence: {historical}"
         )
-    if READABLE_TRAINING_MODEL_ROUTE not in training:
-        raise ValueError("training route evidence lacks the readable HF model loop")
-    missing_leaves = sorted(REQUIRED_TRAINING_LEAF_ROUTES - training)
-    if missing_leaves:
+    missing = sorted(REQUIRED_REFERENCE_TRAINING_ROUTES - training)
+    if missing:
         raise ValueError(
-            "training route evidence lacks required independent kernel leaves: "
-            f"{missing_leaves}"
+            "training route evidence lacks the complete reference program: "
+            f"{missing}"
         )
-    missing_programs = sorted(REQUIRED_TRAINING_PROGRAM_ROUTES - training)
-    if missing_programs:
+    diagnostics = sorted(training & DIAGNOSTIC_TRAINING_ROUTES)
+    if diagnostics:
         raise ValueError(
-            "training route evidence lacks the required atomic adaptive program "
-            f"route: {missing_programs}"
+            "formal reference training contains optional diagnostic routes: "
+            f"{diagnostics}"
         )
-    allowed = {
-        READABLE_TRAINING_MODEL_ROUTE,
-        *REQUIRED_TRAINING_ROUTES,
-        *TRAINING_FALLBACK_ROUTES,
-    }
-    unknown = sorted(training - allowed)
+    unknown = sorted(training - REQUIRED_REFERENCE_TRAINING_ROUTES)
     if unknown:
         raise ValueError(f"training route evidence contains unknown routes: {unknown}")
     return normalized
 
 
-def validate_formal_adaptive_environment(environment: Any) -> dict[str, str]:
+def validate_formal_reference_environment(environment: Any) -> dict[str, str]:
     """Require the fail-closed selector state used by formal HF training."""
 
     if not isinstance(environment, dict):
-        raise ValueError("formal adaptive environment is missing")
+        raise ValueError("formal reference environment is missing")
     backend = environment.get("backend_environment")
     if not isinstance(backend, dict):
-        raise ValueError("formal adaptive backend environment is missing")
-    actual = {name: backend.get(name) for name in FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT}
-    if actual != FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT:
+        raise ValueError("formal reference backend environment is missing")
+    actual = {name: backend.get(name) for name in FORMAL_REFERENCE_BACKEND_ENVIRONMENT}
+    if actual != FORMAL_REFERENCE_BACKEND_ENVIRONMENT:
         raise ValueError(
-            "formal adaptive backend environment differs: "
-            f"expected={FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT} actual={actual}"
+            "formal reference backend environment differs: "
+            f"expected={FORMAL_REFERENCE_BACKEND_ENVIRONMENT} actual={actual}"
         )
     return actual
 
@@ -133,11 +135,9 @@ def validate_formal_adaptive_environment(environment: Any) -> dict[str, str]:
 def validate_actual_routes(routes: Any) -> dict[str, list[str]]:
     """Validate and normalize the complete release route matrix.
 
-    Training evidence must prove the readable model boundary, the atomic
-    adaptive program route, and every clean accelerated leaf. The historical
-    whole-model train-temp runtime remains useful for archived diagnostics,
-    but it is not an admissible HF release route and must never be promoted by
-    provenance.
+    Training evidence must prove the complete readable reference program and
+    contain no optimized/diagnostic leaf. Historical diagnostics remain useful
+    but are not admissible HF release routes.
     """
 
     if not isinstance(routes, dict):

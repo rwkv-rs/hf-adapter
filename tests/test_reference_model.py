@@ -19,6 +19,11 @@ def test_public_structure_and_forward(tiny_config):
     assert isinstance(model.model.layers[0], RWKV7Block)
     assert isinstance(model.model.layers[0].attn, RWKV7TimeMix)
     assert isinstance(model.model.layers[0].ffn, RWKV7ChannelMix)
+    assert isinstance(model.model.layers[0].pre_norm, torch.nn.LayerNorm)
+    assert all(
+        isinstance(layer.pre_norm, torch.nn.Identity)
+        for layer in model.model.layers[1:]
+    )
 
     ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
     with torch.inference_mode():
@@ -320,41 +325,244 @@ def test_gradient_checkpointing_disables_cache(tiny_config):
     output.loss.backward()
 
 
-def test_checkpoint_recomputation_republishes_training_batch_context(
+def test_causal_lm_reuses_one_explicit_context_for_base_and_head(
+    tiny_config,
+    monkeypatch,
+):
+    import rwkv7_hf.modeling_rwkv7 as modeling
+
+    monkeypatch.setenv("RWKV7_BACKEND", "reference")
+    resolved = []
+    linear_contexts = []
+    original_resolve = modeling.resolve_execution_context
+    original_linear = modeling.RWKV7Linear.forward
+    import rwkv7_hf.ops_rwkv7 as ops
+
+    def record_resolve(*args, **kwargs):
+        context = original_resolve(*args, **kwargs)
+        resolved.append(context)
+        return context
+
+    def record_linear(self, value):
+        linear_contexts.append(ops._linear_execution_context.get())
+        return original_linear(self, value)
+
+    monkeypatch.setattr(modeling, "resolve_execution_context", record_resolve)
+    monkeypatch.setattr(modeling.RWKV7Linear, "forward", record_linear)
+    model = RWKV7ForCausalLM(tiny_config).train()
+    ids = torch.tensor([[1, 2, 3, 4]])
+    model(input_ids=ids, labels=ids, use_cache=False).loss.backward()
+
+    assert len(resolved) == 1
+    assert linear_contexts
+    assert all(context is resolved[0] for context in linear_contexts)
+
+
+def test_projection_and_output_modules_keep_standard_forward_contract(tiny_config):
+    """PEFT and quantization wrappers must only need ``module(value)``."""
+
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    model.model.layers[0].attn.r_proj = torch.nn.Linear(
+        tiny_config.hidden_size,
+        tiny_config.attention_hidden_size,
+        bias=False,
+    )
+    model.set_output_embeddings(
+        torch.nn.Linear(tiny_config.hidden_size, tiny_config.vocab_size, bias=False)
+    )
+    output = model(input_ids=torch.tensor([[1, 2, 3]]), use_cache=False)
+    assert output.logits.shape == (1, 3, tiny_config.vocab_size)
+
+
+def test_rwkv7_linear_forward_signature_matches_nn_linear():
+    import inspect
+    from rwkv7_hf.modeling_rwkv7 import RWKV7Linear
+
+    parameters = tuple(inspect.signature(RWKV7Linear.forward).parameters)
+    assert parameters == ("self", "value")
+
+
+def test_execution_context_cannot_be_injected_through_public_forward(tiny_config):
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    ids = torch.tensor([[1, 2, 3]])
+    with pytest.raises(TypeError, match="internal"):
+        model.model(input_ids=ids, _execution_context=object())
+    with pytest.raises(TypeError, match="internal"):
+        model(input_ids=ids, _execution_context=object())
+
+
+def test_causal_lm_calls_decoder_public_boundary_before_embeddings(tiny_config):
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    events = []
+    decoder_hook = model.model.register_forward_pre_hook(
+        lambda *_args: events.append("decoder_pre")
+    )
+    embedding_hook = model.model.embeddings.register_forward_pre_hook(
+        lambda *_args: events.append("embedding_pre")
+    )
+    try:
+        model(input_ids=torch.tensor([[1, 2, 3]]), use_cache=False)
+    finally:
+        decoder_hook.remove()
+        embedding_hook.remove()
+    assert events[:2] == ["decoder_pre", "embedding_pre"]
+
+
+def test_set_decoder_standard_forward_wrapper_remains_supported(tiny_config):
+    class DecoderWrapper(torch.nn.Module):
+        def __init__(self, decoder):
+            super().__init__()
+            self.decoder = decoder
+
+        def forward(self, *args, **kwargs):
+            return self.decoder(*args, **kwargs)
+
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    ids = torch.tensor([[1, 2, 3]])
+    expected = model(input_ids=ids, use_cache=False).logits
+    model.set_decoder(DecoderWrapper(model.get_decoder()))
+    actual = model(input_ids=ids, use_cache=False).logits
+    torch.testing.assert_close(actual, expected)
+
+
+def test_decoder_context_capture_resets_after_exception(tiny_config):
+    import rwkv7_hf.modeling_rwkv7 as modeling
+
+    class FailingDecoder(torch.nn.Module):
+        def forward(self, **_kwargs):
+            raise RuntimeError("decoder failed")
+
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    model.set_decoder(FailingDecoder())
+    with pytest.raises(RuntimeError, match="decoder failed"):
+        model(input_ids=torch.tensor([[1, 2, 3]]), use_cache=False)
+    assert modeling._execution_context_capture.get() is None
+
+
+@pytest.mark.parametrize("instrumentation", ["instance_forward", "accelerate_hook"])
+def test_whole_model_shortcut_never_bypasses_decoder_instrumentation(
+    tiny_config, monkeypatch, instrumentation
+):
+    import types
+    import rwkv7_hf.modeling_rwkv7 as modeling
+
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    decoder_calls = []
+    backend_calls = []
+    original_forward = model.model.forward
+
+    if instrumentation == "instance_forward":
+        def wrapped_forward(_self, *args, **kwargs):
+            decoder_calls.append("forward")
+            return original_forward(*args, **kwargs)
+
+        model.model.forward = types.MethodType(wrapped_forward, model.model)
+    else:
+        model.model._hf_hook = object()
+        model.model._old_forward = original_forward
+        decoder_calls.append("accelerate-installed")
+
+    def record_backend(owner, *_args, **_kwargs):
+        backend_calls.append(owner)
+        return None
+
+    monkeypatch.setattr(modeling, "maybe_model_forward", record_backend)
+    output = model(input_ids=torch.tensor([[1, 2, 3]]), use_cache=False)
+    assert output.logits.shape == (1, 3, tiny_config.vocab_size)
+    assert backend_calls == []
+    if instrumentation == "instance_forward":
+        assert decoder_calls == ["forward"]
+
+
+@pytest.mark.parametrize("target", ["embedding", "projection"])
+def test_whole_model_shortcut_preserves_child_module_hooks(
+    tiny_config, monkeypatch, target
+):
+    import rwkv7_hf.modeling_rwkv7 as modeling
+
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    events = []
+    backend_owners = []
+    module = (
+        model.model.embeddings
+        if target == "embedding"
+        else model.model.layers[0].attn.r_proj
+    )
+    handle = module.register_forward_pre_hook(
+        lambda *_args: events.append(f"{target}_pre")
+    )
+
+    def record_backend(owner, *_args, **_kwargs):
+        backend_owners.append(owner)
+        return None
+
+    monkeypatch.setattr(modeling, "maybe_model_forward", record_backend)
+    try:
+        model(input_ids=torch.tensor([[1, 2, 3]]), use_cache=False)
+    finally:
+        handle.remove()
+    assert events == [f"{target}_pre"]
+    assert backend_owners == []
+
+
+def test_base_model_shortcut_preserves_child_module_hooks(tiny_config, monkeypatch):
+    import rwkv7_hf.modeling_rwkv7 as modeling
+
+    model = modeling.RWKV7Model(tiny_config).eval()
+    events = []
+    handle = model.layers[0].attn.r_proj.register_forward_pre_hook(
+        lambda *_args: events.append("projection_pre")
+    )
+    monkeypatch.setattr(
+        modeling,
+        "maybe_model_forward",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("instrumented base model must skip whole-model dispatch")
+        ),
+    )
+    try:
+        output = model(input_ids=torch.tensor([[1, 2, 3]]), use_cache=False)
+    finally:
+        handle.remove()
+    assert output.last_hidden_state.shape == (1, 3, tiny_config.hidden_size)
+    assert events == ["projection_pre"]
+
+
+def test_checkpoint_recomputation_reuses_explicit_execution_context(
     tiny_config,
     monkeypatch,
 ):
     """Checkpoint replay must select the same optional linear program."""
 
     import rwkv7_hf.modeling_rwkv7 as modeling
-    from contextlib import contextmanager
 
     calls = []
-    original = modeling.training_batch_context
+    original = modeling.RWKV7Block.forward
 
-    @contextmanager
-    def record_context(context):
-        calls.append(
-            (
-                context.fully_active,
-                context.token_aligned,
-                context.initial_state_zero,
-                context.adaptive_fast_program,
-            )
+    def record_context(self, *args, execution_context=None, **kwargs):
+        calls.append(execution_context)
+        return original(
+            self,
+            *args,
+            execution_context=execution_context,
+            **kwargs,
         )
-        with original(context) as published:
-            yield published
 
-    monkeypatch.setattr(modeling, "training_batch_context", record_context)
+    monkeypatch.setattr(modeling.RWKV7Block, "forward", record_context)
     model = RWKV7ForCausalLM(tiny_config).train()
     model.gradient_checkpointing_enable()
     ids = torch.tensor([[1, 2, 3, 4]])
     model(input_ids=ids, labels=ids, use_cache=False).loss.backward()
 
-    # One head scope plus both the original checkpoint forward and backward
-    # recomputation for every layer.
-    assert len(calls) >= 2 * tiny_config.num_hidden_layers + 1
-    assert all(call == (True, False, True, False) for call in calls)
+    # Both the original checkpoint forward and backward recomputation receive
+    # the same immutable model-call context by ordinary argument passing.
+    assert len(calls) >= 2 * tiny_config.num_hidden_layers
+    assert calls[0] is not None
+    assert all(context is calls[0] for context in calls)
+    assert calls[0].fully_active is True
+    assert calls[0].token_aligned is None
+    assert calls[0].initial_state_zero is True
+    assert calls[0].optimized_program is False
 
 
 def test_model_computes_mask_activity_once_outside_layer_shift_math():

@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Validate the readable HF training loop and optional tensor leaves.
 
-The standard model route always remains ``modeling_rwkv7.py``.  The adaptive
-candidate may independently select recurrent, flattened-linear, and
-explicit-shift Mix6 leaves; unsupported leaf shapes remain on their readable
-PyTorch operations through the outer ``auto`` boundary.  The reference lane
-selects no optional training leaf.
+The formal candidate is the complete reference training program reached
+through ``auto`` after the API-v4 atomic preflight declines. Private adaptive
+leaves remain available as explicit diagnostics only.
 """
 
 from __future__ import annotations
@@ -76,11 +74,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--candidate-route",
         choices=("adaptive", "reference", "native", "reference-fallback"),
-        default="adaptive",
+        default="reference",
         help=(
-            "adaptive selects independent BF16 tensor leaves; reference keeps "
-            "all training operations in PyTorch. native and reference-fallback "
-            "are deprecated aliases."
+            "reference is the formal complete PyTorch training program; "
+            "adaptive remains an isolated leaf diagnostic. native and "
+            "reference-fallback are deprecated aliases."
         ),
     )
     parser.add_argument("--dtype", choices=("bf16", "fp16"), default="bf16")
@@ -94,8 +92,14 @@ def route(candidate: bool, candidate_route: str) -> None:
     candidate_route = canonical_candidate_route(candidate_route)
     os.environ["RWKV7_KERNEL_IMPL"] = "auto"
     os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
-    if not candidate or candidate_route == "reference":
+    if not candidate:
         os.environ["RWKV7_BACKEND"] = "reference"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+        return
+    if candidate_route == "reference":
+        # Exercise the installed v4 preflight and prove that it selects the
+        # complete reference program without entering any optional leaf.
+        os.environ["RWKV7_BACKEND"] = "auto"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
         return
     os.environ["RWKV7_BACKEND"] = "auto"

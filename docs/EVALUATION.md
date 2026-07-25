@@ -183,20 +183,18 @@ before the directory is published.
 ## Optional training comparison
 
 Training comparison never substitutes a second model class. The reference and
-candidate lanes load the same `RWKV7ForCausalLM`; the candidate keeps the
-readable layer loop and replaces only canonical mathematical leaves.  The
-`adaptive` candidate uses the factorized recurrent and flattened linear leaves
-only in the currently certified fully active, zero-state `B=4,T=128` domain.
-It selects the exact matrix recurrence and reference linears for masked,
-unaligned, stateful, or differently shaped batches. `matrix` and `factorized`
-remain explicit isolation modes. FLA is loaded from the pinned checkout as an
-independent comparison lane.
+FLA lanes load their documented model paths, while private recurrent, linear,
+and Mix6 candidates remain isolated operator diagnostics. API v4 currently
+cannot preflight the concrete three-leaf plan, so formal HF `auto` training is
+the readable reference program. `matrix`, `factorized`, and `adaptive` are
+explicit isolation modes only and must not be reported as a certified
+full-model training route.
 
-The optional package certifies that coupled fast program once before any
-projection. The same immutable decision is replayed under gradient
-checkpointing and used by the LM head. If a certified linear or recurrent leaf
-later declines, the forward fails instead of returning an unvalidated mixture
-of flattened projections and exact/reference recurrence.
+The API-v4 `training_program` operation currently returns unsupported before
+the layer loop because its request cannot bind every concrete leaf. Formal
+training evidence must therefore record the reference program. Strict
+`optimized` must fail at that model boundary; reaching an optional leaf is a
+gate failure.
 
 The factorized rows require a CUDA development toolkit matching
 `torch.version.cuda`. The kernel wheel installs Ninja, but it deliberately does
@@ -235,7 +233,7 @@ forward/backward throughput comparison:
 
 ```bash
 python evaluation/validate_model_training.py \
-  --candidate adaptive \
+  --candidate reference \
   --model /models/rwkv7-0.1b-hf \
   --fla-source /sources/fla-80e494f6 \
   --output results/training/model.json \
@@ -247,17 +245,10 @@ python evaluation/validate_model_training.py \
   --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
 ```
 
-For the exact rows of `--candidate adaptive` (or `--candidate matrix`), the
-full-model gate requires actual recurrent route
-`torch-cuda-rwkv7-batched-matrix-recurrent-training-v1`, reference linear route
-`torch-reference-linear-v1`, and readable model route
-`torch-reference-model-v1`. Only the fully active, fresh-zero-state
-`B=4,T=128` adaptive row is currently certified for the coupled
-`native-nvidia-rwkv7-factorized-recurrent-training-v1` plus flattened-linear
-program. Explicit `--candidate factorized` remains an isolated recurrent
-experiment, not an adaptive model-route claim. Frozen-input/PEFT requests and
-reentrant checkpoint forwards fail closed to the exact program unless their
-actual leaves have a valid autograd edge. The gate rejects
+For formal full-model HF rows the gate requires the readable
+`torch-reference-model-v1` route and no optional training leaf execution.
+Explicit `adaptive`, `matrix`, and `factorized` rows remain isolated operator
+experiments, not model-route claims. The gate rejects
 non-finite tensors, missing gradients, loss/logit/optimizer-vector threshold
 failures. The pinned FLA lane remains a complete non-blocking diagnostic. Named
 per-parameter diagnostics remain in JSON even when the aggregate

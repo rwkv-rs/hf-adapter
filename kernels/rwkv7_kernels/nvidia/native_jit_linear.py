@@ -22,8 +22,15 @@ def dense_linear_module(module) -> bool:
     quantized Linear subclasses whose weight is a tensor subclass.
     """
 
+    module_type = type(module)
+    exact_torch_linear = module_type is torch.nn.Linear
+    class_forward = module_type.__dict__.get("forward")
+    explicit_rwkv7_contract = (
+        class_forward is not None
+        and getattr(class_forward, "_rwkv7_dense_linear_contract", False) is True
+    )
     return bool(
-        isinstance(module, torch.nn.Linear)
+        (exact_torch_linear or explicit_rwkv7_contract)
         and type(getattr(module, "weight", None)) is torch.nn.Parameter
     )
 

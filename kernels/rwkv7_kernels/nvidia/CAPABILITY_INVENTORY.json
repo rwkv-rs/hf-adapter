@@ -535,7 +535,7 @@
       ]
     }
   ],
-  "kernel_api_version": 3,
+  "kernel_api_version": 4,
   "ownership": "rwkv7-kernels only; no model, config, tokenizer, or public cache ownership",
   "production_auto": "disabled until the immutable-wheel release-device gate passes",
   "schema": "rwkv7-nvidia-capability-inventory-v1",

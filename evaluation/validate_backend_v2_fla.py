@@ -63,11 +63,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--training-tokens", type=int, default=16)
     parser.add_argument(
         "--training-mode",
-        choices=("adaptive", "native", "skip-not-applicable"),
-        default="adaptive",
+        choices=("reference", "adaptive", "native", "skip-not-applicable"),
+        default="reference",
         help=(
-            "adaptive validates BF16 clean-loop tensor leaves; native is a "
-            "deprecated alias; SM70 may use skip-not-applicable"
+            "reference validates the formal readable program; adaptive keeps "
+            "private leaf diagnostics; native is a deprecated alias; SM70 "
+            "may use skip-not-applicable"
         ),
     )
     parser.add_argument("--seed", type=int, default=42)
@@ -133,12 +134,15 @@ def canonical_training_mode(value: str) -> str:
     return "adaptive" if value == "native" else value
 
 
-def training_route_mode(optimized: bool) -> None:
+def training_route_mode(optimized: bool, training_mode: str) -> None:
     os.environ["RWKV7_KERNEL_IMPL"] = "auto"
     os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
-    if optimized:
+    if optimized and training_mode == "adaptive":
         os.environ["RWKV7_BACKEND"] = "auto"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "adaptive"
+    elif optimized and training_mode == "reference":
+        os.environ["RWKV7_BACKEND"] = "auto"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
     else:
         os.environ["RWKV7_BACKEND"] = "reference"
         os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
@@ -628,13 +632,19 @@ def run_inference_model(
     }
 
 
-def run_training_lane(kind: str, path: Path, ids: torch.Tensor, labels: torch.Tensor):
+def run_training_lane(
+    kind: str,
+    path: Path,
+    ids: torch.Tensor,
+    labels: torch.Tensor,
+    training_mode: str,
+):
     dtype = torch.bfloat16
     if kind == "fla":
         model = fla_model(path, dtype, training=True)
     else:
         model = clean_model(path, dtype).train()
-        training_route_mode(kind == "optimized")
+        training_route_mode(kind == "optimized", training_mode)
     model.zero_grad(set_to_none=True)
     output = model(
         input_ids=ids,
@@ -700,7 +710,13 @@ def compare_full_model_training_lane(
     }
 
 
-def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, Any]:
+def run_training(
+    path: Path,
+    batch: int,
+    tokens: int,
+    seed: int,
+    training_mode: str,
+) -> dict[str, Any]:
     probe = clean_model(path, torch.bfloat16)
     vocab = int(probe.config.vocab_size)
     del probe
@@ -710,7 +726,7 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
     labels = ids.clone()
     labels[0, tokens // 2] = -100
     lanes = {
-        name: run_training_lane(name, path, ids, labels)
+        name: run_training_lane(name, path, ids, labels, training_mode)
         for name in ("reference", "optimized", "fla")
     }
     comparisons = {
@@ -723,34 +739,51 @@ def run_training(path: Path, batch: int, tokens: int, seed: int) -> dict[str, An
     linear_route = routes.get("linear") or {}
     mix6_route = routes.get("mix6") or {}
     program_route = routes.get("program") or {}
-    fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
-    recurrent_implementation = (
-        "native-nvidia-rwkv7-factorized-recurrent-training-v1"
-        if fast_domain
-        else "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
-    )
-    linear_route_passed = (
-        linear_route.get("selected") == "optimized"
-        and linear_route.get("implementation")
-        == "torch-cuda-rwkv7-flattened-linear-training-v1"
-        if fast_domain
-        else linear_route.get("selected") == "reference"
-        and linear_route.get("implementation") == "torch-reference-linear-v1"
-    )
-    optimized_route_passed = bool(
-        model_route.get("selected") == "reference"
-        and model_route.get("phase") == "training"
-        and model_route.get("implementation") == "torch-reference-model-v1"
-        and recurrent_route.get("selected") == "optimized"
-        and recurrent_route.get("implementation") == recurrent_implementation
-        and linear_route_passed
-        and mix6_route.get("selected") == "optimized"
-        and mix6_route.get("implementation") == "native-nvidia-rwkv7-mix6-training-v1"
-        and program_route.get("selected")
-        == ("optimized" if fast_domain else "reference")
-        and program_route.get("implementation")
-        == "native-nvidia-rwkv7-adaptive-training-program-v1"
-    )
+    if training_mode == "reference":
+        optimized_route_passed = bool(
+            model_route.get("selected") == "reference"
+            and model_route.get("phase") == "training"
+            and model_route.get("implementation") == "torch-reference-model-v1"
+            and recurrent_route.get("selected") == "reference"
+            and recurrent_route.get("implementation") == "torch-reference-v1"
+            and linear_route.get("selected") == "reference"
+            and linear_route.get("implementation") == "torch-reference-linear-v1"
+            and mix6_route.get("selected") == "reference"
+            and mix6_route.get("implementation") == "torch-reference-mix6-v1"
+            and program_route.get("selected") == "reference"
+            and program_route.get("implementation")
+            == "torch-reference-training-program-v1"
+        )
+    else:
+        fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
+        recurrent_implementation = (
+            "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+            if fast_domain
+            else "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+        )
+        linear_route_passed = (
+            linear_route.get("selected") == "optimized"
+            and linear_route.get("implementation")
+            == "torch-cuda-rwkv7-flattened-linear-training-v1"
+            if fast_domain
+            else linear_route.get("selected") == "reference"
+            and linear_route.get("implementation") == "torch-reference-linear-v1"
+        )
+        optimized_route_passed = bool(
+            model_route.get("selected") == "reference"
+            and model_route.get("phase") == "training"
+            and model_route.get("implementation") == "torch-reference-model-v1"
+            and recurrent_route.get("selected") == "optimized"
+            and recurrent_route.get("implementation") == recurrent_implementation
+            and linear_route_passed
+            and mix6_route.get("selected") == "optimized"
+            and mix6_route.get("implementation")
+            == "native-nvidia-rwkv7-mix6-training-v1"
+            and program_route.get("selected")
+            == ("optimized" if fast_domain else "reference")
+            and program_route.get("implementation")
+            == "native-nvidia-rwkv7-adaptive-training-program-v1"
+        )
     for lane in lanes.values():
         lane.pop("logits")
         lane.pop("loss")
@@ -813,12 +846,13 @@ def main() -> int:
     if training_label not in models:
         raise ValueError(f"unknown --training-model label: {training_label}")
     training_mode = canonical_training_mode(args.training_mode)
-    if training_mode == "adaptive":
+    if training_mode in {"reference", "adaptive"}:
         training = run_training(
             models[training_label],
             args.training_batch,
             args.training_tokens,
             args.seed + 50_000,
+            training_mode,
         )
         training = {
             "status": "passed" if training["passed"] else "failed",
@@ -869,7 +903,7 @@ def main() -> int:
         and all(row["fla_reference_diagnostic"]["passed"] for row in inference)
         and (
             training.get("fla_reference_diagnostic", {}).get("passed", True)
-            if training_mode == "adaptive"
+            if training_mode in {"reference", "adaptive"}
             else True
         )
     )

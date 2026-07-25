@@ -38,10 +38,13 @@ def cpu_inputs(tokens: int = 2, batch: int = 1):
 
 def test_public_kernel_surface_is_versioned_and_small():
     kernels = importlib.import_module("rwkv7_kernels")
-    assert kernels.RWKV7_KERNEL_API_VERSION == 3
+    assert kernels.RWKV7_KERNEL_API_VERSION == 4
     assert kernels.__all__ == [
         "__version__",
         "RWKV7_KERNEL_API_VERSION",
+        "execute_optional_v4",
+    ]
+    legacy_names = (
         "execute_linear_training_v1",
         "execute_mix6_training_v1",
         "execute_recurrent_training_v1",
@@ -56,22 +59,376 @@ def test_public_kernel_surface_is_versioned_and_small():
         "probe_training_program_v1",
         "recurrent_v1",
         "recurrent_training_v1",
+    )
+    assert all(not hasattr(kernels, name) for name in legacy_names)
+
+
+def test_v4_training_program_never_exposes_a_partial_private_certificate(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+    calls = []
+
+    def probe(hidden_states, attention_mask, **facts):
+        calls.append((hidden_states, attention_mask, dict(facts)))
+        return {
+            "supported": True,
+            "implementation": "native-nvidia-rwkv7-adaptive-training-program-v1",
+            "reason": "program accepted",
+        }
+
+    monkeypatch.setattr(backend, "probe_training_program_v1", probe)
+    hidden = torch.randn(4, 128, 64)
+    mask = torch.ones(4, 128, dtype=torch.bool)
+    result = backend.execute_optional_v4(
+        "training_program",
+        hidden,
+        mask,
+        fully_active=True,
+        initial_state_zero=True,
+        autograd_leaf_eligible=True,
+        head_dim=64,
+    )
+
+    assert set(result) == {
+        "api_version",
+        "kind",
+        "supported",
+        "implementation",
+        "reason",
+        "result",
+        "phase",
+    }
+    assert result["api_version"] == 4
+    assert result["kind"] == "training_program"
+    assert result["supported"] is False
+    assert result["implementation"] == "torch-reference-training-program-v1"
+    assert result["phase"] == "training"
+    assert result["result"] is None
+    assert "cannot issue a public certificate" in result["reason"]
+    assert len(calls) == 1
+    assert calls[0][2]["training"] is True
+    assert calls[0][2]["token_aligned"] is True
+
+
+def test_v4_training_program_force_reference_skips_optional_probe(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("forced reference must not probe an optional program")
+
+    monkeypatch.setattr(backend, "probe_training_program_v1", unexpected)
+    result = backend.execute_optional_v4(
+        "training_program",
+        torch.randn(2, 17, 64),
+        torch.ones(2, 17, dtype=torch.bool),
+        fully_active=True,
+        initial_state_zero=True,
+        autograd_leaf_eligible=False,
+        force_reference_program=True,
+        head_dim=64,
+    )
+
+    assert result["supported"] is False
+    assert result["implementation"] == "torch-reference-training-program-v1"
+    assert result["result"] is None
+
+
+def test_v4_envelope_rejects_payload_on_unsupported_result():
+    protocol = importlib.import_module("rwkv7_kernels.protocol")
+    with pytest.raises(ValueError, match="unsupported.*must be None"):
+        protocol.optional_kernel_result(
+            kind="recurrent",
+            supported=False,
+            implementation="mock",
+            reason="unsupported",
+            result=(torch.empty(0), torch.empty(0)),
+            phase="prefill",
+        )
+    with pytest.raises(ValueError, match="unsupported.*must be None"):
+        protocol.validate_optional_kernel_result(
+            {
+                "api_version": 4,
+                "kind": "recurrent",
+                "supported": False,
+                "implementation": "mock",
+                "reason": "unsupported",
+                "result": {},
+                "phase": "prefill",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("api_version", True),
+        ("api_version", 4.0),
+        ("kind", b"recurrent"),
+        ("supported", "false"),
+        ("supported", 1),
+        ("implementation", 7),
+        ("reason", None),
+        ("phase", False),
+    ),
+)
+def test_v4_envelope_rejects_coercible_field_types(field, value):
+    protocol = importlib.import_module("rwkv7_kernels.protocol")
+    result = {
+        "api_version": 4,
+        "kind": "recurrent",
+        "supported": False,
+        "implementation": "mock",
+        "reason": "unsupported",
+        "result": None,
+        "phase": "prefill",
+    }
+    result[field] = value
+    with pytest.raises(TypeError, match=field):
+        protocol.validate_optional_kernel_result(result)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("kind", b"recurrent"),
+        ("supported", "false"),
+        ("supported", 1),
+        ("implementation", 7),
+        ("reason", None),
+        ("phase", False),
+    ),
+)
+def test_v4_envelope_builder_rejects_coercible_field_types(field, value):
+    protocol = importlib.import_module("rwkv7_kernels.protocol")
+    fields = {
+        "kind": "recurrent",
+        "supported": False,
+        "implementation": "mock",
+        "reason": "unsupported",
+        "result": None,
+        "phase": "prefill",
+    }
+    fields[field] = value
+    with pytest.raises(TypeError, match=field):
+        protocol.optional_kernel_result(**fields)
+
+
+def test_v4_facade_rejects_coercible_legacy_probe_fields(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+    monkeypatch.setattr(
+        backend,
+        "probe_recurrent_v1",
+        lambda *_args, **_kwargs: {
+            "supported": "false",
+            "implementation": "mock",
+            "reason": "must not coerce",
+        },
+    )
+    with pytest.raises(TypeError, match="supported"):
+        backend.execute_optional_v4(
+            "recurrent", *cpu_inputs(), training=False
+        )
+
+
+def test_v4_disabled_legacy_program_fails_closed_before_linear(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+    captured = []
+
+    def execute(*args, **kwargs):
+        captured.append((args, dict(kwargs)))
+        return {
+            "supported": True,
+            "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+            "reason": "linear accepted",
+            "output": torch.randn(4, 128, 8),
+        }
+
+    monkeypatch.setattr(backend, "execute_linear_training_v1", execute)
+    value = torch.randn(4, 128, 4)
+    weight = torch.randn(8, 4)
+    result = backend.execute_optional_v4(
+        "linear_training",
+        value,
+        weight,
+        None,
+        program_id="native-nvidia-rwkv7-adaptive-training-program-v1",
+        facts={
+            "fully_active": True,
+            "initial_state_zero": True,
+            "token_aligned": True,
+            "autograd_leaf_eligible": True,
+        },
+    )
+
+    assert result["supported"] is False
+    assert result["result"] is None
+    assert result["phase"] == "training"
+    assert "legacy adaptive training program certificate is disabled" in result[
+        "reason"
+    ]
+    assert captured == []
+
+
+def test_v4_unknown_program_id_fails_closed_before_leaf(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("an unrecognized certificate must not reach a leaf")
+
+    monkeypatch.setattr(backend, "execute_mix6_training_v1", unexpected)
+    result = backend.execute_optional_v4(
+        "mix6_training",
+        torch.randn(1, 2, 4),
+        torch.randn(1, 2, 4),
+        *(torch.randn(4) for _ in range(6)),
+        program_id="forged-program",
+        facts={"fully_active": True, "token_aligned": True},
+    )
+
+    assert result["supported"] is False
+    assert result["result"] is None
+    assert "unknown optional training program_id" in result["reason"]
+
+
+def test_v4_force_reference_fact_fails_closed_before_leaf(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("a reference program must not enter an optional leaf")
+
+    monkeypatch.setattr(backend, "execute_linear_training_v1", unexpected)
+    result = backend.execute_optional_v4(
+        "linear_training",
+        torch.randn(2, 3, 4),
+        torch.randn(8, 4),
+        None,
+        program_id=None,
+        facts={
+            "fully_active": True,
+            "initial_state_zero": True,
+            "token_aligned": False,
+            "autograd_leaf_eligible": False,
+            "force_reference_program": True,
+        },
+    )
+
+    assert result["supported"] is False
+    assert result["implementation"] == "torch-reference-training-program-v1"
+    assert result["result"] is None
+
+
+def test_v4_recurrent_selects_inference_or_atomic_training(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+    inference_output = (torch.randn(1, 1, 1, 64), torch.randn(1, 1, 64, 64))
+    calls = []
+
+    def inference_probe(*_args, **_kwargs):
+        calls.append("inference_probe")
+        return {
+            "supported": True,
+            "implementation": "mock-recurrent-v1",
+            "reason": "inference accepted",
+        }
+
+    def inference_run(*_args, **_kwargs):
+        calls.append("inference_run")
+        return inference_output
+
+    monkeypatch.setattr(backend, "probe_recurrent_v1", inference_probe)
+    monkeypatch.setattr(backend, "recurrent_v1", inference_run)
+    inference = backend.execute_optional_v4(
+        "recurrent", *cpu_inputs(tokens=1), training=False
+    )
+    assert inference["result"] is inference_output
+    assert inference["phase"] == "decode"
+
+    training_output = (torch.randn(1, 2, 1, 64), torch.randn(1, 1, 64, 64))
+
+    def training_run(*_args, **kwargs):
+        calls.append(("training_run", dict(kwargs)))
+        return {
+            "supported": True,
+            "implementation": "mock-training-v1",
+            "reason": "training accepted",
+            "result": training_output,
+        }
+
+    monkeypatch.setattr(backend, "execute_recurrent_training_v1", training_run)
+    training = backend.execute_optional_v4(
+        "recurrent",
+        *cpu_inputs(tokens=2),
+        training=True,
+        program_id=None,
+        facts={
+            "fully_active": True,
+            "initial_state_zero": True,
+            "token_aligned": False,
+        },
+    )
+    assert training["result"] is training_output
+    assert training["phase"] == "training"
+    assert calls == [
+        "inference_probe",
+        "inference_run",
+        (
+            "training_run",
+            {
+                "fully_active": True,
+                "initial_state_zero": True,
+                "token_aligned": False,
+                "adaptive_fast_program": None,
+            },
+        ),
     ]
 
 
+def test_v4_model_forward_normalizes_probe_and_execution(monkeypatch):
+    backend = importlib.import_module("rwkv7_kernels.backend")
+    model_result = {
+        "output_kind": "causal_lm",
+        "logits": torch.randn(1, 2, 8),
+        "implementation": "mock-prefill-v2[effective]",
+        "phase": "prefill",
+    }
+    monkeypatch.setattr(
+        backend,
+        "probe_model_forward_v1",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "implementation": "mock-prefill-v2",
+            "reason": "model accepted",
+            "phase": "prefill",
+        },
+    )
+    monkeypatch.setattr(
+        backend,
+        "model_forward_v1",
+        lambda *_args, **_kwargs: model_result,
+    )
+    result = backend.execute_optional_v4(
+        "model_forward",
+        object(),
+        {"model_kind": "causal_lm", "training": False, "use_cache": True},
+    )
+
+    assert result["supported"] is True
+    assert result["result"] is model_result
+    assert result["implementation"] == "mock-prefill-v2[effective]"
+    assert result["phase"] == "prefill"
+
+
 def test_model_forward_auto_is_fail_closed_outside_validated_cuda():
-    kernels = importlib.import_module("rwkv7_kernels")
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
     request = {
         "model_kind": "base",
         "training": False,
         "use_cache": True,
     }
-    support = kernels.probe_model_forward_v1(object(), request)
+    support = dispatcher.probe_model_forward_v1(object(), request)
     assert not support["supported"]
     assert support["phase"] == "prefill"
     assert "causal-LM boundary" in support["reason"]
     with pytest.raises(RuntimeError, match="causal-LM boundary"):
-        kernels.model_forward_v1(object(), request)
+        dispatcher.model_forward_v1(object(), request)
 
 
 def test_model_forward_auto_opens_only_validated_4080_fp16_envelope(monkeypatch):
@@ -174,7 +531,7 @@ def test_model_forward_auto_rejects_autograd_before_native_probe(
 
 def test_explicit_dense_model_diagnostic_reports_unsupported_cpu(monkeypatch):
     monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "dense")
-    kernels = importlib.import_module("rwkv7_kernels")
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
     request = {
         "model_kind": "base",
         "training": False,
@@ -182,7 +539,7 @@ def test_explicit_dense_model_diagnostic_reports_unsupported_cpu(monkeypatch):
         "use_cache": True,
         "hidden_states": torch.zeros(1, 1, 8, dtype=torch.float16),
     }
-    support = kernels.probe_model_forward_v1(object(), request)
+    support = dispatcher.probe_model_forward_v1(object(), request)
     assert not support["supported"]
     assert support["implementation"] == "native-torchscript-dense-sequential-v2"
     assert support["phase"] == "decode"
@@ -191,7 +548,7 @@ def test_explicit_dense_model_diagnostic_reports_unsupported_cpu(monkeypatch):
 
 def test_explicit_native_prefill_reports_unsupported_cpu(monkeypatch):
     monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
-    kernels = importlib.import_module("rwkv7_kernels")
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
 
     class Base:
         embeddings = type(
@@ -212,7 +569,7 @@ def test_explicit_native_prefill_reports_unsupported_cpu(monkeypatch):
         "output_hidden_states": False,
         "output_attentions": False,
     }
-    support = kernels.probe_model_forward_v1(owner, request)
+    support = dispatcher.probe_model_forward_v1(owner, request)
     assert not support["supported"]
     assert support["implementation"] == "native-nvidia-prefill-v2"
     assert support["phase"] == "prefill"
@@ -285,8 +642,8 @@ def test_whole_model_dispatch_has_no_training_runtime_bridge():
 
 
 def test_default_auto_prefill_reports_graph_implementation_on_cpu():
-    kernels = importlib.import_module("rwkv7_kernels")
-    support = kernels.probe_recurrent_v1(*cpu_inputs())
+    dispatcher = importlib.import_module("rwkv7_kernels.dispatcher")
+    support = dispatcher.probe_recurrent_v1(*cpu_inputs())
     assert not support["supported"]
     assert support["implementation"] == "torch-cuda-graph-reference-v1"
     assert "CUDA" in support["reason"]
@@ -295,12 +652,12 @@ def test_default_auto_prefill_reports_graph_implementation_on_cpu():
 def test_training_auto_is_fail_closed_and_factorized_checks_capability(
     monkeypatch,
 ):
-    kernels = importlib.import_module("rwkv7_kernels")
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
     inputs = list(cpu_inputs())
     for value in inputs[:-2]:
         value.requires_grad_(True)
 
-    support = kernels.probe_recurrent_training_v1(*inputs)
+    support = dispatcher.probe_recurrent_training_v1(*inputs)
     assert not support["supported"]
     assert (
         support["implementation"]
@@ -309,7 +666,7 @@ def test_training_auto_is_fail_closed_and_factorized_checks_capability(
     assert "full-model release gate" in support["reason"]
 
     monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "factorized")
-    support = kernels.probe_recurrent_training_v1(*inputs)
+    support = dispatcher.probe_recurrent_training_v1(*inputs)
     assert not support["supported"]
     assert (
         support["implementation"]
@@ -319,13 +676,13 @@ def test_training_auto_is_fail_closed_and_factorized_checks_capability(
 
 
 def test_training_matrix_policy_is_exact_and_requires_cuda(monkeypatch):
-    kernels = importlib.import_module("rwkv7_kernels")
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
     inputs = list(cpu_inputs())
     for value in inputs[:-2]:
         value.requires_grad_(True)
 
     monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "matrix")
-    support = kernels.probe_recurrent_training_v1(*inputs)
+    support = dispatcher.probe_recurrent_training_v1(*inputs)
     assert not support["supported"]
     assert (
         support["implementation"]
@@ -624,6 +981,33 @@ def test_training_program_preflight_rejects_frozen_or_reentrant_input(monkeypatc
         "native-nvidia-rwkv7-adaptive-training-program-v1"
     )
     assert "gradient-bearing inputs" in result["reason"]
+
+
+def test_training_program_never_issues_partial_three_leaf_certificate(monkeypatch):
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
+
+    def unexpected_cuda_probe(*_args, **_kwargs):
+        raise AssertionError("an incomplete training plan must not load CUDA")
+
+    monkeypatch.setattr(torch.cuda, "is_available", unexpected_cuda_probe)
+    hidden = torch.randn(4, 128, 64, requires_grad=True)
+    mask = torch.ones(4, 128, dtype=torch.bool)
+    result = dispatcher.probe_training_program_v1(
+        hidden,
+        mask,
+        training=True,
+        fully_active=True,
+        initial_state_zero=True,
+        token_aligned=True,
+        autograd_leaf_eligible=True,
+        head_dim=64,
+    )
+
+    assert result["supported"] is False
+    assert "concrete recurrent, flattened-linear, and Mix6 leaf plan" in result[
+        "reason"
+    ]
 
 
 def test_forged_adaptive_bool_does_not_bypass_recurrent_runtime_preflight(monkeypatch):
@@ -1081,17 +1465,17 @@ def test_training_matrix_math_matches_reference_outputs_and_full_gradient():
 def test_training_linear_auto_is_fail_closed_and_factorized_requires_cuda(
     monkeypatch,
 ):
-    kernels = importlib.import_module("rwkv7_kernels")
+    dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
     value = torch.randn(2, 3, 4, requires_grad=True)
     weight = torch.randn(5, 4, requires_grad=True)
 
-    support = kernels.probe_linear_training_v1(value, weight, None)
+    support = dispatcher.probe_linear_training_v1(value, weight, None)
     assert not support["supported"]
     assert support["implementation"] == "torch-cuda-rwkv7-flattened-linear-training-v1"
     assert "full-model precision" in support["reason"]
 
     monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "factorized")
-    support = kernels.probe_linear_training_v1(value, weight, None)
+    support = dispatcher.probe_linear_training_v1(value, weight, None)
     assert not support["supported"]
     assert support["implementation"] == "torch-cuda-rwkv7-flattened-linear-training-v1"
     assert "CUDA" in support["reason"]
@@ -1195,8 +1579,8 @@ def test_training_flattened_linear_declares_small_row_numerical_gate():
 
 def test_explicit_triton_lane_reports_real_implementation_on_cpu(monkeypatch):
     monkeypatch.setenv("RWKV7_KERNEL_IMPL", "triton")
-    kernels = importlib.import_module("rwkv7_kernels")
-    support = kernels.probe_recurrent_v1(*cpu_inputs())
+    dispatcher = importlib.import_module("rwkv7_kernels.dispatcher")
+    support = dispatcher.probe_recurrent_v1(*cpu_inputs())
     assert not support["supported"]
     assert support["implementation"] == "native-triton-rank1-scan-v1"
     assert "CUDA" in support["reason"] or "Triton" in support["reason"]
@@ -1310,9 +1694,9 @@ def test_route_trace_records_executed_whole_model_phase(monkeypatch, tmp_path):
 
 def test_unknown_kernel_implementation_is_rejected(monkeypatch):
     monkeypatch.setenv("RWKV7_KERNEL_IMPL", "mystery")
-    kernels = importlib.import_module("rwkv7_kernels")
+    dispatcher = importlib.import_module("rwkv7_kernels.dispatcher")
     with pytest.raises(ValueError, match="RWKV7_KERNEL_IMPL"):
-        kernels.probe_recurrent_v1(*cpu_inputs())
+        dispatcher.probe_recurrent_v1(*cpu_inputs())
 
 
 def test_graph_reference_math_is_batch_regrouping_invariant():

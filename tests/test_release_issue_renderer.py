@@ -17,10 +17,9 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 from scripts.release_route_contract import (  # noqa: E402
-    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
-    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
     READABLE_TRAINING_MODEL_ROUTE,
-    REQUIRED_TRAINING_LEAF_ROUTES,
+    REQUIRED_REFERENCE_TRAINING_ROUTES,
 )
 
 AUDIT_SPEC = importlib.util.spec_from_file_location(
@@ -54,16 +53,12 @@ def fixtures():
         },
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
-        "training_policy": "adaptive",
-        "training_backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
+        "training_policy": "reference",
+        "training_backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
         "actual_routes": {
             "prefill": ["native-nvidia-prefill-v2[self_chunk]"],
             "decode": ["native-nvidia-fused-decode-v2[cuda_graph]"],
-            "training": [
-                READABLE_TRAINING_MODEL_ROUTE,
-                ADAPTIVE_TRAINING_PROGRAM_ROUTE,
-                *sorted(REQUIRED_TRAINING_LEAF_ROUTES),
-            ],
+            "training": sorted(REQUIRED_REFERENCE_TRAINING_ROUTES),
             "quantization": ["native-w8-mm8-v1"],
         },
     }
@@ -182,8 +177,7 @@ def test_release_issue_is_rendered_from_complete_speed_and_eval_matrices():
     assert "Formal lm_eval accuracy/NLL/PPL matrix" in body
     assert "native-nvidia-prefill-v2[self_chunk]" in body
     assert READABLE_TRAINING_MODEL_ROUTE in body
-    assert ADAPTIVE_TRAINING_PROGRAM_ROUTE in body
-    assert all(route in body for route in REQUIRED_TRAINING_LEAF_ROUTES)
+    assert all(route in body for route in REQUIRED_REFERENCE_TRAINING_ROUTES)
     assert "not an admissible formal HF training route" in body
     assert "| same | same |" in body
     assert "SFT" in body and "DPO" in body and "GRPO" in body
@@ -216,12 +210,12 @@ def test_release_issue_rejects_historical_whole_model_training_route():
         )
 
 
-def test_release_issue_rejects_non_adaptive_training_provenance():
+def test_release_issue_rejects_non_reference_training_provenance():
     provenance, speeds, lm_evals = fixtures()
     provenance["validation"]["devices"]["rtx-4090"]["training_backend_environment"][
         "RWKV7_TRAINING_KERNEL_IMPL"
-    ] = "auto"
-    with pytest.raises(ValueError, match="adaptive training provenance is incomplete"):
+    ] = "adaptive"
+    with pytest.raises(ValueError, match="reference training provenance is incomplete"):
         MODULE.validate_inputs(
             provenance=provenance,
             speeds=speeds,

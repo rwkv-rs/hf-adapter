@@ -14,17 +14,15 @@ from evaluation.build_backend_v2_device_validation import (
     build,
 )
 from evaluation.validate_finetune_runs import (
-    ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION,
-    MATRIX_RECURRENT_IMPLEMENTATION,
-    MIX6_IMPLEMENTATION,
+    REFERENCE_MIX6_IMPLEMENTATION,
     REFERENCE_LINEAR_IMPLEMENTATION,
+    REFERENCE_PROGRAM_IMPLEMENTATION,
+    REFERENCE_RECURRENT_IMPLEMENTATION,
 )
 from scripts.release_route_contract import (
-    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
-    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
     HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
     READABLE_TRAINING_MODEL_ROUTE,
-    REQUIRED_TRAINING_LEAF_ROUTES,
 )
 
 
@@ -57,7 +55,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         "gpu": "NVIDIA GeForce RTX 4080",
         "torch": "2.11.0+cu130",
         "cuda": "13.0",
-        "backend_environment": dict(FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT),
+        "backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
         "cuda_toolkit": {
             "cuda_home": "/toolkit",
             "torch_extensions_dir": "/extensions/backend-v2",
@@ -89,10 +87,10 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         },
         "hf_ecosystem": {
             "stages": [{"passed": True}],
-            "training_expectation": {"mode": "adaptive"},
+            "training_expectation": {"mode": "reference"},
         },
         "training": {
-            "settings": {"candidate_route": "adaptive"},
+            "settings": {"candidate_route": "reference"},
             "cases": [
                 {
                     "model_route": {
@@ -101,11 +99,15 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                     },
                     "program_route": {
                         "phase": "training",
-                        "implementation": ADAPTIVE_TRAINING_PROGRAM_ROUTE,
+                        "implementation": REFERENCE_PROGRAM_IMPLEMENTATION,
                     },
                     "leaf_routes": [
-                        {"implementation": route}
-                        for route in sorted(REQUIRED_TRAINING_LEAF_ROUTES)
+                        {"phase": "training", "implementation": route}
+                        for route in (
+                            REFERENCE_RECURRENT_IMPLEMENTATION,
+                            REFERENCE_LINEAR_IMPLEMENTATION,
+                            REFERENCE_MIX6_IMPLEMENTATION,
+                        )
                     ],
                 }
             ],
@@ -133,7 +135,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         },
         "speed": {
             "fla": {"commit": EXPECTED_FLA_COMMIT},
-            "training": {"mode": "adaptive"},
+            "training": {"mode": "reference"},
         },
     }
     paths = {}
@@ -172,34 +174,37 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                         "event": "pre_optimizer_step",
                         "boundary": "program",
                         "selected": "reference",
-                        "implementation": ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION,
+                        "implementation": REFERENCE_PROGRAM_IMPLEMENTATION,
                     },
                     {
                         "event": "pre_optimizer_step",
                         "boundary": "recurrent",
-                        "selected": "optimized",
-                        "implementation": MATRIX_RECURRENT_IMPLEMENTATION,
+                        "selected": "reference",
+                        "phase": "training",
+                        "implementation": REFERENCE_RECURRENT_IMPLEMENTATION,
                     },
                     {
                         "event": "pre_optimizer_step",
                         "boundary": "linear",
                         "selected": "reference",
+                        "phase": "training",
                         "implementation": REFERENCE_LINEAR_IMPLEMENTATION,
                     },
                     {
                         "event": "pre_optimizer_step",
                         "boundary": "mix6",
-                        "selected": "optimized",
-                        "implementation": MIX6_IMPLEMENTATION,
+                        "selected": "reference",
+                        "phase": "training",
+                        "implementation": REFERENCE_MIX6_IMPLEMENTATION,
                     },
                 ],
                 "kernel_route_trace": {
                     "schema": "rwkv7-kernel-route-trace-v2",
-                    "requested_training_policy": "adaptive",
+                    "requested_training_policy": "auto",
                     "actual_model_calls": {},
-                    "actual_recurrent_calls": {MATRIX_RECURRENT_IMPLEMENTATION: 12},
+                    "actual_recurrent_calls": {},
                     "actual_linear_calls": {},
-                    "actual_mix6_calls": {MIX6_IMPLEMENTATION: 12},
+                    "actual_mix6_calls": {},
                 },
             }
             for name in ("sft", "dpo", "grpo")
@@ -257,8 +262,8 @@ def test_device_builder_consolidates_all_gates_and_actual_routes(tmp_path: Path)
     assert report["hf_wheel_sha256"] == hf_sha
     assert report["kernel_wheel_sha256"] == kernel_sha
     assert report["lm_eval_units"] == 144
-    assert report["training_policy"] == "adaptive"
-    assert report["training_backend_environment"] == FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT
+    assert report["training_policy"] == "reference"
+    assert report["training_backend_environment"] == FORMAL_REFERENCE_BACKEND_ENVIRONMENT
     assert report["actual_routes"]["prefill"]
     assert report["actual_routes"]["decode"]
     assert report["actual_routes"]["training"]
@@ -310,12 +315,14 @@ def test_device_builder_rejects_non_release_v100_target(tmp_path: Path):
         build(args)
 
 
-def test_device_builder_rejects_non_adaptive_formal_environment(tmp_path: Path):
+def test_device_builder_rejects_non_reference_formal_environment(tmp_path: Path):
     args, paths, _, _ = setup_reports(tmp_path)
     payload = json.loads(paths["training"].read_text())
-    payload["environment"]["backend_environment"]["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+    payload["environment"]["backend_environment"]["RWKV7_TRAINING_KERNEL_IMPL"] = (
+        "adaptive"
+    )
     write_json(paths["training"], payload)
-    with pytest.raises(ValueError, match="formal adaptive backend environment differs"):
+    with pytest.raises(ValueError, match="formal reference backend environment differs"):
         build(args)
 
 
@@ -330,7 +337,7 @@ def test_device_builder_rejects_historical_primary_training_route(tmp_path: Path
         build(args)
 
 
-def test_device_builder_rejects_finetune_without_adaptive_route_evidence(
+def test_device_builder_rejects_finetune_without_reference_route_evidence(
     tmp_path: Path,
 ):
     args, _, _, _ = setup_reports(tmp_path)
@@ -343,7 +350,7 @@ def test_device_builder_rejects_finetune_without_adaptive_route_evidence(
     ]
     write_json(args.finetune_report, payload)
     with pytest.raises(
-        ValueError, match="sft report has invalid adaptive training routes"
+        ValueError, match="sft report has invalid reference training routes"
     ):
         build(args)
 
@@ -355,7 +362,7 @@ def test_device_builder_rejects_unknown_finetune_leaf_execution(tmp_path: Path):
         "unknown-training-linear": 1
     }
     write_json(args.finetune_report, payload)
-    with pytest.raises(ValueError, match="unknown linear implementations"):
+    with pytest.raises(ValueError, match="optional diagnostic routes"):
         build(args)
 
 
@@ -379,18 +386,17 @@ def test_device_builder_rejects_unpinned_fla(tmp_path: Path):
         build(args)
 
 
-def test_device_builder_rejects_training_leaves_without_compiler_identity(
+def test_device_builder_reference_training_does_not_require_compiler_identity(
     tmp_path: Path,
 ):
     args, paths, _, _ = setup_reports(tmp_path)
     payload = json.loads(paths["training"].read_text())
     payload["environment"]["cuda_toolkit"]["provenance"] = None
     write_json(paths["training"], payload)
-    with pytest.raises(ValueError, match="CUDA toolkit identity"):
-        build(args)
+    assert build(args)["status"] == "passed"
 
 
-def test_device_builder_rejects_training_leaves_with_mismatched_compiler(
+def test_device_builder_reference_training_ignores_mismatched_compiler(
     tmp_path: Path,
 ):
     args, paths, _, _ = setup_reports(tmp_path)
@@ -399,17 +405,15 @@ def test_device_builder_rejects_training_leaves_with_mismatched_compiler(
         "Cuda compilation tools, release 12.8, V12.8.93"
     ]
     write_json(paths["training"], payload)
-    with pytest.raises(ValueError, match="does not match PyTorch CUDA"):
-        build(args)
+    assert build(args)["status"] == "passed"
 
 
-def test_device_builder_rejects_unbound_native_build_paths(tmp_path: Path):
+def test_device_builder_reference_training_ignores_native_build_paths(tmp_path: Path):
     args, paths, _, _ = setup_reports(tmp_path)
     payload = json.loads(paths["training"].read_text())
     payload["environment"]["cuda_toolkit"]["torch_extensions_dir"] = None
     write_json(paths["training"], payload)
-    with pytest.raises(ValueError, match="CUDA build paths are not bound"):
-        build(args)
+    assert build(args)["status"] == "passed"
 
 
 def test_device_builder_rejects_lm_eval_without_compact_metric_matrix(

@@ -31,7 +31,7 @@ from scripts.audit_release_wheels import (  # noqa: E402
     open_wheel,
 )
 from scripts.release_route_contract import (  # noqa: E402
-    FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
     validate_actual_routes,
 )
 
@@ -316,13 +316,13 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         ):
             if row.get(f"{gate}_status") != "passed":
                 raise ValueError(f"{gate} gate did not pass: {device}")
-        if row.get("training_policy") != "adaptive":
-            raise ValueError(f"formal adaptive training policy is missing: {device}")
+        if row.get("training_policy") != "reference":
+            raise ValueError(f"formal reference training policy is missing: {device}")
         if (
             row.get("training_backend_environment")
-            != FORMAL_ADAPTIVE_BACKEND_ENVIRONMENT
+            != FORMAL_REFERENCE_BACKEND_ENVIRONMENT
         ):
-            raise ValueError(f"formal adaptive training environment differs: {device}")
+            raise ValueError(f"formal reference training environment differs: {device}")
         bundle_sha = str(row.get("compact_bundle_manifest_sha256", ""))
         if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha):
             raise ValueError(f"compact evidence identity is missing: {device}")

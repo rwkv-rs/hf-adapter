@@ -39,6 +39,7 @@ HISTORICAL_WHOLE_MODEL_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
 REFERENCE_RECURRENT_IMPLEMENTATION = "torch-reference-v1"
 REFERENCE_LINEAR_IMPLEMENTATION = "torch-reference-linear-v1"
 REFERENCE_MIX6_IMPLEMENTATION = "torch-reference-mix6-v1"
+REFERENCE_PROGRAM_IMPLEMENTATION = "torch-reference-training-program-v1"
 
 
 def _positive_trace_implementations(
@@ -63,6 +64,90 @@ def _positive_trace_implementations(
         if count:
             implementations.add(implementation)
     return implementations
+
+
+def validate_reference_finetune_route_evidence(
+    routes: list[dict], kernel_trace: dict
+) -> dict:
+    """Require one complete readable HF training program.
+
+    Optional inference may occur during adapter save/reload in the same
+    process, so the process-wide trace is used only to reject known optimized
+    *training* leaves. Per-optimizer-step boundary records prove the actual
+    model/program/recurrent/linear/Mix6 training route.
+    """
+
+    failures: list[str] = []
+    if not isinstance(routes, list) or any(not isinstance(row, dict) for row in routes):
+        return {
+            "passed": False,
+            "failures": ["backend routes are not a list of objects"],
+            "observed": {},
+        }
+    if not isinstance(kernel_trace, dict):
+        return {
+            "passed": False,
+            "failures": ["kernel route trace is not an object"],
+            "observed": {},
+        }
+    if kernel_trace.get("schema") != "rwkv7-kernel-route-trace-v2":
+        failures.append("missing versioned process-wide kernel route trace")
+    if kernel_trace.get("requested_training_policy") != "auto":
+        failures.append("kernel trace training policy does not match reference")
+
+    expected = {
+        "model": READABLE_MODEL_IMPLEMENTATION,
+        "program": REFERENCE_PROGRAM_IMPLEMENTATION,
+        "recurrent": REFERENCE_RECURRENT_IMPLEMENTATION,
+        "linear": REFERENCE_LINEAR_IMPLEMENTATION,
+        "mix6": REFERENCE_MIX6_IMPLEMENTATION,
+    }
+    optimizer_routes = [
+        row
+        for row in routes
+        if row.get("event") == "pre_optimizer_step" and row.get("boundary") in expected
+    ]
+    observed: dict[str, list[str]] = {}
+    for boundary, implementation in expected.items():
+        rows = [row for row in optimizer_routes if row.get("boundary") == boundary]
+        observed[boundary] = sorted(
+            {str(row.get("implementation")) for row in rows}
+        )
+        if not rows:
+            failures.append(f"training did not record the reference {boundary} route")
+        if any(
+            row.get("selected") != "reference"
+            or (boundary != "program" and row.get("phase") != "training")
+            or row.get("implementation") != implementation
+            for row in rows
+        ):
+            failures.append(f"training recorded a non-reference {boundary} route")
+
+    for key in (
+        "actual_recurrent_calls",
+        "actual_linear_calls",
+        "actual_mix6_calls",
+    ):
+        actual = _positive_trace_implementations(kernel_trace, key, failures)
+        if actual:
+            failures.append(
+                f"formal reference training executed optional diagnostic routes: "
+                f"{sorted(actual)}"
+            )
+
+    actual_model = _positive_trace_implementations(
+        kernel_trace, "actual_model_calls", failures
+    )
+    if HISTORICAL_WHOLE_MODEL_IMPLEMENTATION in actual_model or any(
+        row.get("implementation") == HISTORICAL_WHOLE_MODEL_IMPLEMENTATION
+        for row in routes
+    ):
+        failures.append("whole-model diagnostic training unexpectedly executed")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "observed": observed,
+    }
 
 
 def validate_adaptive_finetune_route_evidence(
@@ -400,6 +485,7 @@ def validate_run(
     if name == "grpo":
         expected_config["max_completion_length"] = 64
     adaptive_route_evidence = None
+    reference_route_evidence = None
     if require_training_candidate == "adaptive":
         adaptive_route_evidence = validate_adaptive_finetune_route_evidence(
             routes, kernel_trace
@@ -417,6 +503,17 @@ def validate_run(
             failures.append(
                 "training checks disagree with the adaptive fallback decision"
             )
+        if checks.get("historical_whole_model_diagnostic") is not False:
+            failures.append("historical whole-model diagnostic route is not false")
+    elif require_training_candidate == "reference":
+        reference_route_evidence = validate_reference_finetune_route_evidence(
+            routes, kernel_trace
+        )
+        failures.extend(reference_route_evidence["failures"])
+        if not checks.get("readable_model_loop"):
+            failures.append("training checks did not retain the readable HF layer loop")
+        if checks.get("adaptive_fast_program") is not False:
+            failures.append("reference training claimed an adaptive fast program")
         if checks.get("historical_whole_model_diagnostic") is not False:
             failures.append("historical whole-model diagnostic route is not false")
     if require_training_candidate is not None:
@@ -466,8 +563,7 @@ def validate_run(
         if checks.get("historical_whole_model_diagnostic") is not False:
             failures.append("historical whole-model diagnostic route is not false")
     if (
-        require_training_candidate is not None
-        and require_training_candidate != "adaptive"
+        require_training_candidate in {"matrix", "factorized"}
     ):
         if kernel_trace.get("schema") != "rwkv7-kernel-route-trace-v2":
             failures.append("missing versioned process-wide kernel route trace")
@@ -639,6 +735,7 @@ def validate_run(
         "backend_routes": routes,
         "kernel_route_trace": kernel_trace,
         "adaptive_route_evidence": adaptive_route_evidence,
+        "reference_route_evidence": reference_route_evidence,
         "artifacts": artifacts,
         "status": "passed" if not failures else "failed",
         "failures": failures,
@@ -653,7 +750,7 @@ def main() -> None:
     parser.add_argument("--require-backend-v2-routes", action="store_true")
     parser.add_argument(
         "--require-training-candidate",
-        choices=("adaptive", "matrix", "factorized"),
+        choices=("reference", "adaptive", "matrix", "factorized"),
     )
     args = parser.parse_args()
     runs = {

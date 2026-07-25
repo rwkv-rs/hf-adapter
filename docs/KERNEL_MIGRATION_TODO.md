@@ -7,8 +7,8 @@
 ## Fixed decisions
 
 - Initial clean base: `4bbd911e4dcb446e8c21fb795e373b4a59775ff3`.
-- Current baseline: `10584cb5abf25f9e685116a863d73cdd426ce931`.
-- Working branch: `perf/training-large-batch-v1`.
+- Current refactor base: `fc6f6b39637f2f79fe9b54e29def3e9859fb4796`.
+- Working branch: `refactor/thin-ops-v1`.
 - `rwkv7_hf/` remains the readable HF source of truth and contains only the
   canonical model modules.
 - CLI/conversion/smoke stay in the sibling `rwkv7_hf_tools/` package.
@@ -16,12 +16,26 @@
 - Model weights, `config.json`, public cache ABI, and HF forward/generation
   signatures do not select hardware or kernel policy.
 - Public recurrent state remains canonical `[B,H,K,V]`.
+- The HF core calls only kernel API v4's `execute_optional_v4`; its five
+  operation kinds are `training_program`, `model_forward`, `linear_training`,
+  `mix6_training`, and `recurrent`. Unsupported envelopes require
+  `result=None`.
+- `modeling_rwkv7.py` resolves one immutable `RWKV7ExecutionContext` and passes
+  it explicitly through non-linear layer boundaries, the LM-head boundary, and
+  checkpoint replay. Two narrow routing bridges carry that resolved value: a
+  decoder-to-LM-head capture across the standard HF output boundary and lexical
+  `linear_execution_context` for `nn.Linear`/PEFT/quantization `forward(x)`;
+  replay republishes the linear scope. Two other context-local values are
+  evidence-only.
 - Kernel-policy `auto` routes one-token FP16 decode to Triton and multi-token
   FP16 prefill to the exact CUDA-graph implementation. Explicit `triton` and
   `graph` modes remain available for isolated evidence; requested policy is
   never reported as the actual route.
-- Unsupported device/dtype/shape, missing wheel, autograd, or probe failure
-  falls back to `rwkv7_recurrent_reference` in `auto` mode.
+- Unsupported device/dtype/shape, missing wheel, or autograd returns a
+  side-effect-free negative decision and falls back to readable math in `auto`.
+  `model_forward` uses the caller's canonical cache zero-copy; after positive
+  execution starts, an exception or malformed payload fails closed and is never
+  reference-recomputed.
 - No old model wrapper, compatibility module, monkey patch, or performance
   policy may be copied from `perf/native-kernels-v0.8` or
   `perf/optional-native-backend-v0.10` into `rwkv7_hf/`.
@@ -57,8 +71,8 @@
       `kernels/rwkv7_kernels/recurrent/triton.py`.
 - [x] Keep implementation selection and environment parsing inside the kernel
       wheel, not in `rwkv7_hf/`.
-- [x] Expose only `RWKV7_KERNEL_API_VERSION`, `probe_recurrent_v1`, and
-      `recurrent_v1` as the v1 public kernel protocol.
+- [x] Supersede the split implementation entry points with the single public
+      API-v4 `execute_optional_v4` facade.
 
 ### Core boundary
 
@@ -77,7 +91,8 @@
 - [x] `auto` falls back on unsupported inputs and autograd.
 - [x] `optimized` fails clearly rather than silently falling back.
 - [x] API version mismatch fails clearly.
-- [x] Broken probe/kernel is contained in `auto` and surfaced in `optimized`.
+- [x] Broken optional execution is contained in `auto` and surfaced in
+      `optimized`.
 - [x] Kernel wheel and HF wheel build independently.
 - [x] Package-free converted directory loads without either installed wheel.
 
@@ -193,10 +208,10 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 
 - [x] Freeze the complete model-forward ABI and migration inventory before
       moving implementation code.
-- [x] Add the kernel API v3 request/result envelope, explicit diagnostic probe,
-      and the single early clean-model hook; production auto stays disabled.
-- [ ] Complete every `probe_model_forward_v1` / `model_forward_v1` phase and
-      enable production auto only after the unified wheel passes.
+- [x] Add the single kernel API-v4 request/result envelope and clean-model
+      facade; production auto stays disabled for changed bytes.
+- [ ] Complete every API-v4 `model_forward` phase and enable production auto
+      only after the unified immutable wheel passes.
 - [x] Port fused token, W/A/G/V, projection, FFN, norm, state pool and CUDA
       Graph replay without replacing `modeling_rwkv7.py`.
 - [x] Port DPLR/self-chunk/fused prefill and all shape routing behind the same
@@ -209,8 +224,9 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 ## Phase 6 — backend-v2 training implementation and unified acceptance
 
 - [x] Preserve the existing whole-model forward/backward runtime only as a
-      private historical diagnostic. Formal HF training never dispatches it
-      through `model_forward_v1` and does not create a separate model/cache.
+      private historical diagnostic. Formal HF training never selects the
+      API-v4 `model_forward` operation and does not create a separate
+      model/cache.
 - [x] Add clean recurrent and stateless-linear training leaf protocols so the
       readable HF layer loop can use CUDA without the historical whole-model
       training wrapper.
@@ -229,14 +245,14 @@ relabelled as evidence for this candidate.
       recurrent, flattened-linear, and explicit-shift Mix6 as independent
       tensor leaves. The historical whole-model runtime remains a private
       diagnostic and is not eligible for formal HF training evidence.
-- [x] Advance the optional-package protocol to API v3 and bind one versioned
-      request/result boundary to the adaptive training-program preflight.
-- [x] Make the adaptive preflight atomic: certify recurrent, flattened-linear,
-      and Mix6 support once before the first accelerated projection, or run the
-      complete exact reference program without entering a partial fast path.
-- [x] Report `native-nvidia-rwkv7-adaptive-training-program-v1` separately
-      from the readable model-loop and tensor-leaf routes, and require all of
-      them in release provenance.
+- [x] Advance the optional-package protocol to API v4 and reserve the
+      `training_program` operation as the atomic adaptive-preflight boundary.
+- [x] Fail closed while API v4 lacks the concrete projection and Mix6 tensor
+      plan: issue no partial certificate, keep `auto` on the complete readable
+      reference program, and fail strict `optimized` at the model boundary.
+- [ ] Extend a future training-program request with the complete concrete leaf
+      plan, preload every lazy dependency, bind a non-forgeable certificate,
+      and prove that no leaf can JIT or decline after certification.
 - [x] Preserve the fixed-row readable reference projection contract while the
       optional flattened-linear leaf presents one `[B*T,C]` GEMM to PyTorch.
 - [x] Remove the benchmark's second causal cross-entropy calculation without
@@ -261,11 +277,10 @@ relabelled as evidence for this candidate.
       command, code identity, and wheel identity. Schema v3 also records the
       process peak RSS (Linux `VmHWM`, with `getrusage` fallback) so allocator
       and whole-process memory evidence are not conflated.
-- [x] Pass the complete local Python test/lint/hash gate on the final source
-      candidate: full pytest, Ruff on changed first-party Python, diff check,
-      102/102 migration hashes, and source-scope/capability audits. The current
-      source candidate completed **347 tests**; any later byte change requires
-      another full rerun before this count is release evidence.
+- [x] Re-run the complete local Python test/lint/hash gate after the shared
+      source settles: **428 passed** with **385 expected warnings**; Ruff on
+      every changed first-party Python file, bytecode compilation, diff check,
+      102/102 migration hashes, and source-scope/capability audits all pass.
 - [ ] Build one immutable HF/kernel wheel pair and compile the changed Mix6
       extension on RTX 4080 from that exact pair.
 - [ ] Pass Mix6 output/first-gradient parity, repeated-run determinism, and
@@ -292,6 +307,38 @@ relabelled as evidence for this candidate.
 - [ ] GitHub, Hub and PyPI versions/tags agree.
 
 ## Session log
+
+### 2026-08-30 — API-v4 facade and explicit execution context
+
+- Reduced the HF/kernel ABI to one public call,
+  `execute_optional_v4(kind, ...)`, with five operation kinds and one
+  normalized envelope. Negative capability decisions are side-effect-free and
+  return `result=None`; split capability/execution adapters remain private to the
+  kernel package.
+- Replaced the implicit per-leaf training control state with one frozen
+  `RWKV7ExecutionContext`. `modeling_rwkv7.py` resolves it once and passes it
+  explicitly through every non-linear boundary and checkpoint replay. Two narrow
+  routing bridges carry it across decoder-to-LM-head output and standard
+  `forward(x)` linear/PEFT/quantization calls; the linear scope is republished
+  inside checkpoint replay. Two additional context-local snapshots
+  remain solely for last-route evidence and cannot affect execution.
+- `ops_rwkv7.py` now contains the readable reference recurrence, common
+  envelope validation, explicit-context routing, and small stable operation
+  entry points. Device/shape policy, environment selectors beyond the public
+  `auto|reference|optimized` mode, probing, kernel execution, and trace
+  accounting stay in `rwkv7-kernels`.
+- All training requests currently select one complete readable training
+  program in `auto` because the API-v4 request cannot prove the concrete
+  recurrent/linear/Mix6 plan. Strict `optimized` fails at the model boundary
+  instead of mixing leaves from different programs.
+- The final shared source snapshot passes **428 tests** with **385 expected
+  warnings**. Ruff on every changed first-party Python file, bytecode
+  compilation, diff check, 102/102 migration hashes, and the source-scope and
+  capability audits also pass. **No immutable HF/kernel wheel pair or new RTX
+  4080 result exists for these changed bytes yet.** Build/audit,
+  exact-route numerical matrices, performance/FLA comparison, HF ecosystem,
+  SFT/DPO/GRPO, and lm_eval regression remain open and must use the same new
+  wheel hashes.
 
 ### 2026-08-30 — large-batch training hot-path source candidate
 
@@ -364,9 +411,9 @@ relabelled as evidence for this candidate.
   W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO adapters, and train-temp
   forward/backward/autograd all remain in scope.
 - The wheel/source audits bind 102 NVIDIA destination files to the frozen
-  historical trees: 100 byte-identical transfers and the two declared clean
-  boundary adaptations. Any omitted file, changed Git blob, or undeclared
-  third adaptation fails the release audit.
+  historical trees. The current manifest records 89 byte-identical transfers
+  and 13 declared clean-boundary adaptations; any omitted file, changed Git
+  blob, or undeclared adaptation fails the release audit.
 - Audited package imports and made direct runtime dependencies explicit in the
   independent kernel distribution: `torch`, `numpy`, and `packaging`.
   Transformers, DeepSpeed, BitsAndBytes and TorchAO stay lazy feature-specific
@@ -1195,10 +1242,10 @@ relabelled as evidence for this candidate.
   5090 route families plus adjacent-product fail-closed behavior. These tests
   verify the migration is represented in hardware dispatch rather than only
   stored as source files.
-- Production whole-model `auto` remains disabled. `migrated` means the
-  implementation and route ownership are complete; promotion still waits for
-  the immutable-wheel RTX 4080 -> V100 -> RTX 4090 acceptance and 144-unit
-  three-way `lm_eval` gate.
+- At this historical stage, production whole-model `auto` remained disabled
+  and the planned device order included V100. The current fixed decisions
+  above supersede that order: RTX 4080 is the primary gate, RTX 4090 follows,
+  and V100 is historical evidence only.
 - Targeted Ruff, compileall, `git diff --check`, and the complete local suite
   pass: `143 passed`. A disposable development-wheel build was then audited
   from its ZIP contents: 16/16 capability families, 102/102 mapped and
@@ -1212,11 +1259,11 @@ relabelled as evidence for this candidate.
   Marlin/TorchAO route, and training autograd. The GitHub source-tree audit
   also requires both embedded inventories and this migration audit document;
   a release can no longer publish only generic “optimized” wording.
-- `docs/ARCHITECTURE.md` now documents the two optional protocol boundaries
-  and the complete operator families next to the readable model/cache
-  structure. It makes explicit that installation never replaces a model
-  class, cache ABI or checkpoint layout and that unsupported calls fall back
-  to the unchanged reference body.
+- `docs/ARCHITECTURE.md` now documents the single API-v4 facade, its five
+  operation kinds, and the complete operator families next to the readable
+  model/cache structure. Installation never replaces a model class, cache ABI,
+  or checkpoint layout, and unsupported calls fall back to the unchanged
+  reference body.
 - Source and documentation commits were pushed as
   `bf8ecdb0cdde9cc276507f6cd47833542e0ccc90` on
   `perf/optional-kernels-v1`; draft PR #146 points to the same SHA. At
@@ -1232,11 +1279,11 @@ relabelled as evidence for this candidate.
 ### 2026-08-28 — historical denominator is now cryptographically complete
 
 - Audited the complete `perf/native-kernels-v0.8:rwkv7_hf` tree rather than
-  trusting the selected 102-file migration list. The frozen historical tree
-  contains 153 files: 100 byte-identical NVIDIA files, 12 model/glue or runtime
-  files adapted behind the clean protocol, 7 canonical reference owners, 6
-  relocated/retired tools, 27 explicitly separate Ascend/MLX/Biren/MetaX/MUSA
-  files, and one retired non-kernel speculative helper.
+  trusting the selected 102-file migration list. The current 153-row scope
+  records 89 byte-migrated NVIDIA files, 23 adapted protocol/glue files, 7
+  canonical reference owners, 6 relocated/retired tools, 27 explicitly
+  separate Ascend/MLX/Biren/MetaX/MUSA files, and one retired non-kernel
+  speculative helper.
 - Added wheel-owned `nvidia/SOURCE_SCOPE.json` with the historical mode/blob
   identity and disposition of every file. `audit_release_wheels.py` rebuilds
   the Git tree and requires exact tree
@@ -1278,8 +1325,9 @@ relabelled as evidence for this candidate.
   subtree at commit `0c5ea30ac6868974ba9836c4a065fa8b2847af68`.
   Its three rows reconstruct frozen Git tree
   `7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb`.
-- The old API entry point is explicitly adapted to API v2. The old Graph and
-  Triton recurrence implementations are still byte-identical as
+- The historical package entry point is adapted behind the current private
+  dispatcher and single public API-v4 facade. The old Graph and Triton
+  recurrence implementations are still byte-identical as
   `recurrent/graph.py` and `recurrent/triton.py`; the release-wheel audit now
   recomputes their SHA256 and Git blob identities in addition to the 153-file
   v0.8 scope and 102-file NVIDIA manifest.
@@ -1321,15 +1369,13 @@ relabelled as evidence for this candidate.
   binds the canonical `RWKV7Cache` instead of the old private cache, and
   `train_temp_cuda.py` removes whole-model `forward` monkeypatching in favor of
   `training_runtime.py` direct dispatch.
-- Corrected the machine-readable denominator to **100 byte-identical + 2
-  declared clean-boundary adaptations = all 102 NVIDIA transfers**. The
-  complete 153-file source scope is now 100 byte-identical NVIDIA, 12 adapted
-  protocol/runtime files, 7 canonical owners, 6 relocated tools, 27 separate
-  hardware files, and one retired non-kernel helper. The frozen source-tree ID
-  remains unchanged because every historical mode/blob row is still present.
-- The two adaptations are restricted by exact historical source path and must
-  carry a non-empty rationale; an undeclared third adaptation fails the wheel
-  audit. Capability coverage remains 102/102 across the same 16 families.
+- Strengthened the machine-readable denominator and adaptation-rationale
+  checks. Subsequent clean-boundary work brings the current manifest to **89
+  byte-identical + 13 declared adaptations = all 102 NVIDIA transfers**; the
+  complete current source scope is the 89/23/7/6/27/1 classification recorded
+  above. Every adaptation is restricted by exact historical source path and
+  requires a non-empty rationale. Capability coverage remains 102/102 across
+  the same 16 families.
 - A newly built disposable ZIP passed the stronger combined audit: 100 exact
   Git blobs, two declared adaptations, 102 destination SHA256 values, 153/153
   historical rows, 16/16 capability families, and both byte-identical v0.10
@@ -1961,10 +2007,10 @@ relabelled as evidence for this candidate.
   PID `4099419`) after ecosystem and FLA completed: 100-step SFT, DPO and GRPO,
   followed by SFT checkpoint resume, W&B offline smoke and strict artifact
   validation.  Datasets are the already cached pinned revisions; the model and
-  both wheel SHA256s are recorded in every run.  AutoModel remote-code modules
-  own a separate route ContextVar, so the callback now resolves the accessor
+  both wheel SHA256s are recorded in every run. AutoModel remote-code modules
+  own a separate evidence namespace, so the callback resolves the accessor
   from the actual model class before falling back to the installed-package
-  accessor.  The nested causal-LM reference route is accepted only alongside
+  accessor. The nested causal-LM reference route is accepted only alongside
   the existing nonzero-gradient, changed-parameter and adapter-save/reload
   proof.  Local coverage for this namespace case raises the suite to **186
   tests**.  SFT has entered the 100-step loop normally on GPU 0 while the lm_eval
@@ -2026,12 +2072,12 @@ relabelled as evidence for this candidate.
 
 ### 2026-08-29 — canonical leaf-level CUDA training boundary
 
-- Added an additive recurrent-training protocol without changing the readable
-  `modeling_rwkv7.py` layer structure.  The public names are
-  `probe_recurrent_training_v1` and `recurrent_training_v1`; the implementation
-  route is `native-nvidia-rwkv7-recurrent-training-v1` and the implementation
-  module is `recurrent/training_cuda.py`.  FLA remains an evaluation dependency
-  only and no project or contributor nickname appears in the runtime API.
+- Added an additive recurrent-training adapter without changing the readable
+  `modeling_rwkv7.py` layer structure. Its implementation route is
+  `native-nvidia-rwkv7-recurrent-training-v1` and its implementation module is
+  `recurrent/training_cuda.py`; the adapter is now private behind API v4's
+  `recurrent` operation. FLA remains an evaluation dependency only and no
+  project or contributor nickname appears in the runtime API.
 - `RWKV7_TRAINING_KERNEL_IMPL=auto|cuda` is independent from inference policy.
   Production `auto` stays on reference autograd until the full-gradient release
   gate passes; explicit `cuda` is the only way to compile and exercise the
@@ -2083,8 +2129,9 @@ relabelled as evidence for this candidate.
   representative matrix shapes.  This justifies a second **stateless leaf**;
   it does not justify copying a fused model or parameter ownership into the
   kernel package.
-- Added public `probe_linear_training_v1` / `linear_training_v1`, implementation
-  `native-nvidia-cublas-linear-training-v1`, and route tracing at the existing
+- Added the flattened-linear implementation adapter and route
+  `native-nvidia-cublas-linear-training-v1`; it is now private behind API v4's
+  `linear_training` operation. Route tracing remains at the existing
   `RWKV7_TRAINING_KERNEL_IMPL=auto|cuda` policy.  `RWKV7Linear` remains the
   visible checkpoint-compatible layer; the optional leaf only flattens
   `[B,T,C]` and calls PyTorch `F.linear`, so PyTorch/PEFT still owns autograd,
@@ -2095,11 +2142,11 @@ relabelled as evidence for this candidate.
   no-op recurrent updates to the CUDA chunk size, and scattered back.  An
   all-padding sample preserves explicit zero gradients for every public
   recurrent operand rather than returning `None` gradients.
-- Finetune provenance now records three separate boundaries (`model`,
-  `recurrent`, `linear`) and requires the readable model route plus both CUDA
-  leaf routes for the high-performance training claim.  Runtime names and
-  comments use only RWKV7/recurrent/linear/training/CUDA terminology; FLA is
-  confined to evaluator and documentation text.
+- Finetune provenance now records the model plus recurrent, linear, and Mix6
+  tensor leaves. A high-performance training claim requires the readable model
+  route and every optional leaf expected for that certified program. Runtime
+  names and comments use only mathematical RWKV7 terminology; FLA is confined
+  to evaluator and documentation text.
 - Local quality gate passes: Ruff on every changed first-party file,
   `git diff --check`, and
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q` -> **197 passed** with
@@ -2119,15 +2166,16 @@ relabelled as evidence for this candidate.
 
 ### 2026-08-29 — standardized training API and exact wheel candidate
 
-- Public training terminology is now limited to RWKV7, recurrent, linear,
-  training and CUDA.  The two leaf APIs, their probes and their actual route
-  strings are documented in `kernels/README.md`; the pinned FLA name appears
-  only in evaluator/documentation comparison text.  The readable model remains
-  the only owner of modules, parameters, adapters, cache, loss and checkpoints.
+- Public training terminology is now limited to RWKV7 mathematical operations.
+  The recurrent, linear, and Mix6 routes are documented as operation kinds
+  under the single API-v4 facade; the pinned FLA name appears only in
+  evaluator/documentation comparison text. The readable model remains the
+  only owner of modules, parameters, adapters, cache, loss, and checkpoints.
 - `docs/EVALUATION.md` now contains the exact leaf and full-model three-way
-  commands.  Full-model acceptance requires the readable
-  `torch-reference-model-v1` loop plus actual recurrent and linear CUDA routes;
-  requested environment variables are not accepted as evidence.
+  commands. Full-model acceptance requires the readable
+  `torch-reference-model-v1` loop plus the recurrent, linear, and Mix6 routes
+  expected for the certified program; requested environment variables are not
+  accepted as evidence.
 - Re-ran the complete local quality gate after the masked evaluator and
   documentation changes: Ruff, both evaluator syntax checks and
   `git diff --check` pass; `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
@@ -2332,16 +2380,16 @@ relabelled as evidence for this candidate.
 - The `08c2bf82a012` full-model run reached the last dense checkpointed shape,
   B4/T128, then preserved a real `torch.utils.checkpoint.CheckpointError`
   instead of generating a partial pass bundle. Its first forward used the
-  512-row flattened linear program, while autograd checkpoint replay ran in a
-  context that did not inherit the outer Python `ContextVar` and returned to
-  128-row reference chunks. The different saved-tensor metadata made the
+  512-row flattened linear program, while autograd checkpoint replay did not
+  receive the outer implicit execution decision and returned to 128-row
+  reference chunks. The different saved-tensor metadata made the
   failure deterministic; it was a route-replay bug, not a tolerance issue.
-- The clean model now republishes only the already-normalized mask semantic
-  inside `RWKV7Model._checkpointed_layer` before every layer execution. This
-  makes forward and recomputation select the same stateless linear program
-  without passing hardware policy, parameters, cache, or optimizer state into
-  `modeling_rwkv7.py`. A CPU regression test verifies that every checkpoint
-  replay republishes the same mask. The kernel distribution also declares
+- That intermediate repair republished normalized mask semantics during
+  checkpoint replay. The current design replaces the implicit mechanism with
+  an explicit immutable `RWKV7ExecutionContext`, so forward and recomputation
+  receive the same program decision without passing hardware policy,
+  parameters, cache, or optimizer state into `modeling_rwkv7.py`. The kernel
+  distribution also declares
   Ninja as a direct runtime dependency; factorized JIT still requires an
   explicit matching `nvcc` toolkit and fails closed when it is absent.
 - Local acceptance is now **203 passed** with 253 expected TorchScript
@@ -2380,12 +2428,10 @@ relabelled as evidence for this candidate.
   fallback with the flattened accumulation program. Explicit `factorized`
   remains an isolation/diagnostic selector; production `auto` remains the
   readable reference path.
-- Renamed the HF boundary helper from `set_training_mask_context` to
-  `set_training_batch_context`, without a compatibility alias. The name now
-  matches the only data it publishes: mask activity and protocol chunk
-  alignment. Gradient-checkpoint replay republishes the same context before
-  every layer. Unit coverage includes fully active unaligned recurrent and
-  linear requests.
+- Consolidated the historical mask/batch helper into the current
+  `RWKV7ExecutionContext` contract. Mask activity and token alignment are
+  resolved once and passed explicitly to every layer and checkpoint replay.
+  Unit coverage includes fully active unaligned recurrent and linear requests.
 - The corrected source passes the complete local gate: **203 passed**, with
   253 expected TorchScript deprecation warnings; targeted Ruff and
   `git diff --check` also pass. Corrected immutable candidate
@@ -2426,8 +2472,9 @@ relabelled as evidence for this candidate.
   disable a second Trainer AMP context, and use non-reentrant gradient
   checkpointing. This keeps LayerNorm/projection tensors in the declared BF16
   contract and lets the optional probe observe the real autograd request.
-- Route evidence now combines the last optimizer-boundary ContextVar with the
-  optional package's process-wide actual-call counter. This is necessary for
+- Route evidence now combines the last optimizer-boundary evidence snapshot
+  with the optional package's process-wide actual-call counter. This is
+  necessary for
   DPO because its differentiable policy forward is followed by a no-grad
   reference forward; the latter must not erase the earlier optimized call.
 - Harness `27b21bf41b73` ran one-step SFT, DPO and GRPO with the unchanged

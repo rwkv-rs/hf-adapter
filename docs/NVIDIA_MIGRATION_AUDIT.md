@@ -96,15 +96,18 @@ being hidden inside the larger v0.8 count. The wheel embeds
 `perf/optional-native-backend-v0.10` commit
 `0c5ea30ac6868974ba9836c4a065fa8b2847af68`. It reconstructs the complete
 three-file historical `kernel_wheel/rwkv7_kernels` Git subtree
-(`7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb`): the old package entry point is
-adapted to API v3, while `recurrent_graph.py` and `recurrent_triton.py` remain
-byte-identical as `recurrent/graph.py` and `recurrent/triton.py`. Release
+(`7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb`): the historical package entry
+point is adapted behind the private dispatcher and the single public API-v4
+`execute_optional_v4` facade, while `recurrent_graph.py` and
+`recurrent_triton.py` remain byte-identical as `recurrent/graph.py` and
+`recurrent/triton.py`. Release
 auditing recomputes both SHA256 and Git blob identity, so the earlier HF
 high-performance recurrent implementation is covered in addition to all 102
 v0.8 NVIDIA files.
 
 The inventory deliberately distinguishes `migrated` from `production auto`.
-All implementation families are present behind API v3, but inference
+All implementation families are present behind API v4's five operation kinds,
+but inference
 whole-model families remain diagnostic until the same immutable wheel passes
 the complete RTX 4080 and RTX 4090 gate. The historical whole-model training
 runtime is never promoted as the HF training boundary; only the clean tensor
@@ -199,13 +202,11 @@ until one immutable HF wheel and one immutable kernel wheel pass:
 
 Requested environment selectors are never accepted as proof. Result bundles
 must contain the actual inference routes and, for training, the
-`torch-reference-model-v1` boundary together with all executed recurrent,
-linear and Mix6 leaf routes. The historical
+`torch-reference-model-v1` boundary with no optional training-leaf execution.
+The historical
 `native-nvidia-train-temp-autograd-v2` route is admissible only in explicitly
 labelled archived diagnostics and is rejected by release provenance. Every
 formal result remains bound to code, model, environment, and wheel hashes.
-Formal adaptive training additionally records the fail-closed selector state
-`RWKV7_BACKEND=auto`, `RWKV7_KERNEL_IMPL=auto`,
-`RWKV7_MODEL_KERNEL_IMPL=auto`, and
-`RWKV7_TRAINING_KERNEL_IMPL=adaptive`; release consolidation rejects any other
-environment even when a report claims to have passed.
+Private adaptive leaf diagnostics remain historical/experimental evidence and
+are not accepted as a formal HF training route until one complete atomic
+preflight exists.

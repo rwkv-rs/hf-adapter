@@ -45,6 +45,7 @@ HF_FORBIDDEN = {
 KERNEL_REQUIRED = {
     "rwkv7_kernels/__init__.py",
     "rwkv7_kernels/_runtime_preflight.py",
+    "rwkv7_kernels/backend.py",
     "rwkv7_kernels/dispatcher.py",
     "rwkv7_kernels/linear/__init__.py",
     "rwkv7_kernels/linear/training_flattened.py",
@@ -81,7 +82,9 @@ KERNEL_FORBIDDEN = {
 }
 KERNEL_INIT = "rwkv7_kernels/__init__.py"
 KERNEL_PROTOCOL = "rwkv7_kernels/protocol.py"
-KERNEL_API_VERSION = 3
+KERNEL_BACKEND = "rwkv7_kernels/backend.py"
+HF_OPS = "rwkv7_hf/ops_rwkv7.py"
+KERNEL_API_VERSION = 4
 MIGRATION_MANIFEST = "rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
 CAPABILITY_INVENTORY = "rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
 SOURCE_SCOPE = "rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
@@ -245,11 +248,25 @@ def audit_hf_wheel(path: Path) -> dict[str, Any]:
             or 'extra == "kernels"' not in str(kernel_requirement.marker)
         ):
             raise ValueError("HF wheel rwkv7-kernels extra is not pinned to 1.0.0")
+        ops_tree = module_tree(archive, HF_OPS)
+        expected_kernel_api = literal_assignment(
+            ops_tree,
+            "_KERNEL_API_VERSION",
+            member=HF_OPS,
+        )
+        if type(expected_kernel_api) is not int or (
+            expected_kernel_api != KERNEL_API_VERSION
+        ):
+            raise ValueError(
+                "HF optional boundary kernel API version must be "
+                f"{KERNEL_API_VERSION}; got {expected_kernel_api!r}"
+            )
         return {
             "status": "passed",
             "canonical_files": len(HF_REQUIRED),
             "tool_files": len(HF_TOOL_REQUIRED),
             "kernel_extra": str(kernel_requirement),
+            "expected_kernel_api": expected_kernel_api,
             "members": len(members),
         }
     finally:
@@ -335,7 +352,7 @@ def audit_kernel_protocol(
 ) -> dict[str, Any]:
     """Bind the executable public protocol to the advertised API inventory."""
 
-    missing = sorted({KERNEL_INIT, KERNEL_PROTOCOL} - members)
+    missing = sorted({KERNEL_INIT, KERNEL_PROTOCOL, KERNEL_BACKEND} - members)
     if missing:
         raise ValueError(f"kernel wheel is missing public protocol files: {missing}")
 
@@ -352,11 +369,11 @@ def audit_kernel_protocol(
         )
 
     init_tree = module_tree(archive, KERNEL_INIT)
-    public_name = "probe_training_program_v1"
+    public_name = "execute_optional_v4"
     imported = any(
         isinstance(node, ast.ImportFrom)
         and node.level == 1
-        and node.module == "training_dispatcher"
+        and node.module == "backend"
         and any(
             alias.name == public_name and alias.asname in (None, public_name)
             for alias in node.names
@@ -368,14 +385,40 @@ def audit_kernel_protocol(
         isinstance(value, str) for value in exports
     ):
         raise ValueError(f"{KERNEL_INIT} __all__ must be a literal string sequence")
+    expected_exports = {
+        "__version__",
+        "RWKV7_KERNEL_API_VERSION",
+        public_name,
+    }
+    if set(exports) != expected_exports:
+        raise ValueError(
+            "kernel root __all__ must expose exactly the API-v4 public surface"
+        )
+    forbidden_v1_imports = {
+        alias.name
+        for node in init_tree.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name.endswith("_v1") or alias.name.startswith("probe_")
+    }
+    if forbidden_v1_imports:
+        raise ValueError("kernel root imports legacy v1 symbols")
+    backend_tree = module_tree(archive, KERNEL_BACKEND)
+    backend_definitions = {
+        node.name
+        for node in backend_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    if public_name not in backend_definitions:
+        raise ValueError(f"kernel backend does not define {public_name}")
     if not imported or public_name not in exports:
         raise ValueError(
-            f"kernel wheel does not publicly export {public_name} from training_dispatcher"
+            f"kernel wheel does not publicly export {public_name} from backend"
         )
     return {
         "status": "passed",
         "api_version": api_version,
-        "training_program_probe": public_name,
+        "optional_backend_entrypoint": public_name,
     }
 
 
@@ -906,10 +949,18 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = arguments(argv)
+    hf_report = audit_hf_wheel(args.hf_wheel)
+    kernel_report = audit_kernel_wheel(args.kernel_wheel)
+    kernel_api = kernel_report["public_protocol"]["api_version"]
+    if hf_report["expected_kernel_api"] != kernel_api:
+        raise ValueError(
+            "HF/kernel wheel API mismatch: "
+            f"hf={hf_report['expected_kernel_api']!r} kernel={kernel_api!r}"
+        )
     report = {
         "status": "passed",
-        "hf": audit_hf_wheel(args.hf_wheel),
-        "kernels": audit_kernel_wheel(args.kernel_wheel),
+        "hf": hf_report,
+        "kernels": kernel_report,
     }
     print(json.dumps(report, sort_keys=True))
     return 0
