@@ -2,14 +2,19 @@
 
 [English](README.md) | [中文](README_ZH.md)
 
-1.0 是可阅读、可复现的纯 PyTorch RWKV-7 HF 实现。TMix、
-CMix、残差、归一化、层循环、loss 与 cache 都能直接从
+1.0 是可阅读、可复现的纯 PyTorch RWKV-7 HF 实现。源码采用
+HF 可读 state-space 模型常用的 Mamba 式分层：config、cache、ops 和
+modeling 各有唯一归属；这只是工程组织方式，不改变 RWKV-7 数学。
+TMix、CMix、残差、归一化、层循环、loss 与 cache 都能直接从
 `rwkv7_hf/modeling_rwkv7.py` 看懂；WKV 递推只通过
 `rwkv7_hf/ops_rwkv7.py` 这一处明确边界。`rwkv7_hf/` 只放模型代码，转换与
 smoke 命令统一放在同级 `rwkv7_hf_tools/`。独立的 `rwkv7-kernels` 可选包通过
 唯一稳定的 API-v4 facade 提供完整 NVIDIA 高性能实现；安装它不会替换可读模型、
 config、cache、tokenizer 或 checkpoint 布局。历史开发代码继续归档在
 `perf/native-kernels-v0.8`，用户不需要从旧分支安装。
+
+发布状态与不可变制品门禁统一记录在 [`HF_STATUS.md`](HF_STATUS.md)。下文所有
+`==1.0.0` 精确版本命令，在对应制品于该状态页标记为已发布后生效。
 
 ## 直接使用 HF 模型
 

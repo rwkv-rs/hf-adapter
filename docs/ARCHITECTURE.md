@@ -1,9 +1,11 @@
 # Architecture
 
-RWKV-7 follows the same separation used by clean state-space Hugging Face
-implementations: configuration describes architecture, cache owns public state,
-modeling exposes readable layers and HF outputs, and the operator file contains
-the reference recurrence plus one optional implementation boundary.
+RWKV-7 follows the same Mamba-style source separation used by clean state-space
+Hugging Face implementations: configuration describes architecture, cache owns
+public state, modeling exposes readable layers and HF outputs, and the operator
+file contains the reference recurrence plus one optional implementation
+boundary. "Mamba-style" describes the file and ownership boundaries only;
+RWKV-7 keeps its own recurrence and checkpoint semantics.
 
 ## Canonical Hugging Face files
 
@@ -108,10 +110,10 @@ field in `RWKV7Config`.
 ## Migration inventory
 
 `nvidia/MIGRATION_MANIFEST.json` verifies all 102 historical NVIDIA
-destinations: 89 byte-identical transfers and 13 declared clean-boundary
+destinations: 86 byte-identical transfers and 16 declared clean-boundary
 adaptations. `nvidia/CAPABILITY_INVENTORY.json` maps them to 16 runtime
 families. `nvidia/SOURCE_SCOPE.json` classifies the complete 153-file
-historical source tree as 89 byte-migrated, 23 adapted, 7 canonical-reference,
+historical source tree as 86 byte-migrated, 26 adapted, 7 canonical-reference,
 6 relocated/retired tooling, 27 separate-hardware, and 1 retired non-kernel
 file. `nvidia/RECURRENT_SOURCE_SCOPE.json` separately reconstructs the later
 recurrent-only source line. The wheel audit recomputes these identities from

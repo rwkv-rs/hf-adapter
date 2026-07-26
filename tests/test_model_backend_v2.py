@@ -138,6 +138,43 @@ def test_structural_dense_packs_follow_module_replacement_and_model_moves(
     assert meta_packs[0][-1].device.type == "meta"
 
 
+def test_native_lm_head_preserves_rank3_reference_linear_contract(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    linear = importlib.import_module("rwkv7_kernels.nvidia.native_jit_linear")
+
+    projection = RWKV7Linear(
+        tiny_config.hidden_size,
+        tiny_config.vocab_size,
+        bias=False,
+    )
+    calls = []
+    original_forward = RWKV7Linear.forward
+
+    def recorded_forward(self, value):
+        calls.append(tuple(value.shape))
+        return original_forward(self, value)
+
+    recorded_forward._rwkv7_dense_linear_contract = True
+    monkeypatch.setattr(RWKV7Linear, "forward", recorded_forward)
+
+    rank3 = torch.randn(2, 3, tiny_config.hidden_size)
+    rank2 = rank3.reshape(-1, tiny_config.hidden_size)
+    torch.testing.assert_close(
+        linear.linear_module(projection, rank3),
+        projection(rank3),
+    )
+    assert calls == [tuple(rank3.shape), tuple(rank3.shape)]
+
+    calls.clear()
+    torch.testing.assert_close(
+        linear.linear_module(projection, rank2),
+        F.linear(rank2, projection.weight, projection.bias),
+    )
+    assert calls == []
+
+
 def test_native_whole_model_operands_preserve_linear_subclass_forward(
     tiny_config, monkeypatch
 ):

@@ -400,11 +400,12 @@
       "transfer": "byte_identical"
     },
     {
+      "adaptation": "adapted the rounded recurrent decay constant to the clean model's exact exp(-0.5) value shared by Triton and Torch fallback paths, eliminating a one-ULP FP32 state-preparation mismatch amplified by long FP16 prefills",
       "destination": "kernels/rwkv7_kernels/nvidia/fused_prefill.py",
-      "destination_sha256": "02e433b5011196133e736090140df06724a9f82dc06676bda13b8a940645272e",
+      "destination_sha256": "9ce356e278dea27ab9c56ccf5ff3257127da464be8bc2017b4d4f6f74b3aa75a",
       "git_blob": "751fdb345dfe9f3dd72f78c0d5e1d4930b80f6a7",
       "source": "rwkv7_hf/fused_prefill.py",
-      "transfer": "byte_identical"
+      "transfer": "adapted_clean_boundary"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/fused_projection.py",
@@ -435,11 +436,12 @@
       "transfer": "byte_identical"
     },
     {
+      "adaptation": "adapted the RTX 4080 A8W8 small-row policy to select the activation-stable W8A16 output-head route through 32 rows while retaining the validated RTX 4090 threshold",
       "destination": "kernels/rwkv7_kernels/nvidia/kernel_policy.py",
-      "destination_sha256": "f35699e92d8b364d39518bff0b1376b46230787d2e1df944301aa4ca9690193d",
+      "destination_sha256": "86eb68c375dd6730f4b198fcac5e95f9509b3b11d32821d7dd2cae4e24a0609c",
       "git_blob": "3e179725133a3435f20a7bd493e9b291067905ef",
       "source": "rwkv7_hf/kernel_policy.py",
-      "transfer": "byte_identical"
+      "transfer": "adapted_clean_boundary"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/marlin_autotune.py",
@@ -493,9 +495,9 @@
       "transfer": "byte_identical"
     },
     {
-      "adaptation": "adapted exact nn.Linear checks to accept the clean RWKV7Linear subclass only while its model-owned forward identity marker and ordinary Parameter weight remain intact; custom and packed quantized subclasses remain callable operands",
+      "adaptation": "adapted exact nn.Linear checks to accept the clean RWKV7Linear subclass only while its model-owned forward identity marker and ordinary Parameter weight remain intact; preserve the subclass rank-3 fixed-row vocabulary-head contract while decode remains direct; custom and packed quantized subclasses remain callable operands",
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit_linear.py",
-      "destination_sha256": "97e0e4af3cb19985015d9fa12ed7d05a00798d773701c12820ff6135d13e09e7",
+      "destination_sha256": "03f986b1bdc6aa47c45d12e0d3e69d0e4a8ab16f8828085b742c594bbf754513",
       "git_blob": "0f0b38ba0a4b8271a644f44db3f5c1689ac08dd3",
       "source": "rwkv7_hf/native_jit_linear.py",
       "transfer": "adapted_clean_boundary"
@@ -545,11 +547,12 @@
       "transfer": "byte_identical"
     },
     {
+      "adaptation": "adapted dynamic-A8 CUDA padding to complete 32-row torch._int_mm/cuBLASLt tiles while ROCm retains the historical 17-row minimum; added an activation-stable tiled W8A16 small-row output-head route without changing the conservative body-module fallback",
       "destination": "kernels/rwkv7_kernels/nvidia/native_quant_a8w8.py",
-      "destination_sha256": "40f71469bd34f714f91f42404e00589fb56cd40344cdbf0906092331022a544f",
+      "destination_sha256": "7a59a933ecc62386e9ce628c91eaf78b522597fb9936016b215d4cb3a037af09",
       "git_blob": "2ce47e2e2faba120caf943b9eea8826d365661e8",
       "source": "rwkv7_hf/native_quant_a8w8.py",
-      "transfer": "byte_identical"
+      "transfer": "adapted_clean_boundary"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/native_quant_bn_tn.py",

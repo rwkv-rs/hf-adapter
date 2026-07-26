@@ -91,7 +91,7 @@ def test_github_release_audit_accepts_exact_tag_assets_and_issue(tmp_path: Path)
     report = MODULE.audit(args, get_json=getter, get_asset=asset_getter)
     assert report["status"] == "passed"
     assert report["tag_commit"] == args.source_sha
-    assert len(report["release"]["assets"]) == 6
+    assert len(report["release"]["assets"]) == 8
 
 
 def test_github_release_audit_rejects_drift_and_incomplete_issue(tmp_path: Path):

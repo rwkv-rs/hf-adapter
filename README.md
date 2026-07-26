@@ -3,9 +3,12 @@
 [English](README.md) | [中文](README_ZH.md)
 
 A readable, pure-PyTorch RWKV-7 implementation for Hugging Face Transformers.
-Version 1.0 makes readability and reproducibility the default: the model
-architecture is visible in one `modeling_rwkv7.py`, recurrent math has one
-small boundary in `ops_rwkv7.py`, and each converted model is self-contained.
+Version 1.0 follows the clean Mamba-style source separation used by readable HF
+state-space models: configuration, cache, operators, and modeling each have one
+obvious owner. This is an organizational convention, not a change to RWKV-7
+math. The full architecture stays visible in `modeling_rwkv7.py`, recurrent
+math has one small boundary in `ops_rwkv7.py`, and each converted model is
+self-contained.
 The `rwkv7_hf` package contains model code only; conversion and smoke-test
 commands live in the separate `rwkv7_hf_tools` package.
 The optional `rwkv7-kernels` companion distribution contains the complete
@@ -13,6 +16,10 @@ NVIDIA performance implementation behind one stable API-v4 facade.
 Installing it does not replace the readable model, config, cache, tokenizer or
 checkpoint layout. Historical development remains archived on
 `perf/native-kernels-v0.8`; users do not install code from that branch.
+
+Publication status and immutable-artifact gates are tracked in
+[`HF_STATUS.md`](HF_STATUS.md). Exact `==1.0.0` commands below apply once the
+matching artifacts are listed there as published.
 
 ## Install and use a published model
 

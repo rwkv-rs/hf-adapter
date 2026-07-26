@@ -2,15 +2,22 @@ from __future__ import annotations
 
 from argparse import Namespace
 import hashlib
+import io
 import json
 from pathlib import Path
+import tarfile
 
 import pytest
 
 from conftest import write_valid_hf_wheel, write_valid_kernel_wheel, write_valid_sdist
 from evaluation.build_backend_v2_compact_bundle import build_bundle
-from scripts.build_release_provenance import DEVICE_REPORT, REQUIRED_GATES, build
-from scripts.build_release_provenance import DEVICE_RUN_REPORT
+from scripts.build_release_provenance import (
+    DEVICE_REPORT,
+    DEVICE_RUN_REPORT,
+    REQUIRED_GATES,
+    build,
+    verify_existing,
+)
 from scripts.release_route_contract import (
     ADAPTIVE_TRAINING_PROGRAM_ROUTE,
     FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
@@ -21,6 +28,7 @@ from scripts.release_route_contract import (
 from scripts.verify_release_assets import (
     DEVICES,
     FLA_COMMIT,
+    device_evidence_archive_name,
     expected_artifacts,
     verify,
 )
@@ -157,6 +165,20 @@ def test_builder_generates_verifiable_deterministic_release(tmp_path: Path):
     assert first == second
     assert (args.directory / "release-provenance.json").read_bytes() == first_provenance
     assert (args.directory / "SHA256SUMS").read_bytes() == first_sums
+    for device in DEVICES:
+        assert (
+            args.directory / device_evidence_archive_name(device, VERSION)
+        ).is_file()
+    rebuilt = verify_existing(
+        Namespace(
+            directory=args.directory,
+            version=VERSION,
+            source_sha=SOURCE_SHA,
+            harness_sha=None,
+            device_evidence=[],
+        )
+    )
+    assert rebuilt == first
     report = verify(
         Namespace(
             directory=args.directory,
@@ -167,6 +189,82 @@ def test_builder_generates_verifiable_deterministic_release(tmp_path: Path):
     )
     assert report["status"] == "passed"
     assert set(report["devices"]) == DEVICES
+
+
+def test_final_verifier_rejects_extra_release_asset(tmp_path: Path):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    (args.directory / "unreviewed-wheel.whl").write_bytes(b"unreviewed")
+    with pytest.raises(ValueError, match="release asset set differs.*unreviewed-wheel"):
+        verify(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                require_validation_passed=True,
+            )
+        )
+
+
+def test_final_verifier_rejects_extra_checksum_row(tmp_path: Path):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    with (args.directory / "SHA256SUMS").open("a", encoding="utf-8") as stream:
+        stream.write(f"{'0' * 64}  undeclared-artifact.bin\n")
+    with pytest.raises(ValueError, match="SHA256SUMS entry set differs.*undeclared"):
+        verify(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                require_validation_passed=True,
+            )
+        )
+
+
+def test_existing_verifier_rejects_rewritten_summary_without_bundle_evidence(
+    tmp_path: Path,
+):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    path = args.directory / "release-provenance.json"
+    declared = json.loads(path.read_text())
+    declared["validation"]["devices"]["rtx-4080"]["speed_status"] = "failed"
+    path.write_text(json.dumps(declared, indent=2, sort_keys=True) + "\n")
+    sums = (args.directory / "SHA256SUMS").read_text().splitlines()
+    sums[-1] = f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+    (args.directory / "SHA256SUMS").write_text("\n".join(sums) + "\n")
+    with pytest.raises(ValueError, match="differs from validated compact evidence"):
+        verify_existing(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                harness_sha=None,
+                device_evidence=[],
+            )
+        )
+
+
+def test_existing_verifier_rejects_unsafe_compact_archive_member(tmp_path: Path):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    archive = args.directory / device_evidence_archive_name("rtx-4080", VERSION)
+    with tarfile.open(archive, "w:gz") as tar:
+        payload = b"escape\n"
+        member = tarfile.TarInfo("../escape.txt")
+        member.size = len(payload)
+        tar.addfile(member, io.BytesIO(payload))
+    with pytest.raises(ValueError, match="unsafe compact evidence archive member"):
+        verify_existing(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                harness_sha=None,
+                device_evidence=[],
+            )
+        )
 
 
 def rewrite_bundle(

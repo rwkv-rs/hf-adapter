@@ -6,7 +6,7 @@ mixing, residuals, normalization, layer iteration, cache handling, language
 model loss, and generation integration. Optional acceleration enters through
 four versioned boundaries in ops_rwkv7.py: stateless Mix6 and training-linear
 leaves, the recurrence, and one inference-only whole-layer-loop hook. None of
-these boundaries owns model, configuration, cache, parameter, adapter, or
+these boundaries own model, configuration, cache, parameter, adapter, or
 optimizer definitions.
 """
 

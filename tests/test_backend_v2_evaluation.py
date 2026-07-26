@@ -41,6 +41,7 @@ from training_metrics import (  # noqa: E402
     global_gradient_passed,
 )
 from validate_backend_v2_fla import (  # noqa: E402
+    compare_lanes as compare_fla_lanes,
     compare_full_model_training_lane,
     route_mode,
     three_way_validation_status,
@@ -54,9 +55,12 @@ from validate_backend_v2_inference import (  # noqa: E402
     release_metric_passed,
 )
 from fla_common import (  # noqa: E402
+    annotate_metric as annotate_fla_metric,
+    aspirational_metric_passed as fla_aspirational_metric_passed,
     compare_states,
     gradient_metrics,
     gradient_rows_passed,
+    release_metric_passed as fla_release_metric_passed,
     tensor_metric,
 )
 
@@ -103,6 +107,59 @@ def test_inference_bf16_release_floor_keeps_argmax_as_diagnostic():
     row["argmax_same"] = False
     assert release_metric_passed(row, torch.bfloat16, logits=True)
     assert release_metric_passed(row, torch.bfloat16, logits=False)
+
+
+def test_fla_fp16_max_abs_is_visible_but_not_a_release_gate():
+    row = {
+        "shape_match": True,
+        "finite": True,
+        "cosine": 0.99995,
+        "max_abs": 0.20,
+        "fp32_allclose": False,
+    }
+    assert fla_release_metric_passed(row, torch.float16, logits=True)
+    assert not fla_aspirational_metric_passed(row, torch.float16, logits=True)
+    annotated = annotate_fla_metric(row.copy(), torch.float16, logits=True)
+    assert annotated["max_abs"] == 0.20
+    assert annotated["release_passed"]
+    assert not annotated["aspirational_passed"]
+
+
+def test_fla_bf16_uses_calibrated_release_cosine_floor():
+    row = {
+        "shape_match": True,
+        "finite": True,
+        "cosine": 0.9995,
+        "max_abs": 1.0,
+        "fp32_allclose": False,
+    }
+    assert fla_release_metric_passed(row, torch.bfloat16, logits=True)
+    assert not fla_aspirational_metric_passed(row, torch.bfloat16, logits=True)
+
+
+def test_fla_lane_keeps_release_and_aspirational_results_separate():
+    reference_logits = torch.full((1, 1, 16), 1000.0)
+    candidate_logits = reference_logits.clone()
+    candidate_logits[..., 0] += 0.20
+    state = torch.zeros(1, 1, 2, 2)
+    reference = {
+        "forward": {"b1-t1": {"logits": reference_logits, "cache": [state]}},
+        "cached_logits": reference_logits,
+        "cached_cache": [state],
+        "greedy": torch.tensor([[1, 2, 3]]),
+    }
+    candidate = {
+        "forward": {"b1-t1": {"logits": candidate_logits, "cache": [state]}},
+        "cached_logits": candidate_logits,
+        "cached_cache": [state],
+        "greedy": reference["greedy"].clone(),
+    }
+
+    comparison = compare_fla_lanes(candidate, reference, torch.float16)
+    assert comparison["passed"]
+    assert comparison["release_passed"]
+    assert not comparison["aspirational_passed"]
+    assert comparison["forward"]["b1-t1"]["logits"]["max_abs"] > 0.15
 
 
 def test_compare_states_detects_fla_vk_layout():
@@ -858,25 +915,45 @@ def test_fla_full_model_comparison_keeps_named_gradient_gate_diagnostic():
 
 def test_fla_three_way_status_keeps_external_failure_non_blocking():
     status = three_way_validation_status(
-        candidate_reference_passed=True,
+        candidate_reference_release_passed=True,
+        candidate_reference_aspirational_passed=False,
         route_passed=True,
-        fla_reference_passed=False,
+        fla_reference_release_passed=True,
+        fla_reference_aspirational_passed=False,
     )
     assert status["passed"]
     assert status["candidate_reference_release_gate"] == {
         "role": "release-gate-blocking",
         "passed": True,
     }
+    assert status["candidate_reference_aspirational_diagnostic"] == {
+        "role": "diagnostic-non-blocking",
+        "passed": False,
+    }
     assert status["route_release_gate"]["passed"]
     assert status["fla_reference_diagnostic"] == {
         "role": "diagnostic-non-blocking",
         "passed": False,
+        "release_passed": True,
+        "aspirational_passed": False,
     }
 
     status = three_way_validation_status(
-        candidate_reference_passed=False,
+        candidate_reference_release_passed=True,
+        candidate_reference_aspirational_passed=True,
         route_passed=True,
-        fla_reference_passed=True,
+        fla_reference_release_passed=False,
+        fla_reference_aspirational_passed=False,
+    )
+    assert status["passed"]
+    assert not status["fla_reference_diagnostic"]["release_passed"]
+
+    status = three_way_validation_status(
+        candidate_reference_release_passed=False,
+        candidate_reference_aspirational_passed=False,
+        route_passed=True,
+        fla_reference_release_passed=True,
+        fla_reference_aspirational_passed=True,
     )
     assert not status["passed"]
 

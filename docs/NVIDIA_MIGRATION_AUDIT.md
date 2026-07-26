@@ -10,8 +10,8 @@ boundary, without copying its duplicate Hugging Face model stack back into
 `kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json` records **102** files
 from `perf/native-kernels-v0.8`. Each row contains the old path, Git blob, new
 path, destination SHA256, and transfer kind. The wheel test recomputes every
-destination hash. For the **89 byte-identical** rows it also reconstructs the
-Git blob directly from the wheel bytes. Thirteen files require explicit
+destination hash. For the **86 byte-identical** rows it also reconstructs the
+Git blob directly from the wheel bytes. Sixteen files require explicit
 clean-boundary adaptation rather than a false byte-identity claim:
 
 - `native_graph_runtime.py` now binds only canonical `RWKV7Cache` views rather
@@ -19,12 +19,17 @@ clean-boundary adaptation rather than a false byte-identity claim:
   dense projection contract;
 - `native_jit_linear.py` recognizes `RWKV7Linear` as dense only when its
   weight is an ordinary `Parameter`, without misclassifying quantized tensor
-  subclasses;
+  subclasses, and preserves the reference model's fixed-row rank-3 vocabulary
+  projection while retaining the direct rank-1/rank-2 decode path;
 - `native_jit_packing.py` retains the reference model's decay bias as FP32 in
   private packs without mutating public model parameters;
 - `native_jit_prefill.py` and `native_jit_decode.py` add that decay bias only
   after promoting the low-rank projection to FP32 and bypass same-dtype fused
   raw-decay lanes that cannot preserve the clean contract;
+- `fused_prefill.py` uses the model's exact `exp(-0.5)` decay base in both its
+  Triton and Torch paths instead of a rounded decimal constant;
+- `kernel_policy.py` scopes the validated small-row W8A16 output-head route to
+  RTX 4080 while retaining the separate RTX 4090 threshold;
 - `train_temp_cuda.py` retains the migrated leaf forward/backward autograd
   operators, while `training_runtime.py` preserves the old whole-model
   composition only as a private historical diagnostic. Neither is a formal HF
@@ -42,17 +47,22 @@ clean-boundary adaptation rather than a false byte-identity claim:
   parameter-gradient accumulation.
 - `extension_build.py` adds process-safe CUDA build helpers shared by the
   clean stateless training leaves without moving model or mathematical
-  ownership into the build layer.
+  ownership into the build layer;
+- `native_quant_a8w8.py` pads dynamic-A8 CUDA rows to complete 32-row
+  `torch._int_mm`/cuBLASLt tiles while retaining the historical 17-row minimum
+  on ROCm, and uses an activation-stable tiled W8A16 path only for small-row
+  output-head calls.
 
-Formal HF training follows a different, clean composition: the readable
-`modeling_rwkv7.py` layer loop remains the model boundary and independently
-dispatches recurrent, flattened-linear, and explicit-shift Mix6 tensor leaves.
-The admissible accelerated implementations are
+Isolated training diagnostics follow a different, clean composition: the
+readable `modeling_rwkv7.py` layer loop remains the model boundary, while the
+kernel package can exercise recurrent, flattened-linear, and explicit-shift
+Mix6 tensor leaves independently. The preserved implementations are
 `native-nvidia-rwkv7-factorized-recurrent-training-v1`,
 `torch-cuda-rwkv7-flattened-linear-training-v1`, and
-`native-nvidia-rwkv7-mix6-training-v1`; their model route remains
-`torch-reference-model-v1`. This is the same structure seen by Trainer,
-Accelerate, PEFT and TRL.
+`native-nvidia-rwkv7-mix6-training-v1`. API v4 does not yet certify all leaves
+atomically, so formal Trainer, Accelerate, PEFT, and TRL runs keep the complete
+`torch-reference-model-v1` program; strict optimized training fails closed at
+the model boundary.
 
 All adapted rows retain the historical **source** Git blob identity, the new
 destination SHA256 and a machine-checked rationale; adapted destination bytes
@@ -70,7 +80,7 @@ are never mislabelled as the old Git blob. The complete 102-file set includes:
 
 Source-tree presence is not enough: `scripts/audit_release_wheels.py` opens the
 actual kernel wheel, rejects unsafe/cross-package members, reads the embedded
-manifest, and recomputes all 102 destination hashes plus all 89 applicable
+manifest, and recomputes all 102 destination hashes plus all 86 applicable
 source Git blobs. It also requires the adapted dispatcher,
 dense/prefill/decode, graph/state-pool, quantization, recurrent and historical
 diagnostic runtime modules that were intentionally not byte-copied from the
@@ -123,8 +133,8 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 
 | disposition | files |
 |---|---:|
-| byte-identical NVIDIA implementation | 89 |
-| adapted to the clean protocol/package boundary | 23 |
+| byte-identical NVIDIA implementation | 86 |
+| adapted to the clean protocol/package boundary | 26 |
 | replaced by canonical reference ownership | 7 |
 | tooling relocated or retired | 6 |
 | separate non-NVIDIA hardware distribution | 27 |
@@ -133,7 +143,7 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 Every row retains its historical Git mode and blob ID. The wheel audit rebuilds
 the Git tree object from all 153 rows and requires the result to equal frozen
 tree `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`. It then cross-checks all 102
-NVIDIA rows (89 exact transfers and thirteen clean adaptations) against
+NVIDIA rows (86 exact transfers and sixteen clean adaptations) against
 `MIGRATION_MANIFEST.json` and requires every adapted kernel
 replacement to exist in the wheel. An omitted historical file, an
 `unclassified` row, or a relabelled blob changes the reconstructed tree and

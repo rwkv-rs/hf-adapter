@@ -231,8 +231,8 @@ def test_public_release_tools_reject_migration_transfer_count_drift(
         json.dumps(
             {
                 "files": [
-                    *({"transfer": "byte_identical"} for _ in range(88)),
-                    *({"transfer": "adapted_clean_boundary"} for _ in range(14)),
+                    *({"transfer": "byte_identical"} for _ in range(89)),
+                    *({"transfer": "adapted_clean_boundary"} for _ in range(13)),
                 ]
             }
         )

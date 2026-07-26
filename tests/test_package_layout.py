@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib.machinery
 from pathlib import Path
+import re
 
 try:
     import tomllib
@@ -87,7 +88,47 @@ def test_one_console_entrypoint_dispatches_all_tools():
     }
 
 
+def test_distribution_package_discovery_is_explicit():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert project["tool"]["setuptools"]["packages"]["find"]["include"] == [
+        "rwkv7_hf",
+        "rwkv7_hf_tools",
+    ]
+
+
+def test_release_version_metadata_stays_in_lockstep():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    kernel_project = tomllib.loads(
+        (ROOT / "kernels" / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    version = project["project"]["version"]
+    assert kernel_project["project"]["version"] == version
+    assert project["build-system"]["requires"] == kernel_project["build-system"][
+        "requires"
+    ]
+    assert all("==" in requirement for requirement in project["build-system"]["requires"])
+    assert project["project"]["optional-dependencies"]["kernels"] == [
+        f"rwkv7-kernels=={version}"
+    ]
+
+    citation = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
+    citation_version = re.search(r"^version:\s*([^\s#]+)\s*$", citation, re.MULTILINE)
+    assert citation_version is not None
+    assert citation_version.group(1) == version
+
+    for package in (ROOT / "rwkv7_hf", ROOT / "kernels" / "rwkv7_kernels"):
+        init_source = (package / "__init__.py").read_text(encoding="utf-8")
+        fallback = re.search(
+            r'^\s*__version__\s*=\s*["\']([^"\']+)["\']\s*$',
+            init_source,
+            re.MULTILINE,
+        )
+        assert fallback is not None
+        assert fallback.group(1) == version
+
+
 def test_legacy_python_module_paths_are_removed():
+    package_path = [str(ROOT / "rwkv7_hf")]
     for module in (
         "rwkv7_hf.model_cache",
         "rwkv7_hf.model_config",
@@ -97,4 +138,7 @@ def test_legacy_python_module_paths_are_removed():
         "rwkv7_hf.smoke",
         "rwkv7_hf.adapter_manifest",
     ):
-        assert importlib.util.find_spec(module) is None
+        # Restrict discovery to this checkout. A developer environment may have
+        # an unrelated legacy editable install whose meta-path finder still
+        # advertises one of these historical module names.
+        assert importlib.machinery.PathFinder.find_spec(module, package_path) is None

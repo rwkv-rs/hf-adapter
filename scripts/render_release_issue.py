@@ -41,8 +41,8 @@ MIGRATION_MANIFEST = (
 )
 EXPECTED_MIGRATION_TRANSFER_SUMMARY = {
     "total": 102,
-    "byte_identical": 89,
-    "adapted_clean_boundary": 13,
+    "byte_identical": 86,
+    "adapted_clean_boundary": 16,
 }
 
 

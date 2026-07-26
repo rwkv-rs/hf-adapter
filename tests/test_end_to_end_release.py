@@ -36,7 +36,20 @@ def fixture():
             "sha256": "4" * 64,
         },
     }
-    release = {"harness_sha": harness_sha, "artifacts": artifacts}
+    evidence = {
+        device: {
+            "archive": f"rwkv7-evidence-{device}-{version}.tar.gz",
+            "size": 20 + index,
+            "sha256": str(5 + index) * 64,
+            "compact_bundle_manifest_sha256": str(7 + index) * 64,
+        }
+        for index, device in enumerate(("rtx-4080", "rtx-4090"))
+    }
+    release = {
+        "harness_sha": harness_sha,
+        "artifacts": artifacts,
+        "evidence": evidence,
+    }
     repositories = []
     smokes = {}
     for index, repo in enumerate(sorted(MODULE.HUB_REPOSITORIES)):
@@ -137,8 +150,20 @@ def fixture():
         "release": {
             "url": "https://github/release",
             "assets": {
-                name: {"match": True, "github": identity}
-                for name, identity in artifacts.items()
+                **{
+                    name: {"match": True, "github": identity}
+                    for name, identity in artifacts.items()
+                },
+                **{
+                    row["archive"]: {
+                        "match": True,
+                        "github": {
+                            "size": row["size"],
+                            "sha256": row["sha256"],
+                        },
+                    }
+                    for row in evidence.values()
+                },
             },
         },
     }
@@ -163,6 +188,22 @@ def test_end_to_end_evidence_rejects_cached_hub_smoke():
     version, source_sha, release, hub, pypi, github, smokes = fixture()
     next(iter(smokes.values()))["download"]["cache_was_empty"] = False
     with pytest.raises(ValueError, match="fresh Hub redownload"):
+        MODULE.validate_external_evidence(
+            version=version,
+            source_sha=source_sha,
+            release=release,
+            hub=hub,
+            pypi=pypi,
+            github=github,
+            smokes=smokes,
+        )
+
+
+def test_end_to_end_evidence_rejects_missing_compact_release_asset():
+    version, source_sha, release, hub, pypi, github, smokes = fixture()
+    archive = release["evidence"]["rtx-4090"]["archive"]
+    github["release"]["assets"].pop(archive)
+    with pytest.raises(ValueError, match="validated evidence: rtx-4090"):
         MODULE.validate_external_evidence(
             version=version,
             source_sha=source_sha,

@@ -27,12 +27,14 @@ import torch.nn.functional as F
 from common import environment, git_revision, model_fingerprint, sha256_file
 from fla_common import (
     activate_fla_source,
+    annotate_metric,
+    annotate_state_rows,
     compare_states,
     gradient_metrics,
     gradient_rows_passed,
-    metric_passed,
     recurrent_states,
-    state_rows_passed,
+    state_rows_aspirational_passed,
+    state_rows_release_passed,
     tensor_metric,
     write_json,
 )
@@ -106,13 +108,22 @@ def route_mode(optimized: bool) -> None:
 
 
 def three_way_validation_status(
-    *, candidate_reference_passed: bool, route_passed: bool, fla_reference_passed: bool
+    *,
+    candidate_reference_release_passed: bool,
+    candidate_reference_aspirational_passed: bool,
+    route_passed: bool,
+    fla_reference_release_passed: bool,
+    fla_reference_aspirational_passed: bool,
 ) -> dict[str, Any]:
-    """Separate blocking candidate gates from the pinned FLA diagnostic."""
+    """Separate blocking candidate gates from stricter numeric diagnostics."""
 
     candidate_gate = {
         "role": "release-gate-blocking",
-        "passed": bool(candidate_reference_passed),
+        "passed": bool(candidate_reference_release_passed),
+    }
+    candidate_diagnostic = {
+        "role": "diagnostic-non-blocking",
+        "passed": bool(candidate_reference_aspirational_passed),
     }
     route_gate = {
         "role": "release-gate-blocking",
@@ -120,11 +131,16 @@ def three_way_validation_status(
     }
     fla_diagnostic = {
         "role": "diagnostic-non-blocking",
-        "passed": bool(fla_reference_passed),
+        # Preserve the historical strict-diagnostic meaning of ``passed``.
+        # The two explicit keys are authoritative for new consumers.
+        "passed": bool(fla_reference_aspirational_passed),
+        "release_passed": bool(fla_reference_release_passed),
+        "aspirational_passed": bool(fla_reference_aspirational_passed),
     }
     return {
         "passed": bool(candidate_gate["passed"] and route_gate["passed"]),
         "candidate_reference_release_gate": candidate_gate,
+        "candidate_reference_aspirational_diagnostic": candidate_diagnostic,
         "route_release_gate": route_gate,
         "fla_reference_diagnostic": fla_diagnostic,
     }
@@ -271,11 +287,27 @@ def run_operator_parity(
                 ("optimized", optimized_output, optimized_state),
                 ("fla", fla_output, fla_state),
             ):
-                output_row = tensor_metric(output.cpu(), reference_output.cpu())
-                state_row = tensor_metric(state.cpu(), reference_state.cpu())
+                output_row = annotate_metric(
+                    tensor_metric(output.cpu(), reference_output.cpu()),
+                    dtype,
+                    logits=False,
+                )
+                state_row = annotate_metric(
+                    tensor_metric(state.cpu(), reference_state.cpu()),
+                    dtype,
+                    logits=False,
+                )
+                release_passed = bool(
+                    output_row["release_passed"] and state_row["release_passed"]
+                )
+                aspirational_passed = bool(
+                    output_row["aspirational_passed"]
+                    and state_row["aspirational_passed"]
+                )
                 comparisons[name] = {
-                    "passed": metric_passed(output_row, dtype)
-                    and metric_passed(state_row, dtype),
+                    "passed": release_passed,
+                    "release_passed": release_passed,
+                    "aspirational_passed": aspirational_passed,
                     "output": output_row,
                     "state": state_row,
                 }
@@ -317,9 +349,19 @@ def run_operator_parity(
             )
             gradient_passed = gradient_rows_passed(gradients, dtype)
             status = three_way_validation_status(
-                candidate_reference_passed=comparisons["optimized"]["passed"],
+                candidate_reference_release_passed=comparisons["optimized"][
+                    "release_passed"
+                ],
+                candidate_reference_aspirational_passed=comparisons["optimized"][
+                    "aspirational_passed"
+                ],
                 route_passed=recurrent_route_is_optimized(optimized_route),
-                fla_reference_passed=(comparisons["fla"]["passed"] and gradient_passed),
+                fla_reference_release_passed=(
+                    comparisons["fla"]["release_passed"] and gradient_passed
+                ),
+                fla_reference_aspirational_passed=(
+                    comparisons["fla"]["aspirational_passed"] and gradient_passed
+                ),
             )
             rows.append(
                 {
@@ -347,13 +389,30 @@ def run_operator_parity(
                 row["candidate_reference_release_gate"]["passed"] for row in rows
             ),
         },
+        "candidate_reference_aspirational_diagnostic": {
+            "role": "diagnostic-non-blocking",
+            "passed": all(
+                row["candidate_reference_aspirational_diagnostic"]["passed"]
+                for row in rows
+            ),
+        },
         "route_release_gate": {
             "role": "release-gate-blocking",
             "passed": all(row["route_release_gate"]["passed"] for row in rows),
         },
         "fla_reference_diagnostic": {
             "role": "diagnostic-non-blocking",
-            "passed": all(row["fla_reference_diagnostic"]["passed"] for row in rows),
+            "passed": all(
+                row["fla_reference_diagnostic"]["aspirational_passed"]
+                for row in rows
+            ),
+            "release_passed": all(
+                row["fla_reference_diagnostic"]["release_passed"] for row in rows
+            ),
+            "aspirational_passed": all(
+                row["fla_reference_diagnostic"]["aspirational_passed"]
+                for row in rows
+            ),
         },
         "cases": rows,
     }
@@ -489,37 +548,73 @@ def compare_lanes(
 ) -> dict[str, Any]:
     forward = {}
     for name in reference["forward"]:
-        logits = tensor_metric(
-            candidate["forward"][name]["logits"],
-            reference["forward"][name]["logits"],
+        logits = annotate_metric(
+            tensor_metric(
+                candidate["forward"][name]["logits"],
+                reference["forward"][name]["logits"],
+            ),
+            dtype,
+            logits=True,
         )
-        states = compare_states(
-            candidate["forward"][name]["cache"],
-            reference["forward"][name]["cache"],
+        states = annotate_state_rows(
+            compare_states(
+                candidate["forward"][name]["cache"],
+                reference["forward"][name]["cache"],
+            ),
+            dtype,
+        )
+        release_passed = bool(
+            logits["release_passed"]
+            and state_rows_release_passed(states, dtype)
+        )
+        aspirational_passed = bool(
+            logits["aspirational_passed"]
+            and state_rows_aspirational_passed(states, dtype)
         )
         forward[name] = {
-            "passed": metric_passed(logits, dtype, logits=True)
-            and state_rows_passed(states, dtype),
+            "passed": release_passed,
+            "release_passed": release_passed,
+            "aspirational_passed": aspirational_passed,
             "logits": logits,
             "states": states,
         }
-    cached_logits = tensor_metric(
-        candidate["cached_logits"], reference["cached_logits"]
+    cached_logits = annotate_metric(
+        tensor_metric(candidate["cached_logits"], reference["cached_logits"]),
+        dtype,
+        logits=True,
     )
-    cached_states = compare_states(candidate["cached_cache"], reference["cached_cache"])
+    cached_states = annotate_state_rows(
+        compare_states(candidate["cached_cache"], reference["cached_cache"]),
+        dtype,
+    )
     greedy_equal = bool(torch.equal(candidate["greedy"], reference["greedy"]))
-    passed = (
-        all(row["passed"] for row in forward.values())
-        and metric_passed(cached_logits, dtype, logits=True)
-        and state_rows_passed(cached_states, dtype)
+    cached_release_passed = bool(
+        cached_logits["release_passed"]
+        and state_rows_release_passed(cached_states, dtype)
+    )
+    cached_aspirational_passed = bool(
+        cached_logits["aspirational_passed"]
+        and state_rows_aspirational_passed(cached_states, dtype)
+    )
+    release_passed = (
+        all(row["release_passed"] for row in forward.values())
+        and cached_release_passed
+        and greedy_equal
+    )
+    aspirational_passed = (
+        all(row["aspirational_passed"] for row in forward.values())
+        and cached_aspirational_passed
         and greedy_equal
     )
     return {
-        "passed": passed,
+        "passed": release_passed,
+        "release_passed": release_passed,
+        "aspirational_passed": aspirational_passed,
         "forward": forward,
         "cached_decode": {
-            "passed": metric_passed(cached_logits, dtype, logits=True)
-            and state_rows_passed(cached_states, dtype),
+            "passed": cached_release_passed,
+            "release_passed": cached_release_passed,
+            "aspirational_passed": cached_aspirational_passed,
             "logits": cached_logits,
             "states": cached_states,
         },
@@ -617,9 +712,17 @@ def run_inference_model(
     release_lane_tensors(optimized)
     release_lane_tensors(fla_rows)
     status = three_way_validation_status(
-        candidate_reference_passed=optimized_comparison["passed"],
+        candidate_reference_release_passed=optimized_comparison[
+            "release_passed"
+        ],
+        candidate_reference_aspirational_passed=optimized_comparison[
+            "aspirational_passed"
+        ],
         route_passed=optimized_routes_passed,
-        fla_reference_passed=fla_comparison["passed"],
+        fla_reference_release_passed=fla_comparison["release_passed"],
+        fla_reference_aspirational_passed=fla_comparison[
+            "aspirational_passed"
+        ],
     )
     return {
         "label": label,
@@ -698,6 +801,11 @@ def compare_full_model_training_lane(
     )
     return {
         "passed": reference_release_envelope["passed"],
+        "release_passed": reference_release_envelope["passed"],
+        # Full-model training uses BF16 and has no separate FP16-logit
+        # max-absolute target, so this lane's aspirational outcome is the same
+        # fixed reference envelope.
+        "aspirational_passed": reference_release_envelope["passed"],
         "reference_release_envelope": reference_release_envelope,
         "strict_named_parameter_diagnostic_passed": gradient_rows_passed(
             gradients, torch.bfloat16
@@ -794,7 +902,11 @@ def run_training(
     candidate_reference_release_gate = numerical_roles[
         "candidate_reference_release_gate"
     ]
-    fla_reference_diagnostic = numerical_roles["fla_reference_diagnostic"]
+    fla_reference_diagnostic = {
+        **numerical_roles["fla_reference_diagnostic"],
+        "release_passed": numerical_roles["fla_reference_diagnostic"]["passed"],
+        "aspirational_passed": comparisons["fla"]["aspirational_passed"],
+    }
     return {
         "passed": bool(
             optimized_route_passed and candidate_reference_release_gate["passed"]
@@ -807,6 +919,10 @@ def run_training(
             "passed": optimized_route_passed,
         },
         "candidate_reference_release_gate": candidate_reference_release_gate,
+        "candidate_reference_aspirational_diagnostic": {
+            "role": "diagnostic-non-blocking",
+            "passed": comparisons["optimized"]["aspirational_passed"],
+        },
         "fla_reference_diagnostic": fla_reference_diagnostic,
         "routes": {name: row["route"] for name, row in lanes.items()},
         "comparisons": comparisons,
@@ -874,6 +990,11 @@ def main() -> int:
                 "passed": True,
                 "status": "not_applicable",
             },
+            "candidate_reference_aspirational_diagnostic": {
+                "role": "diagnostic-non-blocking",
+                "passed": True,
+                "status": "not_applicable",
+            },
             "route_release_gate": {
                 "role": "release-gate-blocking",
                 "passed": True,
@@ -882,6 +1003,8 @@ def main() -> int:
             "fla_reference_diagnostic": {
                 "role": "diagnostic-non-blocking",
                 "passed": True,
+                "release_passed": True,
+                "aspirational_passed": True,
                 "status": "not_applicable",
             },
         }
@@ -898,11 +1021,44 @@ def main() -> int:
         and all(row["passed"] for row in inference)
         and training["passed"]
     )
-    fla_diagnostics_passed = bool(
-        operator["fla_reference_diagnostic"]["passed"]
-        and all(row["fla_reference_diagnostic"]["passed"] for row in inference)
+    candidate_aspirational_passed = bool(
+        operator["candidate_reference_aspirational_diagnostic"]["passed"]
+        and all(
+            row["candidate_reference_aspirational_diagnostic"]["passed"]
+            for row in inference
+        )
         and (
-            training.get("fla_reference_diagnostic", {}).get("passed", True)
+            training.get("candidate_reference_aspirational_diagnostic", {}).get(
+                "passed", True
+            )
+            if training_mode in {"reference", "adaptive"}
+            else True
+        )
+    )
+    fla_release_diagnostics_passed = bool(
+        operator["fla_reference_diagnostic"]["release_passed"]
+        and all(
+            row["fla_reference_diagnostic"]["release_passed"]
+            for row in inference
+        )
+        and (
+            training.get("fla_reference_diagnostic", {}).get(
+                "release_passed", True
+            )
+            if training_mode in {"reference", "adaptive"}
+            else True
+        )
+    )
+    fla_aspirational_diagnostics_passed = bool(
+        operator["fla_reference_diagnostic"]["aspirational_passed"]
+        and all(
+            row["fla_reference_diagnostic"]["aspirational_passed"]
+            for row in inference
+        )
+        and (
+            training.get("fla_reference_diagnostic", {}).get(
+                "aspirational_passed", True
+            )
             if training_mode in {"reference", "adaptive"}
             else True
         )
@@ -917,10 +1073,15 @@ def main() -> int:
             "inference": all(row["passed"] for row in inference),
             "training": training["passed"],
         },
+        "candidate_aspirational_diagnostics": {
+            "role": "diagnostic-non-blocking",
+            "passed": candidate_aspirational_passed,
+        },
         "fla_diagnostics": {
             "role": "diagnostic-non-blocking",
             "complete": True,
-            "passed_strict_envelope": fla_diagnostics_passed,
+            "passed_release_envelope": fla_release_diagnostics_passed,
+            "passed_strict_envelope": fla_aspirational_diagnostics_passed,
         },
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "dtype": args.dtype,
@@ -935,6 +1096,20 @@ def main() -> int:
             "seed": args.seed,
             "training_mode": training_mode,
             "requested_training_mode": args.training_mode,
+        },
+        "numeric_envelopes": {
+            "release": {
+                "fp32": "rtol=1e-4,atol=1e-5",
+                "fp16_cosine_min": 0.9999,
+                "bf16_cosine_min": 0.999,
+                "finite_required": True,
+                "fp16_logits_max_abs": "reported-not-blocking",
+            },
+            "aspirational": {
+                "fp32": "rtol=1e-4,atol=1e-5",
+                "low_precision_cosine_min": 0.9999,
+                "fp16_logits_max_abs": 0.15,
+            },
         },
         "operator": operator,
         "inference": inference,

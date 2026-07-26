@@ -25,8 +25,8 @@ MIGRATION_MANIFEST = (
 )
 EXPECTED_MIGRATION_TRANSFER_SUMMARY = {
     "total": 102,
-    "byte_identical": 89,
-    "adapted_clean_boundary": 13,
+    "byte_identical": 86,
+    "adapted_clean_boundary": 16,
 }
 
 
@@ -159,6 +159,8 @@ def expected_assets(version: str) -> tuple[str, ...]:
         f"rwkv7_hf-{version}.tar.gz",
         f"rwkv7_kernels-{version}-py3-none-any.whl",
         f"rwkv7_kernels-{version}.tar.gz",
+        f"rwkv7-evidence-rtx-4080-{version}.tar.gz",
+        f"rwkv7-evidence-rtx-4090-{version}.tar.gz",
         "SHA256SUMS",
         "release-provenance.json",
     )

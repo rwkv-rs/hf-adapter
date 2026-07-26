@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from pathlib import Path
+import zipfile
 
 import pytest
 
-from conftest import write_valid_hf_wheel, write_valid_kernel_wheel
+from conftest import _wheel_metadata, write_valid_hf_wheel, write_valid_kernel_wheel
 from scripts.audit_release_wheels import (
     CAPABILITY_INVENTORY,
     EXPECTED_MIGRATION_TRANSFERS,
@@ -16,6 +19,44 @@ from scripts.audit_release_wheels import (
     audit_hf_wheel,
     audit_kernel_wheel,
 )
+
+
+def rewrite_wheel_member(path: Path, member: str, payload: bytes) -> None:
+    with zipfile.ZipFile(path) as archive:
+        members = {
+            name: archive.read(name)
+            for name in archive.namelist()
+            if not name.endswith("/")
+        }
+    members[member] = payload
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, value in sorted(members.items()):
+            archive.writestr(name, value)
+
+
+def changed_record(
+    path: Path,
+    *,
+    target: str,
+    field: int | None,
+    value: str = "",
+) -> bytes:
+    with zipfile.ZipFile(path) as archive:
+        record_member = next(
+            name
+            for name in archive.namelist()
+            if name.endswith(".dist-info/RECORD")
+        )
+        rows = list(csv.reader(io.StringIO(archive.read(record_member).decode())))
+    if field is None:
+        rows = [row for row in rows if row[0] != target]
+    else:
+        row = next(row for row in rows if row[0] == target)
+        row[field] = value
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, lineterminator="\n")
+    writer.writerows(rows)
+    return stream.getvalue().encode()
 
 
 def first_migrated_member() -> str:
@@ -51,6 +92,154 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["recurrent_source_scope"]["historical_files"] == 3
     assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
     assert report["dependencies"] == ["ninja", "numpy", "packaging", "torch"]
+    assert report["license"] == {
+        "expression": "MIT",
+        "file": "LICENSE",
+        "member": "rwkv7_kernels-1.0.0.dist-info/licenses/LICENSE",
+    }
+
+
+def test_hf_wheel_audit_rejects_unrecorded_payload(tmp_path: Path):
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(hf)
+    record = "rwkv7_hf-1.0.0.dist-info/RECORD"
+    rewrite_wheel_member(
+        hf,
+        record,
+        changed_record(
+            hf,
+            target="rwkv7_hf/modeling_rwkv7.py",
+            field=None,
+        ),
+    )
+    with pytest.raises(ValueError, match="RECORD coverage differs"):
+        audit_hf_wheel(hf)
+
+
+def test_hf_wheel_audit_rejects_record_hash_mismatch(tmp_path: Path):
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(hf)
+    record = "rwkv7_hf-1.0.0.dist-info/RECORD"
+    rewrite_wheel_member(
+        hf,
+        record,
+        changed_record(
+            hf,
+            target="rwkv7_hf/modeling_rwkv7.py",
+            field=1,
+            value="sha256=" + "A" * 43,
+        ),
+    )
+    with pytest.raises(ValueError, match="RECORD hash differs"):
+        audit_hf_wheel(hf)
+
+
+def test_hf_wheel_audit_rejects_record_size_mismatch(tmp_path: Path):
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(hf)
+    record = "rwkv7_hf-1.0.0.dist-info/RECORD"
+    rewrite_wheel_member(
+        hf,
+        record,
+        changed_record(
+            hf,
+            target="rwkv7_hf/modeling_rwkv7.py",
+            field=2,
+            value="0",
+        ),
+    )
+    with pytest.raises(ValueError, match="RECORD size differs"):
+        audit_hf_wheel(hf)
+
+
+def test_hf_wheel_audit_rejects_non_universal_wheel_tag(tmp_path: Path):
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(
+        hf,
+        extra={
+            "rwkv7_hf-1.0.0.dist-info/WHEEL": (
+                b"Wheel-Version: 1.0\n"
+                b"Root-Is-Purelib: true\n"
+                b"Tag: cp312-cp312-manylinux_2_28_x86_64\n"
+            )
+        },
+    )
+    with pytest.raises(ValueError, match="tag must be exactly py3-none-any"):
+        audit_hf_wheel(hf)
+
+
+def test_hf_wheel_audit_rejects_extra_top_level_import(tmp_path: Path):
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(
+        hf,
+        extra={
+            "rwkv7_hf-1.0.0.dist-info/top_level.txt": (
+                b"rwkv7_hf\nrwkv7_hf_tools\nsitecustomize\n"
+            )
+        },
+    )
+    with pytest.raises(ValueError, match="top_level.txt differs"):
+        audit_hf_wheel(hf)
+
+
+def test_hf_wheel_audit_rejects_malicious_console_entry_point(tmp_path: Path):
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(
+        hf,
+        extra={
+            "rwkv7_hf-1.0.0.dist-info/entry_points.txt": (
+                b"[console_scripts]\nrwkv7-hf = os:system\n"
+            )
+        },
+    )
+    with pytest.raises(ValueError, match="console entry points differ"):
+        audit_hf_wheel(hf)
+
+
+def test_hf_wheel_audit_rejects_added_dependency_marker(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    metadata = _wheel_metadata(
+        distribution="rwkv7-hf",
+        project_path=root / "pyproject.toml",
+    ).replace(
+        b"Requires-Dist: torch\n",
+        b'Requires-Dist: torch; python_version >= "3.10"\n',
+    )
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(hf, metadata=metadata)
+    with pytest.raises(ValueError, match="Requires-Dist contract differs"):
+        audit_hf_wheel(hf)
+
+
+def test_kernel_wheel_audit_rejects_direct_url_dependency(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    metadata = _wheel_metadata(
+        distribution="rwkv7-kernels",
+        project_path=root / "kernels" / "pyproject.toml",
+        license_expression="MIT",
+        license_file="LICENSE",
+    ).replace(
+        b"Requires-Dist: torch\n",
+        b"Requires-Dist: torch @ https://example.invalid/torch.whl\n",
+    )
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(kernel, metadata=metadata)
+    with pytest.raises(ValueError, match="Requires-Dist contract differs"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_extra_dependency(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    metadata = _wheel_metadata(
+        distribution="rwkv7-kernels",
+        project_path=root / "kernels" / "pyproject.toml",
+        license_expression="MIT",
+        license_file="LICENSE",
+    ) + b"Requires-Dist: requests\n"
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(kernel, metadata=metadata)
+    with pytest.raises(ValueError, match="Requires-Dist contract differs"):
+        audit_kernel_wheel(kernel)
 
 
 def test_kernel_wheel_audit_rejects_inventory_protocol_api_mismatch(tmp_path: Path):
@@ -155,10 +344,52 @@ def test_kernel_wheel_audit_rejects_incomplete_direct_dependencies(tmp_path: Pat
             b"Metadata-Version: 2.4\n"
             b"Name: rwkv7-kernels\n"
             b"Version: 1.0.0\n"
+            b"License-Expression: MIT\n"
+            b"License-File: LICENSE\n"
             b"Requires-Dist: torch\n"
         ),
     )
-    with pytest.raises(ValueError, match="direct dependencies differ"):
+    with pytest.raises(ValueError, match="Requires-Dist contract differs"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_missing_pep639_license_metadata(tmp_path: Path):
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        metadata=(
+            b"Metadata-Version: 2.4\n"
+            b"Name: rwkv7-kernels\n"
+            b"Version: 1.0.0\n"
+            b"Requires-Dist: torch\n"
+            b"Requires-Dist: numpy\n"
+            b"Requires-Dist: packaging\n"
+            b"Requires-Dist: ninja\n"
+        ),
+    )
+    with pytest.raises(ValueError, match="MIT License-Expression"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_missing_license_payload(tmp_path: Path):
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        omit="rwkv7_kernels-1.0.0.dist-info/licenses/LICENSE",
+    )
+    with pytest.raises(ValueError, match="missing its declared LICENSE payload"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_changed_license_payload(tmp_path: Path):
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={
+            "rwkv7_kernels-1.0.0.dist-info/licenses/LICENSE": b"not the project license\n"
+        },
+    )
+    with pytest.raises(ValueError, match="LICENSE payload differs from checkout"):
         audit_kernel_wheel(kernel)
 
 
@@ -180,17 +411,15 @@ def test_kernel_wheel_audit_rejects_changed_migrated_bytes(tmp_path: Path):
 
 def test_hf_wheel_audit_rejects_unpinned_kernel_extra(tmp_path: Path):
     hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    metadata = _wheel_metadata(
+        distribution="rwkv7-hf",
+        project_path=Path(__file__).resolve().parents[1] / "pyproject.toml",
+    ).replace(b"rwkv7-kernels==1.0.0", b"rwkv7-kernels>=1")
     write_valid_hf_wheel(
         hf,
-        metadata=(
-            "Metadata-Version: 2.4\n"
-            "Name: rwkv7-hf\n"
-            "Version: 1.0.0\n"
-            "Provides-Extra: kernels\n"
-            'Requires-Dist: rwkv7-kernels>=1; extra == "kernels"\n'
-        ).encode(),
+        metadata=metadata,
     )
-    with pytest.raises(ValueError, match="extra is not pinned to 1.0.0"):
+    with pytest.raises(ValueError, match="Requires-Dist contract differs"):
         audit_hf_wheel(hf)
 
 

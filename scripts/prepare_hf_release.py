@@ -199,15 +199,16 @@ The model follows the standard `AutoModelForCausalLM` contract and supports
 `Trainer`, Accelerate, PEFT LoRA, TRL SFT/DPO/GRPO, and `lm_eval` through the
 ordinary Transformers path.  Set `model.config.use_cache = False` during
 training.  Reproducible examples and evaluation manifests are in
-[123123213weqw/hf-adapter](https://github.com/123123213weqw/hf-adapter).
+[rwkv-rs/hf-adapter](https://github.com/rwkv-rs/hf-adapter).
 
 ## Optional optimized execution
 
 The checked-in model code is always the readable correctness path. Installing
 the separately versioned `rwkv7-kernels` package may replace recurrence or an
-inference-only whole-model boundary on supported NVIDIA devices. Training
-always retains the readable HF layer loop and may accelerate only independent
-recurrent, linear and Mix6 tensor leaves.
+inference-only whole-model boundary on supported NVIDIA devices. Formal HF
+training always executes one complete readable reference program. The
+companion's recurrent, linear, and Mix6 training leaves are isolated
+diagnostics only; they are not certified HF training routes.
 It does not replace the model/config/cache classes, checkpoint keys, or HF
 forward/generation contract. Unsupported
 devices, dtypes and shapes fail closed to the corresponding reference tensor
@@ -221,9 +222,10 @@ Equivalent: `python -m pip install "rwkv7-hf[kernels]==1.0.0"`.
 
 The optional package includes recurrent, fused prefill/decode, projection,
 norm, FFN/LoRA, CUDA Graph/state-pool, SM70/Ada/Blackwell, quantization and
-training-leaf operator families. Exact supported routes and required-device
-evidence are recorded in the source repository; requested environment settings
-alone are not accepted as proof that an optimized route executed.
+training-leaf operator families for isolated diagnostics. Exact supported
+routes and required-device evidence are recorded in the source repository;
+requested environment settings alone are not accepted as proof that an
+optimized route executed.
 
 ## Model and provenance
 

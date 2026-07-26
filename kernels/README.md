@@ -127,12 +127,12 @@ actual implementation counts. Policy names such as `auto`, `optimized`,
 
 The built wheel embeds `MIGRATION_MANIFEST.json` and
 `CAPABILITY_INVENTORY.json`. The manifest verifies all 102 historical NVIDIA
-destinations: **89 byte-identical transfers and 13 declared clean-boundary
+destinations: **86 byte-identical transfers and 16 declared clean-boundary
 adaptations**. The capability inventory maps all 102 payloads exactly once to
 16 runtime families.
 
 `SOURCE_SCOPE.json` closes the denominator over the complete 153-file
-historical performance tree: 89 byte-migrated NVIDIA files, 23 adapted
+historical performance tree: 86 byte-migrated NVIDIA files, 26 adapted
 protocol/glue files, 7 canonical reference files, 6 relocated/retired tools,
 27 separate-hardware files, and 1 retired non-kernel helper. Release auditing
 recomputes those hashes from the built wheel rather than trusting the checkout.

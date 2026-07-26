@@ -11,6 +11,9 @@
 - Working branch: `refactor/thin-ops-v1`.
 - `rwkv7_hf/` remains the readable HF source of truth and contains only the
   canonical model modules.
+- The HF source uses a Mamba-style ownership boundary (`configuration`,
+  `cache`, `ops`, `modeling`) only as a clean organizational convention; RWKV-7
+  recurrence and checkpoint semantics remain unchanged.
 - CLI/conversion/smoke stay in the sibling `rwkv7_hf_tools/` package.
 - Optimized code is built as a separate `rwkv7-kernels` wheel from `kernels/`.
 - Model weights, `config.json`, public cache ABI, and HF forward/generation
@@ -49,6 +52,10 @@
   design in `docs/KERNEL_BACKEND_V2_DESIGN.md`. Its public ABI is fixed before
   implementation; diagnostic stages may identify failures but do not redesign
   the clean model boundary.
+- Current audited NVIDIA denominator: 102 destinations = 86 byte-identical +
+  16 declared clean-boundary adaptations. The full 153-file historical scope
+  is 86 byte-migrated, 26 adapted protocol/glue, 7 canonical-reference, 6
+  relocated/retired tooling, 27 separate-hardware, and 1 retired non-kernel.
 
 ## Phase 0 — clean layout
 
@@ -308,6 +315,48 @@ relabelled as evidence for this candidate.
 
 ## Session log
 
+### 2026-08-30 — package/API cleanup and final-source numerical fixes
+
+- Kept the public HF runtime to the six canonical Python modules under
+  `rwkv7_hf/`; converter, CLI, manifest and smoke utilities remain in the
+  sibling `rwkv7_hf_tools/` package. Setuptools discovery now names those two
+  packages explicitly, so a future similarly prefixed directory cannot enter
+  the HF wheel accidentally.
+- Preserved the readable model's fixed-row rank-3 vocabulary projection at the
+  optional whole-model boundary while retaining the direct rank-1/rank-2
+  decode path.
+- Fixed RTX 4080 A8W8 small-row execution: CUDA `torch._int_mm` inputs now use
+  complete 32-row tiles, and the output head uses an activation-stable tiled
+  W8A16 path through 32 rows. The speed and memory policies passed the existing
+  finite/cosine/cache/greedy gates with FP16 logits max-abs `0.125` and
+  `0.09375`, respectively; the small-row microbench was `0.0568`–`0.1142 ms`
+  instead of `0.2699`–`0.2719 ms` for padded dynamic A8.
+- Replaced the fused-prefill rounded decay constant `0.606531` with the exact
+  `exp(-0.5)` value shared by its Triton and Torch fallback. RTX 4080 state
+  preparation then matched W/K/V/KK bitwise. A strict reference-layout
+  diagnostic can make 0.4B/1.5B, B1/B4, T128 logits and state bitwise equal,
+  but it is `10.5x`–`19.7x` slower and therefore remains a parity diagnostic,
+  not the default optimized route.
+- Aligned the FLA harness with the documented calibrated release envelope:
+  low precision blocks on finiteness and cosine, while FP16 logits
+  max-absolute `0.15` stays visible as an aspirational diagnostic. Candidate
+  route/reference gates remain blocking; FLA comparisons remain non-blocking.
+- Hardened release archives: wheel payload outside the owned package roots and
+  one `.dist-info` tree is rejected; sdists reject unowned build hooks or
+  checkout drift. The kernel distribution now carries and audits its own
+  byte-exact MIT license under PEP 639 metadata.
+- The current frozen denominator is **86 byte-identical + 16 declared
+  adaptations = 102 NVIDIA destinations**; the complete historical source
+  scope is **86/26/7/6/27/1**. All destination hashes match the working tree.
+- Local gate after all shared edits: the complete suite is **459 passed**, with
+  **397 expected TorchScript deprecation warnings**. The package-layout check
+  now restricts legacy-module discovery to this checkout, so an unrelated old
+  editable install cannot forge a failure. Ruff on every changed Python file,
+  bytecode compilation, `git diff --check`, the 74 focused release/source
+  audits, and a locally built HF/kernel wheel membership audit all pass. No
+  immutable final 4080/4090 wheel pair or device evidence has been created for
+  these bytes yet.
+
 ### 2026-08-30 — API-v4 facade and explicit execution context
 
 - Reduced the HF/kernel ABI to one public call,
@@ -353,8 +402,8 @@ relabelled as evidence for this candidate.
   parameter ownership remain unchanged; no public whole-model training route
   is used.
 - The NVIDIA manifest still contains exactly 102 historical destinations. Its
-  current classification is 89 byte-identical transfers and 13 declared clean
-  adaptations; the complete historical source scope is 89 byte-migrated, 23
+  current classification is 86 byte-identical transfers and 16 declared clean
+  adaptations; the complete historical source scope is 86 byte-migrated, 26
   adapted, 7 canonical-reference, 6 relocated/retired tooling, 27 separate
   hardware, and 1 retired non-kernel file. Destination SHA256 values currently
   match the working-tree bytes.
@@ -411,8 +460,8 @@ relabelled as evidence for this candidate.
   W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO adapters, and train-temp
   forward/backward/autograd all remain in scope.
 - The wheel/source audits bind 102 NVIDIA destination files to the frozen
-  historical trees. The current manifest records 89 byte-identical transfers
-  and 13 declared clean-boundary adaptations; any omitted file, changed Git
+  historical trees. The current manifest records 86 byte-identical transfers
+  and 16 declared clean-boundary adaptations; any omitted file, changed Git
   blob, or undeclared adaptation fails the release audit.
 - Audited package imports and made direct runtime dependencies explicit in the
   independent kernel distribution: `torch`, `numpy`, and `packaging`.
@@ -1280,7 +1329,7 @@ relabelled as evidence for this candidate.
 
 - Audited the complete `perf/native-kernels-v0.8:rwkv7_hf` tree rather than
   trusting the selected 102-file migration list. The current 153-row scope
-  records 89 byte-migrated NVIDIA files, 23 adapted protocol/glue files, 7
+  records 86 byte-migrated NVIDIA files, 26 adapted protocol/glue files, 7
   canonical reference owners, 6 relocated/retired tools, 27 explicitly
   separate Ascend/MLX/Biren/MetaX/MUSA files, and one retired non-kernel
   speculative helper.
@@ -1370,9 +1419,9 @@ relabelled as evidence for this candidate.
   `train_temp_cuda.py` removes whole-model `forward` monkeypatching in favor of
   `training_runtime.py` direct dispatch.
 - Strengthened the machine-readable denominator and adaptation-rationale
-  checks. Subsequent clean-boundary work brings the current manifest to **89
-  byte-identical + 13 declared adaptations = all 102 NVIDIA transfers**; the
-  complete current source scope is the 89/23/7/6/27/1 classification recorded
+  checks. Subsequent clean-boundary work brings the current manifest to **88
+  byte-identical + 14 declared adaptations = all 102 NVIDIA transfers**; the
+  complete current source scope is the 86/26/7/6/27/1 classification recorded
   above. Every adaptation is restricted by exact historical source path and
   requires a non-empty rationale. Capability coverage remains 102/102 across
   the same 16 families.
@@ -1622,8 +1671,10 @@ relabelled as evidence for this candidate.
   the FP32 decay bias is converted only in the private activation-dtype native
   pack. Training, graph-head and quantization ownership checks use the same
   dense contract.
-- Migration evidence now records **98 byte-identical + 4 declared
-  clean-boundary adaptations = all 102 NVIDIA files**. Targeted backend tests
+- At this historical checkpoint, migration evidence recorded **98
+  byte-identical + 4 declared clean-boundary adaptations = all 102 NVIDIA
+  files**; later adaptations superseded that snapshot with the current count
+  in Fixed decisions. Targeted backend tests
   and the complete local suite pass **175 tests** with 145 expected TorchScript
   deprecation warnings; `git diff --check` passes. Next action is to rebuild an
   immutable corrected kernel wheel on RTX 4080 and rerun only the failed
@@ -1646,10 +1697,11 @@ relabelled as evidence for this candidate.
   RTX 4080 is SM89.
 - The three affected BF16 training translation units now retain the vector
   atomic on SM90+ and use two equivalent scalar FP32 atomics on SM89/SM80/SM70.
-  Migration evidence is transparently updated to **95 byte-identical + 7
-  declared adaptations = all 102 NVIDIA files**; the frozen historical tree
-  and original Git blob IDs remain unchanged. Targeted migration, wheel-audit,
-  and backend-v2 tests pass 29/29 with plugin autoload disabled.
+  This historical checkpoint recorded **95 byte-identical + 7 declared
+  adaptations = all 102 NVIDIA files**; later adaptations superseded that
+  snapshot with the current count in Fixed decisions. The frozen historical
+  tree and original Git blob IDs remain unchanged. Targeted migration,
+  wheel-audit, and backend-v2 tests pass 29/29 with plugin autoload disabled.
 - Remote source sync was interrupted by a temporary loss of the V100
   Tailscale route. No formal GPU process was running or terminated. Next action
   is to resume the same V100 jump route, compile the corrected training leaf,

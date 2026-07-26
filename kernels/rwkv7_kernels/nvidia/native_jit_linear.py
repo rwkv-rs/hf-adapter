@@ -39,6 +39,20 @@ def linear_module(module, x: torch.Tensor) -> torch.Tensor:
     """Call a dense or native quantized linear module."""
 
     if dense_linear_module(module):
+        # The readable RWKV7 Linear owns a batch/length-invariant 128-row
+        # reference GEMM for rank-3 model activations. Whole-model prefill
+        # must retain that public numerical contract at the vocabulary head;
+        # bypassing ``forward`` here lets cuBLAS choose a B*T-dependent
+        # reduction and can move FP16 logits outside the fixed acceptance
+        # envelope. Decode remains rank-1/2 and therefore keeps the direct
+        # zero-overhead F.linear path below.
+        class_forward = type(module).__dict__.get("forward")
+        if (
+            x.ndim == 3
+            and class_forward is not None
+            and getattr(class_forward, "_rwkv7_dense_linear_contract", False) is True
+        ):
+            return module(x)
         return F.linear(x, module.weight, module.bias)
     return module(x)
 

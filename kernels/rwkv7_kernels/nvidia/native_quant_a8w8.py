@@ -1,10 +1,13 @@
 # coding=utf-8
 """Graph-capturable dynamic-A8 / per-channel-W8 Linear for CUDA/HIP serving.
 
-PyTorch's CUDA int8 GEMM requires more than sixteen activation rows. Cached
-decode normally has only one to eight rows, so this module pads the activation
-matrix to seventeen rows, uses a fused Triton per-row quantizer, dispatches
-``torch._int_mm``, and fuses output scaling/casting in a second Triton kernel.
+Small output-head matrices use W8A16 directly so activation quantization cannot
+amplify the tiny hidden-state differences between the readable and optimized
+model routes.  FP16 multi-row heads use one tiled ``tl.dot`` kernel; scalar and
+non-FP16 inputs keep the portable GEMV kernels. Larger matrices use a fused
+Triton per-row quantizer, ``torch._int_mm``, and a fused dequantization epilogue.
+CUDA's cuBLASLt path requires the row count to be a multiple of 32 on current
+PyTorch builds; ROCm retains the historical minimum of 17 rows.
 The speed policy quantizes ``lm_head`` only. The memory policy quantizes all
 size-gated linears covered by the native kernel (input width <= 4096), while
 leaving wider FFN-down projections dense instead of dequantizing them on every
@@ -31,7 +34,9 @@ except Exception:  # pragma: no cover - remote-code fallback
 try:
     from .sm70_quant import is_sm70, quantize_w8_row, w8_linear as sm70_w8_linear
 except Exception:  # pragma: no cover
-    is_sm70 = lambda _device=None: False  # type: ignore[assignment]
+    def is_sm70(_device=None):
+        return False
+
     quantize_w8_row = None  # type: ignore[assignment]
     sm70_w8_linear = None  # type: ignore[assignment]
 
@@ -130,6 +135,60 @@ if _HAS_TRITON:
                 other=0.0,
             ).to(tl.float32)
         tl.store(output_ptr + row * N + offsets_n, output, mask=mask_n)
+
+    @triton.jit
+    def _w8a16_tiled_matmul_kernel(
+        x_ptr,
+        q_weight_ptr,
+        weight_scale_ptr,
+        bias_ptr,
+        output_ptr,
+        x_row_stride,
+        M: tl.constexpr,
+        K: tl.constexpr,
+        N: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+    ):
+        """Tensor-core W8A16 matmul for a small FP16 output head."""
+
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+        offsets_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        offsets_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        offsets_k = tl.arange(0, BLOCK_K)
+        accumulator = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+        for start in range(0, K, BLOCK_K):
+            k = start + offsets_k
+            activation = tl.load(
+                x_ptr + offsets_m[:, None] * x_row_stride + k[None, :],
+                mask=(offsets_m[:, None] < M) & (k[None, :] < K),
+                other=0.0,
+            )
+            weight = tl.load(
+                q_weight_ptr + k[:, None] * N + offsets_n[None, :],
+                mask=(k[:, None] < K) & (offsets_n[None, :] < N),
+                other=0,
+            ).to(tl.float16)
+            accumulator = tl.dot(activation, weight, accumulator)
+        output = accumulator * tl.load(
+            weight_scale_ptr + offsets_n,
+            mask=offsets_n < N,
+            other=0.0,
+        )[None, :].to(tl.float32)
+        if HAS_BIAS:
+            output += tl.load(
+                bias_ptr + offsets_n,
+                mask=offsets_n < N,
+                other=0.0,
+            )[None, :].to(tl.float32)
+        tl.store(
+            output_ptr + offsets_m[:, None] * N + offsets_n[None, :],
+            output,
+            mask=(offsets_m[:, None] < M) & (offsets_n[None, :] < N),
+        )
 
     @triton.jit
     def _dynamic_a8_quant_kernel(
@@ -320,7 +379,32 @@ def quantize_weight_per_channel_int8(weight):
     return quantized.t().contiguous(), scales.contiguous()
 
 
-def a8w8_linear(x, q_weight_t, weight_scale, bias=None, *, out=None):
+def _int_mm_padded_rows(rows: int, *, hip: bool | None = None) -> int:
+    """Return a legal activation-row count for ``torch._int_mm``.
+
+    PyTorch rejects 16 or fewer rows on both GPU backends. CUDA 13's
+    cuBLASLt implementation additionally rejects non-multiples of 32, even
+    though older releases accepted the historical 17-row padding. Keep the
+    ROCm behavior unchanged and round CUDA rows to the next complete tile.
+    The extra rows remain zero/unwritten and are discarded after GEMM.
+    """
+
+    rows = max(int(rows), 17)
+    if hip is None:
+        version = getattr(torch, "version", None) if torch is not None else None
+        hip = bool(getattr(version, "hip", None))
+    return rows if hip else ((rows + 31) // 32) * 32
+
+
+def a8w8_linear(
+    x,
+    q_weight_t,
+    weight_scale,
+    bias=None,
+    *,
+    out=None,
+    tiled_w8a16: bool = False,
+):
     """Apply graph-capturable dynamic-A8 / W8 matrix multiplication."""
 
     if torch is None or F is None:
@@ -350,10 +434,9 @@ def a8w8_linear(x, q_weight_t, weight_scale, bias=None, *, out=None):
             return out
         return result
 
-    # Small cached-decode batches do not fill tensor-core tiles. Reading W8
-    # directly and dequantizing in registers avoids padding every projection to
-    # seventeen rows. The batched kernel still launches once per projection and
-    # honors non-contiguous last-token row strides.
+    # Do not pad small rows into dynamic-A8 GEMM. The output head uses a tiled
+    # tensor-core W8A16 kernel, while scalar and body-module fallbacks retain
+    # the portable GEMV kernels. Every route honors last-token row strides.
     gemv_max_rows = a8w8_gemv_max_rows(x.device)
     if rows <= gemv_max_rows:
         output2 = (
@@ -378,6 +461,26 @@ def a8w8_linear(x, q_weight_t, weight_scale, bias=None, *, out=None):
                 HAS_BIAS=bias is not None,
                 num_warps=num_warps,
             )
+        elif tiled_w8a16 and x.dtype == torch.float16:
+            block_m = 16
+            _w8a16_tiled_matmul_kernel[
+                (triton.cdiv(rows, block_m), triton.cdiv(outputs, block_n))
+            ](
+                x2,
+                q_weight_t,
+                weight_scale,
+                bias if bias is not None else weight_scale,
+                output2,
+                x2.stride(0),
+                M=rows,
+                K=inputs,
+                N=outputs,
+                BLOCK_M=block_m,
+                BLOCK_K=32,
+                BLOCK_N=block_n,
+                HAS_BIAS=bias is not None,
+                num_warps=4,
+            )
         else:
             _w8a16_batched_gemv_kernel[(rows, triton.cdiv(outputs, block_n))](
                 x2,
@@ -397,7 +500,7 @@ def a8w8_linear(x, q_weight_t, weight_scale, bias=None, *, out=None):
             return output2.reshape(outputs)
         return output2.reshape(*leading, outputs)
 
-    padded_rows = max(rows, 17)
+    padded_rows = _int_mm_padded_rows(rows)
     q_activation = torch.empty((padded_rows, inputs), device=x.device, dtype=torch.int8)
     activation_scale = torch.empty((rows,), device=x.device, dtype=torch.float32)
     block_k = triton.next_power_of_2(inputs)
@@ -470,7 +573,7 @@ def a8w8_ffn(x, up, down, residual):
     rows = int(x2.shape[0])
     if rows < 1 or int(residual2.shape[0]) != rows or not residual2.is_contiguous():
         return None
-    padded_rows = max(rows, 17)
+    padded_rows = _int_mm_padded_rows(rows)
 
     q_input = torch.empty(
         (padded_rows, int(up.in_features)), device=x.device, dtype=torch.int8
@@ -528,8 +631,9 @@ def a8w8_ffn(x, up, down, residual):
 class A8W8Linear(torch.nn.Module):
     """Inference-only ``nn.Linear`` replacement using dynamic A8 and W8."""
 
-    def __init__(self, linear):
+    def __init__(self, linear, *, tiled_w8a16: bool = False):
         super().__init__()
+        self.tiled_w8a16 = bool(tiled_w8a16)
         self.in_features = int(linear.in_features)
         self.out_features = int(linear.out_features)
         self.fused_ffn = a8w8_fused_ffn_enabled(linear.weight.device)
@@ -550,7 +654,13 @@ class A8W8Linear(torch.nn.Module):
         if self.sm70_rowwise and sm70_w8_linear is not None:
             result = sm70_w8_linear(x, self.q_weight_row, self.weight_scale)
             return result if self.bias is None else result + self.bias
-        return a8w8_linear(x, self.q_weight_t, self.weight_scale, self.bias)
+        return a8w8_linear(
+            x,
+            self.q_weight_t,
+            self.weight_scale,
+            self.bias,
+            tiled_w8a16=self.tiled_w8a16,
+        )
 
     def rwkv7_forward_into(self, x, out):
         """Write graph-replay head output directly into a stable buffer."""
@@ -561,7 +671,14 @@ class A8W8Linear(torch.nn.Module):
             result = sm70_w8_linear(x, self.q_weight_row, self.weight_scale) + self.bias
             out.copy_(result)
             return out
-        return a8w8_linear(x, self.q_weight_t, self.weight_scale, self.bias, out=out)
+        return a8w8_linear(
+            x,
+            self.q_weight_t,
+            self.weight_scale,
+            self.bias,
+            out=out,
+            tiled_w8a16=self.tiled_w8a16,
+        )
 
     def rwkv7_forward_ffn(self, x, down, residual):
         """Attempt the paired A8W8 FFN route; return ``None`` to fall back."""
@@ -571,7 +688,11 @@ class A8W8Linear(torch.nn.Module):
         return a8w8_ffn(x, self, down, residual)
 
     def extra_repr(self) -> str:
-        return f"in={self.in_features}, out={self.out_features}, dynamic_a8w8"
+        small_rows = "tiled_w8a16" if self.tiled_w8a16 else "batched_w8a16"
+        return (
+            f"in={self.in_features}, out={self.out_features}, "
+            f"dynamic_a8w8, small_rows={small_rows}"
+        )
 
 
 def quantize_model_a8w8(
@@ -605,7 +726,15 @@ def quantize_model_a8w8(
     for full_name in targets:
         parent_name, _, attribute = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
-        setattr(parent, attribute, A8W8Linear(getattr(parent, attribute)))
+        is_output_head = full_name == "lm_head" or full_name.endswith(".lm_head")
+        setattr(
+            parent,
+            attribute,
+            A8W8Linear(
+                getattr(parent, attribute),
+                tiled_w8a16=is_output_head,
+            ),
+        )
     fused_ffn_modules = 0
     for name, module in model.named_modules():
         if not (

@@ -169,7 +169,7 @@ weights, wheels, W&B runtime files, or model directories:
 python evaluation/build_backend_v2_compact_bundle.py \
   --input-dir /results/backend-v2/4080-final \
   --output-dir results/backend-v2/4080-final-compact \
-  --device RTX-4080 \
+  --device rtx-4080 \
   --harness-sha "$(git rev-parse HEAD)"
 ```
 
