@@ -84,21 +84,22 @@ that same lexical scope. Neither bridge makes a second decision or carries
 hardware policy or tensor state. Two other `ContextVar` objects retain only
 last-route and last-context evidence; neither participates in selection.
 
-The current API-v4 request does not contain the concrete projection
-weights/biases and Mix6 parameter tensors needed to prove all three leaves
-before execution. It therefore issues no optimized-training certificate:
-`auto` runs the complete readable reference training program and strict
-`optimized` fails at the model boundary. The three private leaf dispatchers
-remain available for isolated numerical and performance diagnostics, but a
-standalone leaf result is not a production HF training-program claim. This is
-intentional fail-closed behavior; the boundary may be enabled only after a
-future request binds and preloads the complete recurrent/linear/Mix6 plan.
+`RWKV7_TRAINING_KERNEL_IMPL=adaptive` enables the API-v4 atomic preflight. The
+current certificate is deliberately narrow: dense B4/T128, fully active mask,
+zero initial state, aligned tokens, gradient-bearing inputs, and head size 64.
+It preloads the native dependencies before the layer loop and binds one
+program identity to the immutable execution context. The factorized
+recurrent, flattened-linear, and Mix6 leaves revalidate their concrete tensors
+against that identity; an unexpected decline is a fail-closed error.
 
-Isolated adaptive diagnostics can exercise the factorized recurrent and
-flattened-linear/Mix6 leaves for shapes covered by their numerical matrices.
-They never receive a model-level certificate. The factorized CUDA leaf is
-compiled lazily, so Ninja and a local `nvcc` toolkit matching
-`torch.version.cuda` are required for that diagnostic route.
+Outside the certified domain, `auto` runs one complete readable reference
+program and strict `optimized` fails at the model boundary. Explicit `matrix`
+and `factorized` selectors remain operator diagnostics rather than production
+HF program claims. The factorized CUDA and Mix6 leaves compile lazily, so Ninja
+and a local `nvcc` toolkit matching `torch.version.cuda` are required. Ordinary
+large projections use one flattened GEMM; 4x FFN projections use a bounded
+320-row grouping that passed the complete-gradient gate without giving up the
+large-batch launch reduction.
 
 For whole-model inference, `model_forward` receives the caller's canonical
 cache directly so native decode can bind it zero-copy to persistent CUDA Graph
@@ -110,8 +111,7 @@ been bound or updated.
 Production promotion requires route-proven output/state/logits/loss/all-
 gradient parity, checkpoint consistency, HF ecosystem tests, SFT/DPO/GRPO,
 speed comparison, and lm_eval from one immutable wheel pair. Historical
-device evidence is not relabelled for changed bytes. The complete local suite must be rerun after the current source settles; the
-new immutable-wheel RTX 4080 gate is still pending.
+device evidence is not relabelled for changed bytes.
 
 ## Quantization and trace evidence
 

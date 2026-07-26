@@ -84,11 +84,14 @@ canonical cache to the wheel without cloning. Once positive execution starts,
 an exception or malformed payload fails closed even in `auto`; it is never
 recomputed through reference code after the cache may have been bound or
 updated by a CUDA Graph.
-The current `training_program` request cannot bind every concrete training
-leaf, so it deliberately remains unsupported: HF training uses the complete
-reference program in `auto`, while strict `optimized` fails at the model
-boundary. Private training leaves remain available only for isolated
-diagnostics.
+Training keeps the same readable HF layer loop. Setting
+`RWKV7_TRAINING_KERNEL_IMPL=adaptive` asks API v4 for one atomic certificate;
+the currently certified dense B4/T128 program uses the factorized recurrent,
+bounded FFN-linear, and explicit-shift Mix6 leaves. Every leaf revalidates its
+concrete tensors against that certificate. Requests outside the certified
+domain take one complete reference program in `auto`, while strict
+`RWKV7_BACKEND=optimized` fails at the model boundary instead of mixing an
+uncertified partial route.
 
 The kernel package top level exports only `__version__`,
 `RWKV7_KERNEL_API_VERSION`, and `execute_optional_v4`; historical v1 helpers

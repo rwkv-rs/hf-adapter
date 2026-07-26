@@ -686,6 +686,13 @@ def test_ecosystem_route_gates_require_readable_model_and_actual_leafs():
     assert expected_dense_training_route(reference, "reference-fallback")
     assert not expected_dense_training_route(reference, "adaptive")
 
+    peft_fallback = clean_training_routes(adaptive=False)
+    peft_fallback["program"]["facts"] = {
+        "autograd_leaf_eligible": False,
+        "force_reference_program": True,
+    }
+    assert expected_dense_training_route(peft_fallback, "adaptive")
+
 
 def test_ecosystem_fp16_uses_fp32_master_parameters():
     assert training_parameter_dtype("fp16") is torch.float32

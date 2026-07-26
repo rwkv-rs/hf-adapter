@@ -59,10 +59,12 @@ kernel package can exercise recurrent, flattened-linear, and explicit-shift
 Mix6 tensor leaves independently. The preserved implementations are
 `native-nvidia-rwkv7-factorized-recurrent-training-v1`,
 `torch-cuda-rwkv7-flattened-linear-training-v1`, and
-`native-nvidia-rwkv7-mix6-training-v1`. API v4 does not yet certify all leaves
-atomically, so formal Trainer, Accelerate, PEFT, and TRL runs keep the complete
-`torch-reference-model-v1` program; strict optimized training fails closed at
-the model boundary.
+`native-nvidia-rwkv7-mix6-training-v1`. API v4 now certifies these leaves
+atomically for the dense B4/T128 fast domain through
+`native-nvidia-rwkv7-adaptive-training-program-v1`. The readable
+`torch-reference-model-v1` layer loop remains the only model implementation;
+unsupported shapes and masks keep one complete reference program rather than
+mixing uncertified leaves.
 
 All adapted rows retain the historical **source** Git blob identity, the new
 destination SHA256 and a machine-checked rationale; adapted destination bytes

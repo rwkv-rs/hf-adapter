@@ -182,19 +182,19 @@ before the directory is published.
 
 ## Optional training comparison
 
-Training comparison never substitutes a second model class. The reference and
-FLA lanes load their documented model paths, while private recurrent, linear,
-and Mix6 candidates remain isolated operator diagnostics. API v4 currently
-cannot preflight the concrete three-leaf plan, so formal HF `auto` training is
-the readable reference program. `matrix`, `factorized`, and `adaptive` are
-explicit isolation modes only and must not be reported as a certified
-full-model training route.
+Training comparison never substitutes a second model class. The reference,
+adaptive, and FLA lanes load their documented model paths while retaining the
+same readable HF layer loop. `adaptive` asks API v4 for one atomic certificate;
+the current full-model fast domain is dense B4/T128 with zero initial state,
+fully active aligned tokens, gradient-bearing inputs, and head size 64. The
+certificate covers the factorized recurrent, bounded FFN-linear, and Mix6
+leaves. `matrix` and `factorized` remain isolated recurrent diagnostics.
 
-The API-v4 `training_program` operation currently returns unsupported before
-the layer loop because its request cannot bind every concrete leaf. Formal
-training evidence must therefore record the reference program. Strict
-`optimized` must fail at that model boundary; reaching an optional leaf is a
-gate failure.
+Formal training evidence must record the model route, all three actual leaf
+implementations, the program identity, complete optimizer-gradient vector,
+checkpoint replay, and process-wide route counts. An unsupported request uses
+one complete reference program in `auto`; a certified leaf decline or strict
+optimized request outside the domain must fail closed.
 
 The factorized rows require a CUDA development toolkit matching
 `torch.version.cuda`. The kernel wheel installs Ninja, but it deliberately does

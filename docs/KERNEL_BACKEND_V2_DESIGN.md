@@ -171,11 +171,12 @@ boundary, not a deletion of history.
 - No optimized subclass, monkeypatch, duplicate model layer, or native cache.
 - Installing/uninstalling `rwkv7-kernels` changes only implementation choice.
 - `modeling_rwkv7.py` always retains a complete readable path.
-- Three private training leaf adapters exist for recurrent, linear, and Mix6
-  diagnostics; they are not currently a certified HF training program.
-- Production training is one coherent reference program until a complete
-  three-leaf preflight can be represented; strict optimized fails before the
-  layer loop and never mixes certified and uncertified leaves.
+- The adaptive API-v4 preflight may certify recurrent, linear, and Mix6 as one
+  immutable training program; leaves still validate their concrete tensors.
+- The current fast domain is dense B4/T128 with zero initial state, an active
+  mask, aligned tokens, autograd inputs, and head size 64. All other requests
+  use one coherent reference program in `auto`; strict optimized fails before
+  the layer loop and never mixes certified and uncertified leaves.
 - Package-free Hub loading remains valid when the wheel is absent.
 
 ## One-shot acceptance
@@ -192,5 +193,5 @@ pass, without relabelling historical evidence:
 - the agreed RTX 4080 gate, followed by RTX 4090 and larger-model loading
   smoke. V100 evidence remains historical and is not a v1.0 release gate.
 
-The complete local suite must be rerun after the current source settles. It
-does not substitute for the pending immutable-wheel RTX 4080 validation.
+The local suite is necessary but does not substitute for immutable-wheel GPU
+validation and route evidence.

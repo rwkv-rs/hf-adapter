@@ -197,6 +197,26 @@ def expected_dense_training_route(
             and program.get("selected") == "reference"
             and program.get("implementation") == "torch-reference-training-program-v1"
         )
+
+    # PEFT may freeze the embedding table while keeping LoRA projections
+    # trainable. The model boundary then cannot prove a gradient-bearing input
+    # before the first adapter executes, so the immutable context deliberately
+    # selects one complete reference program. This is the advertised adaptive
+    # fallback, not a failed optional route.
+    forced_reference = bool(
+        recurrent.get("selected") == "reference"
+        and recurrent.get("implementation") == "torch-reference-v1"
+        and linear.get("selected") == "reference"
+        and linear.get("implementation") == "torch-reference-linear-v1"
+        and mix6.get("selected") == "reference"
+        and mix6.get("implementation") == "torch-reference-mix6-v1"
+        and program.get("selected") == "reference"
+        and program.get("implementation") == "torch-reference-training-program-v1"
+        and (program.get("facts") or {}).get("force_reference_program") is True
+    )
+    if forced_reference:
+        return True
+
     fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
     expected_recurrent = FACTORIZED_RECURRENT if fast_domain else MATRIX_RECURRENT
     linear_passed = (
@@ -743,9 +763,19 @@ def main() -> int:
     torch.manual_seed(args.seed)
     path = args.model.expanduser().resolve()
     inference_backend_environment()
-    stages = [
-        execute("auto-model-save-generation", lambda: run_auto_model(path, args.seed))
-    ]
+    # Transformers 4.56 derives its dynamic-module package from a local
+    # directory basename without fully escaping dots. Use a short safe alias
+    # for the save/reload stage so a perfectly valid model directory such as
+    # ``rwkv7-g1d-0.4b-hf`` does not become an invalid Python package name.
+    with tempfile.TemporaryDirectory(prefix="rwkv7-model-alias-") as alias_root:
+        model_alias = Path(alias_root) / "rwkv7_model"
+        model_alias.symlink_to(path, target_is_directory=True)
+        stages = [
+            execute(
+                "auto-model-save-generation",
+                lambda: run_auto_model(model_alias, args.seed),
+            )
+        ]
     training_backend_environment(training_mode)
     stages.extend(
         [

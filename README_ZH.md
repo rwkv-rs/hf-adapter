@@ -71,9 +71,12 @@ SM70/Ada/Blackwell 策略、量化适配和训练 autograd。它对 HF core 只�
 `model_forward` 直接使用调用方的规范 cache，不复制；一旦已开始正向执行，异常或
 畸形返回都会 fail closed，即使在 `auto` 下也不会在可能已绑定或更新 CUDA Graph
 cache 后再用 reference 重算。
-当前 `training_program` 请求还不能绑定全部具体训练叶子，因此会主动返回不支持：
-HF 训练在 `auto` 下完整走 reference，严格 `optimized` 会在模型边界报错；私有训练
-叶子仅用于独立诊断。
+训练始终保留同一份可读 HF 层循环。设置
+`RWKV7_TRAINING_KERNEL_IMPL=adaptive` 后，API v4 会先签发一个原子 program
+证书；当前通过门禁的稠密 B4/T128 路线组合 factorized recurrent、受限行数的
+FFN linear 和显式 shift 的 Mix6，每个叶子仍会用实际张量再次核验证书。超出已认证
+范围的请求在 `auto` 下完整走 reference；严格 `RWKV7_BACKEND=optimized` 会在模型
+边界报错，不会拼接未经认证的部分加速路线。
 
 kernel 包顶层只导出
 `__version__`、`RWKV7_KERNEL_API_VERSION` 和

@@ -102,7 +102,7 @@ runs with:
 python evaluation/validate_finetune_runs.py \
   --result-dir results/backend-v2/finetune \
   --require-backend-v2-routes \
-  --require-training-candidate reference
+  --require-training-candidate adaptive
 ```
 
 One immutable `RWKV7ExecutionContext` selects the program at the differentiable
@@ -119,11 +119,12 @@ Standard HF training always retains the readable
 dispatch. This keeps PEFT/TRL wrappers, hooks, gradient checkpointing, masking,
 and the ordinary autograd graph visible to the framework.
 
-The optional package retains recurrent, flattened-linear, and Mix6 leaf
-adapters for isolated diagnostics. They are not currently promoted into HF
-finetuning because API v4 cannot preflight all concrete leaves before the
-layer loop. Formal SFT/DPO/GRPO therefore uses the complete readable reference
-program; strict optimized training fails at the model boundary. Finite
-loss/gradients, changed parameters and adapter save/reload are still mandatory.
-Historical leaf or whole-model selector results cannot be promoted as current
-HF training evidence.
+The optional package can certify recurrent, flattened-linear, and Mix6 as one
+adaptive program for the dense B4/T128 domain. This changes only tensor leaves:
+PEFT/TRL still see the readable model loop, hooks, adapters, checkpoint replay,
+and ordinary PyTorch autograd. Batches, masks, or sequence lengths outside the
+certificate use one complete reference program in `auto`. Formal SFT/DPO/GRPO
+must record process-wide leaf counts as well as the final route because DPO and
+GRPO may legitimately combine optimized differentiable passes with reference
+no-grad or sampled-shape passes. Finite loss/gradients, changed parameters, and
+adapter save/reload remain mandatory.

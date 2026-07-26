@@ -92,12 +92,14 @@ policy, trace accounting, quantization, and implementation errors are owned by
 the companion wheel, not by modeling/config/cache.
 
 Training does not dispatch an opaque replacement model. The readable model
-loop remains authoritative. API v4 cannot yet bind the concrete recurrent,
-flattened-linear, and Mix6 tensors in one preflight request, so it deliberately
-issues no optimized-training certificate. `auto` executes one complete
-reference program; strict `optimized` fails at the model boundary rather than
-entering a partially accelerated layer loop. Private leaf routes remain
-diagnostics, not formal HF training routes.
+loop remains authoritative. With `RWKV7_TRAINING_KERNEL_IMPL=adaptive`, API v4
+preflights the model-owned shape, mask, initial-state, autograd, alignment, and
+head-dimension facts once and issues an immutable program certificate only for
+the certified dense B4/T128 domain. The recurrent, linear, and Mix6 leaves then
+revalidate their concrete tensors against that certificate. Any unexpected
+decline fails the certified call closed. Requests outside that domain execute
+one complete reference program in `auto`; strict `optimized` fails at the
+model boundary instead of entering a partially accelerated layer loop.
 
 The wheel may internally use Triton/CUDA recurrence, fused decode, DPLR or
 self-chunk prefill, projection/norm/FFN/LoRA fusion, CUDA Graph/state pools,
