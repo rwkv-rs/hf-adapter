@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Exercise RWKV-7 through HF, Accelerate, PEFT, and TRL.
 
-Formal training executes one complete readable ``modeling_rwkv7.py`` program.
-Private adaptive leaves remain available only in explicit diagnostic mode.
+Training keeps the readable ``modeling_rwkv7.py`` program while the formal
+adaptive lane replaces only certified tensor boundaries. Unsupported shapes
+use the same clean PyTorch operations without changing the framework contract.
 """
 
 from __future__ import annotations
@@ -53,11 +54,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--training-mode",
         choices=("adaptive", "reference", "native", "reference-fallback"),
-        default="reference",
+        default="adaptive",
         help=(
-            "reference is the formal complete PyTorch training program; "
-            "adaptive remains a leaf diagnostic. native/reference-fallback "
-            "are deprecated aliases."
+            "adaptive validates the formal optional-kernel training program "
+            "with shape-local reference fallback; reference forces the clean "
+            "PyTorch baseline. native/reference-fallback are deprecated "
+            "aliases."
         ),
     )
     parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")

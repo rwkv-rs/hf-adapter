@@ -99,11 +99,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--candidate",
         choices=("reference", "adaptive", "matrix", "factorized"),
-        default="reference",
+        default="adaptive",
         help=(
-            "reference is the formal complete PyTorch program reached through "
-            "the fail-closed v4 preflight; adaptive, matrix, and factorized "
-            "remain isolated leaf diagnostics"
+            "adaptive is the formal optional-kernel program with shape-local "
+            "reference fallback; reference forces the clean PyTorch baseline; "
+            "matrix and factorized are recurrent-leaf diagnostics"
         ),
     )
     return parser.parse_args()
@@ -545,7 +545,7 @@ def main() -> int:
     torch.cuda.empty_cache()
 
     batches = tuple(args.batch or (1, 4))
-    tokens = tuple(args.tokens or (16, 128))
+    tokens = tuple(args.tokens or (16, 17, 128))
     checkpointing_modes = tuple(
         value == "on" for value in (args.checkpointing or ("off", "on"))
     )

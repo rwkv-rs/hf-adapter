@@ -83,12 +83,12 @@ def arguments() -> argparse.Namespace:
             "native",
             "reference-fallback",
         ),
-        default="reference",
+        default="adaptive",
         help=(
-            "reference is the formal complete PyTorch training program; "
-            "adaptive benchmarks private diagnostic leaves; native and "
-            "reference-fallback are deprecated aliases; skip-not-applicable "
-            "records a hardware limitation"
+            "adaptive benchmarks the formal optional-kernel training program "
+            "with shape-local reference fallback; reference measures the clean "
+            "PyTorch baseline; native and reference-fallback are deprecated "
+            "aliases; skip-not-applicable records a hardware limitation"
         ),
     )
     parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")

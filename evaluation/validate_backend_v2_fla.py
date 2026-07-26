@@ -66,11 +66,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--training-mode",
         choices=("reference", "adaptive", "native", "skip-not-applicable"),
-        default="reference",
+        default="adaptive",
         help=(
-            "reference validates the formal readable program; adaptive keeps "
-            "private leaf diagnostics; native is a deprecated alias; SM70 "
-            "may use skip-not-applicable"
+            "adaptive validates the formal optional-kernel training program "
+            "with shape-local reference fallback; reference forces the clean "
+            "PyTorch baseline; native is a deprecated alias; SM70 may use "
+            "skip-not-applicable"
         ),
     )
     parser.add_argument("--seed", type=int, default=42)

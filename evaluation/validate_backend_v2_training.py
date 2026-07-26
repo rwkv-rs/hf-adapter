@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Validate the readable HF training loop and optional tensor leaves.
+"""Validate the readable HF training loop with adaptive optional tensor leaves.
 
-The formal candidate is the complete reference training program reached
-through ``auto`` after the API-v4 atomic preflight declines. Private adaptive
-leaves remain available as explicit diagnostics only.
+The model structure always stays in ``modeling_rwkv7.py``.  The candidate lane
+uses the public API-v4 training program and replaces only certified recurrent,
+linear, and Mix6 tensor boundaries.  Unsupported shapes fail closed to the
+same readable PyTorch operations and remain part of the formal candidate.
 """
 
 from __future__ import annotations
@@ -74,11 +75,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--candidate-route",
         choices=("adaptive", "reference", "native", "reference-fallback"),
-        default="reference",
+        default="adaptive",
         help=(
-            "reference is the formal complete PyTorch training program; "
-            "adaptive remains an isolated leaf diagnostic. native and "
-            "reference-fallback are deprecated aliases."
+            "adaptive validates the formal optional-kernel training program "
+            "with shape-local reference fallback; reference forces the clean "
+            "PyTorch baseline. native and reference-fallback are deprecated "
+            "aliases."
         ),
     )
     parser.add_argument("--dtype", choices=("bf16", "fp16"), default="bf16")
@@ -241,7 +243,7 @@ def main() -> int:
     model = RWKV7ForCausalLM.from_pretrained(path, torch_dtype=dtype).cuda().train()
     vocab = int(model.config.vocab_size)
     batches = tuple(args.batch or (1, 4))
-    tokens = tuple(args.tokens or (16, 128))
+    tokens = tuple(args.tokens or (16, 17, 128))
     cases = []
     failures = []
     for checkpointing in (False, True):
