@@ -73,12 +73,14 @@ def training_linear(
     weight: torch.Tensor,
     bias: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Select the canonical one-tile path or one flattened training GEMM.
+    """Select the canonical one-tile path or shape-stable training GEMMs.
 
     A single canonical tile is kept byte-for-byte identical to the readable HF
-    model.  Larger ``B * T`` requests use one flattened GEMM.  This boundary is
-    private to the explicitly selected native whole-model training runtime; the
-    clean reference model continues to use :func:`fixed_row_linear` semantics.
+    model. Larger ``B * T`` requests use the optional linear leaf, which keeps
+    ordinary projections flattened and bounds the row group for 4x FFN
+    projections. This boundary is private to the explicitly selected training
+    runtime; the clean reference model continues to use
+    :func:`fixed_row_linear` semantics.
     """
 
     if value.ndim != 3 or int(value.shape[0]) * int(value.shape[1]) <= REFERENCE_LINEAR_ROWS:

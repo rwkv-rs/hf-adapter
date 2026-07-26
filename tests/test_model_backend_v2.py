@@ -853,6 +853,29 @@ def test_native_training_linear_flattens_only_multiple_reference_tiles(monkeypat
     assert torch.isfinite(four_tiles.grad).all()
 
 
+def test_native_training_linear_bounds_four_times_wide_ffn_rows(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    training_math = importlib.import_module("rwkv7_kernels.nvidia.training_math")
+    original_linear = training_math.F.linear
+    calls = []
+
+    def record_linear(value, weight, bias=None):
+        calls.append(tuple(value.shape))
+        return original_linear(value, weight, bias)
+
+    monkeypatch.setattr(training_math.F, "linear", record_linear)
+    value = torch.randn(4, 128, 8, requires_grad=True)
+    weight = torch.randn(32, 8, requires_grad=True)
+
+    output = training_math.training_linear(value, weight)
+
+    assert output.shape == (4, 128, 32)
+    assert calls == [(4, 80, 8), (4, 48, 8)]
+    output.square().mean().backward()
+    assert value.grad is not None and torch.isfinite(value.grad).all()
+    assert weight.grad is not None and torch.isfinite(weight.grad).all()
+
+
 def test_native_training_channel_mix_does_not_reenter_linear_dispatch(
     tiny_config, monkeypatch
 ):
