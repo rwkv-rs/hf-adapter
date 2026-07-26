@@ -41,6 +41,7 @@ _FACTORIZED_IMPLEMENTATION = "native-nvidia-rwkv7-factorized-recurrent-training-
 _FLATTENED_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 _MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
 _PROGRAM_IMPLEMENTATION = "native-nvidia-rwkv7-adaptive-training-program-v1"
+_REFERENCE_PROGRAM_IMPLEMENTATION = "torch-reference-training-program-v1"
 _RECURRENT_HINT_NAMES = frozenset(
     (
         "adaptive_fast_program",
@@ -103,7 +104,7 @@ def probe_training_program_v1(
     if _requested_implementation() != "adaptive":
         return {
             "supported": False,
-            "implementation": _PROGRAM_IMPLEMENTATION,
+            "implementation": _REFERENCE_PROGRAM_IMPLEMENTATION,
             "reason": "the coupled program is selected only by adaptive training",
         }
     if not all(

@@ -296,11 +296,7 @@ def _execute_training_program(
         normalized,
         result=result,
         phase="training",
-        implementation=(
-            normalized["implementation"]
-            if normalized["supported"]
-            else _REFERENCE_PROGRAM_ID
-        ),
+        implementation=normalized["implementation"],
     )
 
 
