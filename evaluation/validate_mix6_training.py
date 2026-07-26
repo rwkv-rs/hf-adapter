@@ -13,6 +13,7 @@ that ``create_graph=True`` retains a usable higher-order graph.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 import json
 import os
@@ -217,11 +218,11 @@ class NativeCallObserver(AbstractContextManager["NativeCallObserver"]):
 
 
 def collect_candidate(
-    mix6: Any,
+    kernel_api: Any,
     base: dict[str, tuple[torch.Tensor, ...] | torch.Tensor],
 ) -> dict[str, tuple[torch.Tensor, ...]]:
     inputs = clone_inputs(base["inputs"])  # type: ignore[arg-type]
-    outputs = tuple(mix6.mix6_training_v1(*inputs))
+    outputs = public_mix6_training_v1(kernel_api, *inputs)
     gradients = torch.autograd.grad(
         outputs,
         inputs,
@@ -232,6 +233,32 @@ def collect_candidate(
         "outputs": tuple(value.detach().clone() for value in outputs),
         "gradients": tuple(value.detach().clone() for value in gradients),
     }
+
+
+def public_mix6_training_v1(
+    kernel_api: Any,
+    *inputs: torch.Tensor,
+) -> tuple[torch.Tensor, ...]:
+    """Execute Mix6 through the only public API-v4 package boundary."""
+
+    envelope = kernel_api.execute_optional_v4(
+        "mix6_training",
+        *inputs,
+        program_id=None,
+        facts={},
+    )
+    if not isinstance(envelope, Mapping):
+        raise TypeError("mix6_training returned a non-mapping API-v4 envelope")
+    if envelope.get("kind") != "mix6_training":
+        raise ValueError("mix6_training returned the wrong API-v4 kind")
+    if envelope.get("supported") is not True:
+        raise RuntimeError(str(envelope.get("reason", "Mix6 is unsupported")))
+    result = envelope.get("result")
+    if not isinstance(result, tuple) or len(result) != len(OUTPUT_NAMES):
+        raise TypeError("mix6_training result must contain six tensors")
+    if any(not isinstance(value, torch.Tensor) for value in result):
+        raise TypeError("mix6_training result must contain only tensors")
+    return result
 
 
 def expected_strategy(rows: int, threshold: int) -> str:
@@ -383,7 +410,7 @@ def validate_higher_order(
     base = make_case(batch, tokens, channels, seed)
     inputs = clone_inputs(base["inputs"])  # type: ignore[arg-type]
     with NativeCallObserver() as observer:
-        outputs = tuple(mix6.mix6_training_v1(*inputs))
+        outputs = public_mix6_training_v1(mix6, *inputs)
         first_gradients = torch.autograd.grad(
             outputs,
             inputs,
