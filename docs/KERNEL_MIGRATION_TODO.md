@@ -257,9 +257,10 @@ relabelled as evidence for this candidate.
 - [x] Fail closed while API v4 lacks the concrete projection and Mix6 tensor
       plan: issue no partial certificate, keep `auto` on the complete readable
       reference program, and fail strict `optimized` at the model boundary.
-- [ ] Extend a future training-program request with the complete concrete leaf
-      plan, preload every lazy dependency, bind a non-forgeable certificate,
-      and prove that no leaf can JIT or decline after certification.
+- [ ] The API-v4 source now preloads every lazy native dependency and binds an
+      opaque per-call certificate to shape/device/dtype/model facts. Prove on
+      RTX 4080 that no certified recurrent, linear, or Mix6 leaf JITs or
+      declines after certification before checking this item.
 - [x] Preserve the fixed-row readable reference projection contract while the
       optional flattened-linear leaf presents one `[B*T,C]` GEMM to PyTorch.
 - [x] Remove the benchmark's second causal cross-entropy calculation without
@@ -314,6 +315,30 @@ relabelled as evidence for this candidate.
 - [ ] GitHub, Hub and PyPI versions/tags agree.
 
 ## Session log
+
+### 2026-08-30 — atomic B4/T128 training-program source candidate
+
+- The first immutable `1.0.0` candidate wheel pair reached RTX 4080 with
+  matching SHA256 values. Its Mix6 extension compiled for sm89 and the direct
+  API-v4 Mix6 matrix passed six B1/B4 × T1/T17/T128 cases, five-run bitwise
+  determinism, first gradients, higher-order gradients, and a non-default CUDA
+  stream. The original validator incorrectly called a removed top-level
+  private symbol; that infrastructure failure is preserved and the harness now
+  exercises only `execute_optional_v4`.
+- The old wheel's full-model hotspot run confirmed the intended remaining
+  blocker: API-v4 always declined its training-program preflight, so the
+  optimized lane could not report the adaptive routes. No old result is being
+  relabelled as final evidence.
+- The new source candidate restores the conservative B4/T128 BF16 fast domain,
+  loads recurrent and Mix6 CUDA dependencies before issuing an opaque
+  process-local certificate, and binds that certificate to B/T, device, dtype,
+  and model facts. Certified leaf mismatch is a fail-closed API-v4 decline;
+  non-certified `auto` shapes may use only their independently probed adaptive
+  leaves and readable fallbacks.
+- Local source gate: **464 passed** with **397 expected warnings**; Ruff on all
+  changed Python files, bytecode compilation, and `git diff --check` pass. A
+  new wheel pair and RTX 4080 full-model/FLA/ecosystem/finetune evidence for
+  these changed package bytes are still pending.
 
 ### 2026-08-30 — package/API cleanup and final-source numerical fixes
 

@@ -8,7 +8,10 @@ adapters so the v4 boundary does not change established kernel behavior.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping
+import secrets
+import threading
 from typing import Any
 
 import torch
@@ -32,6 +35,9 @@ from .training_dispatcher import (
 
 _TRAINING_PROGRAM_ID = "native-nvidia-rwkv7-adaptive-training-program-v1"
 _REFERENCE_PROGRAM_ID = "torch-reference-training-program-v1"
+_MAX_PROGRAM_CERTIFICATES = 4096
+_PROGRAM_CERTIFICATES: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_PROGRAM_CERTIFICATE_LOCK = threading.Lock()
 _KINDS = (
     "training_program",
     "model_forward",
@@ -89,8 +95,79 @@ def _unsupported_program(
     )
 
 
+def _issue_program_certificate(
+    hidden_states: torch.Tensor,
+    *,
+    fully_active: bool,
+    initial_state_zero: bool | None,
+    token_aligned: bool,
+    autograd_leaf_eligible: bool,
+) -> str:
+    """Create one opaque process-local certificate for a model call."""
+
+    token = f"{_TRAINING_PROGRAM_ID}:{secrets.token_hex(16)}"
+    certificate = {
+        "shape": tuple(hidden_states.shape),
+        "device_type": hidden_states.device.type,
+        "device_index": hidden_states.device.index,
+        "dtype": hidden_states.dtype,
+        "facts": {
+            "fully_active": fully_active,
+            "initial_state_zero": initial_state_zero,
+            "token_aligned": token_aligned,
+            "autograd_leaf_eligible": autograd_leaf_eligible,
+        },
+    }
+    with _PROGRAM_CERTIFICATE_LOCK:
+        _PROGRAM_CERTIFICATES[token] = certificate
+        _PROGRAM_CERTIFICATES.move_to_end(token)
+        while len(_PROGRAM_CERTIFICATES) > _MAX_PROGRAM_CERTIFICATES:
+            _PROGRAM_CERTIFICATES.popitem(last=False)
+    return token
+
+
+def _program_certificate(program_id: str) -> dict[str, Any] | None:
+    with _PROGRAM_CERTIFICATE_LOCK:
+        certificate = _PROGRAM_CERTIFICATES.get(program_id)
+        if certificate is None:
+            return None
+        _PROGRAM_CERTIFICATES.move_to_end(program_id)
+        return certificate
+
+
+def _certificate_matches_leaf(
+    certificate: Mapping[str, Any],
+    args: tuple[Any, ...],
+    facts: Mapping[str, Any],
+) -> str | None:
+    """Return a reason when a certified leaf no longer matches its model call."""
+
+    value = args[0] if args else None
+    if not isinstance(value, torch.Tensor) or value.ndim not in (3, 4):
+        return "certified training leaves require a rank-three or rank-four tensor"
+    shape = certificate.get("shape")
+    if not isinstance(shape, tuple) or len(shape) != 3:
+        return "the program certificate has an invalid hidden-state shape"
+    if tuple(value.shape[:2]) != tuple(shape[:2]):
+        return "leaf batch/token shape does not match the program certificate"
+    if (
+        value.device.type != certificate.get("device_type")
+        or value.device.index != certificate.get("device_index")
+        or value.dtype != certificate.get("dtype")
+    ):
+        return "leaf device or dtype does not match the program certificate"
+    expected_facts = certificate.get("facts")
+    if not isinstance(expected_facts, Mapping):
+        return "the program certificate has invalid model facts"
+    for name, expected in expected_facts.items():
+        if facts.get(name) != expected:
+            return f"leaf fact {name!r} does not match the program certificate"
+    return None
+
+
 def _leaf_request(
     kind: OptionalKernelKind,
+    args: tuple[Any, ...],
     kwargs: dict[str, Any],
     *,
     accepted_facts: frozenset[str],
@@ -98,21 +175,13 @@ def _leaf_request(
     """Translate the v4 program certificate and fact mapping to v1 hints."""
 
     program_id = kwargs.pop("program_id", None)
-    if program_id == _TRAINING_PROGRAM_ID:
-        return None, optional_kernel_result(
-            kind=kind,
-            supported=False,
-            implementation=_REFERENCE_PROGRAM_ID,
-            reason=(
-                "the legacy adaptive training program certificate is disabled "
-                "until every concrete recurrent, linear, and Mix6 leaf can be "
-                "preflighted before execution"
-            ),
-            result=None,
-            phase="training",
-        )
+    certificate = None
     if program_id is not None:
-        return None, _unsupported_program(kind, program_id=program_id)
+        if not isinstance(program_id, str):
+            return None, _unsupported_program(kind, program_id=program_id)
+        certificate = _program_certificate(program_id)
+        if certificate is None:
+            return None, _unsupported_program(kind, program_id=program_id)
 
     facts = kwargs.pop("facts", None)
     if facts is None:
@@ -136,6 +205,18 @@ def _leaf_request(
             phase="training",
         )
 
+    if certificate is not None:
+        mismatch = _certificate_matches_leaf(certificate, args, facts)
+        if mismatch is not None:
+            return None, optional_kernel_result(
+                kind=kind,
+                supported=False,
+                implementation=_REFERENCE_PROGRAM_ID,
+                reason=mismatch,
+                result=None,
+                phase="training",
+            )
+
     hints = {
         name: facts[name]
         for name in accepted_facts
@@ -148,7 +229,7 @@ def _leaf_request(
         names = ", ".join(sorted(kwargs))
         raise TypeError(f"unexpected {kind} options: {names}")
     if kind in ("linear_training", "recurrent"):
-        hints["adaptive_fast_program"] = None
+        hints["adaptive_fast_program"] = True if certificate is not None else None
     return hints, None
 
 
@@ -198,25 +279,28 @@ def _execute_training_program(
     normalized = validate_support_result(
         support, probe_name="probe_training_program_v1"
     )
-    # API v4 cannot yet describe the complete concrete leaf plan.  Keep the
-    # public facade fail-closed even if a private/experimental probe is
-    # monkeypatched or accidentally regresses to a partial positive result.
+    result = None
     if normalized["supported"]:
-        normalized = {
-            "supported": False,
-            "implementation": normalized["implementation"],
-            "reason": (
-                "the private training probe cannot issue a public certificate "
-                "until API v4 binds every concrete recurrent, linear, and Mix6 "
-                "leaf before execution"
-            ),
-        }
+        if not isinstance(hidden_states, torch.Tensor):
+            raise TypeError("supported training preflight requires hidden_states")
+        program_id = _issue_program_certificate(
+            hidden_states,
+            fully_active=bool(kwargs["fully_active"]),
+            initial_state_zero=kwargs.get("initial_state_zero"),
+            token_aligned=token_aligned,
+            autograd_leaf_eligible=bool(kwargs["autograd_leaf_eligible"]),
+        )
+        result = {"program_id": program_id, "token_aligned": token_aligned}
     return _envelope(
         "training_program",
         normalized,
-        result=None,
+        result=result,
         phase="training",
-        implementation=_REFERENCE_PROGRAM_ID,
+        implementation=(
+            normalized["implementation"]
+            if normalized["supported"]
+            else _REFERENCE_PROGRAM_ID
+        ),
     )
 
 
@@ -245,6 +329,7 @@ def _execute_model_forward(
 def _execute_linear_training(*args: Any, **kwargs: Any) -> OptionalKernelEnvelope:
     hints, declined = _leaf_request(
         "linear_training",
+        args,
         kwargs,
         accepted_facts=frozenset(
             {"fully_active", "initial_state_zero", "token_aligned"}
@@ -265,6 +350,7 @@ def _execute_linear_training(*args: Any, **kwargs: Any) -> OptionalKernelEnvelop
 def _execute_mix6_training(*args: Any, **kwargs: Any) -> OptionalKernelEnvelope:
     hints, declined = _leaf_request(
         "mix6_training",
+        args,
         kwargs,
         accepted_facts=frozenset({"fully_active", "token_aligned"}),
     )
@@ -287,6 +373,7 @@ def _execute_recurrent(*args: Any, **kwargs: Any) -> OptionalKernelEnvelope:
     if training:
         hints, declined = _leaf_request(
             "recurrent",
+            args,
             kwargs,
             accepted_facts=frozenset(
                 {"fully_active", "initial_state_zero", "token_aligned"}

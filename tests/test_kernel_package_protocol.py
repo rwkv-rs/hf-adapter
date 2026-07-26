@@ -63,7 +63,7 @@ def test_public_kernel_surface_is_versioned_and_small():
     assert all(not hasattr(kernels, name) for name in legacy_names)
 
 
-def test_v4_training_program_never_exposes_a_partial_private_certificate(monkeypatch):
+def test_v4_training_program_issues_one_opaque_public_certificate(monkeypatch):
     backend = importlib.import_module("rwkv7_kernels.backend")
     calls = []
 
@@ -99,14 +99,66 @@ def test_v4_training_program_never_exposes_a_partial_private_certificate(monkeyp
     }
     assert result["api_version"] == 4
     assert result["kind"] == "training_program"
-    assert result["supported"] is False
-    assert result["implementation"] == "torch-reference-training-program-v1"
+    assert result["supported"] is True
+    assert result["implementation"] == (
+        "native-nvidia-rwkv7-adaptive-training-program-v1"
+    )
     assert result["phase"] == "training"
-    assert result["result"] is None
-    assert "cannot issue a public certificate" in result["reason"]
+    assert result["result"]["token_aligned"] is True
+    assert result["result"]["program_id"].startswith(
+        "native-nvidia-rwkv7-adaptive-training-program-v1:"
+    )
     assert len(calls) == 1
     assert calls[0][2]["training"] is True
     assert calls[0][2]["token_aligned"] is True
+
+    leaf_calls = []
+
+    def execute_linear(value, weight, bias, **hints):
+        leaf_calls.append(dict(hints))
+        return {
+            "supported": True,
+            "implementation": "torch-cuda-rwkv7-flattened-linear-training-v1",
+            "reason": "certificate accepted",
+            "output": torch.nn.functional.linear(value, weight, bias),
+        }
+
+    monkeypatch.setattr(backend, "execute_linear_training_v1", execute_linear)
+    program_id = result["result"]["program_id"]
+    facts = {
+        "fully_active": True,
+        "initial_state_zero": True,
+        "token_aligned": True,
+        "autograd_leaf_eligible": True,
+    }
+    linear = backend.execute_optional_v4(
+        "linear_training",
+        hidden,
+        torch.randn(8, 64),
+        None,
+        program_id=program_id,
+        facts=facts,
+    )
+    assert linear["supported"] is True
+    assert leaf_calls == [
+        {
+            "fully_active": True,
+            "initial_state_zero": True,
+            "token_aligned": True,
+            "adaptive_fast_program": True,
+        }
+    ]
+
+    mismatch = backend.execute_optional_v4(
+        "linear_training",
+        hidden[:1],
+        torch.randn(8, 64),
+        None,
+        program_id=program_id,
+        facts=facts,
+    )
+    assert mismatch["supported"] is False
+    assert "batch/token shape" in mismatch["reason"]
 
 
 def test_v4_training_program_force_reference_skips_optional_probe(monkeypatch):
@@ -229,7 +281,7 @@ def test_v4_facade_rejects_coercible_legacy_probe_fields(monkeypatch):
         )
 
 
-def test_v4_disabled_legacy_program_fails_closed_before_linear(monkeypatch):
+def test_v4_forged_legacy_program_fails_closed_before_linear(monkeypatch):
     backend = importlib.import_module("rwkv7_kernels.backend")
     captured = []
 
@@ -262,9 +314,7 @@ def test_v4_disabled_legacy_program_fails_closed_before_linear(monkeypatch):
     assert result["supported"] is False
     assert result["result"] is None
     assert result["phase"] == "training"
-    assert "legacy adaptive training program certificate is disabled" in result[
-        "reason"
-    ]
+    assert "unknown optional training program_id" in result["reason"]
     assert captured == []
 
 
@@ -983,15 +1033,30 @@ def test_training_program_preflight_rejects_frozen_or_reentrant_input(monkeypatc
     assert "gradient-bearing inputs" in result["reason"]
 
 
-def test_training_program_never_issues_partial_three_leaf_certificate(monkeypatch):
+def test_training_program_preloads_both_native_dependencies(monkeypatch):
     dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
     monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
-
-    def unexpected_cuda_probe(*_args, **_kwargs):
-        raise AssertionError("an incomplete training plan must not load CUDA")
-
-    monkeypatch.setattr(torch.cuda, "is_available", unexpected_cuda_probe)
-    hidden = torch.randn(4, 128, 64, requires_grad=True)
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    calls = []
+    monkeypatch.setattr(torch.Tensor, "is_cuda", property(lambda _self: True))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _device: (8, 9))
+    monkeypatch.setattr(
+        train_temp,
+        "recurrent_training_cuda_available",
+        lambda *, build: calls.append(("recurrent", build)) or True,
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "load_mix6_training_cuda_extension",
+        lambda *, device: calls.append(("mix6", device)),
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "_certify_recurrent_runtime",
+        lambda device: calls.append(("certify", device)),
+    )
+    hidden = torch.randn(4, 128, 64, dtype=torch.bfloat16, requires_grad=True)
     mask = torch.ones(4, 128, dtype=torch.bool)
     result = dispatcher.probe_training_program_v1(
         hidden,
@@ -1004,9 +1069,11 @@ def test_training_program_never_issues_partial_three_leaf_certificate(monkeypatc
         head_dim=64,
     )
 
-    assert result["supported"] is False
-    assert "concrete recurrent, flattened-linear, and Mix6 leaf plan" in result[
-        "reason"
+    assert result["supported"] is True
+    assert calls == [
+        ("recurrent", True),
+        ("mix6", hidden.device),
+        ("certify", hidden.device),
     ]
 
 

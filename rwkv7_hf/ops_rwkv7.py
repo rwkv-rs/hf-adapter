@@ -391,7 +391,7 @@ def _optional_result(
         and context.training
         and (
             context.force_reference_program
-            or context.optimized_program is False
+            or context.autograd_leaf_eligible is False
         )
     )
     reference = _reference_implementation(kind)

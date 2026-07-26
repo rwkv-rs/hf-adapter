@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 
+from ._runtime_preflight import _certify_recurrent_runtime
 from .linear.training_flattened import flattened_linear as _run_flattened
 from .linear.training_flattened import (
     probe_linear_training_v1 as _probe_flattened,
@@ -28,6 +29,7 @@ from .trace import record_mix6 as _record_mix6_trace
 from .trace import record_recurrent as _record_recurrent_trace
 from .time_mix.training_mix6 import _run_mix6_training as _run_mix6
 from .time_mix.training_mix6 import (
+    load_mix6_training_cuda_extension,
     probe_mix6_training_v1 as _probe_mix6,
 )
 
@@ -89,16 +91,13 @@ def probe_training_program_v1(
     autograd_leaf_eligible: bool,
     head_dim: int | None,
 ) -> dict[str, Any]:
-    """Fail closed until one request can preflight every training leaf.
+    """Preflight the dense B4/T128 adaptive training program.
 
-    API v4 currently provides model-level shape and mask facts, but it does
-    not provide the concrete projection weights/biases or the six Mix6
-    parameter tensors that will be used later in the readable layer loop.
-    Consequently this function cannot prove that those leaves are supported,
-    cannot load every lazy CUDA dependency up front, and must not issue a
-    reusable program certificate.  Standalone leaf diagnostics remain
-    available through their private v1 dispatchers, but production model
-    routing stays on the complete reference program.
+    Model-owned shape, mask, cache, and autograd facts define the only fast
+    domain.  The linear leaf is ordinary cuBLAS with no lazy dependency; this
+    preflight loads both native CUDA extensions before a certificate is
+    issued.  Every later leaf still validates its concrete tensors, and an
+    unexpected decline fails the certified model call closed.
     """
 
     if _requested_implementation() != "adaptive":
@@ -179,13 +178,55 @@ def probe_training_program_v1(
             "implementation": _PROGRAM_IMPLEMENTATION,
             "reason": "attention_mask must be a [B,T] tensor",
         }
+    if (
+        not torch.cuda.is_available()
+        or not hidden_states.is_cuda
+        or hidden_states.dtype != torch.bfloat16
+    ):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the coupled program requires BF16 CUDA hidden states",
+        }
+    if not attention_mask.is_cuda or attention_mask.device != hidden_states.device:
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "attention_mask must share the hidden-state CUDA device",
+        }
+    if torch.cuda.get_device_capability(hidden_states.device) < (8, 0):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the BF16 training program requires sm80 or newer",
+        }
+
+    from .nvidia.train_temp_cuda import recurrent_training_cuda_available
+
+    if not recurrent_training_cuda_available(build=True):
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": "the native recurrent extension is not loaded",
+        }
+    try:
+        load_mix6_training_cuda_extension(device=hidden_states.device)
+    except Exception as exc:
+        return {
+            "supported": False,
+            "implementation": _PROGRAM_IMPLEMENTATION,
+            "reason": f"the native Mix6 extension is not loaded: {exc}",
+        }
+
+    # Recurrent leaf probes may skip runtime/toolchain discovery only after
+    # both native dependencies above have completed successfully.
+    _certify_recurrent_runtime(hidden_states.device)
     return {
-        "supported": False,
+        "supported": True,
         "implementation": _PROGRAM_IMPLEMENTATION,
         "reason": (
-            "atomic optimized training is disabled because API v4 does not "
-            "yet carry the concrete recurrent, flattened-linear, and Mix6 "
-            "leaf plan required to preflight every leaf before execution"
+            "dense B4/T128 recurrent, flattened-linear, and Mix6 program "
+            "passed atomic runtime preflight"
         ),
     }
 
