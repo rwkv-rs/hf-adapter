@@ -97,7 +97,7 @@ def probe_recurrent_training_v1(
     capability = torch.cuda.get_device_capability(receptance.device)
     if capability < (8, 0):
         return _unsupported("the BF16 training kernel requires sm80 or newer")
-    from ..nvidia.train_temp_cuda import recurrent_training_cuda_available
+    from ..nvidia.official_training_cuda import recurrent_training_cuda_available
 
     # Only the explicit ``factorized`` policy or the dense branch of
     # ``adaptive`` reaches this probe. Lazy compilation is therefore expected
@@ -206,7 +206,7 @@ def _run_factorized_recurrent(
     # Every public caller probes before execution.  That probe loads the
     # extension once; call the custom-autograd edge directly so each model
     # layer does not repeat runtime/toolchain discovery after certification.
-    from ..nvidia.train_temp_cuda import _ClampW
+    from ..nvidia.official_training_cuda import _ClampW
 
     return _run_masked_training(
         (receptance, decay, key, value, a, b),

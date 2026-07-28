@@ -1441,7 +1441,7 @@ relabelled as evidence for this candidate.
   manifest had incorrectly counted as byte-identical. The implementation was
   already correct, but the evidence label was not: `native_graph_runtime.py`
   binds the canonical `RWKV7Cache` instead of the old private cache, and
-  `train_temp_cuda.py` removes whole-model `forward` monkeypatching in favor of
+  `official_training_cuda.py` removes whole-model `forward` monkeypatching in favor of
   `training_runtime.py` direct dispatch.
 - Strengthened the machine-readable denominator and adaptation-rationale
   checks. Subsequent clean-boundary work brings the current manifest to **88
@@ -1739,7 +1739,7 @@ relabelled as evidence for this candidate.
   reached the model and exposed a second clean-boundary dtype mismatch: the
   historical BF16 training path invoked the decay projection module directly,
   while the clean HF model intentionally stores its public w0 bias in FP32.
-- The already-declared `train_temp_cuda.py` adapter now mirrors the clean
+- The already-declared `official_training_cuda.py` adapter now mirrors the clean
   contract without changing the model: it evaluates the low-rank projection
   without bias, adds w0 in FP32, and casts only the private raw-decay operand
   consumed by the BF16 CUDA kernel. The public FP32 parameter and gradient edge
@@ -2429,7 +2429,7 @@ relabelled as evidence for this candidate.
 - Renamed the first-party leaf modules to
   `recurrent/training_factorized.py` and `linear/training_flattened.py` so file,
   protocol and route names describe the actual mathematics. The upstream
-  `nvidia/train_temp_cuda.py` name remains private because it identifies the
+  `nvidia/official_training_cuda.py` name remains private because it identifies the
   pinned vendored implementation. Comments now distinguish the explicit
   factorized/adaptive request from production `auto`.
 - Built and deployed immutable candidate `08c2bf82a012`. HF wheel SHA256 is
@@ -2662,3 +2662,52 @@ relabelled as evidence for this candidate.
   289 expected TorchScript deprecation warnings; targeted Ruff and
   `git diff --check` pass. RTX 4080 strict train_temp confirmation is pending a
   rebuilt immutable wheel; the `8397dec0` wheel must not be promoted.
+
+### 2026-08-31 — 1.0 core and plugin boundary frozen
+
+- The canonical HF distribution is now structurally closed: `rwkv7_hf/`
+  contains exactly the six Python modules `__init__.py`,
+  `configuration_rwkv7.py`, `cache_rwkv7.py`, `ops_rwkv7.py`,
+  `modeling_rwkv7.py`, and `tokenization_rwkv7.py`, plus the chat-template
+  asset. CLI, conversion, manifest, and smoke utilities remain exclusively in
+  the sibling `rwkv7_hf_tools/` package. The duplicate source-checkout
+  conversion wrappers under `scripts/` were removed; `rwkv7-hf convert` is the
+  single conversion command.
+- The only optional-backend import boundary is frozen as
+  `rwkv7_kernels.execute_optional_v4`. The shipped
+  `KERNEL_PLUGIN_API.json` fixes API version 4, its five operation names, exact
+  envelope fields, canonical `[B,H,K,V]` cache layout, and fail-closed policy.
+  The HF model never imports an NVIDIA/private implementation module. A new
+  backend can therefore be installed or removed without replacing config,
+  cache, tokenizer, model classes, checkpoint keys, or HF outputs.
+- Kernel source naming is normalized around mathematical ownership. The
+  official RWKV-LM training modules are
+  `official_training_cuda.py`, `official_training_alignment.py`, and
+  `official_training_checkpoint.py`; their vendored sources live under
+  `nvidia/csrc/training/rwkv_lm/`. Historical `train_temp` function names inside
+  byte-provenance code remain only where they identify the upstream recipe and
+  are not import paths or public plugin names. The stable execution identity is
+  `native-nvidia-official-training-autograd-v2`.
+- `RELEASE_SOURCE_FREEZE.json` records SHA-256 for all 155 executable and
+  distribution-input files in both packages. The freeze test rejects any
+  addition, removal, or byte change. Altering the 1.0.0 source now requires an
+  explicit thaw, version/manifest change, and the full hardware matrix again;
+  documentation and validation evidence can continue to be appended without
+  silently changing the wheel inputs.
+- The complete local suite passes **470/470** with 409 expected TorchScript
+  deprecation warnings. The package-tree, migration, byte-identity, plugin
+  contract, source-freeze, HF roundtrip, cache, conversion, ecosystem, release,
+  and evidence tests all pass. A clean wheel install also passed a tiny cached
+  forward under Torch 2.13 and Transformers 5.15.
+- A pre-commit reproducibility build produced and audited both universal wheels
+  and source distributions. The audit verified 7 canonical HF files, 5 tool
+  files, 102 migrated NVIDIA files, all 153 historical-source dispositions,
+  16 capability families, API v4, the JSON contract, dependencies, RECORD, and
+  license metadata. These timestamped artifacts are build proof only. The
+  immutable validation pair will be rebuilt from the freeze commit with a fixed
+  `SOURCE_DATE_EPOCH`; its hashes replace every earlier candidate hash.
+- Per the user's final gate decision, V100 remains historical and is not
+  restarted. The deterministic frozen pair must next pass RTX 4080 and then RTX
+  4090, including sharded inference, FLA parity/speed, HF/PEFT/TRL training, and
+  the formal three-way 144-unit `lm_eval` matrix before GitHub, PyPI, or the six
+  Hub repositories are published.

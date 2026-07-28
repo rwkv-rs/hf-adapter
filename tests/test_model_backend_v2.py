@@ -182,9 +182,7 @@ def test_native_whole_model_operands_preserve_linear_subclass_forward(
     linear = importlib.import_module("rwkv7_kernels.nvidia.native_jit_linear")
     packing = importlib.import_module("rwkv7_kernels.nvidia.native_jit_packing")
     native_jit = importlib.import_module("rwkv7_kernels.nvidia.native_jit")
-    graph_runtime = importlib.import_module(
-        "rwkv7_kernels.nvidia.native_graph_runtime"
-    )
+    graph_runtime = importlib.import_module("rwkv7_kernels.nvidia.native_graph_runtime")
 
     class OffsetLinear(torch.nn.Linear):
         def forward(self, value):
@@ -619,7 +617,7 @@ def test_private_training_diagnostic_uses_direct_layer_loop_without_monkeypatch(
 ):
     _load_dense_backend(monkeypatch)
     runtime = importlib.import_module("rwkv7_kernels.nvidia.training_runtime")
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     monkeypatch.setattr(
         train_temp, "load_training_runtime_cuda_extensions", lambda: None
     )
@@ -691,7 +689,7 @@ def test_private_training_diagnostic_uses_direct_layer_loop_without_monkeypatch(
 
 def test_training_runtime_loader_compiles_only_accepted_leaf_set(monkeypatch):
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     calls = []
     monkeypatch.setattr(
         train_temp,
@@ -716,7 +714,7 @@ def test_recurrent_training_loader_uses_isolated_cuda_build_environment(monkeypa
     """A thin venv must expose base Ninja/NVCC and the active GPU arch."""
 
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     state = {"active": False, "built": False}
     calls = []
 
@@ -901,7 +899,7 @@ def test_train_temp_include_paths_merge_partial_overlay_and_pip_headers(
     tmp_path, monkeypatch
 ):
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     overlay = tmp_path / "cuda"
     overlay_include = overlay / "include"
     overlay_include.mkdir(parents=True)
@@ -926,7 +924,7 @@ def test_train_temp_decay_operand_privately_adds_fp32_public_bias(
     tiny_config, monkeypatch
 ):
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     attention = RWKV7ForCausalLM(tiny_config).model.layers[0].attn.bfloat16()
     projection = attention.w_lora.lora[2]
     projection.bias = torch.nn.Parameter(projection.bias.float())
@@ -956,7 +954,7 @@ def test_train_temp_decay_operand_privately_adds_fp32_public_bias(
 
 def test_recurrent_training_replay_matches_reference_full_gradient(monkeypatch):
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     torch.manual_seed(73)
     shape = (2, 3, 2, 4)
     recurrent_inputs = [(torch.randn(shape) * 0.1).requires_grad_() for _ in range(6)]
@@ -1062,7 +1060,7 @@ def test_recurrent_training_dense_hints_avoid_mask_scalar_sync(monkeypatch):
 
 
 def test_train_temp_mix6_backward_matches_canonical_token_mix():
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     torch.manual_seed(127)
     x = torch.randn(2, 5, 8, requires_grad=True)
     mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
@@ -1083,7 +1081,7 @@ def test_train_temp_mix6_backward_matches_canonical_token_mix():
 
 
 def test_train_temp_mix6_large_backward_calls_native_operator(monkeypatch):
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     torch.manual_seed(131)
     x = torch.randn(4, 8, 8).transpose(1, 2)
     mixes = [torch.randn(16)[::2] for _ in range(6)]
@@ -1120,7 +1118,7 @@ def test_train_temp_mix6_large_backward_calls_native_operator(monkeypatch):
 
 
 def test_train_temp_mix6_small_backward_replays_canonical_math(monkeypatch):
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     torch.manual_seed(133)
     x = torch.randn(1, 16, 8, requires_grad=True)
     mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
@@ -1154,7 +1152,7 @@ def test_train_temp_mix6_small_backward_replays_canonical_math(monkeypatch):
 
 
 def test_train_temp_mix6_double_backward_retains_canonical_graph(monkeypatch):
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     torch.manual_seed(137)
     x = torch.randn(2, 5, 8, requires_grad=True)
     mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
@@ -1205,7 +1203,8 @@ def test_train_temp_mix6_cuda_backward_has_fixed_reduction_order():
         / "rwkv7_kernels"
         / "nvidia"
         / "csrc"
-        / "train_temp"
+        / "training"
+        / "rwkv_lm"
         / "rwkv7_tmix_mix6_bf16_v5.cu"
     ).read_text()
     cpp_source = (
@@ -1214,7 +1213,8 @@ def test_train_temp_mix6_cuda_backward_has_fixed_reduction_order():
         / "rwkv7_kernels"
         / "nvidia"
         / "csrc"
-        / "train_temp"
+        / "training"
+        / "rwkv_lm"
         / "rwkv7_tmix_mix6_bf16_v5.cpp"
     ).read_text()
 
@@ -1231,7 +1231,9 @@ def test_train_temp_mix6_cuda_backward_has_fixed_reduction_order():
 
 
 def test_train_temp_clampw_uses_checked_tensor_device_and_current_stream():
-    root = ROOT / "kernels" / "rwkv7_kernels" / "nvidia" / "csrc" / "train_temp"
+    root = (
+        ROOT / "kernels" / "rwkv7_kernels" / "nvidia" / "csrc" / "training" / "rwkv_lm"
+    )
     cpp_source = (root / "rwkv7_clampw_v3.cpp").read_text()
     cuda_source = (root / "rwkv7_clampw_v3_for_h100.cu").read_text()
 

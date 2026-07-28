@@ -637,7 +637,7 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "hopper": GPUAdaptationRule(
         family="hopper",
         cards=("H100", "H200"),
-        status="TODO validation target",
+        status="not release-validated",
         default_stance="expected fast server path, but not tuned until H100 rows exist",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),

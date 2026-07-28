@@ -43,9 +43,7 @@ def changed_record(
 ) -> bytes:
     with zipfile.ZipFile(path) as archive:
         record_member = next(
-            name
-            for name in archive.namelist()
-            if name.endswith(".dist-info/RECORD")
+            name for name in archive.namelist() if name.endswith(".dist-info/RECORD")
         )
         rows = list(csv.reader(io.StringIO(archive.read(record_member).decode())))
     if field is None:
@@ -80,6 +78,14 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["public_protocol"] == {
         "status": "passed",
         "api_version": 4,
+        "contract_schema": "rwkv7-kernel-plugin-api-v1",
+        "operations": [
+            "training_program",
+            "model_forward",
+            "linear_training",
+            "mix6_training",
+            "recurrent",
+        ],
         "optional_backend_entrypoint": "execute_optional_v4",
     }
     assert report["migrated_files"] == 102
@@ -230,12 +236,15 @@ def test_kernel_wheel_audit_rejects_direct_url_dependency(tmp_path: Path):
 
 def test_kernel_wheel_audit_rejects_extra_dependency(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
-    metadata = _wheel_metadata(
-        distribution="rwkv7-kernels",
-        project_path=root / "kernels" / "pyproject.toml",
-        license_expression="MIT",
-        license_file="LICENSE",
-    ) + b"Requires-Dist: requests\n"
+    metadata = (
+        _wheel_metadata(
+            distribution="rwkv7-kernels",
+            project_path=root / "kernels" / "pyproject.toml",
+            license_expression="MIT",
+            license_file="LICENSE",
+        )
+        + b"Requires-Dist: requests\n"
+    )
     kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
     write_valid_kernel_wheel(kernel, metadata=metadata)
     with pytest.raises(ValueError, match="Requires-Dist contract differs"):
@@ -287,6 +296,24 @@ def test_kernel_wheel_audit_requires_public_optional_backend_entrypoint(tmp_path
         extra={"rwkv7_kernels/__init__.py": payload.encode()},
     )
     with pytest.raises(ValueError, match="exactly the API-v4 public surface"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_modified_plugin_contract(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    contract_path = root / "kernels/rwkv7_kernels/KERNEL_PLUGIN_API.json"
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    contract["public_cache_layout"] = "V,K"
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={
+            "rwkv7_kernels/KERNEL_PLUGIN_API.json": (
+                json.dumps(contract, indent=2) + "\n"
+            ).encode()
+        },
+    )
+    with pytest.raises(ValueError, match="contract JSON differs"):
         audit_kernel_wheel(kernel)
 
 

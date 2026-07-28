@@ -87,7 +87,7 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
         "native_jit_packing.py",
         "native_graph_runtime.py",
         "recurrent_state.py",
-        "train_temp_cuda.py",
+        "official_training_cuda.py",
         "triton_compat.py",
         "SELF_CHUNK_LICENSE",
     }
@@ -196,7 +196,7 @@ def test_nvidia_sources_do_not_reintroduce_model_config_or_cache_ownership():
                 assert not (node.module or "").startswith("rwkv7_hf")
 
     training_runtime = (NVIDIA / "training_runtime.py").read_text()
-    train_temp_runtime = (NVIDIA / "train_temp_cuda.py").read_text()
+    train_temp_runtime = (NVIDIA / "official_training_cuda.py").read_text()
     for source in (training_runtime, train_temp_runtime):
         assert ".forward =" not in source
         assert "types.MethodType" not in source

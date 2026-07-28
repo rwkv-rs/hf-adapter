@@ -231,7 +231,7 @@ def test_historical_whole_model_route_is_diagnostic_and_rejected(tmp_path, monke
     route = {
         "requested": "optimized",
         "selected": "optimized",
-        "implementation": "native-nvidia-train-temp-autograd-v2",
+        "implementation": "native-nvidia-official-training-autograd-v2",
         "reason": "historical diagnostic",
         "phase": "training",
     }
@@ -394,7 +394,7 @@ def test_finetune_validator_accepts_only_readable_model_with_clean_leaves(tmp_pa
     checks_path.write_text(json.dumps(checks) + "\n")
     trace_path = run / "kernel_route_trace.json"
     trace = json.loads(trace_path.read_text())
-    trace["actual_model_calls"] = {"native-nvidia-train-temp-autograd-v2": 1}
+    trace["actual_model_calls"] = {"native-nvidia-official-training-autograd-v2": 1}
     trace_path.write_text(json.dumps(trace) + "\n")
 
     rejected = validate_run(

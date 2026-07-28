@@ -342,7 +342,7 @@ def test_speed_route_gate_distinguishes_v100_training_fallback():
         "model": {
             "selected": "optimized",
             "phase": "training",
-            "implementation": "native-nvidia-train-temp-autograd-v2",
+            "implementation": "native-nvidia-official-training-autograd-v2",
         }
     }
     assert not routes_passed(report)

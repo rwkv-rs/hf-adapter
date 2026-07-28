@@ -55,6 +55,7 @@ HF_FORBIDDEN = {
     "smoke.py",
 }
 KERNEL_REQUIRED = {
+    "rwkv7_kernels/KERNEL_PLUGIN_API.json",
     "rwkv7_kernels/__init__.py",
     "rwkv7_kernels/_runtime_preflight.py",
     "rwkv7_kernels/backend.py",
@@ -68,6 +69,9 @@ KERNEL_REQUIRED = {
     "rwkv7_kernels/nvidia/graph_pool.py",
     "rwkv7_kernels/nvidia/prefill_graph_pool.py",
     "rwkv7_kernels/nvidia/prefill_graph_runtime.py",
+    "rwkv7_kernels/nvidia/official_training_alignment.py",
+    "rwkv7_kernels/nvidia/official_training_checkpoint.py",
+    "rwkv7_kernels/nvidia/official_training_cuda.py",
     "rwkv7_kernels/nvidia/training_math.py",
     "rwkv7_kernels/nvidia/training_runtime.py",
     "rwkv7_kernels/nvidia/csrc/training/rwkv7_tmix_mix6_shifted_bf16_v1.cpp",
@@ -93,10 +97,27 @@ KERNEL_FORBIDDEN = {
     "tokenization_rwkv7.py",
 }
 KERNEL_INIT = "rwkv7_kernels/__init__.py"
+KERNEL_CONTRACT = "rwkv7_kernels/KERNEL_PLUGIN_API.json"
 KERNEL_PROTOCOL = "rwkv7_kernels/protocol.py"
 KERNEL_BACKEND = "rwkv7_kernels/backend.py"
 HF_OPS = "rwkv7_hf/ops_rwkv7.py"
 KERNEL_API_VERSION = 4
+KERNEL_OPERATIONS = (
+    "training_program",
+    "model_forward",
+    "linear_training",
+    "mix6_training",
+    "recurrent",
+)
+KERNEL_ENVELOPE_FIELDS = (
+    "api_version",
+    "kind",
+    "supported",
+    "implementation",
+    "reason",
+    "result",
+    "phase",
+)
 MIGRATION_MANIFEST = "rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
 CAPABILITY_INVENTORY = "rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
 SOURCE_SCOPE = "rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
@@ -237,11 +258,15 @@ def _project_contract(
 
     optional = project.get("optional-dependencies", {})
     if not isinstance(optional, dict):
-        raise ValueError(f"project optional dependencies are malformed: {pyproject_path}")
+        raise ValueError(
+            f"project optional dependencies are malformed: {pyproject_path}"
+        )
     extras: list[str] = []
     for extra, values in optional.items():
-        if not isinstance(extra, str) or not isinstance(values, list) or not all(
-            isinstance(value, str) for value in values
+        if (
+            not isinstance(extra, str)
+            or not isinstance(values, list)
+            or not all(isinstance(value, str) for value in values)
         ):
             raise ValueError(
                 f"project optional dependencies are malformed: {pyproject_path}"
@@ -597,7 +622,9 @@ def audit_kernel_protocol(
 ) -> dict[str, Any]:
     """Bind the executable public protocol to the advertised API inventory."""
 
-    missing = sorted({KERNEL_INIT, KERNEL_PROTOCOL, KERNEL_BACKEND} - members)
+    missing = sorted(
+        {KERNEL_INIT, KERNEL_CONTRACT, KERNEL_PROTOCOL, KERNEL_BACKEND} - members
+    )
     if missing:
         raise ValueError(f"kernel wheel is missing public protocol files: {missing}")
 
@@ -612,6 +639,33 @@ def audit_kernel_protocol(
             "kernel protocol API version must be "
             f"{KERNEL_API_VERSION}; got {api_version!r}"
         )
+    operations = literal_assignment(
+        protocol_tree,
+        "RWKV7_OPTIONAL_OPERATIONS",
+        member=KERNEL_PROTOCOL,
+    )
+    if operations != KERNEL_OPERATIONS:
+        raise ValueError(
+            "kernel protocol operations differ from the frozen API-v4 contract"
+        )
+
+    contract = json.loads(archive.read(KERNEL_CONTRACT))
+    expected_contract = {
+        "schema": "rwkv7-kernel-plugin-api-v1",
+        "api_version": KERNEL_API_VERSION,
+        "entrypoint": "rwkv7_kernels.execute_optional_v4",
+        "operations": list(KERNEL_OPERATIONS),
+        "envelope_fields": list(KERNEL_ENVELOPE_FIELDS),
+        "unsupported_result": None,
+        "public_cache_layout": "B,H,K,V",
+        "failure_policy": {
+            "auto_negative_probe": "reference",
+            "optimized_negative_probe": "error",
+            "positive_execution_failure": "fail_closed",
+        },
+    }
+    if contract != expected_contract:
+        raise ValueError("kernel plugin contract JSON differs from frozen API v4")
 
     init_tree = module_tree(archive, KERNEL_INIT)
     public_name = "execute_optional_v4"
@@ -663,6 +717,8 @@ def audit_kernel_protocol(
     return {
         "status": "passed",
         "api_version": api_version,
+        "contract_schema": contract["schema"],
+        "operations": list(operations),
         "optional_backend_entrypoint": public_name,
     }
 

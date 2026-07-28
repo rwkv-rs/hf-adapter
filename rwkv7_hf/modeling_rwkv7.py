@@ -95,9 +95,14 @@ RWKV7_DECAY_BASE = math.exp(-0.5)
 RWKV7_REFERENCE_LINEAR_ROWS = 128
 
 
-_execution_context_capture: ContextVar[
-    list[RWKV7ExecutionContext | None] | None
-] = ContextVar("rwkv7_model_execution_context_capture", default=None)
+# ---------------------------------------------------------------------------
+# Narrow execution-context bridges for standard HF module boundaries
+# ---------------------------------------------------------------------------
+
+
+_execution_context_capture: ContextVar[list[RWKV7ExecutionContext | None] | None] = (
+    ContextVar("rwkv7_model_execution_context_capture", default=None)
+)
 
 
 @contextmanager
@@ -166,6 +171,11 @@ def _module_has_runtime_instrumentation(module: nn.Module) -> bool:
         ):
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Readable tensor primitives
+# ---------------------------------------------------------------------------
 
 
 def _linear_reference(
@@ -373,6 +383,11 @@ def _group_norm_reference(
         bias=norm.bias,
         eps=norm.eps,
     )
+
+
+# ---------------------------------------------------------------------------
+# RWKV-7 low-rank, token-mix, channel-mix, and block structure
+# ---------------------------------------------------------------------------
 
 
 class RWKV7LowRank(nn.Module):
@@ -764,6 +779,11 @@ class RWKV7Block(nn.Module):
             ffn_shift,
             v_first,
         )
+
+
+# ---------------------------------------------------------------------------
+# Hugging Face model and causal-LM contracts
+# ---------------------------------------------------------------------------
 
 
 class RWKV7PreTrainedModel(PreTrainedModel):
@@ -1391,9 +1411,7 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
             and getattr(decoder_forward, "__func__", None) is RWKV7Model.forward
         )
         whole_model_candidate = bool(
-            standard_decoder
-            and not self.training
-            and not torch.is_grad_enabled()
+            standard_decoder and not self.training and not torch.is_grad_enabled()
         )
         whole_model_eligible = bool(
             whole_model_candidate

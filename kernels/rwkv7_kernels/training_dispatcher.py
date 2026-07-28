@@ -202,7 +202,7 @@ def probe_training_program_v1(
             "reason": "the BF16 training program requires sm80 or newer",
         }
 
-    from .nvidia.train_temp_cuda import recurrent_training_cuda_available
+    from .nvidia.official_training_cuda import recurrent_training_cuda_available
 
     if not recurrent_training_cuda_available(build=True):
         return {

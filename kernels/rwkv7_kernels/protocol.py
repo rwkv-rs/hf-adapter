@@ -13,12 +13,22 @@ from typing import Any, Literal, TypedDict
 
 RWKV7_KERNEL_API_VERSION = 4
 
+# Public API-v4 operation names are frozen for the 1.0 line.  New backends
+# implement one or more of these operations behind ``execute_optional_v4``;
+# model repositories never import an implementation module directly.
+RWKV7_OPTIONAL_OPERATIONS = (
+    "training_program",
+    "model_forward",
+    "linear_training",
+    "mix6_training",
+    "recurrent",
+)
+
 
 def _require_exact_type(name: str, value: Any, expected: type) -> None:
     if type(value) is not expected:
         raise TypeError(
-            f"{name} must be exactly {expected.__name__}; "
-            f"got {type(value).__name__}"
+            f"{name} must be exactly {expected.__name__}; got {type(value).__name__}"
         )
 
 
@@ -111,13 +121,7 @@ def optional_kernel_result(
     """Build the single stable execution envelope exposed by API v4."""
 
     _require_exact_type("kind", kind, str)
-    if kind not in (
-        "training_program",
-        "model_forward",
-        "linear_training",
-        "mix6_training",
-        "recurrent",
-    ):
+    if kind not in RWKV7_OPTIONAL_OPERATIONS:
         raise ValueError(f"unknown optional-kernel kind {kind!r}")
     _require_exact_type("supported", supported, bool)
     _require_exact_type("implementation", implementation, str)
@@ -173,13 +177,7 @@ def validate_optional_kernel_result(
             "execute_optional_v4() kind mismatch: "
             f"expected {expected_kind!r}, got {kind!r}"
         )
-    if kind not in (
-        "training_program",
-        "model_forward",
-        "linear_training",
-        "mix6_training",
-        "recurrent",
-    ):
+    if kind not in RWKV7_OPTIONAL_OPERATIONS:
         raise ValueError(f"execute_optional_v4() returned unknown kind {kind!r}")
     if not value["supported"] and value["result"] is not None:
         raise ValueError("unsupported optional-kernel results must be None")
@@ -255,6 +253,7 @@ def validate_model_result(value: Any, *, expected_kind: str) -> ModelForwardResu
 
 __all__ = [
     "RWKV7_KERNEL_API_VERSION",
+    "RWKV7_OPTIONAL_OPERATIONS",
     "KernelSupport",
     "ModelForwardResult",
     "ModelForwardSupport",

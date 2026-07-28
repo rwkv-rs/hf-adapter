@@ -30,6 +30,12 @@ quantization implementations live in the separately installable
 configuration, cache, or model ownership ambiguous; the readable PyTorch path
 remains available without it.
 
+The only plug-in entrypoint is the frozen API-v4
+`rwkv7_kernels.execute_optional_v4` contract. Its operation names, exact result
+envelope, canonical cache layout, and fallback/fail-closed behavior are defined
+in [`docs/KERNEL_PLUGIN_API.md`](docs/KERNEL_PLUGIN_API.md) and shipped in the
+kernel wheel as `KERNEL_PLUGIN_API.json`.
+
 ## Implemented in the candidate
 
 - [x] readable Transformers config, cache, model, causal-LM, tokenizer, and

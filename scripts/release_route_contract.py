@@ -48,7 +48,7 @@ DIAGNOSTIC_OPTIMIZED_TRAINING_LEAF_ROUTES = frozenset(
         "native-nvidia-rwkv7-mix6-training-v1",
     }
 )
-HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE = "native-nvidia-train-temp-autograd-v2"
+HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE = "native-nvidia-official-training-autograd-v2"
 DIAGNOSTIC_TRAINING_ROUTES = frozenset(
     {
         ADAPTIVE_TRAINING_PROGRAM_ROUTE,

@@ -31,7 +31,7 @@ MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
 ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION = (
     "native-nvidia-rwkv7-adaptive-training-program-v1"
 )
-HISTORICAL_WHOLE_MODEL_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
+HISTORICAL_WHOLE_MODEL_IMPLEMENTATION = "native-nvidia-official-training-autograd-v2"
 
 
 def _output_dir_from_argv() -> Path | None:

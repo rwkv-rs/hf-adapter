@@ -30,7 +30,7 @@ clean-boundary adaptation rather than a false byte-identity claim:
   Triton and Torch paths instead of a rounded decimal constant;
 - `kernel_policy.py` scopes the validated small-row W8A16 output-head route to
   RTX 4080 while retaining the separate RTX 4090 threshold;
-- `train_temp_cuda.py` retains the migrated leaf forward/backward autograd
+- `official_training_cuda.py` retains the migrated leaf forward/backward autograd
   operators, while `training_runtime.py` preserves the old whole-model
   composition only as a private historical diagnostic. Neither is a formal HF
   training route and no model `forward` method is replaced;
@@ -217,7 +217,7 @@ Requested environment selectors are never accepted as proof. Result bundles
 must contain the actual inference routes and, for training, the
 `torch-reference-model-v1` boundary with no optional training-leaf execution.
 The historical
-`native-nvidia-train-temp-autograd-v2` route is admissible only in explicitly
+`native-nvidia-official-training-autograd-v2` route is admissible only in explicitly
 labelled archived diagnostics and is rejected by release provenance. Every
 formal result remains bound to code, model, environment, and wheel hashes.
 Private adaptive leaf diagnostics remain historical/experimental evidence and

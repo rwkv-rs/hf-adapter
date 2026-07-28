@@ -85,6 +85,11 @@ kernel 包顶层只导出
 `execute_optional_v4`，历史 v1 helper 仅保留为内部实现。它不会向
 `RWKV7Config` 加入硬件字段，也不会改变 `RWKV7Cache` 的公开布局。W8/W4/A8W8、BN/TN、
 BitsAndBytes、Marlin 和 TorchAO 仍由 `rwkv7_kernels.quantization` 显式选择。
+API-v4 的操作名和返回 envelope 在 1.0 系列中冻结；其他后端只通过这一个入口
+插拔，不能替换 HF 模型或公开 cache。完整约定见
+[`docs/KERNEL_PLUGIN_API.md`](docs/KERNEL_PLUGIN_API.md)。
+1.0.0 的全部发行输入由 [`RELEASE_SOURCE_FREEZE.json`](RELEASE_SOURCE_FREEZE.json)
+逐文件 SHA-256 锁定；要修改就必须建立新版本冻结清单并重新跑完整硬件矩阵。
 
 ## 转换官方 .pth
 

@@ -27,6 +27,7 @@ include = ["rwkv7_kernels*"]
 
 [tool.setuptools.package-data]
 rwkv7_kernels = [
+  "KERNEL_PLUGIN_API.json",
   "nvidia/CAPABILITY_INVENTORY.json",
   "nvidia/MIGRATION_MANIFEST.json",
   "nvidia/RECURRENT_SOURCE_SCOPE.json",

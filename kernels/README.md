@@ -39,6 +39,12 @@ Every call returns the same outer envelope:
 api_version, kind, supported, implementation, reason, result, phase
 ```
 
+The wheel ships the machine-readable `KERNEL_PLUGIN_API.json`; it is the
+authoritative API-v4 operation, envelope, cache-layout, and failure-policy
+contract. The complete 1.0.0 distribution inputs are SHA-256 locked by the
+repository's `RELEASE_SOURCE_FREEZE.json`. New implementations plug into this
+contract instead of adding imports to the HF model package.
+
 An unsupported negative capability decision is side-effect-free and always has `result=None`. Backend selection,
 capability checks, environment parsing, probes, execution, implementation
 errors, and trace accounting are owned by this wheel. Its internal dispatchers

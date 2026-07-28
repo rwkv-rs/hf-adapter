@@ -201,7 +201,7 @@ def test_release_issue_is_rendered_from_complete_speed_and_eval_matrices():
 def test_release_issue_rejects_historical_whole_model_training_route():
     provenance, speeds, lm_evals = fixtures()
     for row in provenance["validation"]["devices"].values():
-        row["actual_routes"]["training"] = ["native-nvidia-train-temp-autograd-v2"]
+        row["actual_routes"]["training"] = ["native-nvidia-official-training-autograd-v2"]
     with pytest.raises(ValueError, match="not publishable.*historical whole-model"):
         MODULE.validate_inputs(
             provenance=provenance,

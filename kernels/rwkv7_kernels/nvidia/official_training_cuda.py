@@ -1,10 +1,14 @@
-"""Opt-in RWKV-LM train_temp CUDA training backend for HF RWKV-7 models.
+"""Opt-in official RWKV-LM CUDA training operators for HF RWKV-7 models.
 
-The kernels under ``csrc/train_temp`` are vendored from RWKV-LM at the exact
+The kernels under ``csrc/training/rwkv_lm`` are vendored from RWKV-LM at the exact
 commit recorded in that directory. This module keeps them lazy and isolated:
 reference inference, reference training and production ``auto`` do not compile
 or route through these ops. Only an explicit factorized/adaptive training leaf
 may request the recurrent extension.
+
+Private symbols containing ``train_temp`` intentionally retain the upstream
+RWKV-LM recipe/extension namespace for source and operator provenance. The
+stable first-party module name and plug-in boundary use ``official_training``.
 """
 
 from __future__ import annotations
@@ -106,7 +110,7 @@ def _train_temp_checkpoint(function, *args):
 
 
 def _source_root() -> Path:
-    return Path(__file__).resolve().parent / "csrc" / "train_temp"
+    return Path(__file__).resolve().parent / "csrc" / "training" / "rwkv_lm"
 
 
 def _cuda_include_paths(

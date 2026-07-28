@@ -97,6 +97,12 @@ certificate and fails at the model boundary outside its domain.
 The kernel package top level exports only `__version__`,
 `RWKV7_KERNEL_API_VERSION`, and `execute_optional_v4`; historical v1 helpers
 remain internal.
+The API-v4 operation set and envelope are frozen for the 1.0 line. See the
+[kernel plugin contract](docs/KERNEL_PLUGIN_API.md). Alternative backends plug
+into that one entrypoint without replacing the HF model or canonical cache.
+The exact 1.0.0 distribution inputs are SHA-256 locked by
+[`RELEASE_SOURCE_FREEZE.json`](RELEASE_SOURCE_FREEZE.json); changing them
+requires a new versioned freeze and the complete hardware matrix.
 It never adds a hardware field to `RWKV7Config` or a private layout to
 `RWKV7Cache`. Native W8/W4/A8W8, BN/TN, BitsAndBytes, Marlin and TorchAO remain
 explicit quantization choices through `rwkv7_kernels.quantization`.

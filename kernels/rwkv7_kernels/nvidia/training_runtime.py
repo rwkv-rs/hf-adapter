@@ -1,4 +1,4 @@
-"""Private whole-model training diagnostic for vendored train_temp ops.
+"""Private whole-model training diagnostic for vendored official RWKV-LM training ops.
 
 This module is retained as migration evidence and a focused kernel-development
 diagnostic.  It is deliberately not imported by the public model-forward
@@ -14,11 +14,11 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from . import train_temp_cuda as train_temp
+from . import official_training_cuda as official_training
 from .training_math import channel_mix, module_linear
 
 
-IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
+IMPLEMENTATION = "native-nvidia-official-training-autograd-v2"
 
 
 def causal_cross_entropy(
@@ -54,7 +54,7 @@ def _run_training_diagnostic(owner: Any, request: dict[str, Any]) -> dict[str, A
     # Only Mix6 and ClampW are used by this accepted route. Experimental fused
     # gates and the optional L2Wrap loss remain separately loadable diagnostics
     # and must not inflate ordinary HF training cold start.
-    train_temp.load_training_runtime_cuda_extensions()
+    official_training.load_training_runtime_cuda_extensions()
     input_ids = request.get("input_ids")
     inputs_embeds = request.get("inputs_embeds")
     if input_ids is not None:
@@ -69,7 +69,7 @@ def _run_training_diagnostic(owner: Any, request: dict[str, Any]) -> dict[str, A
     def run_layer(layer, hidden, first_value):
         residual = layer.pre_norm(hidden) if hasattr(layer, "pre_norm") else hidden
         attention_input = layer.attn_norm(residual)
-        attention_output, first_value = train_temp._train_temp_attention_forward(
+        attention_output, first_value = official_training._train_temp_attention_forward(
             layer.attn,
             attention_input,
             first_value,
@@ -85,7 +85,7 @@ def _run_training_diagnostic(owner: Any, request: dict[str, Any]) -> dict[str, A
     checkpointing = bool(request.get("gradient_checkpointing"))
     for layer in owner.model.layers:
         if checkpointing:
-            hidden_states, v_first = train_temp._train_temp_checkpoint(
+            hidden_states, v_first = official_training._train_temp_checkpoint(
                 lambda hidden, first, current=layer: run_layer(current, hidden, first),
                 hidden_states,
                 v_first,

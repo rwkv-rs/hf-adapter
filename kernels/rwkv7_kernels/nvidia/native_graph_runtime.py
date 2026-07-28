@@ -257,7 +257,7 @@ class NativeGraphRunner:
     def __init__(self, owner: Any, packs, batch_size: int) -> None:
         if not native_graph_available():
             raise RuntimeError(
-                "native_graph requires CUDA and rwkv7_hf.native_jit graph blocks"
+                "native_graph requires CUDA and rwkv7_kernels.nvidia.native_jit graph blocks"
             )
         self.owner_ref = weakref.ref(owner)
         self.packs = list(packs)

@@ -276,9 +276,7 @@ def test_v4_facade_rejects_coercible_legacy_probe_fields(monkeypatch):
         },
     )
     with pytest.raises(TypeError, match="supported"):
-        backend.execute_optional_v4(
-            "recurrent", *cpu_inputs(), training=False
-        )
+        backend.execute_optional_v4("recurrent", *cpu_inputs(), training=False)
 
 
 def test_v4_forged_legacy_program_fails_closed_before_linear(monkeypatch):
@@ -1036,7 +1034,7 @@ def test_training_program_preflight_rejects_frozen_or_reentrant_input(monkeypatc
 def test_training_program_preloads_both_native_dependencies(monkeypatch):
     dispatcher = importlib.import_module("rwkv7_kernels.training_dispatcher")
     monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "adaptive")
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     calls = []
     monkeypatch.setattr(torch.Tensor, "is_cuda", property(lambda _self: True))
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)

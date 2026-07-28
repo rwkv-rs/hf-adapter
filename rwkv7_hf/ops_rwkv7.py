@@ -28,6 +28,11 @@ _kernel_import_attempted = False
 _kernel_import_error: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Readable source-of-truth recurrence
+# ---------------------------------------------------------------------------
+
+
 def _is_checkpoint_control_flow(exc: Exception) -> bool:
     """Return whether *exc* belongs to PyTorch checkpoint control flow.
 
@@ -155,6 +160,11 @@ def rwkv7_recurrent_reference(
         torch.cat([sample[0] for sample in samples], dim=0),
         torch.cat([sample[1] for sample in samples], dim=0),
     )
+
+
+# ---------------------------------------------------------------------------
+# Frozen API-v4 plug-in boundary
+# ---------------------------------------------------------------------------
 
 
 def _backend_mode(value: str | None) -> str:
@@ -313,8 +323,7 @@ def _kernel_envelope(kind: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
     missing = required - set(value)
     if missing:
         raise TypeError(
-            "execute_optional_v4() result is missing: "
-            + ", ".join(sorted(missing))
+            "execute_optional_v4() result is missing: " + ", ".join(sorted(missing))
         )
     extra = set(value) - required
     if extra:
@@ -389,10 +398,7 @@ def _optional_result(
     force_reference = bool(
         context is not None
         and context.training
-        and (
-            context.force_reference_program
-            or context.autograd_leaf_eligible is False
-        )
+        and (context.force_reference_program or context.autograd_leaf_eligible is False)
     )
     reference = _reference_implementation(kind)
     route_key = _route_key(kind)
@@ -409,7 +415,9 @@ def _optional_result(
         _record_route(route_key, **route)
 
     if requested == "reference":
-        record("reference", reference, "reference backend was explicitly requested", phase)
+        record(
+            "reference", reference, "reference backend was explicitly requested", phase
+        )
         return None
     if force_reference:
         reason = (
@@ -467,6 +475,11 @@ def _optional_result(
         actual_phase,
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Model-owned execution facts
+# ---------------------------------------------------------------------------
 
 
 def resolve_execution_context(
@@ -558,8 +571,7 @@ def resolve_execution_context(
                 program_id = None
                 token_aligned = None
                 reason = (
-                    "optional training preflight failed: "
-                    f"{type(exc).__name__}: {exc}"
+                    f"optional training preflight failed: {type(exc).__name__}: {exc}"
                 )
             else:
                 implementation = envelope["implementation"]
@@ -585,6 +597,11 @@ def resolve_execution_context(
     )
     _last_execution_context.set(context)
     return context
+
+
+# ---------------------------------------------------------------------------
+# Inference-only whole-model plug-in
+# ---------------------------------------------------------------------------
 
 
 def maybe_model_forward(
@@ -728,7 +745,9 @@ def maybe_model_forward(
                 or loss.device != output_tensor.device
                 or not loss.dtype.is_floating_point
             ):
-                raise TypeError("optional model loss must be one floating scalar tensor")
+                raise TypeError(
+                    "optional model loss must be one floating scalar tensor"
+                )
         history = value.get("hidden_states")
         history_requested = bool(request.get("output_hidden_states"))
         if history_requested and not isinstance(history, (tuple, list)):
@@ -741,9 +760,7 @@ def maybe_model_forward(
             )
             if isinstance(expected_layers, int) and len(history) != expected_layers + 1:
                 raise ValueError("optional model hidden-state history length mismatch")
-            hidden_size = getattr(
-                getattr(owner, "config", None), "hidden_size", None
-            )
+            hidden_size = getattr(getattr(owner, "config", None), "hidden_size", None)
             history_shape = (
                 (batch_size, sequence_length, hidden_size)
                 if all(
@@ -756,10 +773,7 @@ def maybe_model_forward(
                 not isinstance(item, torch.Tensor)
                 or item.device != output_tensor.device
                 or item.dtype != output_tensor.dtype
-                or (
-                    history_shape is not None
-                    and tuple(item.shape) != history_shape
-                )
+                or (history_shape is not None and tuple(item.shape) != history_shape)
                 for item in history
             ):
                 raise TypeError(
@@ -793,6 +807,11 @@ def maybe_model_forward(
         fail_closed_on_error=True,
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Training tensor-leaf plug-ins
+# ---------------------------------------------------------------------------
 
 
 def _training_facts(context: RWKV7ExecutionContext | None) -> dict[str, Any]:
@@ -866,6 +885,7 @@ def maybe_mix6_training(
     if len(mixes) != 6:
         raise ValueError("RWKV7 Mix6 requires exactly six parameter tensors")
     context = execution_context
+
     def validate(result: Any) -> tuple[torch.Tensor, ...]:
         if not isinstance(result, tuple) or len(result) != 6:
             raise TypeError("optional mix6_training result must contain six tensors")
@@ -891,6 +911,11 @@ def maybe_mix6_training(
         facts=_training_facts(context),
         validate=validate,
     )
+
+
+# ---------------------------------------------------------------------------
+# Public recurrence selector
+# ---------------------------------------------------------------------------
 
 
 def rwkv7_recurrent(

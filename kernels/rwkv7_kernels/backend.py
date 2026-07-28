@@ -21,6 +21,7 @@ from .model_dispatcher import model_forward_v1, probe_model_forward_v1
 from .protocol import (
     OptionalKernelEnvelope,
     OptionalKernelKind,
+    RWKV7_OPTIONAL_OPERATIONS,
     optional_kernel_result,
     validate_support_result,
 )
@@ -38,13 +39,6 @@ _REFERENCE_PROGRAM_ID = "torch-reference-training-program-v1"
 _MAX_PROGRAM_CERTIFICATES = 4096
 _PROGRAM_CERTIFICATES: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _PROGRAM_CERTIFICATE_LOCK = threading.Lock()
-_KINDS = (
-    "training_program",
-    "model_forward",
-    "linear_training",
-    "mix6_training",
-    "recurrent",
-)
 _FACT_NAMES = frozenset(
     {
         "fully_active",
@@ -69,9 +63,7 @@ def _envelope(
         kind=kind,
         supported=normalized["supported"],
         implementation=(
-            normalized["implementation"]
-            if implementation is None
-            else implementation
+            normalized["implementation"] if implementation is None else implementation
         ),
         reason=normalized["reason"],
         result=result,
@@ -217,11 +209,7 @@ def _leaf_request(
                 phase="training",
             )
 
-    hints = {
-        name: facts[name]
-        for name in accepted_facts
-        if name in facts
-    }
+    hints = {name: facts[name] for name in accepted_facts if name in facts}
     for name in accepted_facts:
         if name in kwargs:
             hints[name] = kwargs.pop(name)
@@ -233,9 +221,7 @@ def _leaf_request(
     return hints, None
 
 
-def _execute_training_program(
-    *args: Any, **kwargs: Any
-) -> OptionalKernelEnvelope:
+def _execute_training_program(*args: Any, **kwargs: Any) -> OptionalKernelEnvelope:
     hidden_states = args[0] if args else kwargs.get("hidden_states")
     attention_mask = args[1] if len(args) > 1 else kwargs.get("attention_mask")
     sequence = None
@@ -243,9 +229,7 @@ def _execute_training_program(
         sequence = int(attention_mask.shape[1])
     elif isinstance(hidden_states, torch.Tensor) and hidden_states.ndim == 3:
         sequence = int(hidden_states.shape[1])
-    token_aligned = bool(
-        sequence is not None and sequence % TOKEN_CHUNK_LENGTH == 0
-    )
+    token_aligned = bool(sequence is not None and sequence % TOKEN_CHUNK_LENGTH == 0)
 
     requested_training = kwargs.pop("training", True)
     if requested_training is not True:
@@ -416,8 +400,8 @@ def execute_optional_v4(
 
     if type(kind) is not str:
         raise TypeError(f"kind must be exactly str; got {type(kind).__name__}")
-    if kind not in _KINDS:
-        choices = ", ".join(_KINDS)
+    if kind not in RWKV7_OPTIONAL_OPERATIONS:
+        choices = ", ".join(RWKV7_OPTIONAL_OPERATIONS)
         raise ValueError(f"kind must be one of {choices}; got {kind!r}")
     if kind == "training_program":
         return _execute_training_program(*args, **kwargs)
