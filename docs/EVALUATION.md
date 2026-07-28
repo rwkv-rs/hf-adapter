@@ -192,9 +192,11 @@ leaves. `matrix` and `factorized` remain isolated recurrent diagnostics.
 
 Formal training evidence must record the model route, all three actual leaf
 implementations, the program identity, complete optimizer-gradient vector,
-checkpoint replay, and process-wide route counts. An unsupported request uses
-one complete reference program in `auto`; a certified leaf decline or strict
-optimized request outside the domain must fail closed.
+checkpoint replay, and process-wide route counts. Outside the atomic fast
+domain, explicitly adaptive leaves must name their exact matrix/reference
+fallback; an unprovable autograd boundary must name the complete reference
+program. A certified leaf decline or strict optimized request outside the
+domain fails closed.
 
 The factorized rows require a CUDA development toolkit matching
 `torch.version.cuda`. The kernel wheel installs Ninja, but it deliberately does

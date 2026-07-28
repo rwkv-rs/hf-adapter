@@ -88,10 +88,11 @@ Training keeps the same readable HF layer loop. Setting
 `RWKV7_TRAINING_KERNEL_IMPL=adaptive` asks API v4 for one atomic certificate;
 the currently certified dense B4/T128 program uses the factorized recurrent,
 bounded FFN-linear, and explicit-shift Mix6 leaves. Every leaf revalidates its
-concrete tensors against that certificate. Requests outside the certified
-domain take one complete reference program in `auto`, while strict
-`RWKV7_BACKEND=optimized` fails at the model boundary instead of mixing an
-uncertified partial route.
+concrete tensors against that certificate. Other explicitly adaptive requests
+use the individually gated exact-matrix/reference fallbacks; PEFT requests
+whose frozen embeddings cannot prove an autograd input select one complete
+reference program. Strict `RWKV7_BACKEND=optimized` still requires the atomic
+certificate and fails at the model boundary outside its domain.
 
 The kernel package top level exports only `__version__`,
 `RWKV7_KERNEL_API_VERSION`, and `execute_optional_v4`; historical v1 helpers

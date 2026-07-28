@@ -174,9 +174,11 @@ boundary, not a deletion of history.
 - The adaptive API-v4 preflight may certify recurrent, linear, and Mix6 as one
   immutable training program; leaves still validate their concrete tensors.
 - The current fast domain is dense B4/T128 with zero initial state, an active
-  mask, aligned tokens, autograd inputs, and head size 64. All other requests
-  use one coherent reference program in `auto`; strict optimized fails before
-  the layer loop and never mixes certified and uncertified leaves.
+  mask, aligned tokens, autograd inputs, and head size 64. Other explicitly
+  adaptive requests use individually gated exact-matrix/reference leaves, and
+  an unprovable autograd boundary uses one coherent reference program. Strict
+  optimized requires the certificate and fails before the layer loop outside
+  that domain.
 - Package-free Hub loading remains valid when the wheel is absent.
 
 ## One-shot acceptance

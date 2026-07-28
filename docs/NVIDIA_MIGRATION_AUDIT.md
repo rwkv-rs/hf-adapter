@@ -63,8 +63,9 @@ Mix6 tensor leaves independently. The preserved implementations are
 atomically for the dense B4/T128 fast domain through
 `native-nvidia-rwkv7-adaptive-training-program-v1`. The readable
 `torch-reference-model-v1` layer loop remains the only model implementation;
-unsupported shapes and masks keep one complete reference program rather than
-mixing uncertified leaves.
+other explicitly adaptive shapes retain the separately validated exact-matrix
+or reference leaves, while an unprovable model-level autograd boundary selects
+one complete reference program.
 
 All adapted rows retain the historical **source** Git blob identity, the new
 destination SHA256 and a machine-checked rationale; adapted destination bytes

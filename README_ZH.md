@@ -75,8 +75,10 @@ cache 后再用 reference 重算。
 `RWKV7_TRAINING_KERNEL_IMPL=adaptive` 后，API v4 会先签发一个原子 program
 证书；当前通过门禁的稠密 B4/T128 路线组合 factorized recurrent、受限行数的
 FFN linear 和显式 shift 的 Mix6，每个叶子仍会用实际张量再次核验证书。超出已认证
-范围的请求在 `auto` 下完整走 reference；严格 `RWKV7_BACKEND=optimized` 会在模型
-边界报错，不会拼接未经认证的部分加速路线。
+范围但显式选择 adaptive 的请求使用各叶子独立通过门禁的 exact-matrix/reference
+回退；冻结 embedding、无法在模型入口证明 autograd 输入的 PEFT 请求会完整走
+reference。严格 `RWKV7_BACKEND=optimized` 仍要求原子证书，超出范围会在模型边界
+报错。
 
 kernel 包顶层只导出
 `__version__`、`RWKV7_KERNEL_API_VERSION` 和

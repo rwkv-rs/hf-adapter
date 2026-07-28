@@ -92,14 +92,16 @@ program identity to the immutable execution context. The factorized
 recurrent, flattened-linear, and Mix6 leaves revalidate their concrete tensors
 against that identity; an unexpected decline is a fail-closed error.
 
-Outside the certified domain, `auto` runs one complete readable reference
-program and strict `optimized` fails at the model boundary. Explicit `matrix`
-and `factorized` selectors remain operator diagnostics rather than production
-HF program claims. The factorized CUDA and Mix6 leaves compile lazily, so Ninja
-and a local `nvcc` toolkit matching `torch.version.cuda` are required. Ordinary
-large projections use one flattened GEMM; 4x FFN projections use a bounded
-320-row grouping that passed the complete-gradient gate without giving up the
-large-batch launch reduction.
+Outside the certified domain, an explicitly adaptive request uses separately
+gated exact-matrix/reference leaves. A model boundary that cannot prove
+autograd eligibility selects one complete reference program. Strict
+`optimized` requires the atomic certificate and fails outside its domain;
+explicit `matrix` and `factorized` selectors remain operator diagnostics. The
+factorized CUDA and Mix6 leaves compile lazily, so Ninja and a local `nvcc`
+toolkit matching `torch.version.cuda` are required. Ordinary large projections
+use one flattened GEMM; 4x FFN projections use a bounded 320-row grouping that
+passed the complete-gradient gate without giving up the large-batch launch
+reduction.
 
 For whole-model inference, `model_forward` receives the caller's canonical
 cache directly so native decode can bind it zero-copy to persistent CUDA Graph

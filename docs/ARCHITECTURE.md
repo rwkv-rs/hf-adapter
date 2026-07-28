@@ -97,9 +97,12 @@ preflights the model-owned shape, mask, initial-state, autograd, alignment, and
 head-dimension facts once and issues an immutable program certificate only for
 the certified dense B4/T128 domain. The recurrent, linear, and Mix6 leaves then
 revalidate their concrete tensors against that certificate. Any unexpected
-decline fails the certified call closed. Requests outside that domain execute
-one complete reference program in `auto`; strict `optimized` fails at the
-model boundary instead of entering a partially accelerated layer loop.
+decline fails the certified call closed. Other explicitly adaptive requests
+use the separately gated exact-matrix/reference leaves. If the model boundary
+cannot prove autograd eligibility (for example, frozen PEFT embeddings), the
+immutable context selects one complete reference program. Strict `optimized`
+requires the atomic certificate and fails at the model boundary outside its
+domain.
 
 The wheel may internally use Triton/CUDA recurrence, fused decode, DPLR or
 self-chunk prefill, projection/norm/FFN/LoRA fusion, CUDA Graph/state pools,

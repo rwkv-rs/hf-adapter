@@ -122,9 +122,10 @@ and the ordinary autograd graph visible to the framework.
 The optional package can certify recurrent, flattened-linear, and Mix6 as one
 adaptive program for the dense B4/T128 domain. This changes only tensor leaves:
 PEFT/TRL still see the readable model loop, hooks, adapters, checkpoint replay,
-and ordinary PyTorch autograd. Batches, masks, or sequence lengths outside the
-certificate use one complete reference program in `auto`. Formal SFT/DPO/GRPO
-must record process-wide leaf counts as well as the final route because DPO and
-GRPO may legitimately combine optimized differentiable passes with reference
-no-grad or sampled-shape passes. Finite loss/gradients, changed parameters, and
-adapter save/reload remain mandatory.
+and ordinary PyTorch autograd. Shapes outside the certificate use the
+individually gated exact-matrix/reference leaves; frozen embeddings that make
+autograd eligibility unprovable at model entry select one complete reference
+program. Formal SFT/DPO/GRPO must record process-wide leaf counts as well as the
+final route because DPO and GRPO may legitimately combine optimized
+differentiable passes with reference no-grad or sampled-shape passes. Finite
+loss/gradients, changed parameters, and adapter save/reload remain mandatory.
