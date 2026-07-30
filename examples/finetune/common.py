@@ -19,6 +19,19 @@ TORCH_DTYPES = {
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
 }
+READABLE_MODEL_IMPLEMENTATION = "torch-reference-model-v1"
+MATRIX_RECURRENT_IMPLEMENTATION = (
+    "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+)
+FACTORIZED_RECURRENT_IMPLEMENTATION = (
+    "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+)
+FLATTENED_LINEAR_IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
+MIX6_IMPLEMENTATION = "native-nvidia-rwkv7-mix6-training-v1"
+ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION = (
+    "native-nvidia-rwkv7-adaptive-training-program-v1"
+)
+HISTORICAL_WHOLE_MODEL_IMPLEMENTATION = "native-nvidia-official-training-autograd-v2"
 
 
 def _output_dir_from_argv() -> Path | None:
@@ -91,27 +104,43 @@ def reconcile_kernel_trace_checks(output: Path) -> None:
         return
     checks = json.loads(checks_path.read_text(encoding="utf-8"))
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    model = trace.get("actual_model_calls", {})
     recurrent = trace.get("actual_recurrent_calls", {})
     linear = trace.get("actual_linear_calls", {})
-    if not isinstance(recurrent, dict) or not isinstance(linear, dict):
+    mix6 = trace.get("actual_mix6_calls", {})
+    if not all(isinstance(value, dict) for value in (model, recurrent, linear, mix6)):
         raise RuntimeError("kernel route trace contains invalid call counters")
 
-    matrix = "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
-    factorized = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
-    flattened = "torch-cuda-rwkv7-flattened-linear-training-v1"
-    checks["matrix_recurrent_training"] = bool(
-        checks.get("matrix_recurrent_training") or int(recurrent.get(matrix, 0))
+    checks["matrix_recurrent_leaf"] = bool(
+        checks.get("matrix_recurrent_leaf")
+        or int(recurrent.get(MATRIX_RECURRENT_IMPLEMENTATION, 0))
     )
-    checks["factorized_recurrent_training"] = bool(
-        checks.get("factorized_recurrent_training")
-        or int(recurrent.get(factorized, 0))
+    checks["factorized_recurrent_leaf"] = bool(
+        checks.get("factorized_recurrent_leaf")
+        or int(recurrent.get(FACTORIZED_RECURRENT_IMPLEMENTATION, 0))
     )
-    checks["flattened_linear_training"] = bool(
-        checks.get("flattened_linear_training") or int(linear.get(flattened, 0))
+    checks["flattened_linear_leaf"] = bool(
+        checks.get("flattened_linear_leaf")
+        or int(linear.get(FLATTENED_LINEAR_IMPLEMENTATION, 0))
+    )
+    checks["mix6_leaf"] = bool(
+        checks.get("mix6_leaf") or int(mix6.get(MIX6_IMPLEMENTATION, 0))
+    )
+    checks["historical_whole_model_diagnostic"] = bool(
+        checks.get("historical_whole_model_diagnostic")
+        or int(model.get(HISTORICAL_WHOLE_MODEL_IMPLEMENTATION, 0))
+    )
+    checks["clean_leaf_training"] = bool(
+        checks.get("readable_model_loop")
+        and checks.get("factorized_recurrent_leaf")
+        and checks.get("flattened_linear_leaf")
+        and checks.get("mix6_leaf")
     )
     checks["kernel_trace_schema"] = trace.get("schema")
+    checks["kernel_trace_actual_model_calls"] = model
     checks["kernel_trace_actual_recurrent_calls"] = recurrent
     checks["kernel_trace_actual_linear_calls"] = linear
+    checks["kernel_trace_actual_mix6_calls"] = mix6
     checks_path.write_text(
         json.dumps(checks, indent=2) + "\n",
         encoding="utf-8",
@@ -567,6 +596,8 @@ class ReproCallback(TrainerCallback):
                 ("model", "get_last_model_route"),
                 ("recurrent", "get_last_recurrent_route"),
                 ("linear", "get_last_linear_route"),
+                ("mix6", "get_last_mix6_route"),
+                ("program", "get_last_training_program_route"),
             ):
                 getter = getattr(ops_module, name, None)
                 if callable(getter):
@@ -576,14 +607,18 @@ class ReproCallback(TrainerCallback):
         try:
             from rwkv7_hf.ops_rwkv7 import (
                 get_last_linear_route,
+                get_last_mix6_route,
                 get_last_model_route,
                 get_last_recurrent_route,
+                get_last_training_program_route,
             )
 
             for boundary, getter in (
                 ("model", get_last_model_route),
                 ("recurrent", get_last_recurrent_route),
                 ("linear", get_last_linear_route),
+                ("mix6", get_last_mix6_route),
+                ("program", get_last_training_program_route),
             ):
                 route = getter()
                 if boundary not in routes and isinstance(route, dict):
@@ -622,69 +657,81 @@ class ReproCallback(TrainerCallback):
                     break
 
     def write_status(self, global_step: int):
-        adapter_fallback = any(
+        historical_whole_model_diagnostic = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "model"
+            and route.get("phase") == "training"
+            and route.get("implementation") == HISTORICAL_WHOLE_MODEL_IMPLEMENTATION
+            for route in self.backend_routes
+        )
+        readable_model_loop = any(
             route.get("event") == "pre_optimizer_step"
             and route.get("boundary") == "model"
             and route.get("selected") == "reference"
             and route.get("phase") == "training"
-            and route.get("implementation") == "torch-reference-model-v1"
-            and (
-                "adapter" in str(route.get("reason", "")).lower()
-                or "causal-lm boundary"
-                in str(route.get("reason", "")).lower()
-            )
+            and route.get("implementation") == READABLE_MODEL_IMPLEMENTATION
             for route in self.backend_routes
         )
-        native_training = any(
-            route.get("event") == "pre_optimizer_step"
-            and route.get("boundary") == "model"
-            and route.get("selected") == "optimized"
-            and route.get("phase") == "training"
-            and route.get("implementation") == "native-nvidia-train-temp-autograd-v2"
-            for route in self.backend_routes
-        )
-        model_reference_training = any(
-            route.get("event") == "pre_optimizer_step"
-            and route.get("boundary") == "model"
-            and route.get("selected") == "reference"
-            and route.get("phase") == "training"
-            and route.get("implementation") == "torch-reference-model-v1"
-            for route in self.backend_routes
-        )
-        matrix_recurrent_training = any(
+        matrix_recurrent_leaf = any(
             route.get("event") == "pre_optimizer_step"
             and route.get("boundary") == "recurrent"
             and route.get("selected") == "optimized"
-            and route.get("implementation")
-            == "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+            and route.get("implementation") == MATRIX_RECURRENT_IMPLEMENTATION
             for route in self.backend_routes
         )
-        factorized_recurrent_training = any(
+        factorized_recurrent_leaf = any(
             route.get("event") == "pre_optimizer_step"
             and route.get("boundary") == "recurrent"
             and route.get("selected") == "optimized"
-            and route.get("implementation")
-            == "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+            and route.get("implementation") == FACTORIZED_RECURRENT_IMPLEMENTATION
             for route in self.backend_routes
         )
-        flattened_linear_training = any(
+        flattened_linear_leaf = any(
             route.get("event") == "pre_optimizer_step"
             and route.get("boundary") == "linear"
             and route.get("selected") == "optimized"
-            and route.get("implementation")
-            == "torch-cuda-rwkv7-flattened-linear-training-v1"
+            and route.get("implementation") == FLATTENED_LINEAR_IMPLEMENTATION
+            for route in self.backend_routes
+        )
+        mix6_leaf = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "mix6"
+            and route.get("selected") == "optimized"
+            and route.get("implementation") == MIX6_IMPLEMENTATION
+            for route in self.backend_routes
+        )
+        adaptive_fast_program = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "program"
+            and route.get("selected") == "optimized"
+            and route.get("implementation") == ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION
+            for route in self.backend_routes
+        )
+        adaptive_program_fallback = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("boundary") == "program"
+            and route.get("selected") == "reference"
+            and route.get("implementation") == ADAPTIVE_TRAINING_PROGRAM_IMPLEMENTATION
             for route in self.backend_routes
         )
         status = {
             "finite_loss": self.saw_finite_loss,
             "nonzero_gradient": self.saw_nonzero_gradient,
             "global_step": int(global_step),
-            "adapter_reference_fallback": adapter_fallback,
-            "native_training": native_training,
-            "model_reference_training": model_reference_training,
-            "matrix_recurrent_training": matrix_recurrent_training,
-            "factorized_recurrent_training": factorized_recurrent_training,
-            "flattened_linear_training": flattened_linear_training,
+            "readable_model_loop": readable_model_loop,
+            "matrix_recurrent_leaf": matrix_recurrent_leaf,
+            "factorized_recurrent_leaf": factorized_recurrent_leaf,
+            "flattened_linear_leaf": flattened_linear_leaf,
+            "mix6_leaf": mix6_leaf,
+            "adaptive_fast_program": adaptive_fast_program,
+            "adaptive_program_fallback": adaptive_program_fallback,
+            "clean_leaf_training": bool(
+                readable_model_loop
+                and factorized_recurrent_leaf
+                and flattened_linear_leaf
+                and mix6_leaf
+            ),
+            "historical_whole_model_diagnostic": (historical_whole_model_diagnostic),
         }
         (self.output / "backend_routes.json").write_text(
             json.dumps(self.backend_routes, indent=2) + "\n", encoding="utf-8"
@@ -692,7 +739,9 @@ class ReproCallback(TrainerCallback):
         (self.output / "training_checks.json").write_text(
             json.dumps(status, indent=2) + "\n"
         )
-        if not all((self.saw_finite_loss, self.saw_nonzero_gradient)):
+        if historical_whole_model_diagnostic or not all(
+            (self.saw_finite_loss, self.saw_nonzero_gradient)
+        ):
             raise RuntimeError(f"training checks failed: {status}")
 
 

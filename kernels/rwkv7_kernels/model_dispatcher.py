@@ -1,10 +1,15 @@
-"""Whole-model capability dispatch for the optional kernel package.
+"""Inference-only whole-model dispatch for the optional kernel package.
 
 This module is the only public bridge from a clean Hugging Face model object to
 performance implementations.  Backend implementations live below
 ``rwkv7_kernels.model`` and may inspect the documented RWKV-7 module structure,
 but may not import or replace ``rwkv7_hf.modeling_rwkv7``.
+
+Training intentionally does not cross this boundary.  The readable Hugging
+Face layer loop owns training structure and dispatches only stateless tensor
+leaves (recurrent, linear, and Mix6) through their dedicated protocols.
 """
+
 from __future__ import annotations
 
 import os
@@ -18,6 +23,7 @@ from .protocol import (
     validate_model_request,
 )
 from .trace import record_model
+
 _NOT_MIGRATED = (
     "whole-model backend-v2 is not available for this shape; "
     "the adapter will use its readable reference layer loop"
@@ -27,7 +33,12 @@ _MODEL_IMPLS = ("auto", "dense", "native")
 _DENSE_IMPLEMENTATION = "native-torchscript-dense-sequential-v2"
 _NATIVE_PREFILL_IMPLEMENTATION = "native-nvidia-prefill-v2"
 _NATIVE_DECODE_IMPLEMENTATION = "native-nvidia-fused-decode-v2"
-_NATIVE_TRAINING_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
+_CLEAN_TRAINING_IMPLEMENTATION = "hf-readable-training-with-kernel-leaves-v1"
+_WHOLE_MODEL_TRAINING_REASON = (
+    "whole-model dispatch is inference-only; training stays in the readable HF "
+    "layer loop and dispatches recurrent, linear, and Mix6 tensor leaves "
+    "independently"
+)
 _AUTO_NATIVE_GPU = "NVIDIA GeForce RTX 4080"
 _AUTO_NATIVE_MODEL_SHAPES = {
     (768, 12),
@@ -36,6 +47,34 @@ _AUTO_NATIVE_MODEL_SHAPES = {
 }
 _AUTO_NATIVE_MAX_BATCH = 8
 _AUTO_NATIVE_MAX_PREFILL_TOKENS = 2048
+
+
+def _dense_model_linears(owner: Any) -> tuple[Any, ...]:
+    """Return every projection consumed as a raw weight by dense-v2."""
+
+    projections: list[Any] = []
+    for layer in owner.layers:
+        attention = layer.attn
+        projections.extend(
+            (
+                attention.r_proj,
+                attention.k_proj,
+                attention.v_proj,
+                attention.o_proj,
+                attention.w_lora.lora[0],
+                attention.w_lora.lora[2],
+                attention.a_lora.lora[0],
+                attention.a_lora.lora[2],
+                attention.g_lora.lora[0],
+                attention.g_lora.lora[2],
+                layer.ffn.key,
+                layer.ffn.value,
+            )
+        )
+        value_lora = getattr(attention, "v_lora", None)
+        if value_lora is not None:
+            projections.extend((value_lora.lora[0], value_lora.lora[2]))
+    return tuple(projections)
 
 
 def _phase(request: dict[str, Any]) -> str:
@@ -107,6 +146,27 @@ def _probe_dense(owner: Any, request: dict[str, Any]):
             reason="owner does not expose the clean RWKV7 base-model structure",
             phase=_phase(request),
         )
+    from .nvidia.native_jit_linear import dense_linear_module
+
+    try:
+        projections = _dense_model_linears(owner)
+    except (AttributeError, IndexError, TypeError) as exc:
+        return support_result(
+            supported=False,
+            implementation=_DENSE_IMPLEMENTATION,
+            reason=f"dense-v2 cannot inspect the clean projection tree: {exc}",
+            phase=_phase(request),
+        )
+    if not all(dense_linear_module(module) for module in projections):
+        return support_result(
+            supported=False,
+            implementation=_DENSE_IMPLEMENTATION,
+            reason=(
+                "dense-v2 raw-weight packing cannot preserve a custom linear "
+                "forward; the readable model must execute this request"
+            ),
+            phase=_phase(request),
+        )
     return support_result(
         supported=True,
         implementation=_DENSE_IMPLEMENTATION,
@@ -129,6 +189,15 @@ def _unsupported_native(request: dict[str, Any], reason: str):
     )
 
 
+def _unsupported_whole_model_training():
+    return support_result(
+        supported=False,
+        implementation=_CLEAN_TRAINING_IMPLEMENTATION,
+        reason=_WHOLE_MODEL_TRAINING_REASON,
+        phase="training",
+    )
+
+
 def _effective_attention_mask(
     request: dict[str, Any], input_ids: torch.Tensor
 ) -> torch.Tensor:
@@ -145,13 +214,11 @@ def _effective_attention_mask(
         raise ValueError("native attention_mask must be rank 1 or 2")
     if mask.ndim == 1:
         mask = mask.unsqueeze(0)
-    if int(mask.shape[0]) not in (1, batch) or int(mask.shape[1]) < sequence:
+    if int(mask.shape[0]) != batch or int(mask.shape[1]) < sequence:
         raise ValueError(
-            "native attention_mask must broadcast to the input batch and cover "
-            "the current sequence"
+            "native attention_mask must match the input batch and cover the "
+            "current sequence"
         )
-    if int(mask.shape[0]) == 1 and batch != 1:
-        mask = mask.expand(batch, -1)
     return mask[:, -sequence:].to(device=input_ids.device, dtype=torch.bool)
 
 
@@ -162,12 +229,8 @@ def _probe_native(owner: Any, request: dict[str, Any]):
         return _unsupported_native(
             request, "native prefill requires the causal-LM boundary"
         )
-    if bool(request["training"]):
-        return _probe_native_training(owner, request)
-    if bool(request.get("grad_enabled", False)):
-        return _unsupported_native(
-            request, "native inference requires torch.no_grad or inference_mode"
-        )
+    if _phase(request) == "training":
+        return _unsupported_whole_model_training()
     if request.get("labels") is not None:
         return _unsupported_native(request, "native prefill does not accept labels")
     if request.get("inputs_embeds") is not None:
@@ -207,9 +270,7 @@ def _probe_native(owner: Any, request: dict[str, Any]):
         try:
             _effective_attention_mask(request, input_ids)
         except ValueError as exc:
-            return _unsupported_native(
-                request, str(exc)
-            )
+            return _unsupported_native(request, str(exc))
     cache = request.get("past_key_values")
     if cache is None or not hasattr(cache, "get_seq_length"):
         return _unsupported_native(
@@ -262,14 +323,15 @@ def _probe_auto_native(owner: Any, request: dict[str, Any]):
     passed the formal inference and lm_eval gates.
     """
 
+    if _phase(request) == "training" or bool(request.get("grad_enabled", False)):
+        return _unsupported_whole_model_training()
+
     support = _probe_native(owner, request)
     if not support["supported"]:
         return support
     phase = str(support["phase"])
     if phase == "training" or bool(request.get("grad_enabled", False)):
-        return _unsupported_native(
-            request, "production auto keeps training on the reference autograd path"
-        )
+        return _unsupported_whole_model_training()
     input_ids = request.get("input_ids")
     if not isinstance(input_ids, torch.Tensor):
         return _unsupported_native(request, "production auto requires input_ids")
@@ -316,103 +378,6 @@ def _probe_auto_native(owner: Any, request: dict[str, Any]):
         implementation=str(support["implementation"]),
         reason="validated RTX 4080 FP16 inference envelope selected by production auto",
         phase=phase,
-    )
-
-
-def _unsupported_training(reason: str):
-    return support_result(
-        supported=False,
-        implementation=_NATIVE_TRAINING_IMPLEMENTATION,
-        reason=reason,
-        phase="training",
-    )
-
-
-def _probe_native_training(owner: Any, request: dict[str, Any]):
-    if not bool(request.get("grad_enabled")):
-        return _unsupported_training("native training requires autograd to be enabled")
-    if bool(request.get("use_cache")):
-        return _unsupported_training("native training is a dense no-cache path")
-    if bool(request.get("output_hidden_states")):
-        return _unsupported_training(
-            "native training hidden-state history is not enabled"
-        )
-    if bool(request.get("output_attentions")):
-        return _unsupported_training(
-            "RWKV7 does not expose Transformer attention matrices"
-        )
-    input_ids = request.get("input_ids")
-    inputs_embeds = request.get("inputs_embeds")
-    if (input_ids is None) == (inputs_embeds is None):
-        return _unsupported_training(
-            "native training requires exactly one of input_ids or inputs_embeds"
-        )
-    value = inputs_embeds if inputs_embeds is not None else input_ids
-    if not isinstance(value, torch.Tensor) or value.ndim not in (2, 3):
-        return _unsupported_training("native training input shape is invalid")
-    if not hasattr(owner, "model") or not hasattr(owner.model, "layers"):
-        return _unsupported_training(
-            "owner does not expose the clean RWKV7 causal-LM structure"
-        )
-    if any(
-        not (
-            isinstance(layer.ffn.key, torch.nn.Linear)
-            and type(layer.ffn.key.weight) is torch.nn.Parameter
-        )
-        or not (
-            isinstance(layer.ffn.value, torch.nn.Linear)
-            and type(layer.ffn.value.weight) is torch.nn.Parameter
-        )
-        for layer in owner.model.layers
-    ):
-        return _unsupported_training(
-            "native train_temp bypasses wrapped FFN modules; adapters use the "
-            "reference autograd path"
-        )
-    if value.device.type != "cuda":
-        return _unsupported_training("native training requires CUDA tensors")
-    tokens = int(value.shape[1])
-    if tokens <= 0 or tokens % 16:
-        return _unsupported_training(
-            "native training sequence length must be divisible by 16"
-        )
-    if owner.model.embeddings.weight.dtype != torch.bfloat16:
-        return _unsupported_training("native training requires a BF16 checkpoint")
-    if inputs_embeds is not None and inputs_embeds.dtype != torch.bfloat16:
-        return _unsupported_training("native training inputs_embeds must be BF16")
-    if int(owner.config.head_dim) != 64:
-        return _unsupported_training("native training requires head_dim=64")
-    mask = request.get("attention_mask")
-    if mask is not None and not bool(mask.to(dtype=torch.bool).all().detach().cpu()):
-        return _unsupported_training("native training does not accept padded batches")
-    labels = request.get("labels")
-    if labels is not None:
-        if not isinstance(labels, torch.Tensor) or labels.dtype != torch.long:
-            return _unsupported_training("native training labels must be int64")
-        if labels.device != value.device:
-            return _unsupported_training(
-                "native training labels and inputs must share a device"
-            )
-        if tuple(labels.shape) != tuple(value.shape[:2]):
-            return _unsupported_training(
-                "native training labels must match the input batch and sequence"
-            )
-        invalid = (labels < -100) | ((labels < 0) & (labels != -100))
-        if bool(invalid.any().detach().cpu()):
-            return _unsupported_training(
-                "native training labels must be token ids or -100"
-            )
-    from .nvidia.train_temp_cuda import train_temp_cuda_available
-
-    if not train_temp_cuda_available(build=False):
-        return _unsupported_training(
-            "native train_temp CUDA runtime is unavailable on this device"
-        )
-    return support_result(
-        supported=True,
-        implementation=_NATIVE_TRAINING_IMPLEMENTATION,
-        reason="migrated train_temp autograd implementation selected",
-        phase="training",
     )
 
 
@@ -506,9 +471,9 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
                 state_vk[layer_index][batch_index : batch_index + 1].copy_(
                     row_state[layer_index].float()
                 )
-                attention_shift[layer_index][
-                    batch_index : batch_index + 1
-                ].copy_(row_attention[layer_index])
+                attention_shift[layer_index][batch_index : batch_index + 1].copy_(
+                    row_attention[layer_index]
+                )
                 ffn_shift[layer_index][batch_index : batch_index + 1].copy_(
                     row_ffn[layer_index]
                 )
@@ -633,7 +598,8 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
         logits = owner.model.embeddings.weight.new_zeros(
             batch, 1, int(owner.lm_head.out_features)
         )
-        cache.seen_tokens += 1
+        if bool(request["use_cache"]):
+            cache.seen_tokens += 1
         return {
             "output_kind": "causal_lm",
             "logits": logits,
@@ -646,9 +612,7 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
 
     compact = int(active.numel()) != batch
     work_state = (
-        [value.index_select(0, active) for value in state_vk]
-        if compact
-        else state_vk
+        [value.index_select(0, active) for value in state_vk] if compact else state_vk
     )
     work_attention = (
         [value.index_select(0, active) for value in attention_shift]
@@ -656,9 +620,7 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
         else attention_shift
     )
     work_ffn = (
-        [value.index_select(0, active) for value in ffn_shift]
-        if compact
-        else ffn_shift
+        [value.index_select(0, active) for value in ffn_shift] if compact else ffn_shift
     )
     active_ids = input_ids.index_select(0, active) if compact else input_ids
     token = F.embedding(active_ids[:, 0], owner.model.embeddings.weight)
@@ -687,15 +649,11 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
     token = owner.model.norm(token)
     active_logits = owner.lm_head(token).unsqueeze(1)
     if compact:
-        logits = active_logits.new_zeros(
-            batch, 1, int(active_logits.shape[-1])
-        )
+        logits = active_logits.new_zeros(batch, 1, int(active_logits.shape[-1]))
         logits.index_copy_(0, active, active_logits)
         for layer_idx in range(len(packs)):
             state_vk[layer_idx].index_copy_(0, active, work_state[layer_idx])
-            attention_shift[layer_idx].index_copy_(
-                0, active, work_attention[layer_idx]
-            )
+            attention_shift[layer_idx].index_copy_(0, active, work_attention[layer_idx])
             ffn_shift[layer_idx].index_copy_(0, active, work_ffn[layer_idx])
     else:
         logits = active_logits
@@ -729,9 +687,11 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
 
 
 def probe_model_forward_v1(owner: Any, request: dict[str, Any]):
-    """Return whether a migrated whole-model implementation accepts a call."""
+    """Return whether an inference-only whole-model implementation accepts a call."""
 
     validate_model_request(request)
+    if _phase(request) == "training":
+        return _unsupported_whole_model_training()
     requested = _requested_implementation()
     if requested == "dense":
         return _probe_dense(owner, request)
@@ -743,12 +703,14 @@ def probe_model_forward_v1(owner: Any, request: dict[str, Any]):
 def model_forward_v1(owner: Any, request: dict[str, Any]):
     """Execute a supported whole-model request.
 
-    Calling this after a negative probe is a protocol error.  Concrete phase
-    dispatch is added here only after decode, prefill, cache and training
-    implementations all satisfy the frozen backend-v2 acceptance matrix.
+    Calling this after a negative probe is a protocol error. Training is never
+    executed here: the readable HF layer loop owns it and uses the dedicated
+    tensor-leaf protocols.
     """
 
     validate_model_request(request)
+    if _phase(request) == "training":
+        raise RuntimeError(_WHOLE_MODEL_TRAINING_REASON)
 
     def traced(result: dict[str, Any]) -> dict[str, Any]:
         record_model(
@@ -766,10 +728,6 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
         )
         if not support["supported"]:
             raise RuntimeError(support["reason"])
-        if bool(request["training"]):
-            from .nvidia.training_runtime import run_training
-
-            return traced(run_training(owner, request))
         cache = request["past_key_values"]
         if int(cache.get_seq_length()) > 0:
             return traced(_run_native_decode(owner, request))

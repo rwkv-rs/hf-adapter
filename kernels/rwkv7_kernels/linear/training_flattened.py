@@ -1,12 +1,17 @@
-"""Flattened CUDA linear leaf for optional RWKV-7 training.
+"""Shape-stable CUDA linear leaf for optional RWKV-7 training.
 
 The readable Hugging Face model deliberately uses a fixed 128-row projection
 shape so results do not change when an evaluation framework regroups samples.
 That execution rule is valuable for the reference line but leaves large
-training matrices split into many small GEMMs.  This optional leaf flattens
-``[batch, time, channels]`` once and lets PyTorch dispatch a single cuBLAS
-linear operation.  PyTorch continues to own autograd, parameters, adapters,
-and optimizer state; the kernel package owns only this stateless operation.
+training matrices split into many small GEMMs.  This optional leaf normally
+flattens ``[batch, time, channels]`` once. Four-times-wide FFN projections use
+bounded row groups instead: a single 512-row BF16 GEMM changes the optimizer
+gradient outside the accepted full-model envelope on Ada, while a 320-row
+ceiling retains both numerical parity and most of the launch reduction. The
+ceiling is expressed as five ordinary 64-row GEMM tiles and applies to the
+matrix row count rather than to a device name, batch size, or sequence length.
+PyTorch continues to own autograd, parameters, adapters, and optimizer state;
+the kernel package owns only this stateless operation.
 """
 
 from __future__ import annotations
@@ -19,6 +24,17 @@ import torch.nn.functional as F
 
 IMPLEMENTATION = "torch-cuda-rwkv7-flattened-linear-training-v1"
 _MIN_FLATTENED_ROWS = 128
+_GEMM_ROW_TILE = 64
+_STABLE_FFN_ROWS_PER_GEMM = 5 * _GEMM_ROW_TILE
+
+
+def _is_four_times_wide_projection(weight: torch.Tensor) -> bool:
+    """Return whether *weight* is one of RWKV's 4x FFN projections."""
+
+    output_features, input_features = map(int, weight.shape)
+    narrow = min(output_features, input_features)
+    wide = max(output_features, input_features)
+    return narrow > 0 and wide == 4 * narrow
 
 
 def _unsupported(reason: str) -> dict[str, Any]:
@@ -78,8 +94,43 @@ def probe_linear_training_v1(
     return {
         "supported": True,
         "implementation": IMPLEMENTATION,
-        "reason": "flattened CUDA training projection is supported by PyTorch cuBLAS",
+        "reason": (
+            "shape-stable CUDA training projection is supported by PyTorch cuBLAS"
+        ),
     }
+
+
+def flattened_linear(
+    value: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+) -> torch.Tensor:
+    """Apply one flattened or numerically bounded stateless CUDA projection."""
+
+    batch, tokens, channels = value.shape
+    if _is_four_times_wide_projection(weight):
+        batch_outputs = []
+        for batch_start in range(0, batch, _STABLE_FFN_ROWS_PER_GEMM):
+            batch_group = value[
+                batch_start : batch_start + _STABLE_FFN_ROWS_PER_GEMM
+            ]
+            group_batch = int(batch_group.shape[0])
+            tokens_per_gemm = max(1, _STABLE_FFN_ROWS_PER_GEMM // group_batch)
+            token_outputs = [
+                F.linear(
+                    batch_group[
+                        :, token_start : token_start + tokens_per_gemm
+                    ].contiguous(),
+                    weight,
+                    bias,
+                )
+                for token_start in range(0, tokens, tokens_per_gemm)
+            ]
+            batch_outputs.append(torch.cat(token_outputs, dim=1))
+        return torch.cat(batch_outputs, dim=0)
+
+    projected = F.linear(value.reshape(batch * tokens, channels), weight, bias)
+    return projected.reshape(batch, tokens, int(weight.shape[0]))
 
 
 def linear_training_v1(
@@ -101,9 +152,12 @@ def linear_training_v1(
     )
     if not support["supported"]:
         raise RuntimeError(str(support["reason"]))
-    batch, tokens, channels = value.shape
-    projected = F.linear(value.reshape(batch * tokens, channels), weight, bias)
-    return projected.reshape(batch, tokens, int(weight.shape[0]))
+    return flattened_linear(value, weight, bias)
 
 
-__all__ = ["IMPLEMENTATION", "linear_training_v1", "probe_linear_training_v1"]
+__all__ = [
+    "IMPLEMENTATION",
+    "flattened_linear",
+    "linear_training_v1",
+    "probe_linear_training_v1",
+]

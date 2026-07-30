@@ -57,11 +57,18 @@ def test_v1_model_card_keeps_reference_self_contained_and_kernel_optional():
         "code-sha",
         "v1.0.0",
     )
+    normalized = " ".join(card.split())
     assert 'revision = "v1.0.0"' in card
     assert '"rwkv7-kernels==1.0.0"' in card
     assert '"rwkv7-hf[kernels]==1.0.0"' in card
     assert "does **not** require `rwkv7-hf`" in card
     assert "does not replace the model/config/cache classes" in card
+    assert "https://github.com/rwkv-rs/hf-adapter" in card
+    assert "123123213weqw/hf-adapter" not in card
+    assert "one complete readable reference program" in normalized
+    assert "isolated diagnostics only" in normalized
+    assert "not certified HF training routes" in normalized
+    assert "may accelerate" not in card
 
 
 def test_version_specific_release_script_names_are_removed():

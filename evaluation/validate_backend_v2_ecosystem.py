@@ -1,32 +1,49 @@
 #!/usr/bin/env python3
-"""Exercise backend-v2 through standard HF, Accelerate, PEFT, and TRL APIs.
+"""Exercise RWKV-7 through HF, Accelerate, PEFT, and TRL.
 
-The plain BF16 training stages must execute the native train-temp route. LoRA
-stages deliberately require the clean PyTorch fallback because adapter-wrapped
-Linear modules must never be bypassed by packed native operands.
-
-For SM70, ``--training-mode reference-fallback --training-dtype fp16`` records
-the hardware limitation explicitly and requires ordinary HF training to remain
-fully functional. It is not reported as native optimized training.
+Training keeps the readable ``modeling_rwkv7.py`` program while the formal
+adaptive lane replaces only certified tensor boundaries. Unsupported shapes
+use the same clean PyTorch operations without changing the framework contract.
 """
 
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import gc
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 from typing import Any, Callable
 
 import torch
 
 from common import environment, git_revision, model_fingerprint, sha256_file
+from training_metrics import adaptive_fast_domain_expected
 
 
-NATIVE_TRAINING = "native-nvidia-train-temp-autograd-v2"
 REFERENCE_MODEL = "torch-reference-model-v1"
+MATRIX_RECURRENT = "torch-cuda-rwkv7-batched-matrix-recurrent-training-v1"
+FACTORIZED_RECURRENT = "native-nvidia-rwkv7-factorized-recurrent-training-v1"
+FLATTENED_LINEAR = "torch-cuda-rwkv7-flattened-linear-training-v1"
+MIX6 = "native-nvidia-rwkv7-mix6-training-v1"
+PROGRAM = "native-nvidia-rwkv7-adaptive-training-program-v1"
+
+
+def canonical_training_mode(value: str) -> str:
+    aliases = {
+        "adaptive": "adaptive",
+        "native": "adaptive",
+        "reference": "reference",
+        "reference-fallback": "reference",
+        "auto": "reference",
+    }
+    try:
+        return aliases[value]
+    except KeyError as exc:  # pragma: no cover - argparse validates the CLI
+        raise ValueError(f"unknown training mode: {value}") from exc
 
 
 def arguments() -> argparse.Namespace:
@@ -36,8 +53,14 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--training-mode",
-        choices=("native", "reference-fallback"),
-        default="native",
+        choices=("adaptive", "reference", "native", "reference-fallback"),
+        default="adaptive",
+        help=(
+            "adaptive validates the formal optional-kernel training program "
+            "with shape-local reference fallback; reference forces the clean "
+            "PyTorch baseline. native/reference-fallback are deprecated "
+            "aliases."
+        ),
     )
     parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--code-sha")
@@ -46,47 +69,171 @@ def arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def backend_environment() -> None:
-    # ``auto`` is required at the HF boundary so unsupported adapter-wrapped
-    # training falls back. The package selector stays explicit until the full
-    # release gate promotes production model auto.
+def inference_backend_environment() -> None:
+    os.environ["RWKV7_BACKEND"] = "optimized"
+    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native"
+    os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
+
+
+def base_model_backend_environment() -> None:
+    """Select the fail-closed base-model path without weakening native LM."""
+
     os.environ["RWKV7_BACKEND"] = "auto"
     os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native"
     os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
 
 
-def last_route() -> dict[str, Any] | None:
-    from rwkv7_hf.ops_rwkv7 import get_last_model_route
+def training_backend_environment(training_mode: str) -> None:
+    training_mode = canonical_training_mode(training_mode)
+    os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
+    if training_mode == "adaptive":
+        os.environ["RWKV7_BACKEND"] = "auto"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "adaptive"
+    else:
+        os.environ["RWKV7_BACKEND"] = "auto"
+        os.environ["RWKV7_TRAINING_KERNEL_IMPL"] = "auto"
 
-    return get_last_model_route()
+
+def _model_route_getter(model) -> Callable[[], dict[str, Any] | None] | None:
+    """Resolve the route accessor owned by the model's modeling module.
+
+    Transformers 4.x loads ``trust_remote_code`` checkpoints into a dynamic
+    package.  Its sibling ``ops_rwkv7`` module therefore owns different
+    ContextVars from the installed ``rwkv7_hf`` package.  Resolve through the
+    actual model class and the imported ``maybe_model_forward`` function so
+    normal installed models, package-free dynamic packages, and the direct
+    sibling fallback all read the route written by their own forward pass.
+    """
+
+    pending = [model]
+    seen: set[int] = set()
+    while pending:
+        candidate = pending.pop(0)
+        if candidate is None or id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+
+        modeling_module = sys.modules.get(type(candidate).__module__)
+        maybe_forward = getattr(modeling_module, "maybe_model_forward", None)
+        ops_module = sys.modules.get(getattr(maybe_forward, "__module__", ""))
+        getter = getattr(ops_module, "get_last_model_route", None)
+        if callable(getter):
+            return getter
+
+        get_base_model = getattr(candidate, "get_base_model", None)
+        if callable(get_base_model):
+            try:
+                pending.append(get_base_model())
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        wrapped = getattr(candidate, "module", None)
+        if wrapped is not None and wrapped is not candidate:
+            pending.append(wrapped)
+        base_model = getattr(candidate, "base_model", None)
+        if base_model is not None and base_model is not candidate:
+            pending.append(base_model)
+    return None
 
 
-def native_training_route(route: dict[str, Any] | None) -> bool:
-    return bool(
-        route
-        and route.get("selected") == "optimized"
-        and route.get("phase") == "training"
-        and route.get("implementation") == NATIVE_TRAINING
+def last_model_route(model) -> dict[str, Any] | None:
+    """Return the route from the exact ops module used by ``model``."""
+
+    getter = _model_route_getter(model)
+    if getter is None:
+        return None
+    route = getter()
+    return dict(route) if isinstance(route, dict) else None
+
+
+def last_training_routes() -> dict[str, Any]:
+    from rwkv7_hf.ops_rwkv7 import (
+        get_last_linear_route,
+        get_last_mix6_route,
+        get_last_model_route,
+        get_last_recurrent_route,
+        get_last_training_program_route,
     )
 
-
-def reference_training_route(route: dict[str, Any] | None) -> bool:
-    return bool(
-        route
-        and route.get("selected") == "reference"
-        and route.get("phase") == "training"
-        and route.get("implementation") == REFERENCE_MODEL
-        and route.get("reason")
-    )
+    return {
+        "model": get_last_model_route(),
+        "recurrent": get_last_recurrent_route(),
+        "linear": get_last_linear_route(),
+        "mix6": get_last_mix6_route(),
+        "program": get_last_training_program_route(),
+    }
 
 
 def expected_dense_training_route(
-    route: dict[str, Any] | None, training_mode: str
+    routes: dict[str, Any] | None,
+    training_mode: str,
+    *,
+    batch: int = 1,
+    tokens: int = 16,
 ) -> bool:
-    return (
-        native_training_route(route)
-        if training_mode == "native"
-        else reference_training_route(route)
+    training_mode = canonical_training_mode(training_mode)
+    routes = routes or {}
+    model = routes.get("model") or {}
+    recurrent = routes.get("recurrent") or {}
+    linear = routes.get("linear") or {}
+    mix6 = routes.get("mix6") or {}
+    program = routes.get("program") or {}
+    if not (
+        model.get("selected") == "reference"
+        and model.get("phase") == "training"
+        and model.get("implementation") == REFERENCE_MODEL
+    ):
+        return False
+    if training_mode == "reference":
+        return bool(
+            recurrent.get("selected") == "reference"
+            and recurrent.get("implementation") == "torch-reference-v1"
+            and linear.get("selected") == "reference"
+            and linear.get("implementation") == "torch-reference-linear-v1"
+            and mix6.get("selected") == "reference"
+            and mix6.get("implementation") == "torch-reference-mix6-v1"
+            and program.get("selected") == "reference"
+            and program.get("implementation") == "torch-reference-training-program-v1"
+        )
+
+    # PEFT may freeze the embedding table while keeping LoRA projections
+    # trainable. The model boundary then cannot prove a gradient-bearing input
+    # before the first adapter executes, so the immutable context deliberately
+    # selects one complete reference program. This is the advertised adaptive
+    # fallback, not a failed optional route.
+    forced_reference = bool(
+        recurrent.get("selected") == "reference"
+        and recurrent.get("implementation") == "torch-reference-v1"
+        and linear.get("selected") == "reference"
+        and linear.get("implementation") == "torch-reference-linear-v1"
+        and mix6.get("selected") == "reference"
+        and mix6.get("implementation") == "torch-reference-mix6-v1"
+        and program.get("selected") == "reference"
+        and program.get("implementation") == "torch-reference-training-program-v1"
+        and (program.get("facts") or {}).get("force_reference_program") is True
+    )
+    if forced_reference:
+        return True
+
+    fast_domain = adaptive_fast_domain_expected(batch=batch, tokens=tokens)
+    expected_recurrent = FACTORIZED_RECURRENT if fast_domain else MATRIX_RECURRENT
+    linear_passed = (
+        linear.get("selected") == "optimized"
+        and linear.get("implementation") == FLATTENED_LINEAR
+        if fast_domain
+        else linear.get("selected") == "reference"
+        and linear.get("implementation") == "torch-reference-linear-v1"
+    )
+    return bool(
+        recurrent.get("selected") == "optimized"
+        and recurrent.get("implementation") == expected_recurrent
+        and linear_passed
+        and mix6.get("selected") == "optimized"
+        and mix6.get("implementation") == MIX6
+        and program.get("selected") == ("optimized" if fast_domain else "reference")
+        and program.get("implementation") == PROGRAM
     )
 
 
@@ -103,24 +250,16 @@ def training_parameter_dtype(name: str) -> torch.dtype:
     return torch.bfloat16 if name == "bf16" else torch.float32
 
 
-def adapter_fallback_route(route: dict[str, Any] | None) -> bool:
-    # A PEFT-wrapped causal LM first rejects the native whole-model training
-    # path because its FFN modules are adapters.  The readable fallback then
-    # enters the nested base-model boundary, whose (also reference) route is
-    # the last route visible through the public diagnostic accessor.  Accept
-    # either explanatory reason, but still require an explicit training-phase
-    # reference route; parameter-change and save/reload checks below prove the
-    # adapter itself stayed active.
-    return bool(
-        route
-        and route.get("selected") == "reference"
-        and route.get("phase") == "training"
-        and route.get("implementation") == REFERENCE_MODEL
-        and (
-            "adapter" in str(route.get("reason", "")).lower()
-            or "causal-lm boundary" in str(route.get("reason", "")).lower()
-        )
-    )
+def training_mixed_precision(name: str) -> str:
+    """Return AMP policy for the ecosystem lane's parameter-dtype contract."""
+
+    return "no" if name == "bf16" else "fp16"
+
+
+def training_smoke_learning_rate(name: str) -> float:
+    """Choose an update large enough to be observable in the parameter dtype."""
+
+    return 1.0e-3 if name == "bf16" else 1.0e-5
 
 
 def finite_nonzero_gradients(model) -> tuple[bool, int]:
@@ -177,6 +316,12 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
         try:
             config = AutoConfig.from_pretrained(path, trust_remote_code=True)
             tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+            # The whole-model NVIDIA route is intentionally a causal-LM
+            # boundary: it owns the language-model head as well as the RWKV
+            # stack.  Base AutoModel must remain usable through the ordinary
+            # fail-closed ``auto`` fallback rather than weakening a forced
+            # native request to hide that contract.
+            base_model_backend_environment()
             base = (
                 AutoModel.from_pretrained(
                     path, torch_dtype=torch.float16, trust_remote_code=True
@@ -193,13 +338,20 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
             )
             with torch.inference_mode():
                 base_output = base(input_ids=ids, use_cache=True)
-            base_route = last_route()
+            base_route = last_model_route(base)
             base_ok = bool(
                 torch.isfinite(base_output.last_hidden_state).all()
                 and base_output.past_key_values is not None
+                and base_route
+                and base_route.get("selected") == "reference"
+                and base_route.get("implementation") == "torch-reference-model-v1"
             )
             release(base, base_output)
 
+            # Causal-LM inference is the strict optimized ecosystem gate.  A
+            # failure below is surfaced rather than silently accepted as a
+            # reference result.
+            inference_backend_environment()
             model = (
                 AutoModelForCausalLM.from_pretrained(
                     path, torch_dtype=torch.float16, trust_remote_code=True
@@ -226,7 +378,7 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
                     pad_token_id=0,
                     eos_token_id=None,
                 )
-            generation_route = last_route()
+            generation_route = last_model_route(model)
             with tempfile.TemporaryDirectory(
                 prefix="rwkv7-backend-v2-save-"
             ) as directory:
@@ -300,14 +452,22 @@ def run_accelerate(
     model = RWKV7ForCausalLM.from_pretrained(
         path, torch_dtype=training_parameter_dtype(dtype_name)
     ).train()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-5)
+    # A 1e-5 direct update is commonly below one BF16 ULP at unit-scale model
+    # parameters.  This smoke deliberately uses a representable BF16 update;
+    # it is an integration check, not a training-quality hyperparameter.
+    learning_rate = training_smoke_learning_rate(dtype_name)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     scaler_kwargs = (
         [GradScalerKwargs(init_scale=128.0, growth_interval=2000)]
         if dtype_name == "fp16"
         else []
     )
     accelerator = Accelerator(
-        mixed_precision=dtype_name,
+        # Native BF16 parameters already provide BF16 compute.  Wrapping the
+        # readable loop in a second BF16 autocast promotes selected norm/math
+        # outputs to FP32 and correctly makes the homogeneous-dtype CUDA leaves
+        # decline.  FP16 retains conventional FP32 masters plus AMP.
+        mixed_precision=training_mixed_precision(dtype_name),
         kwargs_handlers=scaler_kwargs,
     )
     model, optimizer = accelerator.prepare(model, optimizer)
@@ -337,7 +497,7 @@ def run_accelerate(
             tracked_parameter.detach().reshape(-1)[tracked_index],
         )
     )
-    route = last_route()
+    route = last_training_routes()
     passed = bool(
         torch.isfinite(output.loss)
         and gradients_finite
@@ -350,6 +510,9 @@ def run_accelerate(
         "finite_nonzero_gradients": gradients_finite,
         "gradient_tensor_count": gradient_count,
         "parameters_changed": parameter_changed,
+        "learning_rate": learning_rate,
+        "mixed_precision": training_mixed_precision(dtype_name),
+        "parameter_dtype": str(training_parameter_dtype(dtype_name)),
         "route": route,
         "device": str(accelerator.device),
     }
@@ -391,7 +554,9 @@ def run_trainer(
             max_steps=1,
             per_device_train_batch_size=1,
             learning_rate=1.0e-5,
-            bf16=dtype_name == "bf16",
+            # Direct BF16 parameters must not be wrapped in redundant AMP;
+            # see the Accelerate lane above.  FP16 keeps standard AMP masters.
+            bf16=False,
             fp16=dtype_name == "fp16",
             save_strategy="no",
             report_to="none",
@@ -406,7 +571,7 @@ def run_trainer(
             data_collator=DefaultDataCollator(),
         )
         result = trainer.train()
-    route = last_route()
+    route = last_training_routes()
     loss = float(result.training_loss)
     passed = bool(
         result.global_step == 1
@@ -452,7 +617,7 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     autocast = (
         torch.autocast(device_type="cuda", dtype=torch.float16)
         if dtype_name == "fp16"
-        else torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        else nullcontext()
     )
     with autocast:
         output = model(**batch, use_cache=False, logits_to_keep=0)
@@ -463,7 +628,7 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
         not torch.equal(old, parameter.detach())
         for old, parameter in zip(before, trainable)
     )
-    route = last_route()
+    route = last_training_routes()
     probe_ids = batch["input_ids"][:, :8]
     model.eval()
     with torch.inference_mode():
@@ -480,7 +645,12 @@ def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
         torch.isfinite(output.loss)
         and gradients_finite
         and changed
-        and adapter_fallback_route(route)
+        and expected_dense_training_route(
+            route,
+            canonical_training_mode(
+                os.environ.get("RWKV7_TRAINING_KERNEL_IMPL", "reference")
+            ),
+        )
         and reload_equal
     )
     row = {
@@ -517,7 +687,9 @@ def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
             max_steps=max_steps,
             per_device_train_batch_size=1,
             learning_rate=1.0e-3,
-            bf16=dtype_name == "bf16",
+            # The BF16 checkpoint is already in its compute dtype.  Avoid a
+            # second AMP policy so optional leaf inputs retain one dtype.
+            bf16=False,
             fp16=dtype_name == "fp16",
             save_strategy="no",
             report_to="none",
@@ -546,13 +718,18 @@ def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
             for name, parameter in trainer.model.named_parameters()
             if parameter.requires_grad
         )
-    route = last_route()
+    route = last_training_routes()
     loss = float(result.training_loss)
     passed = bool(
         result.global_step == max_steps
         and torch.isfinite(torch.tensor(loss))
         and changed
-        and adapter_fallback_route(route)
+        and expected_dense_training_route(
+            route,
+            canonical_training_mode(
+                os.environ.get("RWKV7_TRAINING_KERNEL_IMPL", "reference")
+            ),
+        )
     )
     row = {
         "passed": passed,
@@ -580,42 +757,56 @@ def main() -> int:
     args = arguments()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
-    backend_environment()
-    if args.training_mode == "native" and args.training_dtype != "bf16":
-        raise ValueError("native train-temp ecosystem acceptance requires BF16")
-    if args.training_mode == "reference-fallback" and args.training_dtype != "fp16":
-        raise ValueError("SM70 ecosystem fallback acceptance requires FP16")
+    training_mode = canonical_training_mode(args.training_mode)
+    if training_mode == "adaptive" and args.training_dtype != "bf16":
+        raise ValueError("adaptive clean-leaf ecosystem acceptance requires BF16")
     torch.manual_seed(args.seed)
     path = args.model.expanduser().resolve()
-    stages = [
-        execute("auto-model-save-generation", lambda: run_auto_model(path, args.seed)),
-        execute(
-            f"accelerate-{args.training_mode}",
-            lambda: run_accelerate(
-                path,
-                args.seed + 1,
-                args.training_dtype,
-                args.training_mode,
+    inference_backend_environment()
+    # Transformers 4.56 derives its dynamic-module package from a local
+    # directory basename without fully escaping dots. Use a short safe alias
+    # for the save/reload stage so a perfectly valid model directory such as
+    # ``rwkv7-g1d-0.4b-hf`` does not become an invalid Python package name.
+    with tempfile.TemporaryDirectory(prefix="rwkv7-model-alias-") as alias_root:
+        model_alias = Path(alias_root) / "rwkv7_model"
+        model_alias.symlink_to(path, target_is_directory=True)
+        stages = [
+            execute(
+                "auto-model-save-generation",
+                lambda: run_auto_model(model_alias, args.seed),
+            )
+        ]
+    training_backend_environment(training_mode)
+    stages.extend(
+        [
+            execute(
+                f"accelerate-{training_mode}",
+                lambda: run_accelerate(
+                    path,
+                    args.seed + 1,
+                    args.training_dtype,
+                    training_mode,
+                ),
             ),
-        ),
-        execute(
-            f"trainer-{args.training_mode}",
-            lambda: run_trainer(
-                path,
-                args.seed + 2,
-                args.training_dtype,
-                args.training_mode,
+            execute(
+                f"trainer-{training_mode}",
+                lambda: run_trainer(
+                    path,
+                    args.seed + 2,
+                    args.training_dtype,
+                    training_mode,
+                ),
             ),
-        ),
-        execute(
-            "peft-lora-fallback",
-            lambda: run_peft(path, args.seed + 3, args.training_dtype),
-        ),
-        execute(
-            "trl-sft-lora-fallback",
-            lambda: run_trl_sft(path, args.seed + 4, args.training_dtype),
-        ),
-    ]
+            execute(
+                f"peft-lora-{training_mode}",
+                lambda: run_peft(path, args.seed + 3, args.training_dtype),
+            ),
+            execute(
+                f"trl-sft-lora-{training_mode}",
+                lambda: run_trl_sft(path, args.seed + 4, args.training_dtype),
+            ),
+        ]
+    )
     wheels = {}
     for name, wheel in (
         ("rwkv7_hf", args.hf_wheel),
@@ -628,17 +819,18 @@ def main() -> int:
             }
     passed = all(row.get("passed") for row in stages)
     report = {
-        "schema": "rwkv7-backend-v2-hf-ecosystem-v1",
+        "schema": "rwkv7-backend-v2-hf-ecosystem-v2",
         "status": "passed" if passed else "failed",
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "environment": environment(),
         "model": model_fingerprint(path),
         "wheels": wheels,
         "training_expectation": {
-            "mode": args.training_mode,
+            "mode": training_mode,
+            "requested_mode": args.training_mode,
             "dtype": args.training_dtype,
             "parameter_dtype": str(training_parameter_dtype(args.training_dtype)),
-            "native_supported": args.training_mode == "native",
+            "optimized_leaves_requested": training_mode == "adaptive",
         },
         "backend_environment": {
             name: os.environ.get(name)
@@ -646,6 +838,7 @@ def main() -> int:
                 "RWKV7_BACKEND",
                 "RWKV7_MODEL_KERNEL_IMPL",
                 "RWKV7_KERNEL_IMPL",
+                "RWKV7_TRAINING_KERNEL_IMPL",
             )
         },
         "stages": stages,

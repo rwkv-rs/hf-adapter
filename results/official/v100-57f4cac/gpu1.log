@@ -1,6 +1,0 @@
-=== GPU 1 0.4b fp32 ===
-{"status": "passed", "artifacts": ["/home/data/wangyue/results/rwkv7-reference-v090/official-v100-57f4cac/0.4b-fp32/official-oracle-rwkv7_04b_hf-fp32.jsonl", "/home/data/wangyue/results/rwkv7-reference-v090/official-v100-57f4cac/0.4b-fp32/official-oracle-rwkv7_04b_hf-fp32.md"]}
-=== GPU 1 0.4b fp16 ===
-{"status": "passed", "artifacts": ["/home/data/wangyue/results/rwkv7-reference-v090/official-v100-57f4cac/0.4b-fp16/official-oracle-rwkv7_04b_hf-fp16.jsonl", "/home/data/wangyue/results/rwkv7-reference-v090/official-v100-57f4cac/0.4b-fp16/official-oracle-rwkv7_04b_hf-fp16.md"]}
-=== GPU 1 1.5b fp32 ===
-{"status": "passed", "artifacts": ["/home/data/wangyue/results/rwkv7-reference-v090/official-v100-57f4cac/1.5b-fp32/official-oracle-rwkv7_15b_hf-fp32.jsonl", "/home/data/wangyue/results/rwkv7-reference-v090/official-v100-57f4cac/1.5b-fp32/official-oracle-rwkv7_15b_hf-fp32.md"]}

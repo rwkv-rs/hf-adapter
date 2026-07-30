@@ -6,7 +6,7 @@ LoRA/state-prep bucket.  This module keeps the public HF path unchanged and
 offers an opt-in state-prep kernel that fuses the elementwise/normalization
 tail after W/A/G/V-gate projections:
 
-* W raw -> recurrent decay ``exp(-0.606531 * sigmoid(w))`` in fp32
+* W raw -> recurrent decay ``exp(-exp(-0.5) * sigmoid(w))`` in fp32
 * K raw + ``k_a`` -> adjusted recurrent K
 * K raw + ``k_k`` -> normalized ``kk`` per head
 * optional V interpolation with ``v_first`` and V-gate
@@ -35,6 +35,12 @@ except Exception:  # pragma: no cover
 
 
 _HAS_TRITON = triton is not None and tl is not None
+
+# Keep the fused and Torch fallback paths on the clean model's exact decay
+# constant.  The formerly rounded ``0.606531`` can differ by one FP32 ULP at
+# state preparation and that perturbation is amplified across deep FP16
+# prefills even though the recurrent state update itself remains stable.
+_RWKV7_DECAY_BASE = 0.6065306597126334
 
 
 if _HAS_TRITON:
@@ -86,7 +92,7 @@ if _HAS_TRITON:
         inv_norm = tl.rsqrt(tl.maximum(norm2, 1.0e-20))
         kk = kk_raw * inv_norm
         k_adj = k_raw * (1.0 + (a_val - 1.0) * ka_scale)
-        w_log = -0.606531 * tl.sigmoid(w_raw)
+        w_log = -_RWKV7_DECAY_BASE * tl.sigmoid(w_raw)
         w_decay = w_log if output_log_decay else tl.exp(w_log)
 
         v_out = v_raw
@@ -266,7 +272,7 @@ def fused_prefill_state_prep(
             v_out = v2 + (vf2 - v2) * vg2
         else:
             v_out = v2
-        w_log = -0.606531 * torch.sigmoid(w2.float())
+        w_log = -_RWKV7_DECAY_BASE * torch.sigmoid(w2.float())
         w_out = w_log if w_transform == "log_decay" else torch.exp(w_log)
         if w_out_dtype == "input":
             w_out = w_out.to(w2.dtype)

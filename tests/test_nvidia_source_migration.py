@@ -38,21 +38,26 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
             )
         else:
             assert entry["source"] in {
+                "rwkv7_hf/extension_build.py",
                 "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3.cpp",
                 "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
                 "rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
                 "rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
+                "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
                 "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
+                "rwkv7_hf/fused_prefill.py",
+                "rwkv7_hf/kernel_policy.py",
                 "rwkv7_hf/native_graph_runtime.py",
                 "rwkv7_hf/native_jit_decode.py",
                 "rwkv7_hf/native_jit_linear.py",
                 "rwkv7_hf/native_jit_packing.py",
                 "rwkv7_hf/native_jit_prefill.py",
+                "rwkv7_hf/native_quant_a8w8.py",
                 "rwkv7_hf/train_temp_cuda.py",
             }
             assert entry["adaptation"]
         destinations.add(destination.name)
-    assert transfers == {"byte_identical": 91, "adapted_clean_boundary": 11}
+    assert transfers == {"byte_identical": 86, "adapted_clean_boundary": 16}
 
     required_families = {
         "fused_attention_projection.py",
@@ -82,7 +87,7 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
         "native_jit_packing.py",
         "native_graph_runtime.py",
         "recurrent_state.py",
-        "train_temp_cuda.py",
+        "official_training_cuda.py",
         "triton_compat.py",
         "SELF_CHUNK_LICENSE",
     }
@@ -93,7 +98,7 @@ def test_nvidia_capability_inventory_maps_every_migrated_byte_once():
     manifest = json.loads((NVIDIA / "MIGRATION_MANIFEST.json").read_text())
     inventory = json.loads((NVIDIA / "CAPABILITY_INVENTORY.json").read_text())
     assert inventory["schema"] == "rwkv7-nvidia-capability-inventory-v1"
-    assert inventory["kernel_api_version"] == 2
+    assert inventory["kernel_api_version"] == 4
     assert inventory["production_auto"].startswith("disabled")
 
     migrated = {
@@ -121,8 +126,8 @@ def test_historical_source_scope_classifies_the_entire_frozen_git_tree():
     assert scope["source_subtree_git_tree"] == historical_tree_oid(scope["entries"])
     assert len(scope["entries"]) == 153
     assert scope["counts"] == {
-        "adapted_protocol": 21,
-        "byte_migrated_nvidia": 91,
+        "adapted_protocol": 26,
+        "byte_migrated_nvidia": 86,
         "canonical_reference": 7,
         "non_kernel_feature_retired": 1,
         "separate_hardware_distribution": 27,
@@ -191,7 +196,7 @@ def test_nvidia_sources_do_not_reintroduce_model_config_or_cache_ownership():
                 assert not (node.module or "").startswith("rwkv7_hf")
 
     training_runtime = (NVIDIA / "training_runtime.py").read_text()
-    train_temp_runtime = (NVIDIA / "train_temp_cuda.py").read_text()
+    train_temp_runtime = (NVIDIA / "official_training_cuda.py").read_text()
     for source in (training_runtime, train_temp_runtime):
         assert ".forward =" not in source
         assert "types.MethodType" not in source

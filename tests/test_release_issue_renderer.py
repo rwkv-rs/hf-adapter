@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +16,12 @@ assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
+from scripts.release_route_contract import (  # noqa: E402
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
+    READABLE_TRAINING_MODEL_ROUTE,
+    REQUIRED_REFERENCE_TRAINING_ROUTES,
+)
+
 AUDIT_SPEC = importlib.util.spec_from_file_location(
     "audit_github_release_for_issue_test",
     ROOT / "evaluation" / "audit_github_release.py",
@@ -44,10 +53,12 @@ def fixtures():
         },
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
+        "training_policy": "reference",
+        "training_backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
         "actual_routes": {
             "prefill": ["native-nvidia-prefill-v2[self_chunk]"],
             "decode": ["native-nvidia-fused-decode-v2[cuda_graph]"],
-            "training": ["native-nvidia-train-temp-autograd-v2"],
+            "training": sorted(REQUIRED_REFERENCE_TRAINING_ROUTES),
             "quantization": ["native-w8-mm8-v1"],
         },
     }
@@ -165,13 +176,70 @@ def test_release_issue_is_rendered_from_complete_speed_and_eval_matrices():
     assert "Whole-model speed matrix" in body
     assert "Formal lm_eval accuracy/NLL/PPL matrix" in body
     assert "native-nvidia-prefill-v2[self_chunk]" in body
+    assert READABLE_TRAINING_MODEL_ROUTE in body
+    assert all(route in body for route in REQUIRED_REFERENCE_TRAINING_ROUTES)
+    assert "not an admissible formal HF training route" in body
     assert "| same | same |" in body
     assert "SFT" in body and "DPO" in body and "GRPO" in body
     assert "Complete optional-kernel capability migration" in body
     assert "dense decode" in body and "DPLR/self-chunk" in body
     assert "SM70, Ada and Blackwell" in body
     assert "source scope" in body and "all 153 files" in body
+    migration = MODULE.migration_transfer_summary()
+    assert migration["total"] == 102
+    assert f"{migration['byte_identical']} are byte-identical" in body
+    assert (
+        f"{migration['adapted_clean_boundary']} are declared clean-boundary adaptations"
+        in body
+    )
     assert "sequentially" in body and "non-overlapping" in body
     normalized = body.lower().replace("lm-eval", "lm_eval")
     assert not [term for term in AUDIT.REQUIRED_ISSUE_TERMS if term not in normalized]
     assert len(body.encode()) < 65_000
+
+
+def test_release_issue_rejects_historical_whole_model_training_route():
+    provenance, speeds, lm_evals = fixtures()
+    for row in provenance["validation"]["devices"].values():
+        row["actual_routes"]["training"] = ["native-nvidia-official-training-autograd-v2"]
+    with pytest.raises(ValueError, match="not publishable.*historical whole-model"):
+        MODULE.validate_inputs(
+            provenance=provenance,
+            speeds=speeds,
+            lm_evals=lm_evals,
+        )
+
+
+def test_release_issue_rejects_non_reference_training_provenance():
+    provenance, speeds, lm_evals = fixtures()
+    provenance["validation"]["devices"]["rtx-4090"]["training_backend_environment"][
+        "RWKV7_TRAINING_KERNEL_IMPL"
+    ] = "adaptive"
+    with pytest.raises(ValueError, match="reference training provenance is incomplete"):
+        MODULE.validate_inputs(
+            provenance=provenance,
+            speeds=speeds,
+            lm_evals=lm_evals,
+        )
+
+
+def test_public_release_tools_reject_migration_transfer_count_drift(
+    tmp_path: Path,
+):
+    path = tmp_path / "MIGRATION_MANIFEST.json"
+    path.write_text(
+        json.dumps(
+            {
+                "files": [
+                    *({"transfer": "byte_identical"} for _ in range(89)),
+                    *({"transfer": "adapted_clean_boundary"} for _ in range(13)),
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="canonical transfer counts differ"):
+        MODULE.migration_transfer_summary(path)
+    with pytest.raises(ValueError, match="canonical transfer counts differ"):
+        AUDIT.migration_transfer_summary(path)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import importlib
 from pathlib import Path
 import sys
@@ -9,10 +10,39 @@ import torch.nn.functional as F
 
 from rwkv7_hf.cache_rwkv7 import RWKV7Cache
 from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM, RWKV7Linear, RWKV7Model
-from rwkv7_hf.ops_rwkv7 import rwkv7_recurrent_reference
+from rwkv7_hf.ops_rwkv7 import get_last_model_route, rwkv7_recurrent_reference
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_training_forward_records_complete_reference_model_route(
+    tiny_config, monkeypatch
+):
+    monkeypatch.setenv("RWKV7_BACKEND", "auto")
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "auto")
+    monkeypatch.setenv("RWKV7_TRAINING_KERNEL_IMPL", "auto")
+    model = RWKV7ForCausalLM(tiny_config).train()
+    input_ids = torch.tensor([[1, 2, 3, 4]])
+
+    output = model(
+        input_ids=input_ids,
+        labels=input_ids,
+        use_cache=False,
+        logits_to_keep=0,
+    )
+
+    assert torch.isfinite(output.loss)
+    assert get_last_model_route() == {
+        "requested": "auto",
+        "selected": "reference",
+        "implementation": "torch-reference-model-v1",
+        "reason": (
+            "readable HF training loop owns structure; optional tensor "
+            "leaves dispatch through one explicit execution context"
+        ),
+        "phase": "training",
+    }
 
 
 def _load_dense_backend(monkeypatch):
@@ -41,6 +71,7 @@ def test_native_packer_recognizes_clean_linear_and_preserves_fp32_decay_bias(
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
 
     dense_packs, *_ = packing.extract_dense_packs(model, rkv_policy="linear")
+    assert [pack[4] for pack in dense_packs] == [1, 0]
     assert dense_packs[0][26].dtype == torch.float32
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
 
@@ -52,10 +83,192 @@ def test_native_packer_recognizes_clean_linear_and_preserves_fp32_decay_bias(
         graph_linear_operand=linear.graph_linear_operand,
         graph_linear_is_dense=linear.graph_linear_is_dense,
     )
+    assert [pack[4] for pack in graph_packs] == [1, 0]
     assert isinstance(graph_packs[0][24], torch.Tensor)
     assert isinstance(graph_packs[0][25], torch.Tensor)
     assert graph_packs[0][26].dtype == torch.float32
     assert model.model.layers[0].attn.w_lora.lora[2].bias.dtype == torch.float32
+
+    structural = importlib.import_module("rwkv7_kernels.model.packing")
+    structural_packs, *_ = structural.extract_dense_packs(model.model)
+    assert [pack[5] for pack in structural_packs] == [1, 0]
+
+
+def test_structural_dense_packs_follow_module_replacement_and_model_moves(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    structural = importlib.import_module("rwkv7_kernels.model.packing")
+    model = RWKV7ForCausalLM(tiny_config).half().eval()
+
+    first_packs, *_ = structural.extract_dense_packs(model.model)
+    old_projection = model.model.layers[0].attn.r_proj
+    old_weight = old_projection.weight
+    assert first_packs[0][21] is old_weight
+
+    replacement = RWKV7Linear(
+        tiny_config.hidden_size,
+        tiny_config.attention_hidden_size,
+        bias=False,
+    ).half()
+    model.model.layers[0].attn.r_proj = replacement
+    second_packs, *_ = structural.extract_dense_packs(model.model)
+    assert second_packs is not first_packs
+    assert second_packs[0][21] is replacement.weight
+    assert second_packs[0][21] is not old_weight
+
+    version = replacement.weight._version
+    with torch.no_grad():
+        replacement.weight.add_(1)
+    third_packs, *_ = structural.extract_dense_packs(model.model)
+    assert replacement.weight._version == version + 1
+    assert third_packs is not second_packs
+    assert third_packs[0][21] is replacement.weight
+
+    # Later blocks use synthetic tensors for their Identity pre-norm. They must
+    # be rebuilt on the model's current dtype/device rather than surviving from
+    # a previous structural extraction.
+    assert third_packs[1][6].dtype == torch.float16
+    model.float()
+    float_packs, *_ = structural.extract_dense_packs(model.model)
+    assert float_packs[1][6].dtype == torch.float32
+    model.to(device="meta")
+    meta_packs, *_ = structural.extract_dense_packs(model.model)
+    assert meta_packs[1][6].device.type == "meta"
+    assert meta_packs[0][-1].device.type == "meta"
+
+
+def test_native_lm_head_preserves_rank3_reference_linear_contract(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    linear = importlib.import_module("rwkv7_kernels.nvidia.native_jit_linear")
+
+    projection = RWKV7Linear(
+        tiny_config.hidden_size,
+        tiny_config.vocab_size,
+        bias=False,
+    )
+    calls = []
+    original_forward = RWKV7Linear.forward
+
+    def recorded_forward(self, value):
+        calls.append(tuple(value.shape))
+        return original_forward(self, value)
+
+    recorded_forward._rwkv7_dense_linear_contract = True
+    monkeypatch.setattr(RWKV7Linear, "forward", recorded_forward)
+
+    rank3 = torch.randn(2, 3, tiny_config.hidden_size)
+    rank2 = rank3.reshape(-1, tiny_config.hidden_size)
+    torch.testing.assert_close(
+        linear.linear_module(projection, rank3),
+        projection(rank3),
+    )
+    assert calls == [tuple(rank3.shape), tuple(rank3.shape)]
+
+    calls.clear()
+    torch.testing.assert_close(
+        linear.linear_module(projection, rank2),
+        F.linear(rank2, projection.weight, projection.bias),
+    )
+    assert calls == []
+
+
+def test_native_whole_model_operands_preserve_linear_subclass_forward(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    linear = importlib.import_module("rwkv7_kernels.nvidia.native_jit_linear")
+    packing = importlib.import_module("rwkv7_kernels.nvidia.native_jit_packing")
+    native_jit = importlib.import_module("rwkv7_kernels.nvidia.native_jit")
+    graph_runtime = importlib.import_module("rwkv7_kernels.nvidia.native_graph_runtime")
+
+    class OffsetLinear(torch.nn.Linear):
+        def forward(self, value):
+            return super().forward(value) + 0.75
+
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    projection = OffsetLinear(
+        tiny_config.hidden_size,
+        tiny_config.attention_hidden_size,
+        bias=False,
+    )
+    model.model.layers[0].attn.r_proj = projection
+    assert not linear.dense_linear_module(projection)
+    assert linear.graph_linear_operand(projection) is projection
+
+    graph_packs, *_ = packing.extract_graph_packs(
+        model,
+        rkv_policy="linear",
+        sparse_ffn_low_memory_pack_enabled=lambda: False,
+        try_relayout_ffn_value_weight=lambda module: False,
+        graph_linear_operand=linear.graph_linear_operand,
+        graph_linear_is_dense=linear.graph_linear_is_dense,
+    )
+    assert graph_packs[0][20] is projection
+    hidden = torch.randn(2, tiny_config.hidden_size)
+    torch.testing.assert_close(
+        native_jit._graph_linear_call(hidden, graph_packs[0][20]),
+        projection(hidden),
+    )
+
+    head = OffsetLinear(
+        tiny_config.hidden_size,
+        tiny_config.vocab_size,
+        bias=False,
+    )
+    model.set_output_embeddings(head)
+    expected = head(hidden)
+    torch.testing.assert_close(native_jit._lm_head(model, hidden), expected)
+    destination = torch.empty_like(expected)
+    graph_runtime._head_linear_into(head, hidden, destination)
+    torch.testing.assert_close(destination, expected)
+
+    # A class-level monkeypatch of the adapter's own Linear must also revoke
+    # the marker.  Checking only the class name/boolean marker would silently
+    # bypass this forward on the whole-model route.
+    original_forward = RWKV7Linear.forward
+
+    def overridden_rwkv7_forward(self, value):
+        return original_forward(self, value) + 0.25
+
+    monkeypatch.setattr(RWKV7Linear, "forward", overridden_rwkv7_forward)
+    internal_projection = model.model.layers[1].attn.r_proj
+    assert not linear.dense_linear_module(internal_projection)
+    assert linear.graph_linear_operand(internal_projection) is internal_projection
+    torch.testing.assert_close(
+        native_jit._graph_linear_call(hidden, internal_projection),
+        internal_projection(hidden),
+    )
+
+    # The tensor-only dense-v2 diagnostic cannot call a custom projection and
+    # therefore must decline rather than silently pack its raw weight.
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
+    assert any(
+        not linear.dense_linear_module(module)
+        for module in dispatcher._dense_model_linears(model.model)
+    )
+
+    class FakeCudaTensor(torch.Tensor):
+        @property
+        def device(self):
+            return torch.device("cuda")
+
+    fake_cuda_hidden = torch.zeros(
+        1, 2, tiny_config.hidden_size, dtype=torch.float16
+    ).as_subclass(FakeCudaTensor)
+    support = dispatcher._probe_dense(
+        model.model,
+        {
+            "model_kind": "base",
+            "hidden_states": fake_cuda_hidden,
+            "training": False,
+            "grad_enabled": False,
+        },
+    )
+    assert support["supported"] is False
+    assert "custom linear forward" in support["reason"]
 
 
 def test_native_decay_projection_adds_w0_only_after_fp32_promotion(
@@ -384,6 +597,12 @@ def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
     runner.bind_cache(cache)
     torch.testing.assert_close(cache.recurrent_state[0], canonical)
     assert runner._cache_bound_to_runner(cache)
+    # A second decode token must retain the exact canonical views.  The
+    # adapter boundary is not allowed to clone/rebind the cache per token.
+    runner.copy_from_cache(cache)
+    runner.bind_cache(cache)
+    assert runner.copy_from_cache_fast_skips == 1
+    assert runner.bind_cache_fast_skips == 1
 
     runner.state[0].add_(1)
     torch.testing.assert_close(cache.recurrent_state[0], canonical + 1)
@@ -393,13 +612,15 @@ def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
     torch.testing.assert_close(cache.recurrent_state[0], detached)
 
 
-def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
+def test_private_training_diagnostic_uses_direct_layer_loop_without_monkeypatch(
     tiny_config, monkeypatch
 ):
     _load_dense_backend(monkeypatch)
     runtime = importlib.import_module("rwkv7_kernels.nvidia.training_runtime")
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
-    monkeypatch.setattr(train_temp, "load_train_temp_cuda_extension", lambda: None)
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
+    monkeypatch.setattr(
+        train_temp, "load_training_runtime_cuda_extensions", lambda: None
+    )
 
     def attention_forward(module, hidden, v_first, *, native_lora_math):
         del native_lora_math
@@ -416,7 +637,14 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
             batch, module.hidden_size, dtype=hidden.dtype, device=hidden.device
         )
         mask = torch.ones(batch, tokens, dtype=torch.bool, device=hidden.device)
-        output, _state, _shift, v_first = module(hidden, state, shift, v_first, mask)
+        output, _state, _shift, v_first = module(
+            hidden,
+            state,
+            shift,
+            v_first,
+            mask,
+            mask_fully_active=True,
+        )
         return output, v_first
 
     monkeypatch.setattr(train_temp, "_train_temp_attention_forward", attention_forward)
@@ -430,7 +658,7 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
     labels[0, 2] = -100
 
     expected = reference(input_ids=ids, labels=labels, use_cache=False)
-    actual = runtime.run_training(
+    actual = runtime._run_training_diagnostic(
         migrated,
         {
             "model_kind": "causal_lm",
@@ -459,6 +687,121 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
     assert "train_temp._CMix.apply(" not in source
 
 
+def test_training_runtime_loader_compiles_only_accepted_leaf_set(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
+    calls = []
+    monkeypatch.setattr(
+        train_temp,
+        "load_mix6_training_cuda_extension",
+        lambda **kwargs: calls.append(("mix6", kwargs)),
+    )
+    monkeypatch.setattr(
+        train_temp,
+        "load_recurrent_training_cuda_extension",
+        lambda **kwargs: calls.append(("recurrent", kwargs)),
+    )
+
+    train_temp.load_training_runtime_cuda_extensions(verbose=True)
+
+    assert calls == [
+        ("mix6", {"verbose": True}),
+        ("recurrent", {"verbose": True}),
+    ]
+
+
+def test_recurrent_training_loader_uses_isolated_cuda_build_environment(monkeypatch):
+    """A thin venv must expose base Ninja/NVCC and the active GPU arch."""
+
+    _load_dense_backend(monkeypatch)
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
+    state = {"active": False, "built": False}
+    calls = []
+
+    @contextmanager
+    def build_environment(*, arch_list):
+        calls.append(("environment", arch_list))
+        state["active"] = True
+        try:
+            yield None
+        finally:
+            state["active"] = False
+
+    def build_recurrent(_cpp_extension, cuda_home, *, verbose):
+        assert state["active"]
+        calls.append(("build", cuda_home, verbose))
+        state["built"] = True
+
+    monkeypatch.setattr(train_temp, "_RECURRENT_LOADED", False)
+    monkeypatch.setattr(train_temp, "_RECURRENT_LOAD_ERROR", None)
+    monkeypatch.setattr(train_temp, "_validate_runtime", lambda: None)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: (8, 9))
+    monkeypatch.setattr(
+        train_temp,
+        "cuda_extension_build_environment",
+        build_environment,
+    )
+    monkeypatch.setattr(
+        train_temp,
+        "_resolve_cuda_home",
+        lambda _cpp_extension: Path("/cuda-13.0"),
+    )
+    monkeypatch.setattr(
+        train_temp,
+        "_op_registered",
+        lambda namespace: namespace == "rwkv7_clampw_v3" and state["built"],
+    )
+    monkeypatch.setattr(train_temp, "_build_recurrent_operator", build_recurrent)
+
+    train_temp.load_recurrent_training_cuda_extension(verbose=True)
+
+    assert calls == [
+        ("environment", "8.9"),
+        ("build", Path("/cuda-13.0"), True),
+    ]
+    assert train_temp._RECURRENT_LOADED is True
+
+
+def test_native_training_causal_loss_avoids_shifted_logits_copy(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    runtime = importlib.import_module("rwkv7_kernels.nvidia.training_runtime")
+    torch.manual_seed(119)
+    expected_logits = torch.randn(3, 7, 19, requires_grad=True)
+    actual_logits = expected_logits.detach().clone().requires_grad_(True)
+    labels = torch.randint(0, 19, (3, 7))
+    labels[0, 2] = -100
+    labels[2, 5:] = -100
+
+    expected = torch.nn.functional.cross_entropy(
+        expected_logits[:, :-1].contiguous().reshape(-1, 19),
+        labels[:, 1:].contiguous().reshape(-1),
+        ignore_index=-100,
+    )
+    actual = runtime.causal_cross_entropy(actual_logits, labels)
+    torch.testing.assert_close(actual, expected)
+
+    expected.backward()
+    actual.backward()
+    torch.testing.assert_close(actual_logits.grad, expected_logits.grad)
+
+    ignored_logits = torch.randn(2, 4, 19, requires_grad=True)
+    ignored = runtime.causal_cross_entropy(
+        ignored_logits,
+        torch.full((2, 4), -100, dtype=torch.long),
+    )
+    assert ignored.item() == 0.0
+    ignored.backward()
+    assert ignored_logits.grad is not None
+    assert torch.count_nonzero(ignored_logits.grad) == 0
+
+    single_logits = torch.randn(2, 1, 19, requires_grad=True)
+    single = runtime.causal_cross_entropy(
+        single_logits,
+        torch.randint(0, 19, (2, 1)),
+    )
+    assert single.item() == 0.0
+
+
 def test_native_training_math_matches_clean_fixed_row_contract(
     tiny_config, monkeypatch
 ):
@@ -471,11 +814,64 @@ def test_native_training_math_matches_clean_fixed_row_contract(
     projection = model.model.layers[0].attn.r_proj
 
     expected = projection(value)
-    actual = training_math.module_linear(projection, value)
-    repeated = training_math.module_linear(projection, value.repeat(3, 1, 1))
+    actual = training_math.fixed_row_linear(value, projection.weight, projection.bias)
+    repeated = training_math.fixed_row_linear(
+        value.repeat(3, 1, 1), projection.weight, projection.bias
+    )
 
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
     torch.testing.assert_close(actual, repeated[:3], rtol=0, atol=0)
+
+
+def test_native_training_linear_flattens_only_multiple_reference_tiles(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    training_math = importlib.import_module("rwkv7_kernels.nvidia.training_math")
+    original_linear = training_math.F.linear
+    calls = []
+
+    def record_linear(value, weight, bias=None):
+        calls.append(tuple(value.shape))
+        return original_linear(value, weight, bias)
+
+    monkeypatch.setattr(training_math.F, "linear", record_linear)
+    weight = torch.randn(11, 7)
+
+    one_tile = torch.randn(4, 16, 7)
+    one_output = training_math.training_linear(one_tile, weight)
+    assert one_output.shape == (4, 16, 11)
+    assert calls == [(training_math.REFERENCE_LINEAR_ROWS, 7)]
+
+    calls.clear()
+    four_tiles = torch.randn(4, 128, 7, requires_grad=True)
+    four_output = training_math.training_linear(four_tiles, weight)
+    assert four_output.shape == (4, 128, 11)
+    assert calls == [(512, 7)]
+    four_output.square().mean().backward()
+    assert four_tiles.grad is not None
+    assert torch.isfinite(four_tiles.grad).all()
+
+
+def test_native_training_linear_bounds_four_times_wide_ffn_rows(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    training_math = importlib.import_module("rwkv7_kernels.nvidia.training_math")
+    original_linear = training_math.F.linear
+    calls = []
+
+    def record_linear(value, weight, bias=None):
+        calls.append(tuple(value.shape))
+        return original_linear(value, weight, bias)
+
+    monkeypatch.setattr(training_math.F, "linear", record_linear)
+    value = torch.randn(4, 128, 8, requires_grad=True)
+    weight = torch.randn(32, 8, requires_grad=True)
+
+    output = training_math.training_linear(value, weight)
+
+    assert output.shape == (4, 128, 32)
+    assert calls == [(4, 80, 8), (4, 48, 8)]
+    output.square().mean().backward()
+    assert value.grad is not None and torch.isfinite(value.grad).all()
+    assert weight.grad is not None and torch.isfinite(weight.grad).all()
 
 
 def test_native_training_channel_mix_does_not_reenter_linear_dispatch(
@@ -489,7 +885,7 @@ def test_native_training_channel_mix_does_not_reenter_linear_dispatch(
     value = torch.randn(2, 9, tiny_config.hidden_size)
     mask = torch.ones(2, 9, dtype=torch.bool)
     shift = torch.zeros(2, tiny_config.hidden_size)
-    expected, _ = channel(value, shift, mask)
+    expected, _ = channel(value, shift, mask, mask_fully_active=True)
 
     def reject_nested_dispatch(*_args, **_kwargs):
         raise AssertionError("native training recursively called RWKV7Linear.forward")
@@ -503,7 +899,7 @@ def test_train_temp_include_paths_merge_partial_overlay_and_pip_headers(
     tmp_path, monkeypatch
 ):
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     overlay = tmp_path / "cuda"
     overlay_include = overlay / "include"
     overlay_include.mkdir(parents=True)
@@ -528,7 +924,7 @@ def test_train_temp_decay_operand_privately_adds_fp32_public_bias(
     tiny_config, monkeypatch
 ):
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     attention = RWKV7ForCausalLM(tiny_config).model.layers[0].attn.bfloat16()
     projection = attention.w_lora.lora[2]
     projection.bias = torch.nn.Parameter(projection.bias.float())
@@ -558,7 +954,7 @@ def test_train_temp_decay_operand_privately_adds_fp32_public_bias(
 
 def test_recurrent_training_replay_matches_reference_full_gradient(monkeypatch):
     _load_dense_backend(monkeypatch)
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     torch.manual_seed(73)
     shape = (2, 3, 2, 4)
     recurrent_inputs = [(torch.randn(shape) * 0.1).requires_grad_() for _ in range(6)]
@@ -588,9 +984,7 @@ def test_recurrent_training_mask_compaction_preserves_padding_and_gradients(
     monkeypatch,
 ):
     _load_dense_backend(monkeypatch)
-    training = importlib.import_module(
-        "rwkv7_kernels.recurrent.training_factorized"
-    )
+    training = importlib.import_module("rwkv7_kernels.recurrent.training_factorized")
     torch.manual_seed(79)
     shape = (2, 5, 2, 4)
     base = [torch.randn(shape, dtype=torch.float64) * 0.1 for _ in range(6)]
@@ -634,8 +1028,39 @@ def test_recurrent_training_mask_compaction_preserves_padding_and_gradients(
     assert runner_calls == [(2, 16, 2, 4)]
 
 
+def test_recurrent_training_dense_hints_avoid_mask_scalar_sync(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    training = importlib.import_module("rwkv7_kernels.recurrent.training_factorized")
+    shape = (2, 16, 2, 4)
+    recurrent_inputs = [torch.randn(shape) for _ in range(6)]
+    state = torch.zeros(2, 2, 4, 4)
+    mask = torch.ones(2, 16, dtype=torch.bool)
+    runner_calls = []
+
+    def runner(*args):
+        runner_calls.append(tuple(args[0].shape))
+        return args[3], args[-1]
+
+    def reject_scalar_sync(*_args, **_kwargs):
+        raise AssertionError("dense request must not reduce the device mask")
+
+    monkeypatch.setattr(torch.Tensor, "all", reject_scalar_sync)
+    output, final_state = training._run_masked_training(
+        recurrent_inputs,
+        state,
+        mask,
+        runner=runner,
+        fully_active=True,
+        token_aligned=True,
+    )
+
+    assert runner_calls == [(2, 16, 2, 4)]
+    assert output is recurrent_inputs[3]
+    assert final_state is state
+
+
 def test_train_temp_mix6_backward_matches_canonical_token_mix():
-    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
     torch.manual_seed(127)
     x = torch.randn(2, 5, 8, requires_grad=True)
     mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
@@ -653,3 +1078,168 @@ def test_train_temp_mix6_backward_matches_canonical_token_mix():
     actual = train_temp._Mix6.backward(Context(), *output_grads)
     for candidate, reference in zip(actual, expected, strict=True):
         torch.testing.assert_close(candidate, reference)
+
+
+def test_train_temp_mix6_large_backward_calls_native_operator(monkeypatch):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
+    torch.manual_seed(131)
+    x = torch.randn(4, 8, 8).transpose(1, 2)
+    mixes = [torch.randn(16)[::2] for _ in range(6)]
+    output_grads = [torch.randn(4, 8, 8).transpose(1, 2) for _ in range(6)]
+    native_results = (torch.randn_like(x), *(torch.randn_like(mix) for mix in mixes))
+    calls = []
+
+    def native_backward(*args):
+        calls.append(args)
+        return native_results
+
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "backward",
+        native_backward,
+        raising=False,
+    )
+
+    class Context:
+        saved_tensors = (x, *mixes)
+
+    with torch.no_grad():
+        actual = train_temp._Mix6.backward(Context(), *output_grads)
+
+    assert len(calls) == 1
+    assert all(
+        candidate is expected for candidate, expected in zip(actual, native_results)
+    )
+    assert all(value.is_contiguous() for value in calls[0])
+    for candidate, expected in zip(calls[0][:6], output_grads, strict=True):
+        torch.testing.assert_close(candidate, expected)
+    for candidate, expected in zip(calls[0][6:], (x, *mixes), strict=True):
+        torch.testing.assert_close(candidate, expected)
+
+
+def test_train_temp_mix6_small_backward_replays_canonical_math(monkeypatch):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
+    torch.manual_seed(133)
+    x = torch.randn(1, 16, 8, requires_grad=True)
+    mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
+    output_grads = [torch.randn_like(x) for _ in range(6)]
+
+    def reject_native_backward(*_args):
+        raise AssertionError("small Mix6 backward must use canonical replay")
+
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "backward",
+        reject_native_backward,
+        raising=False,
+    )
+
+    shifted = torch.cat((torch.zeros_like(x[:, :1]), x[:, :-1]), dim=1)
+    canonical_outputs = tuple(x + (shifted - x) * mix.view(1, 1, -1) for mix in mixes)
+    expected = torch.autograd.grad(
+        canonical_outputs,
+        (x, *mixes),
+        output_grads,
+    )
+
+    class Context:
+        saved_tensors = (x.detach(), *(mix.detach() for mix in mixes))
+
+    with torch.no_grad():
+        actual = train_temp._Mix6.backward(Context(), *output_grads)
+    for candidate, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(candidate, reference)
+
+
+def test_train_temp_mix6_double_backward_retains_canonical_graph(monkeypatch):
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.official_training_cuda")
+    torch.manual_seed(137)
+    x = torch.randn(2, 5, 8, requires_grad=True)
+    mixes = [torch.randn(8, requires_grad=True) for _ in range(6)]
+    output_grads = [torch.randn_like(x) for _ in range(6)]
+
+    def canonical_forward(value, *parameters):
+        shifted = torch.cat((torch.zeros_like(value[:, :1]), value[:, :-1]), dim=1)
+        delta = shifted - value
+        return tuple(
+            value + delta * parameter.view(1, 1, -1) for parameter in parameters
+        )
+
+    def reject_native_backward(*_args):
+        raise AssertionError("double backward must use the canonical replay")
+
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "forward",
+        canonical_forward,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        torch.ops.rwkv7_tmix_mix6_bf16_v5,
+        "backward",
+        reject_native_backward,
+        raising=False,
+    )
+
+    outputs = train_temp._Mix6.apply(x, *mixes)
+    first_gradients = torch.autograd.grad(
+        outputs,
+        (x, *mixes),
+        output_grads,
+        create_graph=True,
+    )
+    assert all(gradient.requires_grad for gradient in first_gradients)
+    second_gradients = torch.autograd.grad(
+        sum(gradient.sum() for gradient in first_gradients),
+        (x, *mixes),
+    )
+    assert all(torch.isfinite(gradient).all() for gradient in second_gradients)
+
+
+def test_train_temp_mix6_cuda_backward_has_fixed_reduction_order():
+    cuda_source = (
+        ROOT
+        / "kernels"
+        / "rwkv7_kernels"
+        / "nvidia"
+        / "csrc"
+        / "training"
+        / "rwkv_lm"
+        / "rwkv7_tmix_mix6_bf16_v5.cu"
+    ).read_text()
+    cpp_source = (
+        ROOT
+        / "kernels"
+        / "rwkv7_kernels"
+        / "nvidia"
+        / "csrc"
+        / "training"
+        / "rwkv_lm"
+        / "rwkv7_tmix_mix6_bf16_v5.cpp"
+    ).read_text()
+
+    assert "tmix_mix6_backward_deterministic_kernel_v5" in cuda_source
+    assert "for (int64_t bt = 0; bt < bt_size; ++bt)" in cuda_source
+    assert "atomicAdd" not in cuda_source
+    assert "blockIdx.y" not in cuda_source
+    assert "torch::zeros" not in cuda_source
+    assert cuda_source.count("at::cuda::getCurrentCUDAStream(x.get_device())") == 2
+    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK()") == 2
+    assert "grad_x_r.data_ptr<at::BFloat16>()" in cuda_source
+    assert cpp_source.count("c10::cuda::CUDAGuard device_guard(x.device())") == 2
+    assert cpp_source.count("check_same_device(*item.first, x, item.second)") == 3
+
+
+def test_train_temp_clampw_uses_checked_tensor_device_and_current_stream():
+    root = (
+        ROOT / "kernels" / "rwkv7_kernels" / "nvidia" / "csrc" / "training" / "rwkv_lm"
+    )
+    cpp_source = (root / "rwkv7_clampw_v3.cpp").read_text()
+    cuda_source = (root / "rwkv7_clampw_v3_for_h100.cu").read_text()
+
+    assert "check_common_inputs(r, decay, k, v, a, b, s, sa)" in cpp_source
+    assert "value.device() == reference.device()" in cpp_source
+    assert cpp_source.count("c10::cuda::CUDAGuard device_guard(r.device())") == 2
+    assert cpp_source.count("at::cuda::getCurrentCUDAStream(r.get_device())") == 2
+    assert cuda_source.count(",0,stream>>>") == 2
+    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK()") == 2

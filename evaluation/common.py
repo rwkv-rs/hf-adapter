@@ -11,6 +11,67 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+_TRAINING_PADDING_MODES = frozenset(("none", "left", "right"))
+
+
+def training_case_seed(
+    base_seed: int,
+    *,
+    batch: int,
+    tokens: int,
+    padding: str = "none",
+    sample_index: int = 0,
+) -> int:
+    """Derive one order-independent training sample seed.
+
+    Checkpointing is intentionally not an input: checkpoint-on and
+    checkpoint-off lanes must consume identical token IDs.  Additional random
+    samples are represented explicitly by ``sample_index`` instead of by the
+    iteration order of one mutable generator.
+    """
+
+    if batch <= 0 or tokens <= 0:
+        raise ValueError("batch and tokens must be positive")
+    if sample_index < 0:
+        raise ValueError("sample_index must be non-negative")
+    if padding not in _TRAINING_PADDING_MODES:
+        choices = ", ".join(sorted(_TRAINING_PADDING_MODES))
+        raise ValueError(f"padding must be one of {choices}; got {padding!r}")
+    payload = json.dumps(
+        {
+            "base_seed": int(base_seed),
+            "batch": int(batch),
+            "tokens": int(tokens),
+            "padding": padding,
+            "sample_index": int(sample_index),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return int.from_bytes(
+        hashlib.sha256(payload).digest()[:8],
+        byteorder="little",
+        signed=False,
+    ) & ((1 << 63) - 1)
+
+
+def input_ids_sha256(value) -> str:
+    """Hash token IDs together with their dtype and exact shape."""
+
+    import torch
+
+    if not isinstance(value, torch.Tensor):
+        raise TypeError("input IDs must be a torch.Tensor")
+    tensor = value.detach().to(device="cpu").contiguous()
+    digest = hashlib.sha256()
+    digest.update(str(tensor.dtype).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(json.dumps(list(tensor.shape), separators=(",", ":")).encode())
+    digest.update(b"\0")
+    digest.update(tensor.view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
+
+
 def git_revision(root: Path) -> str | None:
     try:
         return subprocess.check_output(

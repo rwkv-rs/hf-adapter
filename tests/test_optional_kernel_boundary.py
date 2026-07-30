@@ -5,14 +5,20 @@ import types
 
 import pytest
 import torch
+from torch.utils.checkpoint import checkpoint
 
 from rwkv7_hf import ops_rwkv7
+from rwkv7_hf.cache_rwkv7 import RWKV7Cache
 from rwkv7_hf.ops_rwkv7 import (
+    RWKV7ExecutionContext,
     get_last_linear_route,
+    get_last_mix6_route,
     get_last_model_route,
     get_last_recurrent_route,
     maybe_linear_training,
+    maybe_mix6_training,
     maybe_model_forward,
+    resolve_execution_context,
     rwkv7_recurrent,
     rwkv7_recurrent_reference,
 )
@@ -30,6 +36,18 @@ def recurrent_inputs(*, requires_grad: bool = False):
     return (*values, state, mask)
 
 
+def envelope(kind, *, supported, implementation, reason, result=None, phase=None):
+    return {
+        "api_version": 4,
+        "kind": kind,
+        "supported": supported,
+        "implementation": implementation,
+        "reason": reason,
+        "result": result,
+        "phase": phase or ("training" if "training" in kind else "prefill"),
+    }
+
+
 @pytest.fixture(autouse=True)
 def reset_optional_kernel(monkeypatch):
     monkeypatch.delenv("RWKV7_BACKEND", raising=False)
@@ -39,39 +57,13 @@ def reset_optional_kernel(monkeypatch):
     ops_rwkv7._reset_kernel_discovery_for_tests()
 
 
-def install_fake_kernel(
-    monkeypatch,
-    *,
-    api_version: int = 2,
-    supported: bool = True,
-    probe_error: Exception | None = None,
-    run_error: Exception | None = None,
-):
-    calls = {"probe": 0, "run": 0}
+def install_fake_kernel(monkeypatch, execute):
     module = types.ModuleType("rwkv7_kernels")
-    module.RWKV7_KERNEL_API_VERSION = api_version
-
-    def probe(*_args):
-        calls["probe"] += 1
-        if probe_error is not None:
-            raise probe_error
-        return {
-            "supported": supported,
-            "implementation": "fake-recurrent-v1",
-            "reason": "supported by fake" if supported else "unsupported by fake",
-        }
-
-    def run(*args):
-        calls["run"] += 1
-        if run_error is not None:
-            raise run_error
-        return rwkv7_recurrent_reference(*args)
-
-    module.probe_recurrent_v1 = probe
-    module.recurrent_v1 = run
+    module.RWKV7_KERNEL_API_VERSION = 4
+    module.execute_optional_v4 = execute
     monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
     ops_rwkv7._reset_kernel_discovery_for_tests()
-    return calls
+    return module
 
 
 def assert_reference_equal(actual, expected):
@@ -90,10 +82,7 @@ def test_auto_without_kernel_package_uses_reference(monkeypatch):
     monkeypatch.setattr(ops_rwkv7.importlib, "import_module", missing)
     inputs = recurrent_inputs()
     assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
-    route = get_last_recurrent_route()
-    assert route is not None
-    assert route["requested"] == "auto"
-    assert route["selected"] == "reference"
+    assert get_last_recurrent_route()["selected"] == "reference"
 
 
 def test_forced_optimized_without_package_fails_clearly(monkeypatch):
@@ -106,299 +95,720 @@ def test_forced_optimized_without_package_fails_clearly(monkeypatch):
         rwkv7_recurrent(*recurrent_inputs(), backend="optimized")
 
 
-def test_supported_kernel_is_selected_and_records_actual_route(monkeypatch):
-    calls = install_fake_kernel(monkeypatch)
-    inputs = recurrent_inputs()
-    assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
-    assert calls == {"probe": 1, "run": 1}
+def test_recurrent_v4_supported_records_route_and_gradients(monkeypatch):
+    calls = []
+
+    def execute(kind, *args, **kwargs):
+        calls.append((kind, kwargs))
+        assert kind == "recurrent"
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-recurrent-v4",
+            reason="fake accepted",
+            result=rwkv7_recurrent_reference(*args),
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    inputs = recurrent_inputs(requires_grad=True)
+    output, state = rwkv7_recurrent(*inputs)
+    (output.square().mean() + state.square().mean()).backward()
+    assert calls == [("recurrent", {"training": False})]
+    assert all(tensor.grad is not None for tensor in inputs[:-1])
     assert get_last_recurrent_route() == {
         "requested": "auto",
         "selected": "optimized",
-        "implementation": "fake-recurrent-v1",
-        "reason": "supported by fake",
+        "implementation": "fake-recurrent-v4",
+        "reason": "fake accepted",
+        "phase": "prefill",
     }
 
 
-def test_auto_falls_back_on_unsupported_and_optimized_surfaces(monkeypatch):
-    calls = install_fake_kernel(monkeypatch, supported=False)
+@pytest.mark.parametrize("failure", ["unsupported", "exception", "malformed"])
+def test_auto_contains_optional_failures_and_strict_surfaces(monkeypatch, failure):
+    def execute(kind, *args, **_kwargs):
+        if failure == "exception":
+            raise RuntimeError("broken v4 execution")
+        if failure == "malformed":
+            return {"api_version": 4, "kind": kind}
+        return envelope(
+            kind,
+            supported=False,
+            implementation="fake-recurrent-v4",
+            reason="unsupported v4 request",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
     inputs = recurrent_inputs()
     assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
-    assert calls == {"probe": 1, "run": 0}
-    assert get_last_recurrent_route()["reason"] == "unsupported by fake"
-
-    with pytest.raises(RuntimeError, match="unsupported by fake"):
+    assert get_last_recurrent_route()["selected"] == "reference"
+    with pytest.raises(RuntimeError):
         rwkv7_recurrent(*inputs, backend="optimized")
 
 
-@pytest.mark.parametrize("failure_stage", ["probe", "run"])
-def test_broken_kernel_is_contained_in_auto_and_surfaced_in_optimized(
-    monkeypatch, failure_stage
-):
-    error = RuntimeError(f"broken {failure_stage}")
-    kwargs = {f"{failure_stage}_error": error}
-    install_fake_kernel(monkeypatch, **kwargs)
-    inputs = recurrent_inputs()
-    assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
-    assert "optional kernel failure" in get_last_recurrent_route()["reason"]
-
-    with pytest.raises(RuntimeError, match=f"broken {failure_stage}"):
-        rwkv7_recurrent(*inputs, backend="optimized")
-
-
-def test_api_version_mismatch_falls_back_or_fails_by_mode(monkeypatch):
-    install_fake_kernel(monkeypatch, api_version=999)
+@pytest.mark.parametrize("api_version", (3, True, 4.0))
+def test_api_version_mismatch_is_not_silently_selected(monkeypatch, api_version):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = api_version
+    module.execute_optional_v4 = lambda *_a, **_k: None
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
     inputs = recurrent_inputs()
     assert_reference_equal(rwkv7_recurrent(*inputs), rwkv7_recurrent_reference(*inputs))
     assert "kernel API mismatch" in get_last_recurrent_route()["reason"]
 
-    ops_rwkv7._reset_kernel_discovery_for_tests()
-    with pytest.raises(RuntimeError, match="kernel API mismatch"):
-        rwkv7_recurrent(*inputs, backend="optimized")
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("api_version", True),
+        ("api_version", 4.0),
+        ("kind", b"recurrent"),
+        ("supported", "false"),
+        ("supported", 1),
+        ("implementation", 7),
+        ("reason", None),
+        ("phase", False),
+    ),
+)
+def test_hf_boundary_rejects_coercible_envelope_fields(monkeypatch, field, value):
+    def execute(kind, *_args, **_kwargs):
+        result = envelope(
+            kind,
+            supported=False,
+            implementation="fake-recurrent-v4",
+            reason="unsupported",
+        )
+        result[field] = value
+        return result
 
-def test_training_falls_back_when_optional_package_has_no_training_protocol(
-    monkeypatch,
-):
-    calls = install_fake_kernel(monkeypatch)
-    inputs = recurrent_inputs(requires_grad=True)
-    assert_reference_equal(
-        rwkv7_recurrent(*inputs, training=True),
-        rwkv7_recurrent_reference(*inputs),
-    )
-    assert calls == {"probe": 0, "run": 0}
-    assert get_last_recurrent_route()["selected"] == "reference"
-
-    assert "recurrent-training-v1" in get_last_recurrent_route()["reason"]
-
-    with pytest.raises(RuntimeError, match="recurrent-training-v1"):
-        rwkv7_recurrent(*inputs, training=True, backend="optimized")
-
-
-def test_training_uses_separate_leaf_autograd_protocol(monkeypatch):
-    module = types.ModuleType("rwkv7_kernels")
-    module.RWKV7_KERNEL_API_VERSION = 2
-    calls = {"probe": 0, "run": 0}
-
-    def probe(*_args):
-        calls["probe"] += 1
-        return {
-            "supported": True,
-            "implementation": "fake-cuda-training-v1",
-            "reason": "fake training leaf",
-        }
-
-    def run(*args):
-        calls["run"] += 1
-        return rwkv7_recurrent_reference(*args)
-
-    module.probe_recurrent_training_v1 = probe
-    module.recurrent_training_v1 = run
-    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
-    ops_rwkv7._reset_kernel_discovery_for_tests()
-
-    inputs = recurrent_inputs(requires_grad=True)
-    output, state = rwkv7_recurrent(*inputs, training=True)
-    loss = output.square().mean() + state.square().mean()
-    loss.backward()
-
-    assert calls == {"probe": 1, "run": 1}
-    assert all(value.grad is not None for value in inputs[:-1])
-    assert get_last_recurrent_route() == {
-        "requested": "auto",
-        "selected": "optimized",
-        "implementation": "fake-cuda-training-v1",
-        "reason": "fake training leaf",
-    }
-
-
-def test_training_linear_uses_stateless_optional_protocol(monkeypatch):
-    module = types.ModuleType("rwkv7_kernels")
-    module.RWKV7_KERNEL_API_VERSION = 2
-    calls = {"probe": 0, "run": 0}
-
-    def probe(value, weight, bias, *, fully_active, token_aligned):
-        calls["probe"] += 1
-        assert bias is None
-        assert fully_active is None
-        assert token_aligned is None
-        return {
-            "supported": True,
-            "implementation": "fake-cuda-linear-training-v1",
-            "reason": "fake stateless linear leaf",
-        }
-
-    def run(value, weight, bias, *, fully_active, token_aligned):
-        calls["run"] += 1
-        assert fully_active is None
-        assert token_aligned is None
-        return torch.nn.functional.linear(value, weight, bias)
-
-    module.probe_linear_training_v1 = probe
-    module.linear_training_v1 = run
-    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
-    ops_rwkv7._reset_kernel_discovery_for_tests()
-
-    value = torch.randn(2, 3, 4, dtype=torch.float64, requires_grad=True)
-    weight = torch.randn(5, 4, dtype=torch.float64, requires_grad=True)
-    output = maybe_linear_training(value, weight, None, training=True)
-    assert output is not None
-    output.square().mean().backward()
-
-    assert calls == {"probe": 1, "run": 1}
-    assert value.grad is not None and weight.grad is not None
-    assert get_last_linear_route() == {
-        "requested": "auto",
-        "selected": "optimized",
-        "implementation": "fake-cuda-linear-training-v1",
-        "reason": "fake stateless linear leaf",
-    }
-
-
-def test_training_linear_auto_falls_back_and_optimized_is_strict(monkeypatch):
-    install_fake_kernel(monkeypatch)
-    value = torch.randn(2, 3, 4, requires_grad=True)
-    weight = torch.randn(5, 4, requires_grad=True)
-
-    assert maybe_linear_training(value, weight, None, training=True) is None
-    assert get_last_linear_route()["selected"] == "reference"
-    assert "linear-training-v1" in get_last_linear_route()["reason"]
-    with pytest.raises(RuntimeError, match="linear-training-v1"):
-        maybe_linear_training(
-            value,
-            weight,
-            None,
-            training=True,
-            backend="optimized",
+    install_fake_kernel(monkeypatch, execute)
+    with pytest.raises(TypeError, match=field):
+        ops_rwkv7._kernel_envelope(
+            "recurrent", *recurrent_inputs(), training=False
         )
 
 
-def test_training_model_keeps_readable_loop_and_selects_both_leafs(
-    monkeypatch, tiny_config
+def test_hf_boundary_rejects_unknown_envelope_fields(monkeypatch):
+    def execute(kind, *_args, **_kwargs):
+        result = envelope(
+            kind,
+            supported=False,
+            implementation="fake-recurrent-v4",
+            reason="unsupported",
+        )
+        result["private_payload"] = object()
+        return result
+
+    install_fake_kernel(monkeypatch, execute)
+    with pytest.raises(TypeError, match="unknown fields"):
+        ops_rwkv7._kernel_envelope(
+            "recurrent", *recurrent_inputs(), training=False
+        )
+
+
+def certified_context() -> RWKV7ExecutionContext:
+    return RWKV7ExecutionContext(
+        training=True,
+        fully_active=True,
+        initial_state_zero=True,
+        autograd_leaf_eligible=True,
+        force_reference_program=False,
+        optimized_program=True,
+        program_id="fake-program-v4",
+        token_aligned=True,
+        program_implementation="fake-program-v4",
+        program_reason="certified",
+    )
+
+
+def test_training_preflight_is_one_v4_operation(monkeypatch):
+    calls = []
+
+    def execute(kind, *args, **kwargs):
+        calls.append((kind, args, kwargs))
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-program-v4",
+            reason="certified",
+            result={"program_id": "fake-program-v4", "token_aligned": True},
+            phase="training",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    hidden = torch.randn(4, 128, 64, requires_grad=True)
+    mask = torch.ones(4, 128, dtype=torch.bool)
+    context = resolve_execution_context(
+        mask,
+        training=True,
+        fully_active=True,
+        initial_state_zero=True,
+        autograd_leaf_eligible=True,
+        hidden_states=hidden,
+        head_dim=64,
+    )
+    assert context.optimized_program is True
+    assert context.program_id == "fake-program-v4"
+    assert len(calls) == 1 and calls[0][0] == "training_program"
+    assert "token_aligned" not in calls[0][2]
+
+
+def test_strict_optimized_training_decline_fails_at_model_boundary(monkeypatch):
+    calls = []
+
+    def execute(kind, *_args, **_kwargs):
+        calls.append(kind)
+        return envelope(
+            kind,
+            supported=False,
+            implementation="native-training-program-v4",
+            reason="complete three-leaf plan is unavailable",
+            phase="training",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    monkeypatch.setenv("RWKV7_BACKEND", "optimized")
+    hidden = torch.randn(4, 128, 64, requires_grad=True)
+    mask = torch.ones(4, 128, dtype=torch.bool)
+    with pytest.raises(RuntimeError, match="unavailable at the model boundary"):
+        resolve_execution_context(
+            mask,
+            training=True,
+            fully_active=True,
+            initial_state_zero=True,
+            autograd_leaf_eligible=True,
+            hidden_states=hidden,
+            head_dim=64,
+        )
+    assert calls == ["training_program"]
+
+
+def test_explicit_context_flows_to_all_training_leaves(monkeypatch):
+    received = []
+    context = certified_context()
+
+    def execute(kind, *args, **kwargs):
+        received.append((kind, kwargs))
+        if kind == "linear_training":
+            result = torch.nn.functional.linear(*args)
+        elif kind == "mix6_training":
+            value, shifted, *mixes = args
+            result = tuple(
+                value + (shifted - value) * mix.view(1, 1, -1) for mix in mixes
+            )
+        else:
+            result = rwkv7_recurrent_reference(*args)
+        return envelope(
+            kind,
+            supported=True,
+            implementation=f"fake-{kind}-v4",
+            reason="executed",
+            result=result,
+            phase="training",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    shifted = torch.randn_like(value)
+    mixes = tuple(torch.randn(4) for _ in range(6))
+    weight = torch.randn(5, 4, requires_grad=True)
+    assert maybe_linear_training(
+        value, weight, None, training=True, execution_context=context
+    ) is not None
+    assert maybe_mix6_training(
+        value, shifted, mixes, training=True, execution_context=context
+    ) is not None
+    rwkv7_recurrent(
+        *recurrent_inputs(requires_grad=True),
+        training=True,
+        initial_state_zero=True,
+        execution_context=context,
+    )
+    assert [row[0] for row in received] == [
+        "linear_training",
+        "mix6_training",
+        "recurrent",
+    ]
+    assert all(row[1]["program_id"] == "fake-program-v4" for row in received)
+    assert all(row[1]["facts"]["fully_active"] is True for row in received)
+
+
+@pytest.mark.parametrize("force_reference_program", [False, True])
+def test_uncertified_program_keeps_every_leaf_on_reference(
+    monkeypatch, force_reference_program
 ):
-    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
-
-    module = types.ModuleType("rwkv7_kernels")
-    module.RWKV7_KERNEL_API_VERSION = 2
-    module.probe_model_forward_v1 = lambda _owner, _request: {
-        "supported": False,
-        "implementation": "fake-model-training-v1",
-        "reason": "model structure stays in modeling_rwkv7.py",
-        "phase": "training",
-    }
-    module.model_forward_v1 = lambda *_args: None
-    module.probe_recurrent_training_v1 = lambda *_args: {
-        "supported": True,
-        "implementation": "fake-cuda-recurrent-training-v1",
-        "reason": "fake recurrent leaf",
-    }
-    module.recurrent_training_v1 = lambda *args: rwkv7_recurrent_reference(*args)
-    module.probe_linear_training_v1 = lambda *_args, **_kwargs: {
-        "supported": True,
-        "implementation": "fake-cuda-linear-training-v1",
-        "reason": "fake linear leaf",
-    }
-    module.linear_training_v1 = lambda value, weight, bias, **_kwargs: (
-        torch.nn.functional.linear(value, weight, bias)
+    calls = []
+    install_fake_kernel(monkeypatch, lambda *a, **k: calls.append((a, k)))
+    context = RWKV7ExecutionContext(
+        training=True,
+        fully_active=True,
+        initial_state_zero=True,
+        autograd_leaf_eligible=False,
+        force_reference_program=force_reference_program,
+        optimized_program=False,
+        program_id=None,
+        token_aligned=None,
+        program_implementation="torch-reference-training-program-v1",
+        program_reason="no certificate",
     )
-    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
-    ops_rwkv7._reset_kernel_discovery_for_tests()
-
-    model = RWKV7ForCausalLM(tiny_config).train()
-    output = model(
-        input_ids=torch.tensor([[1, 2, 3]]),
-        labels=torch.tensor([[1, 2, 3]]),
-        use_cache=False,
+    value = torch.randn(2, 3, 4, requires_grad=True)
+    shifted = torch.randn_like(value)
+    mixes = tuple(torch.randn(4) for _ in range(6))
+    weight = torch.randn(5, 4, requires_grad=True)
+    assert maybe_linear_training(
+        value, weight, None, training=True, execution_context=context
+    ) is None
+    assert maybe_mix6_training(
+        value, shifted, mixes, training=True, execution_context=context
+    ) is None
+    rwkv7_recurrent(
+        *recurrent_inputs(requires_grad=True),
+        training=True,
+        execution_context=context,
     )
-    output.loss.backward()
+    assert calls == []
+    assert get_last_linear_route()["selected"] == "reference"
+    assert get_last_mix6_route()["selected"] == "reference"
+    assert get_last_recurrent_route()["selected"] == "reference"
 
+
+@pytest.mark.parametrize("leaf", ["linear", "mix6", "recurrent"])
+@pytest.mark.parametrize("force_reference_program", [False, True])
+def test_uncertified_strict_program_fails_before_kernel(
+    monkeypatch, leaf, force_reference_program
+):
+    install_fake_kernel(
+        monkeypatch,
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not execute")),
+    )
+    context = RWKV7ExecutionContext(
+        training=True,
+        fully_active=True,
+        initial_state_zero=True,
+        autograd_leaf_eligible=False,
+        force_reference_program=force_reference_program,
+        optimized_program=False,
+        program_id=None,
+        token_aligned=None,
+        program_implementation="torch-reference-training-program-v1",
+        program_reason="no certificate",
+    )
+    with pytest.raises(RuntimeError, match="atomic fast-program certificate"):
+        if leaf == "linear":
+            maybe_linear_training(
+                torch.randn(2, 3, 4),
+                torch.randn(5, 4),
+                None,
+                training=True,
+                backend="optimized",
+                execution_context=context,
+            )
+        elif leaf == "mix6":
+            value = torch.randn(2, 3, 4)
+            maybe_mix6_training(
+                value,
+                value,
+                tuple(torch.randn(4) for _ in range(6)),
+                training=True,
+                backend="optimized",
+                execution_context=context,
+            )
+        else:
+            rwkv7_recurrent(
+                *recurrent_inputs(),
+                training=True,
+                backend="optimized",
+                execution_context=context,
+            )
+
+
+def test_atomic_program_late_decline_is_fail_closed(monkeypatch):
+    def execute(kind, *_args, **_kwargs):
+        return envelope(
+            kind,
+            supported=False,
+            implementation="fake-recurrent-v4",
+            reason="late decline",
+            phase="training",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    with pytest.raises(RuntimeError, match="late decline"):
+        rwkv7_recurrent(
+            *recurrent_inputs(),
+            training=True,
+            execution_context=certified_context(),
+        )
+
+
+def test_checkpoint_control_flow_is_not_swallowed(monkeypatch):
+    calls = 0
+
+    def execute(kind, value, weight, bias, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-linear-v4",
+            reason="checkpoint",
+            result=torch.nn.functional.linear(value, weight, bias),
+            phase="training",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    value = torch.randn(4, 8, requires_grad=True)
+    weight = torch.randn(8, 8, requires_grad=True)
+
+    def projection(hidden):
+        output = maybe_linear_training(hidden, weight, None, training=True)
+        assert output is not None
+        return output
+
+    checkpoint(projection, value, use_reentrant=False).sum().backward()
+    assert calls == 2
+    assert value.grad is not None and weight.grad is not None
+
+
+def model_request(kind="base", *, training=False):
+    return {
+        "model_kind": kind,
+        "training": training,
+        "use_cache": True,
+        "hidden_states": torch.zeros(1, 1, 4),
+        "past_key_values": RWKV7Cache(num_layers=0),
+    }
+
+
+def transactional_model_request(*, use_cache=True, cache_type=RWKV7Cache):
+    recurrent = torch.arange(16, dtype=torch.float32).reshape(1, 1, 4, 4)
+    attention_shift = torch.arange(4, dtype=torch.float32).reshape(1, 4)
+    ffn_shift = -attention_shift
+    cache = cache_type(
+        [recurrent],
+        [attention_shift],
+        [ffn_shift],
+        seen_tokens=5,
+    )
+    return {
+        "model_kind": "base",
+        "training": False,
+        "use_cache": use_cache,
+        "hidden_states": torch.zeros(1, 2, 4),
+        "past_key_values": cache,
+    }
+
+
+def snapshot_cache(cache):
+    snapshot = {"seen_tokens": cache.seen_tokens}
+    for name in ("recurrent_state", "attention_shift", "ffn_shift"):
+        values = getattr(cache, name)
+        snapshot[name] = (
+            values,
+            tuple(
+                (value, None if value is None else value.clone()) for value in values
+            ),
+        )
+    return snapshot
+
+
+def assert_cache_unchanged(cache, snapshot):
+    assert cache.seen_tokens == snapshot["seen_tokens"]
+    for name in ("recurrent_state", "attention_shift", "ffn_shift"):
+        values = getattr(cache, name)
+        original_list, original_values = snapshot[name]
+        assert values is original_list
+        assert len(values) == len(original_values)
+        for value, (original_value, expected) in zip(values, original_values):
+            assert value is original_value
+            if expected is None:
+                assert value is None
+            else:
+                torch.testing.assert_close(value, expected)
+
+
+def mutate_attempt_cache(cache, *, token_count=2):
+    cache.recurrent_state[0].add_(100)
+    cache.attention_shift[0].add_(200)
+    cache.ffn_shift[0].sub_(300)
+    cache.seen_tokens += token_count
+
+
+class SeenTokenWriteCountingCache(RWKV7Cache):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.seen_token_writes = 0
+
+    @RWKV7Cache.seen_tokens.setter
+    def seen_tokens(self, value):
+        self.seen_token_writes += 1
+        self._seen_tokens = int(value)
+
+
+def test_model_v4_supported_and_malformed_result_is_fail_closed(monkeypatch):
+    def execute(kind, _owner, request):
+        request["past_key_values"].seen_tokens += 1
+        result = {
+            "output_kind": request["model_kind"],
+            "last_hidden_state": torch.ones(1, 1, 4),
+            "past_key_values": request["past_key_values"],
+        }
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-model-v4",
+            reason="model accepted",
+            result=result,
+            phase="decode",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    result = maybe_model_forward(object(), model_request())
+    assert tuple(result["last_hidden_state"].shape) == (1, 1, 4)
+    assert get_last_model_route()["implementation"] == "fake-model-v4"
+
+    def malformed(kind, *_args):
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-model-v4",
+            reason="bad output",
+            result={"output_kind": "base"},
+        )
+
+    install_fake_kernel(monkeypatch, malformed)
+    with pytest.raises(RuntimeError, match="fail-closed"):
+        maybe_model_forward(object(), model_request())
+
+
+@pytest.mark.parametrize("backend", [None, "optimized"], ids=["auto", "strict"])
+def test_negative_model_probe_is_side_effect_free(monkeypatch, backend):
+    request = transactional_model_request()
+    original_cache = request["past_key_values"]
+    original_snapshot = snapshot_cache(original_cache)
+
+    def execute(kind, _owner, attempt_request):
+        assert attempt_request["past_key_values"] is original_cache
+        return envelope(
+            kind,
+            supported=False,
+            implementation="fake-model-v4",
+            reason="side-effect-free negative probe",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    if backend is None:
+        assert maybe_model_forward(object(), request) is None
+        assert get_last_model_route()["selected"] == "reference"
+    else:
+        with pytest.raises(RuntimeError):
+            maybe_model_forward(object(), request, backend=backend)
+    assert_cache_unchanged(original_cache, original_snapshot)
+
+
+@pytest.mark.parametrize("backend", [None, "optimized"], ids=["auto", "strict"])
+def test_model_execution_exception_is_fail_closed(monkeypatch, backend):
+    request = transactional_model_request()
+    original_cache = request["past_key_values"]
+    original_snapshot = snapshot_cache(original_cache)
+
+    def execute(_kind, _owner, attempt_request):
+        assert attempt_request["past_key_values"] is original_cache
+        raise RuntimeError("native execution failed before cache update")
+
+    install_fake_kernel(monkeypatch, execute)
+    with pytest.raises(RuntimeError, match="fail-closed"):
+        maybe_model_forward(object(), request, backend=backend)
+    assert_cache_unchanged(original_cache, original_snapshot)
+
+
+def test_successful_model_cache_execution_preserves_identity(monkeypatch):
+    request = transactional_model_request(cache_type=SeenTokenWriteCountingCache)
+    original_cache = request["past_key_values"]
+    original_snapshot = snapshot_cache(original_cache)
+
+    def execute(kind, _owner, attempt_request):
+        attempt_cache = attempt_request["past_key_values"]
+        assert attempt_cache is original_cache
+        mutate_attempt_cache(attempt_cache)
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-model-v4",
+            reason="valid zero-copy result",
+            result={
+                "output_kind": "base",
+                "last_hidden_state": torch.ones(1, 2, 4),
+                "past_key_values": attempt_cache,
+            },
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    result = maybe_model_forward(object(), request)
+    assert result is not None
+    assert result["past_key_values"] is original_cache
+    assert original_cache.seen_tokens == original_snapshot["seen_tokens"] + 2
+    assert original_cache.seen_token_writes == 1
+    torch.testing.assert_close(
+        original_cache.recurrent_state[0],
+        original_snapshot["recurrent_state"][1][0][1] + 100,
+    )
+    torch.testing.assert_close(
+        original_cache.attention_shift[0],
+        original_snapshot["attention_shift"][1][0][1] + 200,
+    )
+    torch.testing.assert_close(
+        original_cache.ffn_shift[0],
+        original_snapshot["ffn_shift"][1][0][1] - 300,
+    )
+
+
+def test_use_cache_false_backend_contract_preserves_callers_cache(monkeypatch):
+    request = transactional_model_request(use_cache=False)
+    original_cache = request["past_key_values"]
+    original_snapshot = snapshot_cache(original_cache)
+
+    def execute(kind, _owner, attempt_request):
+        attempt_cache = attempt_request["past_key_values"]
+        assert attempt_cache is original_cache
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-model-v4",
+            reason="valid cache-free result",
+            result={
+                "output_kind": "base",
+                "last_hidden_state": torch.ones(1, 2, 4),
+                "past_key_values": None,
+            },
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    result = maybe_model_forward(object(), request)
+    assert result is not None and result["past_key_values"] is None
+    assert_cache_unchanged(original_cache, original_snapshot)
+
+
+@pytest.mark.parametrize("backend", [None, "optimized"], ids=["auto", "strict"])
+@pytest.mark.parametrize(
+    "defect", ["shape", "dtype", "cache_identity", "cache_advance"]
+)
+def test_model_result_payload_validation_is_fail_closed(monkeypatch, backend, defect):
+    request = transactional_model_request()
+
+    def execute(kind, _owner, attempt_request):
+        attempt_cache = attempt_request["past_key_values"]
+        mutate_attempt_cache(
+            attempt_cache,
+            token_count=1 if defect == "cache_advance" else 2,
+        )
+        output = torch.ones(1, 2, 4)
+        if defect == "shape":
+            output = output[:, :1]
+        elif defect == "dtype":
+            output = output.to(dtype=torch.float64)
+        returned_cache = attempt_cache
+        if defect == "cache_identity":
+            returned_cache = attempt_cache.clone()
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-model-v4",
+            reason=f"invalid {defect}",
+            result={
+                "output_kind": "base",
+                "last_hidden_state": output,
+                "past_key_values": returned_cache,
+            },
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    with pytest.raises(RuntimeError, match="fail-closed"):
+        maybe_model_forward(object(), request, backend=backend)
+
+
+@pytest.mark.parametrize("backend", [None, "optimized"], ids=["auto", "strict"])
+@pytest.mark.parametrize("defect", ["shape", "dtype"])
+def test_linear_result_shape_and_dtype_are_fail_closed(monkeypatch, backend, defect):
+    value = torch.randn(2, 3, 4, dtype=torch.float64)
+    weight = torch.randn(5, 4, dtype=torch.float64)
+
+    def execute(kind, *args, **_kwargs):
+        result = torch.nn.functional.linear(*args)
+        if defect == "shape":
+            result = result[..., :-1]
+        else:
+            result = result.to(dtype=torch.float32)
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-linear-v4",
+            reason=f"invalid {defect}",
+            result=result,
+            phase="training",
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    if backend is None:
+        assert maybe_linear_training(value, weight, None, training=True) is None
+        assert get_last_linear_route()["selected"] == "reference"
+    else:
+        with pytest.raises(RuntimeError):
+            maybe_linear_training(
+                value,
+                weight,
+                None,
+                training=True,
+                backend=backend,
+            )
+
+
+@pytest.mark.parametrize("backend", [None, "optimized"], ids=["auto", "strict"])
+@pytest.mark.parametrize(
+    "defect", ["output_shape", "output_dtype", "state_shape", "state_dtype"]
+)
+def test_recurrent_result_shape_and_dtype_are_fail_closed(
+    monkeypatch, backend, defect
+):
+    inputs = recurrent_inputs()
+    reference = rwkv7_recurrent_reference(*inputs)
+
+    def execute(kind, *args, **_kwargs):
+        output, state = rwkv7_recurrent_reference(*args)
+        if defect == "output_shape":
+            output = output[..., :-1]
+        elif defect == "output_dtype":
+            output = output.to(dtype=torch.float32)
+        elif defect == "state_shape":
+            state = state[..., :-1]
+        else:
+            state = state.to(dtype=torch.float32)
+        return envelope(
+            kind,
+            supported=True,
+            implementation="fake-recurrent-v4",
+            reason=f"invalid {defect}",
+            result=(output, state),
+        )
+
+    install_fake_kernel(monkeypatch, execute)
+    if backend is None:
+        assert_reference_equal(rwkv7_recurrent(*inputs), reference)
+        assert get_last_recurrent_route()["selected"] == "reference"
+    else:
+        with pytest.raises(RuntimeError):
+            rwkv7_recurrent(*inputs, backend=backend)
+
+
+def test_training_never_enters_whole_model_backend(monkeypatch):
+    calls = []
+    install_fake_kernel(monkeypatch, lambda *args, **kwargs: calls.append((args, kwargs)))
+    assert maybe_model_forward(object(), model_request(training=True)) is None
+    assert calls == []
     assert get_last_model_route()["selected"] == "reference"
-    assert get_last_recurrent_route()["implementation"] == (
-        "fake-cuda-recurrent-training-v1"
-    )
-    assert get_last_linear_route()["implementation"] == (
-        "fake-cuda-linear-training-v1"
-    )
 
 
 def test_invalid_backend_mode_is_rejected():
     with pytest.raises(ValueError, match="auto, reference, optimized"):
         rwkv7_recurrent(*recurrent_inputs(), backend="fastest")
-
-
-def install_fake_model_kernel(
-    monkeypatch,
-    *,
-    supported: bool = True,
-    malformed: bool = False,
-):
-    module = types.ModuleType("rwkv7_kernels")
-    module.RWKV7_KERNEL_API_VERSION = 2
-    module.probe_model_forward_v1 = lambda _owner, _request: {
-        "supported": supported,
-        "implementation": "fake-model-v1",
-        "reason": "fake model route" if supported else "fake model unsupported",
-        "phase": "decode",
-    }
-
-    def run(_owner, request):
-        if malformed:
-            return {"output_kind": request["model_kind"]}
-        if request["model_kind"] == "causal_lm":
-            return {
-                "output_kind": "causal_lm",
-                "logits": torch.full((1, 2, 7), 3.0),
-                "past_key_values": request["past_key_values"],
-                "implementation": "fake-causal-prefill-v1",
-                "phase": "prefill",
-            }
-        return {
-            "output_kind": request["model_kind"],
-            "last_hidden_state": torch.ones(1, 1, 4),
-        }
-
-    module.model_forward_v1 = run
-    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
-    ops_rwkv7._reset_kernel_discovery_for_tests()
-
-
-def model_request():
-    return {"model_kind": "base", "training": False, "use_cache": True}
-
-
-def test_model_protocol_selects_supported_result_and_records_route(monkeypatch):
-    install_fake_model_kernel(monkeypatch)
-    result = maybe_model_forward(object(), model_request())
-    assert result is not None
-    assert tuple(result["last_hidden_state"].shape) == (1, 1, 4)
-    assert get_last_model_route() == {
-        "requested": "auto",
-        "selected": "optimized",
-        "implementation": "fake-model-v1",
-        "reason": "fake model route",
-        "phase": "decode",
-    }
-
-
-def test_model_protocol_auto_falls_back_but_optimized_is_strict(monkeypatch):
-    install_fake_model_kernel(monkeypatch, supported=False)
-    assert maybe_model_forward(object(), model_request()) is None
-    assert get_last_model_route()["selected"] == "reference"
-    with pytest.raises(RuntimeError, match="fake model unsupported"):
-        maybe_model_forward(object(), model_request(), backend="optimized")
-
-    install_fake_model_kernel(monkeypatch, malformed=True)
-    assert maybe_model_forward(object(), model_request()) is None
-    assert "kernel model result is missing" in get_last_model_route()["reason"]
-
-
-def test_causal_lm_uses_single_early_model_boundary(monkeypatch, tiny_config):
-    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
-
-    install_fake_model_kernel(monkeypatch)
-    model = RWKV7ForCausalLM(tiny_config).eval()
-    with torch.inference_mode():
-        output = model(input_ids=torch.tensor([[1, 2]]), use_cache=True)
-    assert tuple(output.logits.shape) == (1, 2, 7)
-    assert bool((output.logits == 3).all())
-    assert get_last_model_route()["implementation"] == "fake-causal-prefill-v1"
-    assert get_last_model_route()["phase"] == "prefill"

@@ -1,7 +1,7 @@
 {
   "counts": {
-    "adapted_protocol": 21,
-    "byte_migrated_nvidia": 91,
+    "adapted_protocol": 26,
+    "byte_migrated_nvidia": 86,
     "canonical_reference": 7,
     "non_kernel_feature_retired": 1,
     "separate_hardware_distribution": 27,
@@ -342,7 +342,7 @@
       "source": "rwkv7_hf/csrc/musa/wkv7_musa.muh"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/LICENSE",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/LICENSE",
       "destination_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
@@ -350,7 +350,7 @@
       "source": "rwkv7_hf/csrc/train_temp/LICENSE"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/README.md",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/README.md",
       "destination_sha256": "669c65efddee205ed67cadeae7a4fd7de7d461167a9b1252b313f895b159cf02",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "154849e914a4e41d6981ec038e16ab5bc7da5507",
@@ -358,31 +358,31 @@
       "source": "rwkv7_hf/csrc/train_temp/README.md"
     },
     {
-      "adaptation": "adapted the historical BF16 raw-decay ABI to accept canonical FP32 decay values and return FP32 decay gradients without changing the public HF model",
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3.cpp",
-      "destination_sha256": "af534188b3e69105ba37528001057d94b633f7f4ed1c0d21a99c6cb9b10d0b5f",
+      "adaptation": "adapted the historical BF16 raw-decay ABI to accept canonical FP32 decay values and return FP32 decay gradients without changing the public HF model; added complete shape, dtype, contiguity, and same-device validation plus a tensor-device CUDA guard and explicit PyTorch current-stream handoff",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_clampw_v3.cpp",
+      "destination_sha256": "2c77146767058bf813c89a20ec5a01b43b6ec5c0a514ff6dc2f3ae66dbea0a29",
       "disposition": "adapted_protocol",
       "git_blob": "702966078c410e8ff8338c025790aeb77399739e",
       "git_mode": "100644",
       "replacements": [
-        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3.cpp"
+        "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_clampw_v3.cpp"
       ],
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3.cpp"
     },
     {
-      "adaptation": "adapted the historical raw-decay transform to consume canonical FP32 decay, retain FP32 state, and reproduce the clean BF16 outer-product and output rounding contract on SM80+",
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu",
-      "destination_sha256": "38940b46678e163e3194457d7ad0cfc5df21122b806f7e949bb53db99b0f2f4b",
+      "adaptation": "adapted the historical raw-decay transform to consume canonical FP32 decay, retain FP32 state, and reproduce the clean BF16 outer-product and output rounding contract on SM80+; launches forward and backward on the supplied PyTorch current stream with immediate CUDA launch checks",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_clampw_v3_for_h100.cu",
+      "destination_sha256": "30c7c728cf799e2133421163c405a72cad74cac676c61e04182ca5d1cad2cc65",
       "disposition": "adapted_protocol",
       "git_blob": "677ff81399fad6a1ede38ee25a87562716473323",
       "git_mode": "100644",
       "replacements": [
-        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu"
+        "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_clampw_v3_for_h100.cu"
       ],
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_cmix_bf16_v5.cpp",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_cmix_bf16_v5.cpp",
       "destination_sha256": "f5edb50e8df6306e40ff6a009d015e1a15e1356d5f50fb5de8fd9bf73d71823c",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "ecf66ca35aadecae5eecfdc84bd4211a79d88873",
@@ -391,18 +391,18 @@
     },
     {
       "adaptation": "adapted the SM90-only float2 atomic into an architecture-gated vector path with scalar FP32 atomic fallback for Ada, Ampere, and Volta training",
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_cmix_bf16_v5.cu",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_cmix_bf16_v5.cu",
       "destination_sha256": "ffa86c58ca12d4a593e9eccd0d45a1142a8defb14538f48bf862270bf8251437",
       "disposition": "adapted_protocol",
       "git_blob": "e8304c36bbcb1a6a5d90622959e58ba6b0a8df2b",
       "git_mode": "100644",
       "replacements": [
-        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_cmix_bf16_v5.cu"
+        "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_cmix_bf16_v5.cu"
       ],
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cu"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cpp",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_l2wrap_ce_bf16_v2.cpp",
       "destination_sha256": "6d8deb536b79d4030453bb9cde3d4aa70bf6665f73f480053fbe3383eb48108b",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "ad3b764c3b328d4c495d44464b73fc407aa91cdc",
@@ -410,7 +410,7 @@
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cpp"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cu",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_l2wrap_ce_bf16_v2.cu",
       "destination_sha256": "f5ed2d8df2d89c93a3eb1214ad014b4eca5a6863d11e1dab2bee695d7c14890f",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "70466f345129127ffc87934d951fbd1b48f20d6e",
@@ -418,7 +418,7 @@
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cu"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cpp",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_a_gate_bf16.cpp",
       "destination_sha256": "a2b696c0932e527f15636ec5f005348b3a71feb44203fe448cddf6290eef0a62",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "550874c3ba8896b4d79bb5e700c91acfa9b4c6dc",
@@ -426,7 +426,7 @@
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cpp"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cu",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_a_gate_bf16.cu",
       "destination_sha256": "7a49799269ef99da99e68594bccb73d83f0da1088b98e9243243d0879a8aa45d",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "f4ec4352e2602219f995887aa481f8608acdac3a",
@@ -434,7 +434,7 @@
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cu"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cpp",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_kk_pre_bf16_v5.cpp",
       "destination_sha256": "2101b2e436c889d7c8fdf2949143bb1e7f63ca2280ffc4aeb19b7092456d6953",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "84b9ca8f0f4282dff249c833f62c1a1ae43bbf67",
@@ -443,18 +443,18 @@
     },
     {
       "adaptation": "adapted the SM90-only float2 atomic into an architecture-gated vector path with scalar FP32 atomic fallback for Ada, Ampere, and Volta training",
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_kk_pre_bf16_v5.cu",
       "destination_sha256": "2a8b642b76b80ffd15edebcf4bf2394956433886a8f4bfd3e6a06e542dbe3dc5",
       "disposition": "adapted_protocol",
       "git_blob": "20e4c5b522dd682fbfd5d36eb6e0b0f95f3adb24",
       "git_mode": "100644",
       "replacements": [
-        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu"
+        "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_kk_pre_bf16_v5.cu"
       ],
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp",
       "destination_sha256": "cc1958b2908369a022f1e7a16dc70f024431cc2a4f701c95764dcbb1f13e2565",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "30aed3035a83851bb0b92a67fcdb5f5a62ee14ba",
@@ -462,7 +462,7 @@
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu",
       "destination_sha256": "bfe6dcf30b296f4bd614650f0adff0e8582c73fcbe74720c1ad264af6b5f4c47",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "d95073945955a7ed6899e0393aa3909e53c6f55b",
@@ -470,27 +470,31 @@
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp",
-      "destination_sha256": "3e3549f2567e54e84f3ece77663846518032e92d390d9d9fb0d52493394f414a",
-      "disposition": "byte_migrated_nvidia",
+      "adaptation": "adapted the forward and backward boundaries to validate non-empty rank-three input, even channels, all gradient/vector shapes, contiguity, dtype, and same-device ownership before entering a tensor-device CUDA guard",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_mix6_bf16_v5.cpp",
+      "destination_sha256": "1f6e5b34c7b65523e9428422d48add4542ad0abc9a38b4db854a5a6567377493",
+      "disposition": "adapted_protocol",
       "git_blob": "857deb512db766665a67be4ba17b43f2c6d68a14",
       "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_mix6_bf16_v5.cpp"
+      ],
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp"
     },
     {
-      "adaptation": "adapted the SM90-only float2 atomic into an architecture-gated vector path with scalar FP32 atomic fallback for Ada, Ampere, and Volta training",
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu",
-      "destination_sha256": "ad069950e9b6624711d67de03d29006b1724d253a163af7b261acf82c4c7543a",
+      "adaptation": "replaced architecture-dependent atomic parameter-gradient accumulation with one deterministic channel-pair reduction in canonical flattened batch/token order, removing FP32 scratch and cast launches while retaining the BF16 ABI; uses the input tensor device current stream and checks both CUDA launches immediately",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_mix6_bf16_v5.cu",
+      "destination_sha256": "d451b86313953fd361ae35ad1b6391efeecf052229e97c04cbe511f703959fc9",
       "disposition": "adapted_protocol",
       "git_blob": "56642f0cf92dc0ece37672028290a551abe07ca9",
       "git_mode": "100644",
       "replacements": [
-        "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu"
+        "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_mix6_bf16_v5.cu"
       ],
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cpp",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_vres_gate_bf16_v3.cpp",
       "destination_sha256": "5923e9845ac6f09d46a93547acded22814e75a28290b4934faef676d10b40579",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "ee6950344de1fbecbc16ea89f4a2d7b6be18771c",
@@ -498,7 +502,7 @@
       "source": "rwkv7_hf/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cpp"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cu",
+      "destination": "rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_vres_gate_bf16_v3.cu",
       "destination_sha256": "0394eff6b237f482f206396d81714e6205df8c842c252a47fdd5d024aecc7881",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "1a3e8791adb1c1e3a1e613cc36e4e3b91784721a",
@@ -529,11 +533,15 @@
       "source": "rwkv7_hf/dplr_prefill_triton.py"
     },
     {
+      "adaptation": "extended process-safe CUDA build helpers for the clean stateless Mix6 training leaf; model and kernel math ownership remain unchanged",
       "destination": "rwkv7_kernels/nvidia/extension_build.py",
-      "destination_sha256": "67e446b39311b838835ae4e71ace17eef6d2a360380ccf1cefcbb280d400c8a2",
-      "disposition": "byte_migrated_nvidia",
+      "destination_sha256": "ebe65d8076a490607b6d60c9715c3cfdb27ec32f9b6e1af3ea139a3e6d1c8eff",
+      "disposition": "adapted_protocol",
       "git_blob": "6d46a8771faf685f16db0dc7e121373218b36691",
       "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/nvidia/extension_build.py"
+      ],
       "source": "rwkv7_hf/extension_build.py"
     },
     {
@@ -593,11 +601,15 @@
       "source": "rwkv7_hf/fused_output.py"
     },
     {
+      "adaptation": "adapted the rounded recurrent decay constant to the clean model's exact exp(-0.5) value shared by Triton and Torch fallback paths, eliminating a one-ULP FP32 state-preparation mismatch amplified by long FP16 prefills",
       "destination": "rwkv7_kernels/nvidia/fused_prefill.py",
-      "destination_sha256": "02e433b5011196133e736090140df06724a9f82dc06676bda13b8a940645272e",
-      "disposition": "byte_migrated_nvidia",
+      "destination_sha256": "9ce356e278dea27ab9c56ccf5ff3257127da464be8bc2017b4d4f6f74b3aa75a",
+      "disposition": "adapted_protocol",
       "git_blob": "751fdb345dfe9f3dd72f78c0d5e1d4930b80f6a7",
       "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/nvidia/fused_prefill.py"
+      ],
       "source": "rwkv7_hf/fused_prefill.py"
     },
     {
@@ -633,11 +645,15 @@
       "source": "rwkv7_hf/kernel_package.py"
     },
     {
+      "adaptation": "adapted the RTX 4080 A8W8 small-row policy to select the activation-stable W8A16 output-head route through 32 rows while retaining the validated RTX 4090 threshold",
       "destination": "rwkv7_kernels/nvidia/kernel_policy.py",
-      "destination_sha256": "f35699e92d8b364d39518bff0b1376b46230787d2e1df944301aa4ca9690193d",
-      "disposition": "byte_migrated_nvidia",
+      "destination_sha256": "30dc42be38fa06ce6739d7f1c953648ca484e49f3bb4de3593a2ffbd26547000",
+      "disposition": "adapted_protocol",
       "git_blob": "3e179725133a3435f20a7bd493e9b291067905ef",
       "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/nvidia/kernel_policy.py"
+      ],
       "source": "rwkv7_hf/kernel_policy.py"
     },
     {
@@ -931,7 +947,7 @@
     {
       "adaptation": "adapted from the private cache ABI and exact nn.Linear identity checks to canonical RWKV7Cache and the clean RWKV7Linear dense contract without changing graph kernels",
       "destination": "rwkv7_kernels/nvidia/native_graph_runtime.py",
-      "destination_sha256": "09395a89405ecb3822dc9ea8500498ce2ebec320b17934f86fe9f2df94772b5f",
+      "destination_sha256": "778a205c3be3a101f057a0c9887ef37851c83c0d5814f96dc3c19577f991a6a1",
       "disposition": "adapted_protocol",
       "git_blob": "67bf1baef14e76148713679431975a2ec1213084",
       "git_mode": "100644",
@@ -985,9 +1001,9 @@
       "source": "rwkv7_hf/native_jit_graph_dispatch.py"
     },
     {
-      "adaptation": "adapted exact nn.Linear checks to accept the clean RWKV7Linear subclass only when it exposes an ordinary Parameter weight; packed quantized tensor subclasses remain callable operands",
+      "adaptation": "adapted exact nn.Linear checks to accept the clean RWKV7Linear subclass only while its model-owned forward identity marker and ordinary Parameter weight remain intact; preserve the subclass rank-3 fixed-row vocabulary-head contract while decode remains direct; custom and packed quantized subclasses remain callable operands",
       "destination": "rwkv7_kernels/nvidia/native_jit_linear.py",
-      "destination_sha256": "f53f40bb72f4bae05d4845a5cbef4d3576548373b110a04c962338e1e63bfb79",
+      "destination_sha256": "03f986b1bdc6aa47c45d12e0d3e69d0e4a8ab16f8828085b742c594bbf754513",
       "disposition": "adapted_protocol",
       "git_blob": "0f0b38ba0a4b8271a644f44db3f5c1689ac08dd3",
       "git_mode": "100644",
@@ -997,9 +1013,9 @@
       "source": "rwkv7_hf/native_jit_linear.py"
     },
     {
-      "adaptation": "adapted clean RWKV7Linear operands while retaining the decay bias as FP32 in private packs; ordinary LoRA biases remain activation dtype and public model parameters are never mutated",
+      "adaptation": "adapted clean RWKV7Linear operands while retaining the decay bias as FP32 in private packs; ordinary LoRA biases remain activation dtype, Identity pre-norm modules are packed as absent, and public model parameters are never mutated",
       "destination": "rwkv7_kernels/nvidia/native_jit_packing.py",
-      "destination_sha256": "99083329c84fda294a5df8128bb4ba7adb9b8e899485527dbcb99f30ea9a226c",
+      "destination_sha256": "ca0e506d718e32edb5e85be9043c47ce6eda7aa2c5d4707108540479b09d6327",
       "disposition": "adapted_protocol",
       "git_blob": "3a284bbcaa8b50230a25aa00705644af2a7cf071",
       "git_mode": "100644",
@@ -1063,11 +1079,15 @@
       "source": "rwkv7_hf/native_quant.py"
     },
     {
+      "adaptation": "adapted dynamic-A8 CUDA padding to complete 32-row torch._int_mm/cuBLASLt tiles while ROCm retains the historical 17-row minimum; added an activation-stable tiled W8A16 small-row output-head route without changing the conservative body-module fallback",
       "destination": "rwkv7_kernels/nvidia/native_quant_a8w8.py",
-      "destination_sha256": "40f71469bd34f714f91f42404e00589fb56cd40344cdbf0906092331022a544f",
-      "disposition": "byte_migrated_nvidia",
+      "destination_sha256": "7a59a933ecc62386e9ce628c91eaf78b522597fb9936016b215d4cb3a037af09",
+      "disposition": "adapted_protocol",
       "git_blob": "2ce47e2e2faba120caf943b9eea8826d365661e8",
       "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/nvidia/native_quant_a8w8.py"
+      ],
       "source": "rwkv7_hf/native_quant_a8w8.py"
     },
     {
@@ -1266,7 +1286,7 @@
       "source": "rwkv7_hf/tokenization_rwkv7.py"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/train_temp_alignment.py",
+      "destination": "rwkv7_kernels/nvidia/official_training_alignment.py",
       "destination_sha256": "2e156116e8646675ab3e15402a3f23785ca9751c94127aa477502d0dafaa7a71",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "f98784757fe9fcb13f6bdf3aeab0e8715827fb82",
@@ -1274,19 +1294,19 @@
       "source": "rwkv7_hf/train_temp_alignment.py"
     },
     {
-      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF fixed-row projection/value/a/key/GroupNorm/direct/gate math around the fused recurrence without recursively entering leaf dispatch, compile the recurrent operator independently without FMA contraction, use the native CUDA backward for standard detached-state training, replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers",
-      "destination": "rwkv7_kernels/nvidia/train_temp_cuda.py",
-      "destination_sha256": "316b17906959560dc2cd4ce2e8e0fec2ce71e45037c1355cf60d7a69e434528f",
+      "adaptation": "adapted to expose leaf autograd operators through both the whole-model diagnostic runtime and the canonical recurrent training protocol without monkeypatching model forwards, return canonical final state, preserve canonical FP32 decay and HF projection/value/a/key/GroupNorm/direct/gate math around the fused recurrence without recursively entering leaf dispatch, compile the recurrent operator independently without FMA contraction, use native CUDA backward for standard detached-state training, route ordinary Mix6 gradients through the deterministic native CUDA backward while retaining canonical replay only for higher-order derivatives, replay canonical recurrence only for returned-state and initial-state gradient contributions, and merge reproducible partial CUDA compiler overlays with complementary pip-split library headers, use deterministic native Mix6 backward only from 32 flattened rows while replaying canonical autograd for smaller or higher-order requests, and isolate every train_temp JIT build with active-device architecture plus thin-venv Ninja/NVCC discovery",
+      "destination": "rwkv7_kernels/nvidia/official_training_cuda.py",
+      "destination_sha256": "ee44b8936765956fcc9b2ecbb4b6ef90a6d6b3ae32e34620341cc301410ac4b6",
       "disposition": "adapted_protocol",
       "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
       "git_mode": "100644",
       "replacements": [
-        "rwkv7_kernels/nvidia/train_temp_cuda.py"
+        "rwkv7_kernels/nvidia/official_training_cuda.py"
       ],
       "source": "rwkv7_hf/train_temp_cuda.py"
     },
     {
-      "destination": "rwkv7_kernels/nvidia/train_temp_resume.py",
+      "destination": "rwkv7_kernels/nvidia/official_training_checkpoint.py",
       "destination_sha256": "19f2b6a3e5889845b0e0edc49f666f43dd602b9c202d45dd5f9d00a2dd824610",
       "disposition": "byte_migrated_nvidia",
       "git_blob": "b5e1db88c09c34b8dc5c97be2766f26590bbb39b",
