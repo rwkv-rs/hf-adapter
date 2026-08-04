@@ -117,6 +117,7 @@ if False:  # pragma: no cover
     from .native_quant_bnb8 import fused_bnb8_relu_square_quant as _native_bnb8_dependency_sentinel
     from .native_quant_mm4 import quantize_model_mm4 as _native_mm4_dependency_sentinel
     from .native_quant_mm8 import quantize_model_mm8 as _native_mm8_dependency_sentinel
+    from .native_quant_fp8 import quantize_model_fp8 as _native_fp8_dependency_sentinel
     from .native_quant_policy import normalize_native_mm_policy as _native_quant_policy_dependency_sentinel
     from .native_wkv_fp16 import native_fp16_sequence as _native_wkv_fp16_dependency_sentinel  # noqa: F401
     from .native_jit_linear import graph_linear_operand as _native_jit_linear_dependency_sentinel
