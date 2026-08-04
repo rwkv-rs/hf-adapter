@@ -4,8 +4,9 @@
 
 FP8 (``float8_e4m3fn``) per-tensor weight quantization with online activation
 quantization (W8A8) via ``torch._scaled_mm``.  These tests exercise the
-quantization helper, the drop-in ``FP8Linear`` module, and the ``ffn_only``
-policy on CPU using the dequant fallback path.
+quantization helper, the drop-in ``FP8Linear`` module, the config-driven
+auto-quantize path, and mutual exclusivity with MM8/MM4 on CPU using the
+dequant fallback path.
 """
 from __future__ import annotations
 
@@ -128,47 +129,6 @@ def test_fp8_model_quantization():
 
 
 @pytest.mark.cpu
-def test_fp8_ffn_only_policy():
-    """ffn_only policy quantizes only modules with .ffn. in their name."""
-    torch.manual_seed(0)
-
-    class TinyModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.layers = nn.ModuleList()
-            for i in range(3):
-                layer = nn.Module()
-                layer.attn = nn.Module()
-                layer.attn.proj = nn.Linear(64, 64, bias=False)
-                layer.ffn = nn.Module()
-                layer.ffn.key = nn.Linear(64, 256, bias=False)
-                layer.ffn.value = nn.Linear(256, 64, bias=False)
-                self.layers.append(layer)
-            self.lm_head = nn.Linear(64, 128, bias=False)
-
-    model = TinyModel()
-    replaced = quantize_model_fp8(model, min_params=100, policy="ffn_only")
-
-    # Only ffn.key and ffn.value should be quantized: 3 layers x 2 = 6
-    assert replaced == 6
-    fp8_names = [
-        name for name, mod in model.named_modules()
-        if type(mod).__name__ == "FP8Linear"
-    ]
-    assert len(fp8_names) == 6
-    for name in fp8_names:
-        assert ".ffn." in name, f"Unexpected quantized module: {name}"
-
-    # lm_head should NOT be quantized
-    assert type(model.lm_head).__name__ != "FP8Linear"
-
-    # attention projections should NOT be quantized
-    for name, mod in model.named_modules():
-        if "attn" in name and isinstance(mod, nn.Linear):
-            assert type(mod).__name__ != "FP8Linear", name
-
-
-@pytest.mark.cpu
 def test_fp8_speed_policy():
     """speed policy only quantizes lm_head-like modules."""
     torch.manual_seed(0)
@@ -231,7 +191,6 @@ def main() -> int:
     test_fp8_linear_rwkv7_forward_into()
     test_fp8_linear_extra_repr()
     test_fp8_model_quantization()
-    test_fp8_ffn_only_policy()
     test_fp8_speed_policy()
     test_fp8_min_params_filter()
     test_fp8_dequant_fallback_correctness()

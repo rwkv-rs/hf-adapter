@@ -12,7 +12,6 @@ core support.
 | Path | Purpose | Status |
 |------|---------|--------|
 | FP8 per-tensor (W8A8) | Full FP8 weight + activation quantization | Promoted on RTX 5070 Ti (Blackwell) with 1.5B/7.2B models |
-| FP8 ffn_only | Conservative: quantize only FFN key/value | Validated on 1.5B, improved EAR vs full FP8 |
 
 ## Hardware requirements
 
@@ -30,9 +29,6 @@ from rwkv7_hf.native_quant_fp8 import quantize_model_fp8
 # Full FP8 (aggressive)
 replaced = quantize_model_fp8(model, min_params=8_000_000, policy="memory")
 
-# FFN-only FP8 (conservative, higher precision)
-replaced = quantize_model_fp8(model, min_params=8_000_000, policy="ffn_only")
-
 # Per-channel scales (finer granularity)
 replaced = quantize_model_fp8(model, policy="memory", per_channel=True)
 ```
@@ -43,7 +39,7 @@ replaced = quantize_model_fp8(model, policy="memory", per_channel=True)
 from transformers import AutoModelForCausalLM
 config = AutoConfig.from_pretrained(path, trust_remote_code=True)
 config.use_native_fp8 = True
-config.native_fp8_policy = "memory"  # or "speed", "ffn_only"
+config.native_fp8_policy = "memory"  # or "speed" (lm_head only)
 model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True, config=config)
 ```
 
@@ -59,12 +55,12 @@ model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True, confi
 
 ### 1.5B Model
 
-| Metric | BF16 | FP8 | FFN-only FP8 |
-|--------|------|-----|-------------|
-| Decode speed | 164.1 t/s | 67.8 t/s | ~55 t/s |
-| VRAM | 2.69 GB | 1.60 GB | ~2.0 GB |
-| EAR | 1.0 | 0.9412 | 0.9498 |
-| Top-1 | 100% | 92.52% | 93.46% |
+| Metric | BF16 | FP8 | Change |
+|--------|------|-----|--------|
+| Decode speed | 164.1 t/s | 67.8 t/s | -59% |
+| VRAM | 2.69 GB | 1.60 GB | -41% |
+| EAR | 1.0 | 0.9412 | -5.9pp |
+| Top-1 | 100% | 92.52% | -7.5pp |
 
 ## Acceptance gate
 
