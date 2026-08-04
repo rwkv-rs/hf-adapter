@@ -99,6 +99,10 @@ class NativeRWKV7Config(PretrainedConfig):
         self.native_mm4_policy = kwargs.get("native_mm4_policy", "memory")
         self.native_mm4_group_size = kwargs.get("native_mm4_group_size", 0)
         self.native_mm4_group_policy = kwargs.get("native_mm4_group_policy", "all")
+        # FP8 E4M3 quantization (requires Hopper/Ada/Blackwell for _scaled_mm)
+        self.use_native_fp8 = kwargs.get("use_native_fp8", False)
+        self.native_fp8_min_params = kwargs.get("native_fp8_min_params", 8_000_000)
+        self.native_fp8_policy = kwargs.get("native_fp8_policy", "memory")
         if getattr(self, "auto_map", None) is None:
             self.auto_map = {
                 "AutoConfig": "native_model.NativeRWKV7Config",
