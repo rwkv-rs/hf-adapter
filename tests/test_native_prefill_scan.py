@@ -750,6 +750,7 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
             )
         )
         native_jit.torch.cuda.is_available = lambda: True
+        native_jit.torch.cuda.get_device_name = lambda *_args: "Generic CUDA GPU"
         native_jit.torch.cuda.get_device_capability = lambda *_args: (7, 0)
         assert native_jit._native_prefill_scan_block_m(64, 1) == 16
         assert native_jit._native_prefill_scan_block_m(64, 4) == 32
