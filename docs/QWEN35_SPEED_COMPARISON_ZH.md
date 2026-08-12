@@ -1,39 +1,92 @@
-# RWKV-7 vs Qwen3.5：完整参数、速度对照与复现
+# RWKV-7 vs Qwen3.5：统一 HF 快速路径测试协议
 
-更新日期：**2026-08-12**。数字来自当前主分支已提升的同卡证据。
-完整历史、量化路线和逐项遥测仍以 [`BENCHMARK.md`](../BENCHMARK.md) 为准。
-[English version](QWEN35_SPEED_COMPARISON.md)
+更新日期：**2026-08-12**。[English version](QWEN35_SPEED_COMPARISON.md)
 
-## 先看结论
+## 当前状态
 
-> 当前正式的 NVIDIA dense FP16 optimized-Qwen 同卡对照共有 **32 个
-> GPU/模型/Batch 实测组合**，主表另用空值明确标出 **RTX 4090
-> 7.2B/9B B1 尚未实测**；另列 **3 个 Apple M5 target-only W4 组合**。
-> 每个实测行的 RWKV-7 原始 Prefill 和原始 Decode 中位值均高于 Qwen3.5。
-> 原始 Prefill/Decode 可达 **7.90x / 20.51x**；扣除较小参数量带来的天然速度
-> 优势后，参数规模校正 Prefill/Decode 可达 **4.73x / 12.29x**。
+此前的跨卡 Qwen3.5 baseline **不能进入新的统一主表**。旧结果混用了不同的
+causal-convolution 实现、运行时版本和 RWKV CUDA Graph 设置；即使命令写着
+FLA，实际也可能绑定仓库 Triton convolution 或静默回退到慢速 PyTorch 路径。
+这些证据只保留为历史复现和回归资料。
 
-**RTX 4080 已完成逐格全过：参数规模校正 Prefill 36/36、Decode 36/36
-均超过 `1.00x`，全矩阵最小值为 `1.068520x / 1.140700x`。**
+新的主表现在有意保持为空，直到 RTX 3090、RTX 4090 和 RTX 5090 分别完成
+严格一致的 `hf_fast_path_v1`。每张卡必须有 48 行 RWKV 和 48 行 Qwen；
+不完整卡、后端回退和旧结果都不能混入主表。
 
-**RTX 3090 的最新 g1d/g1i 检查点矩阵也已完成：B1/B8、
-P128/P512/P2048 共 24 格的参数规模校正 Prefill 均达到 `>=1.00x`，Qwen
-参考全部使用 fail-closed full-FLA 路径，最低/中位提升至
-`1.227477x/1.467758x`。**
+## 固定协议（`hf_fast_path_v1`）
 
-**RTX 4090 最新 0.4B/1.5B/2.9B 矩阵也已逐格完成：参数规模校正
-Prefill 36/36、Decode 36/36 均超过 `1.00x`，全矩阵最小值为
-`1.108265x / 4.158943x`。**
+| 项目 | 固定设置 |
+|---|---|
+| GPU | RTX 3090 / 4090 / 5090，分别单卡 |
+| 模型对 | RWKV 0.4/1.5/2.9/7.2B 对 Qwen3.5 0.8/2/4/9B |
+| 精度 | Dense FP16；关闭量化、MTP 和 speculative decode |
+| Batch | 1、8 |
+| Prompt | 128、512、2048 token |
+| Decode | 128、512 token |
+| Prefill chunk | 512 token |
+| 统计 | warmup 3 次、正式 7 次、每格取中位数 |
+| Qwen | Transformers FLA 快速路径 + 官方 Dao-AILab `causal_conv1d` |
+| RWKV 公平线 | `native_jit`，关闭 CUDA Graph |
 
-- `1.02x` 表示 RWKV 吞吐是 Qwen 的 1.02 倍，即约快 2%。
-- Prefill 是处理输入提示词；Decode 是逐 token 生成，后者更接近日常聊天的
-  持续生成速度。
-- NVIDIA 主表的速度基线只采用 **dense FP16 原始 tok/s**，同时补充参数规模
-  校正速度。除 V100 和最新 RTX 3090/5090 明示的形状外，`6格`表示
-  `P128/512/2048 × D128/512` 六个形状的中位值；最新 RTX 3090/5090 的
-  `3格`表示 `P128/512/2048 × D128`。
-- 这里比较的是推理吞吐，不代表任何一方在指令遵循、推理、代码、多语言等
-  任务质量上更好；模型质量需要单独的评测数据。
+每个模型侧 `4 × 2 × 3 × 2 = 48` 格；每张卡 96 行，三张卡共 288 行。
+如果只重测 Qwen baseline，则三张卡共 144 行。
+
+环境也是验收的一部分：三张卡必须使用相同 Python、PyTorch+CUDA build、
+Transformers、FLA、`causal-conv1d` 和仓库提交。产物保存运行时锁、
+`pip freeze`、Docker digest（若存在）、仓库提交以及模型 config/safetensors
+的 SHA256。
+
+### Qwen 每行强制验收
+
+```text
+status=pass
+qwen_fast_path_available=true
+qwen_fast_path_verified=true
+qwen_full_fused_contract_pass=true
+qwen_causal_conv1d_importable=true
+qwen_conv_backend_effective=causal_conv1d
+qwen_force_torch=false
+```
+
+runner 现在会把请求的 convolution 后端与每一层 Qwen GatedDeltaNet 的实时
+算子绑定逐一核对；环境、绑定、结果行三层都 fail-closed。RTX 5090 不允许
+自动改用仓库 `fla_triton` convolution。如果 SM120 无法通过官方路径，则只记为
+**“SM120 官方 HF fast path 未验证”**，并从统一主表排除。
+
+### RWKV 公平线
+
+```bash
+export RWKV7_FAST_TOKEN_BACKEND=native_jit
+export RWKV7_NATIVE_PREFILL_GRAPH=0
+```
+
+`native_graph` 可以另列“最佳优化 HF”附表，但绝不能与公平线混算。
+
+### 单卡复现
+
+准备八个本地模型目录并使用同一个运行时锁：
+
+```bash
+export GPU_MODEL=4090
+export OUT_DIR=/path/to/hf-fast-path-v1-4090
+export PYTHON_BIN=/path/to/locked-python
+export RUNTIME_LOCK=/path/to/hf-fast-path-v1-runtime-lock.json
+
+export RWKV_04_MODEL=/models/rwkv-0.4b
+export RWKV_15_MODEL=/models/rwkv-1.5b
+export RWKV_29_MODEL=/models/rwkv-2.9b
+export RWKV_72_MODEL=/models/rwkv-7.2b
+export QWEN_08_MODEL=/models/Qwen3.5-0.8B
+export QWEN_2_MODEL=/models/Qwen3.5-2B
+export QWEN_4_MODEL=/models/Qwen3.5-4B
+export QWEN_9_MODEL=/models/Qwen3.5-9B
+
+bash bench/run_hf_fast_path_v1.sh
+```
+
+只有第一张建立锁的卡使用 `WRITE_RUNTIME_LOCK=/path/to/lock.json`；后续卡必须
+使用 `RUNTIME_LOCK`。脚本先跑 Qwen；官方快速路径失败时不会继续跑 RWKV，
+也不会生成 `main_table.jsonl`。
 
 ## 参数口径
 
@@ -52,7 +105,10 @@ Prefill 36/36、Decode 36/36 均超过 `1.00x`，全矩阵最小值为
 - 例如最新 RTX 4090 的 0.4B/0.8B B8：原始 Prefill 中位值 `2.22x`，
   按活跃参数校正后约为 `1.33x`。
 
-## NVIDIA：全部正式同卡模型参数与速度
+## 历史非统一 NVIDIA 证据
+
+> 下表仅保留用于审计和回归。它混用了旧运行时与后端协议，**不是**
+> `hf_fast_path_v1` 统一主表，不能再作为新的 3090/4090/5090 速度结论。
 
 下面不再筛选代表项，而是逐行列出当前正式 optimized-Qwen 对照中所有
 GPU、模型对和 Batch。`RWKV P / D tok/s`与`Qwen P / D tok/s`是分别对声明

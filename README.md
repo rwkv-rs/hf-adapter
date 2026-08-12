@@ -146,6 +146,13 @@ claims for unmeasured products or shapes.
 
 Representative promoted evidence:
 
+> **Qwen3.5 comparator reset (2026-08-12):** historical Qwen speed artifacts
+> below remain reproducibility evidence, but are excluded from the new unified
+> main table. New RTX 3090/4090/5090 rows must use the same locked runtime,
+> official FLA plus Dao-AILab `causal_conv1d`, and the RWKV `native_jit`
+> no-CUDA-Graph fair lane. See the
+> [unified protocol](docs/QWEN35_SPEED_COMPARISON.md).
+
 | Scope | Evidence |
 |---|---|
 | RTX 5090 Native vs official/Albatross | [`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md) |

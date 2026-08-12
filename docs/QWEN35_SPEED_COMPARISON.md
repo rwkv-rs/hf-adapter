@@ -1,45 +1,103 @@
-# RWKV-7 vs Qwen3.5: Complete Parameter and Speed Comparison
+# RWKV-7 vs Qwen3.5: Unified HF Fast-Path Benchmark
 
-Updated: **2026-08-12**. All numbers come from promoted same-device evidence
-on the current main branch. See [`BENCHMARK.md`](../BENCHMARK.md) for the full
-history, quantization lanes, and cell-level telemetry. [中文版](QWEN35_SPEED_COMPARISON_ZH.md)
+Updated: **2026-08-12**. [中文版](QWEN35_SPEED_COMPARISON_ZH.md)
 
-## Results at a glance
+## Current status
 
-> The promoted NVIDIA dense-FP16 comparison contains **32 measured
-> GPU/model/batch combinations**. The main table also carries an explicit empty
-> row for the **unmeasured RTX 4090 7.2B/9B B1 gap**, plus **3 Apple M5
-> target-only W4 combinations**. Every measured row
-> has RWKV-7 ahead of Qwen3.5 in median raw Prefill and Decode throughput.
-> Raw Prefill/Decode reaches **7.90x / 20.51x**. After discounting the natural
-> speed advantage of the smaller model, parameter-size-adjusted
-> Prefill/Decode reaches **4.73x / 12.29x**.
+The previous cross-card Qwen3.5 baselines are **not eligible for the unified
+main table**. They mixed causal-convolution implementations, runtime versions,
+and RWKV CUDA-Graph settings. In particular, a row that requested FLA could
+still use a non-official convolution route or a slow Transformers fallback.
+Those artifacts remain reproducibility history only.
 
-**RTX 4080 is now complete at cell level: all 36/36 parameter-size-adjusted
-Prefill cells and 36/36 Decode cells exceed `1.00x`; the minima are
-`1.068520x / 1.140700x`.**
+The replacement main table is intentionally empty until each card completes
+the exact `hf_fast_path_v1` contract below. RTX 3090, RTX 4090 and RTX 5090
+must each produce 48 RWKV rows plus 48 Qwen rows. No partial card, backend
+fallback, or legacy result is merged into this table.
 
-**RTX 3090 now also closes the latest g1d/g1i checkpoint matrix: every one of
-the 24 B1/B8, P128/P512/P2048 cells has parameter-adjusted Prefill `>=1.00x`
-against fail-closed full-FLA Qwen3.5; the minimum/median is now
-`1.227477x/1.467758x`.**
+## Fixed protocol (`hf_fast_path_v1`)
 
-**RTX 4090 now closes its latest 0.4B/1.5B/2.9B matrix at cell level: all
-36/36 parameter-size-adjusted Prefill cells and 36/36 Decode cells exceed
-`1.00x`; the minima are `1.108265x / 4.158943x`.**
+| Axis | Required setting |
+|---|---|
+| GPU | One RTX 3090, RTX 4090 or RTX 5090; one card per run |
+| Pairs | RWKV 0.4/1.5/2.9/7.2B vs Qwen3.5 0.8/2/4/9B |
+| Precision | Dense FP16; quantization and MTP/speculative decode disabled |
+| Batch | 1 and 8 |
+| Prompt | 128, 512 and 2048 tokens |
+| Decode | 128 and 512 tokens |
+| Prefill chunk | 512 tokens |
+| Timing | 3 warmups, 7 measured runs, median per cell |
+| Qwen | Transformers FLA fast path plus official Dao-AILab `causal_conv1d` |
+| RWKV fair lane | `native_jit`, with CUDA Graph disabled |
 
-- `1.02x` means RWKV throughput is 1.02 times Qwen throughput, or about 2%
-  faster.
-- Prefill processes the input prompt. Decode generates tokens one at a time
-  and is the closer match for sustained chat generation.
-- The NVIDIA table uses **raw dense-FP16 tok/s** and also reports
-  parameter-size-adjusted speed. Except for the explicitly labeled V100 and
-  latest RTX 3090/5090 shapes, `6 cells` means the median across
-  `P128/512/2048 × D128/512`; the latest RTX 3090/5090 `3 cells` use
-  `P128/512/2048 × D128`.
-- These are inference throughput comparisons. They do not claim that one
-  model has better instruction following, reasoning, coding, multilingual, or
-  other task quality; those require separate evaluation rows.
+One model side has `4 × 2 × 3 × 2 = 48` cells. One card has 96 rows and all
+three cards have 288 rows. A Qwen-only baseline refresh has 144 rows.
+
+The environment is also part of the result: all cards must use the same
+Python, PyTorch+CUDA build, Transformers revision, FLA revision,
+`causal-conv1d` revision, and repository commit. The artifact records the
+runtime lock, `pip freeze`, Docker digest when present, repository commit, and
+SHA256 hashes for model configs and safetensors.
+
+### Qwen row acceptance
+
+Every Qwen row must satisfy all of the following:
+
+```text
+status=pass
+qwen_fast_path_available=true
+qwen_fast_path_verified=true
+qwen_full_fused_contract_pass=true
+qwen_causal_conv1d_importable=true
+qwen_conv_backend_effective=causal_conv1d
+qwen_force_torch=false
+```
+
+The runner now enforces the requested convolution backend against the live
+operators in every loaded Qwen GatedDeltaNet layer. Environment, binding and
+result-row checks are fail-closed. RTX 5090 is not allowed to switch to the
+repository `fla_triton` convolution route: if the official path cannot pass on
+SM120, the card is recorded as **SM120 official HF fast path unverified** and
+is excluded from the unified main table.
+
+### RWKV fair row acceptance
+
+The main comparison uses:
+
+```bash
+export RWKV7_FAST_TOKEN_BACKEND=native_jit
+export RWKV7_NATIVE_PREFILL_GRAPH=0
+```
+
+`native_graph` results remain useful as a separate “best optimized HF”
+appendix, but are never mixed with this fair lane.
+
+### Reproduce one card
+
+Set the eight local model directories, establish or consume one runtime lock,
+then run the same entry point on each card:
+
+```bash
+export GPU_MODEL=4090
+export OUT_DIR=/path/to/hf-fast-path-v1-4090
+export PYTHON_BIN=/path/to/locked-python
+export RUNTIME_LOCK=/path/to/hf-fast-path-v1-runtime-lock.json
+
+export RWKV_04_MODEL=/models/rwkv-0.4b
+export RWKV_15_MODEL=/models/rwkv-1.5b
+export RWKV_29_MODEL=/models/rwkv-2.9b
+export RWKV_72_MODEL=/models/rwkv-7.2b
+export QWEN_08_MODEL=/models/Qwen3.5-0.8B
+export QWEN_2_MODEL=/models/Qwen3.5-2B
+export QWEN_4_MODEL=/models/Qwen3.5-4B
+export QWEN_9_MODEL=/models/Qwen3.5-9B
+
+bash bench/run_hf_fast_path_v1.sh
+```
+
+Use `WRITE_RUNTIME_LOCK=/path/to/lock.json` instead of `RUNTIME_LOCK` only on
+the first card that establishes the lock. The script runs Qwen first; if its
+official fast path fails, RWKV is not run and no `main_table.jsonl` is created.
 
 ## Parameter accounting
 
@@ -61,7 +119,12 @@ benchmark telemetry are shown in billions, rounded to three decimal places:
 - Example: the latest RTX 4090 0.4B/0.8B B8 row has median raw Prefill `2.22x`
   and about `1.33x` after active-parameter adjustment.
 
-## NVIDIA: complete promoted same-device matrix
+## Historical non-unified NVIDIA evidence
+
+> The following table is retained for audit and regression context. It mixes
+> older runtime and backend contracts and is **not** the `hf_fast_path_v1`
+> unified main table. Its speed ratios must not be presented as the new
+> 3090/4090/5090 comparison.
 
 The table lists every GPU, model pair, and batch combination in the promoted
 optimized-Qwen evidence. `RWKV P / D tok/s` and `Qwen P / D tok/s` are the

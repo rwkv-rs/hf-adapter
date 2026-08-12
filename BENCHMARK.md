@@ -1,8 +1,8 @@
 # RWKV-7 HF adapter benchmark summary
 
-This is the canonical **promoted-results summary**. It intentionally excludes
-exploratory tuning chronology. Raw rows, logs and negative experiments remain
-in [`bench/`](bench/); platform interpretation lives in
+This is the canonical results summary. It intentionally excludes exploratory
+tuning chronology. Raw rows, logs and negative experiments remain in
+[`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 Last updated: **2026-08-12**.
@@ -11,6 +11,15 @@ For a consolidated RWKV-7 vs Qwen3.5 parameter/speed table and live GPU
 reproduction workflow, see the [English guide](docs/QWEN35_SPEED_COMPARISON.md)
 or [中文完整参数版](docs/QWEN35_SPEED_COMPARISON_ZH.md). This document retains
 the full platform, quantization, and acceptance details.
+
+> **Superseding Qwen comparator contract (2026-08-12):** every Qwen speed row
+> recorded before `hf_fast_path_v1` is historical non-unified evidence. Its
+> original PASS status applies only to its original local gate. It is excluded
+> from the new RTX 3090/4090/5090 main table until rerun with one locked
+> Python/PyTorch/CUDA/Transformers/FLA/causal-conv/repository environment,
+> official Dao-AILab `causal_conv1d`, and the RWKV `native_jit` no-Graph fair
+> lane. `fla_triton` and CUDA-Graph results may appear only in experimental or
+> best-optimized appendices.
 
 ## Benchmark contract
 
@@ -24,8 +33,13 @@ Status vocabulary:
 - **PASS:** the named fail-closed gate passed.
 - **PARTIAL:** functionality or selected shapes passed; the full target did not.
 - **SMOKE:** execution proof only, not a production performance claim.
+- **HISTORICAL:** passed an older local gate but is not eligible for the current
+  unified comparison.
 
-## Production-close overview
+## Production-close and historical overview
+
+Rows involving Qwen3.5 in this table are **HISTORICAL** under the superseding
+contract above, even where the final column preserves their original PASS label.
 
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|

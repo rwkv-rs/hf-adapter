@@ -151,17 +151,24 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 
 ## RTX 5090 已验证结果
 
+> **Qwen3.5 baseline 重置（2026-08-12）：**下面涉及 Qwen 速度的旧产物仅保留为
+> 历史复现证据，不能进入新的统一主表。新的 RTX 3090/4090/5090 结果必须使用
+> 相同锁定环境、官方 FLA + Dao-AILab `causal_conv1d`，以及 RWKV `native_jit`
+> 且关闭 CUDA Graph 的公平线。详见
+> [统一测试协议](docs/QWEN35_SPEED_COMPARISON_ZH.md)。
+
 - **Native 对 Albatross/v3a：**官方 g1h 7.2B FP16 缓存解码在 B1/B8 达到
   `146.42/899.51 tok/s`，v3a 对照为 `146.28/890.21`，即
   `1.0010x/1.0104x`；logits、循环状态、top-1 和 greedy token 全部通过。
 - **Prefill：**官方 g1h 2.9B/13.3B 在 B1/B8、prompt128/512/2048 的
   12 个单元全部通过，Native 速度为 v3a 的 `1.0029x–1.5690x`，并通过
   tensor、state 和 token 对齐。
-- **完整 FLA Qwen3.5：**B1/B8 共 8 组模型对、144/144 性能单元通过。
+- **历史非统一 FLA Qwen3.5：**B1/B8 旧矩阵共记录 8 组模型对、144/144
+  原协议性能单元；因 convolution 路径和运行时未按新协议统一，不再作为当前主表结论。
   dense prefill/decode 最低为 `1.0226x/2.8130x`；RWKV-7 7.2B 对
   Qwen3.5-9B 的 B1/B8 最低 prefill 为 `1.1739x/1.0309x`，decode 为
   `2.8934x/2.8130x`。
-- **最新检查点 Qwen3.5 Prefill PD：**g1d/g1i 0.4B/1.5B/2.9B/7.2B
+- **历史最新检查点 Qwen3.5 Prefill PD：**g1d/g1i 0.4B/1.5B/2.9B/7.2B
   对官方 Qwen3.5 0.8B/2B/4B/9B，在 B1/B8、P128/512/2048 的 24 个
   dense-FP16 单元全部通过。参数规模校正 Prefill 最低/中位为
   `1.072987x/1.317515x`，原始 Prefill 最低为 `1.347871x`；Qwen
