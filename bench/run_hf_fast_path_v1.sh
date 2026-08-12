@@ -178,6 +178,7 @@ Path(path).write_text(json.dumps({
 PY
 
 export RWKV7_FAST_TOKEN_BACKEND=native_jit
+export RWKV7_NATIVE_MODEL_BACKEND=native_jit
 export RWKV7_NATIVE_PREFILL_GRAPH=0
 
 run_rwkv() {

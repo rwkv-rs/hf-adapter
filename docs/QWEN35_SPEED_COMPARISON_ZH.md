@@ -57,8 +57,13 @@ runner 现在会把请求的 convolution 后端与每一层 Qwen GatedDeltaNet �
 
 ```bash
 export RWKV7_FAST_TOKEN_BACKEND=native_jit
+export RWKV7_NATIVE_MODEL_BACKEND=native_jit
 export RWKV7_NATIVE_PREFILL_GRAPH=0
 ```
+
+第二个变量固定使用无 FLA native 模型入口的 repo-code checkpoint；第一个仍是
+HF wrapper 的公开开关。统一脚本会同时设置两者，并要求每条 RWKV 结果同时记录
+这两个请求值以及 `effective_backend=native_jit`。
 
 `native_graph` 可以另列“最佳优化 HF”附表，但绝不能与公平线混算。
 

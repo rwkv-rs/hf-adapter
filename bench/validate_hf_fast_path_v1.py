@@ -84,6 +84,7 @@ def _validate_common(
 def _validate_candidate(row: dict[str, Any], errors: list[str]) -> None:
     for field, expected in (
         ("rwkv_fast_token_backend_requested", "native_jit"),
+        ("rwkv_native_model_backend_requested", "native_jit"),
         ("rwkv_prefill_graph_requested", "0"),
         ("effective_backend", "native_jit"),
     ):

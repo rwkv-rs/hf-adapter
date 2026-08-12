@@ -44,6 +44,7 @@ def row(role: str, pair: str, batch: int, prompt: int, decode: int) -> dict:
         value.update(
             {
                 "rwkv_fast_token_backend_requested": "native_jit",
+                "rwkv_native_model_backend_requested": "native_jit",
                 "rwkv_prefill_graph_requested": "0",
                 "effective_backend": "native_jit",
                 "step_backend": "rwkv_fast_token",
@@ -120,6 +121,7 @@ def test_single_card_script_is_official_and_fail_closed() -> None:
     assert "--require-qwen-fast-path" in text
     assert "--qwen-conv-backend fla_triton" not in text
     assert "RWKV7_FAST_TOKEN_BACKEND=native_jit" in text
+    assert "RWKV7_NATIVE_MODEL_BACKEND=native_jit" in text
     assert "RWKV7_NATIVE_PREFILL_GRAPH=0" in text
     assert "SM120 official HF fast path unverified" in text
     assert "--batch-sizes 1 8" in text

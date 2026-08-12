@@ -817,6 +817,7 @@ def environment_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]
         "qwen_fast_path_available": qwen_environment.get("qwen_fast_path_available"),
         "qwen_fla_expected_device_route": qwen_device_route,
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
+        "rwkv_native_model_backend_requested": os.environ.get("RWKV7_NATIVE_MODEL_BACKEND"),
         "rwkv_fast_token_quant_requested": os.environ.get("RWKV7_FAST_TOKEN_QUANT"),
         "rwkv_fast_prefill_requested": os.environ.get("RWKV7_FAST_PREFILL"),
         "rwkv_fast_prefill_quant_requested": os.environ.get("RWKV7_FAST_PREFILL_QUANT"),

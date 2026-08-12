@@ -66,8 +66,14 @@ The main comparison uses:
 
 ```bash
 export RWKV7_FAST_TOKEN_BACKEND=native_jit
+export RWKV7_NATIVE_MODEL_BACKEND=native_jit
 export RWKV7_NATIVE_PREFILL_GRAPH=0
 ```
+
+The second switch pins repo-code checkpoints that use the FLA-free native
+model entrypoint; the first remains the public wrapper switch. The runner sets
+both, and every candidate row must report both requests plus
+`effective_backend=native_jit`.
 
 `native_graph` results remain useful as a separate “best optimized HF”
 appendix, but are never mixed with this fair lane.

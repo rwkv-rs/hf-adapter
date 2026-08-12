@@ -37,8 +37,29 @@ def test_native_model_keeps_historical_policy_patch_surface(monkeypatch) -> None
     assert native_model._native_prefill_external_quant_graph_enabled()
 
     monkeypatch.delenv("RWKV7_NATIVE_MODEL_BACKEND", raising=False)
+    monkeypatch.delenv("RWKV7_FAST_TOKEN_BACKEND", raising=False)
     monkeypatch.setattr(native_model, "_native_model_jit_enabled", lambda: False)
     assert native_model._native_model_backend_requested() == "eager"
+
+
+def test_fast_token_backend_is_native_model_compatibility_alias(monkeypatch) -> None:
+    monkeypatch.delenv("RWKV7_NATIVE_MODEL_BACKEND", raising=False)
+    monkeypatch.setenv("RWKV7_FAST_TOKEN_BACKEND", "native_jit")
+    assert model_runtime_policy.native_model_backend_requested() == "native_jit"
+
+    monkeypatch.setenv("RWKV7_NATIVE_MODEL_BACKEND", "native_graph")
+    assert model_runtime_policy.native_model_backend_requested() == "native_graph"
+
+
+def test_unrelated_wrapper_backend_does_not_override_native_default(monkeypatch) -> None:
+    monkeypatch.delenv("RWKV7_NATIVE_MODEL_BACKEND", raising=False)
+    monkeypatch.setenv("RWKV7_FAST_TOKEN_BACKEND", "fla")
+    assert (
+        model_runtime_policy.native_model_backend_requested(
+            jit_enabled_fn=lambda: True,
+        )
+        == "auto"
+    )
 
 
 @pytest.mark.parametrize(
