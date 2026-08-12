@@ -71,6 +71,8 @@ export GPU_MODEL=4090
 export OUT_DIR=/path/to/hf-fast-path-v1-4090
 export PYTHON_BIN=/path/to/locked-python
 export RUNTIME_LOCK=/path/to/hf-fast-path-v1-runtime-lock.json
+export FLA_SOURCE_COMMIT=2e38c1fab332174d056928feaf29f8c5fd5ac550
+export CAUSAL_CONV1D_SOURCE_COMMIT=4f6ae4e26ae5fe8af9372f8d312ab25cc4595223
 
 export RWKV_04_MODEL=/models/rwkv-0.4b
 export RWKV_15_MODEL=/models/rwkv-1.5b
@@ -87,6 +89,9 @@ bash bench/run_hf_fast_path_v1.sh
 只有第一张建立锁的卡使用 `WRITE_RUNTIME_LOCK=/path/to/lock.json`；后续卡必须
 使用 `RUNTIME_LOCK`。脚本先跑 Qwen；官方快速路径失败时不会继续跑 RWKV，
 也不会生成 `main_table.jsonl`。
+两项扩展需通过 `bench/build_hf_fast_path_v1_extensions.sh` 从上述精确提交编译；
+脚本要求 CUDA developer image，并强制
+`TORCH_CUDA_ARCH_LIST="8.6;8.9;12.0"`。
 
 ## 参数口径
 
