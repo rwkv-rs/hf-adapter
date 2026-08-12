@@ -137,6 +137,6 @@ def test_extension_build_script_pins_sources_and_all_card_arches() -> None:
     )
     assert 'TORCH_CUDA_ARCH_LIST="8.6;8.9;12.0"' in text
     assert "2e38c1fab332174d056928feaf29f8c5fd5ac550" in text
-    assert "4f6ae4e26ae5fe8af9372f8d312ab25cc4595223" in text
+    assert "82867a9d2e6907cc0f637ac6aff318f696838548" in text
     assert "CAUSAL_CONV1D_FORCE_BUILD=TRUE" in text
     assert "--force-reinstall" in text

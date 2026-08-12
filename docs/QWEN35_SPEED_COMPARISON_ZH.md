@@ -72,7 +72,7 @@ export OUT_DIR=/path/to/hf-fast-path-v1-4090
 export PYTHON_BIN=/path/to/locked-python
 export RUNTIME_LOCK=/path/to/hf-fast-path-v1-runtime-lock.json
 export FLA_SOURCE_COMMIT=2e38c1fab332174d056928feaf29f8c5fd5ac550
-export CAUSAL_CONV1D_SOURCE_COMMIT=4f6ae4e26ae5fe8af9372f8d312ab25cc4595223
+export CAUSAL_CONV1D_SOURCE_COMMIT=82867a9d2e6907cc0f637ac6aff318f696838548
 
 export RWKV_04_MODEL=/models/rwkv-0.4b
 export RWKV_15_MODEL=/models/rwkv-1.5b
