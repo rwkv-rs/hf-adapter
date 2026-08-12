@@ -68,6 +68,13 @@ def capture(root: Path) -> tuple[dict[str, Any], str]:
 
     freeze = pip_freeze()
     sources = {label: package_source(package) for label, package in PACKAGES.items()}
+    source_commits = {
+        label: source.get("commit_id") if source else None for label, source in sources.items()
+    }
+    source_commits["fla"] = os.environ.get("FLA_SOURCE_COMMIT") or source_commits["fla"]
+    source_commits["causal_conv1d"] = (
+        os.environ.get("CAUSAL_CONV1D_SOURCE_COMMIT") or source_commits["causal_conv1d"]
+    )
     runtime_lock = {
         "python_version": platform.python_version(),
         "torch_version": str(torch.__version__),
@@ -76,9 +83,7 @@ def capture(root: Path) -> tuple[dict[str, Any], str]:
         "transformers_version": package_version("transformers"),
         "fla_version": package_version("flash-linear-attention"),
         "causal_conv1d_version": package_version("causal-conv1d"),
-        "package_source_commits": {
-            label: source.get("commit_id") if source else None for label, source in sources.items()
-        },
+        "package_source_commits": source_commits,
         "pip_freeze_sha256": hashlib.sha256(freeze.encode("utf-8")).hexdigest(),
         "repository_commit": git_commit(root),
         "torch_cuda_arch_list": os.environ.get("TORCH_CUDA_ARCH_LIST"),

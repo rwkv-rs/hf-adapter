@@ -9,6 +9,8 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 RUNTIME_LOCK="${RUNTIME_LOCK:-}"
 WRITE_RUNTIME_LOCK="${WRITE_RUNTIME_LOCK:-}"
+FLA_SOURCE_COMMIT="${FLA_SOURCE_COMMIT:-}"
+CAUSAL_CONV1D_SOURCE_COMMIT="${CAUSAL_CONV1D_SOURCE_COMMIT:-}"
 BENCHMARK_MATRIX="hf_fast_path_v1"
 
 required=(
@@ -25,6 +27,10 @@ if [[ -n "${RUNTIME_LOCK}" && -n "${WRITE_RUNTIME_LOCK}" ]]; then
 fi
 if [[ -z "${RUNTIME_LOCK}" && -z "${WRITE_RUNTIME_LOCK}" ]]; then
   echo "RUNTIME_LOCK is required; use WRITE_RUNTIME_LOCK only to establish the first-card lock" >&2
+  exit 2
+fi
+if [[ -z "${FLA_SOURCE_COMMIT}" || -z "${CAUSAL_CONV1D_SOURCE_COMMIT}" ]]; then
+  echo "FLA_SOURCE_COMMIT and CAUSAL_CONV1D_SOURCE_COMMIT are required" >&2
   exit 2
 fi
 for name in "${required[@]}"; do
@@ -44,6 +50,7 @@ rm -f \
 
 export CUDA_VISIBLE_DEVICES
 export TORCH_CUDA_ARCH_LIST="8.6;8.9;12.0"
+export FLA_SOURCE_COMMIT CAUSAL_CONV1D_SOURCE_COMMIT
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 

@@ -127,3 +127,16 @@ def test_single_card_script_is_official_and_fail_closed() -> None:
     assert "--decode-tokens 128 512" in text
     assert "--warmup 3" in text
     assert "--runs 7" in text
+    assert "FLA_SOURCE_COMMIT" in text
+    assert "CAUSAL_CONV1D_SOURCE_COMMIT" in text
+
+
+def test_extension_build_script_pins_sources_and_all_card_arches() -> None:
+    text = (ROOT / "bench" / "build_hf_fast_path_v1_extensions.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'TORCH_CUDA_ARCH_LIST="8.6;8.9;12.0"' in text
+    assert "2e38c1fab332174d056928feaf29f8c5fd5ac550" in text
+    assert "4f6ae4e26ae5fe8af9372f8d312ab25cc4595223" in text
+    assert "CAUSAL_CONV1D_FORCE_BUILD=TRUE" in text
+    assert "--force-reinstall" in text
