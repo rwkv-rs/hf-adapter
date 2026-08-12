@@ -661,6 +661,11 @@ def _extract_current_device(model):
     return _extract_dense_packs_impl(
         model,
         rkv_policy=_native_graph_rkv_policy(),
+        rkv_pack_max_hidden=_native_graph_int_env(
+            "RWKV7_NATIVE_GRAPH_RKV_PACK_MAX_HIDDEN",
+            2560,
+            lo=1,
+        ),
     )
 
 
@@ -676,6 +681,11 @@ def _extract_graph_current_device(model):
     return _extract_graph_packs_impl(
         model,
         rkv_policy=_native_graph_rkv_policy(),
+        rkv_pack_max_hidden=_native_graph_int_env(
+            "RWKV7_NATIVE_GRAPH_RKV_PACK_MAX_HIDDEN",
+            2560,
+            lo=1,
+        ),
         sparse_ffn_low_memory_pack_enabled=_native_graph_sparse_ffn_low_memory_pack_enabled,
         try_relayout_ffn_value_weight=_native_graph_try_relayout_ffn_value_weight,
         graph_linear_operand=_graph_linear_operand,

@@ -10,7 +10,25 @@ from __future__ import annotations
 import torch
 
 
-def extract_dense_packs(model, *, rkv_policy: str):
+def _should_stack_rkv(
+    rkv_policy: str,
+    hidden_size: int,
+    pack_max_hidden: int,
+) -> bool:
+    """Bound the eager R/K/V copy to validated, memory-safe model widths."""
+
+    return (
+        rkv_policy == "vkwr_auto"
+        and 0 < int(hidden_size) <= int(pack_max_hidden)
+    )
+
+
+def extract_dense_packs(
+    model,
+    *,
+    rkv_policy: str,
+    rkv_pack_max_hidden: int,
+):
     layers = model.model.layers
     H = layers[0].attn.num_heads
     N = layers[0].attn.head_dim
@@ -19,7 +37,7 @@ def extract_dense_packs(model, *, rkv_policy: str):
     hidden = int(layers[0].attn.hidden_size)
     attention_hidden = int(getattr(layers[0].attn, "attention_hidden_size", H * N))
     dense_ref = model.model.embeddings.weight
-    stack_rkv = rkv_policy == "vkwr_auto"
+    stack_rkv = _should_stack_rkv(rkv_policy, hidden, rkv_pack_max_hidden)
     for i, layer in enumerate(layers):
         a = layer.attn
         ref = a.w_lora.lora[0].weight
@@ -58,6 +76,7 @@ def extract_graph_packs(
     model,
     *,
     rkv_policy: str,
+    rkv_pack_max_hidden: int,
     sparse_ffn_low_memory_pack_enabled,
     try_relayout_ffn_value_weight,
     graph_linear_operand,
@@ -78,7 +97,7 @@ def extract_graph_packs(
     packs = []
     hidden = int(layers[0].attn.hidden_size)
     attention_hidden = int(getattr(layers[0].attn, "attention_hidden_size", H * N))
-    stack_rkv = rkv_policy == "vkwr_auto"
+    stack_rkv = _should_stack_rkv(rkv_policy, hidden, rkv_pack_max_hidden)
     embed_ref = model.model.embeddings.weight
     for i, layer in enumerate(layers):
         if sparse_ffn_low_memory_pack_enabled() and (

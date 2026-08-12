@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 
 from rwkv7_hf import native_jit, native_jit_packing
+from rwkv7_hf.native_jit_packing import _should_stack_rkv
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
 
@@ -48,6 +49,13 @@ def test_packing_implementation_ownership_and_state_aliases() -> None:
     assert {"extract_dense_packs", "extract_graph_packs"}.isdisjoint(facade)
     assert native_jit._init is native_jit_packing.init_state
     assert native_jit._init_batched_from_packs is native_jit_packing.init_batched_from_packs
+
+
+def test_rkv_pack_capacity_gate_keeps_7p2b_copy_free_by_default() -> None:
+    assert _should_stack_rkv("vkwr_auto", 2560, 2560)
+    assert not _should_stack_rkv("vkwr_auto", 4096, 2560)
+    assert _should_stack_rkv("vkwr_auto", 4096, 4096)
+    assert not _should_stack_rkv("manual", 2048, 2560)
 
 
 def test_dense_and_graph_pack_contracts_are_preserved() -> None:
