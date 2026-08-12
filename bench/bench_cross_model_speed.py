@@ -145,6 +145,7 @@ def base_row(args: argparse.Namespace) -> dict[str, Any]:
         "quantization": args.quantization,
         "qwen_backend_requested": args.qwen_backend,
         "qwen_conv_backend_requested": getattr(args, "qwen_conv_backend", "auto"),
+        "qwen_fast_path_required": bool(getattr(args, "require_qwen_fast_path", False)),
         "batch_size": args.batch_size,
         "prompt_tokens": args.prompt_tokens,
         "decode_tokens": args.decode_tokens,
@@ -551,6 +552,33 @@ def enforce_qwen_backend(model, args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.qwen_backend == "torch" and contract["qwen_operator_contract_pass"]:
         raise RuntimeError("Qwen3.5 torch backend was requested but FLA operators remain bound")
+    requested_conv = str(getattr(args, "qwen_conv_backend", "auto"))
+    effective_conv = str(contract.get("qwen_conv_backend_effective", "fallback"))
+    if requested_conv != "auto" and effective_conv != requested_conv:
+        raise RuntimeError(
+            "Qwen3.5 causal-conv backend mismatch: "
+            f"requested {requested_conv!r}, but live layers bound {effective_conv!r}."
+        )
+    if bool(getattr(args, "require_qwen_fast_path", False)) and not bool(
+        contract.get("qwen_full_fused_contract_pass")
+    ):
+        missing = list(contract.get("qwen_fla_core_contract_missing", [])) + list(
+            contract.get("qwen_causal_conv1d_contract_missing", [])
+        )
+        raise RuntimeError(
+            "Qwen3.5 full optimized path was required but the live operator contract failed; "
+            f"missing: {', '.join(missing) or 'unknown operators'}."
+        )
+    if requested_conv == "causal_conv1d" and bool(
+        getattr(args, "require_qwen_fast_path", False)
+    ):
+        official = qwen_official_fast_path_environment()
+        missing = [name for name, available in official.items() if not available]
+        if missing:
+            raise RuntimeError(
+                "Qwen3.5 official FLA + causal_conv1d path was required but the "
+                f"environment gate failed: {', '.join(missing)}."
+            )
     return contract
 
 
@@ -708,15 +736,26 @@ def save_backend_probe(args: argparse.Namespace, model, ids) -> dict[str, Any]:
     }
 
 
-def environment_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]:
-    qwen_fast_path = None
-    if args.model_kind == "qwen35":
-        try:
-            from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
+def qwen_official_fast_path_environment() -> dict[str, bool]:
+    """Return the fail-closed official Qwen3.5 optional-kernel environment gate."""
 
-            qwen_fast_path = bool(is_fast_path_available)
-        except Exception:
-            qwen_fast_path = False
+    try:
+        from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
+
+        available = is_fast_path_available() if callable(is_fast_path_available) else is_fast_path_available
+        fast_path_available = bool(available)
+    except Exception:
+        fast_path_available = False
+    return {
+        "qwen_fast_path_available": fast_path_available,
+        "qwen_fla_importable": importlib.util.find_spec("fla") is not None,
+        "qwen_causal_conv1d_importable": importlib.util.find_spec("causal_conv1d") is not None,
+        "qwen_force_torch_disabled": not QWEN_FORCE_TORCH,
+    }
+
+
+def environment_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]:
+    qwen_environment = qwen_official_fast_path_environment() if args.model_kind == "qwen35" else {}
     self_chunk_h_bv_effective = None
     self_chunk_h_bc_effective = None
     scan_block_m_effective = None
@@ -769,10 +808,10 @@ def environment_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]
         "bitsandbytes_version": package_version("bitsandbytes"),
         "fla_version": package_version("flash-linear-attention"),
         "causal_conv1d_version": package_version("causal-conv1d"),
-        "qwen_fla_importable": importlib.util.find_spec("fla") is not None,
-        "qwen_causal_conv1d_importable": importlib.util.find_spec("causal_conv1d") is not None,
+        "qwen_fla_importable": qwen_environment.get("qwen_fla_importable"),
+        "qwen_causal_conv1d_importable": qwen_environment.get("qwen_causal_conv1d_importable"),
         "qwen_force_torch": QWEN_FORCE_TORCH,
-        "qwen_fast_path_available": qwen_fast_path,
+        "qwen_fast_path_available": qwen_environment.get("qwen_fast_path_available"),
         "qwen_fla_expected_device_route": qwen_device_route,
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
         "rwkv_fast_token_quant_requested": os.environ.get("RWKV7_FAST_TOKEN_QUANT"),
@@ -1063,6 +1102,41 @@ def validate_loaded_model(args: argparse.Namespace, model) -> None:
         )
 
 
+def validate_qwen_result_contract(args: argparse.Namespace, row: dict[str, Any]) -> None:
+    """Reject a row unless it proves the exact requested Qwen fast path.
+
+    The official comparison lane is selected by the existing public CLI
+    combination ``--qwen-conv-backend causal_conv1d`` plus
+    ``--require-qwen-fast-path``. This keeps the repository Triton conv lane
+    available for explicit experiments without allowing it into the official
+    causal-conv main table.
+    """
+
+    if args.model_kind != "qwen35" or not bool(getattr(args, "require_qwen_fast_path", False)):
+        return
+    required: dict[str, Any] = {
+        "status": "pass",
+        "qwen_fast_path_verified": True,
+        "qwen_full_fused_contract_pass": True,
+        "qwen_conv_backend_effective": str(getattr(args, "qwen_conv_backend", "auto")),
+        "qwen_force_torch": False,
+    }
+    if str(getattr(args, "qwen_conv_backend", "auto")) == "causal_conv1d":
+        required.update(
+            {
+                "qwen_fast_path_available": True,
+                "qwen_causal_conv1d_importable": True,
+            }
+        )
+    mismatches = [
+        f"{field}={row.get(field)!r} (expected {expected!r})"
+        for field, expected in required.items()
+        if row.get(field) != expected
+    ]
+    if mismatches:
+        raise RuntimeError("Qwen3.5 result row failed the requested fast-path contract: " + "; ".join(mismatches))
+
+
 def benchmark_loaded(
     args: argparse.Namespace,
     tokenizer,
@@ -1184,6 +1258,7 @@ def benchmark_loaded(
         "warmup": args.warmup,
         "runs": args.runs,
     }
+    validate_qwen_result_contract(args, row)
     return row
 
 

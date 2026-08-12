@@ -30,6 +30,7 @@ from bench.bench_cross_model_speed import (  # noqa: E402
     qwen_effective_backend,
     qwen_fla_operator_contract,
     validate_loaded_model,
+    validate_qwen_result_contract,
     validate_args,
 )
 from bench.qwen35_fla_triton_conv import (  # noqa: E402
@@ -1034,6 +1035,70 @@ def test_qwen_fla_operator_contract_checks_bound_operators() -> None:
     assert partial_contract["qwen_linear_attention_layers"] == 1
     assert partial_contract["qwen_fla_decode_layers"] == 0
     assert partial_contract["qwen_operator_contract_pass"] is False
+
+
+def test_explicit_qwen_conv_backend_rejects_a_different_live_binding() -> None:
+    model = fake_qwen_model(accelerated=True)
+    official_args = worker_args(
+        model_kind="qwen35",
+        qwen_backend="fla",
+        qwen_conv_backend="causal_conv1d",
+        require_qwen_fast_path=False,
+    )
+    contract = enforce_qwen_backend(model, official_args)
+    assert contract["qwen_conv_backend_effective"] == "causal_conv1d"
+
+    layer = model.named_modules()[0][1]
+    layer.causal_conv1d_fn = fake_operator("bench.qwen35_fla_triton_conv.causal_conv1d_fn")
+    layer.causal_conv1d_update = fake_operator(
+        "bench.qwen35_fla_triton_conv.causal_conv1d_update"
+    )
+    with pytest.raises(RuntimeError, match="causal-conv backend mismatch"):
+        enforce_qwen_backend(model, official_args)
+
+
+def test_official_qwen_fast_path_requires_the_import_environment(monkeypatch) -> None:
+    model = fake_qwen_model(accelerated=True)
+    args = worker_args(
+        model_kind="qwen35",
+        qwen_backend="fla",
+        qwen_conv_backend="causal_conv1d",
+        require_qwen_fast_path=True,
+    )
+    monkeypatch.setitem(
+        enforce_qwen_backend.__globals__,
+        "qwen_official_fast_path_environment",
+        lambda: {
+            "qwen_fast_path_available": True,
+            "qwen_fla_importable": True,
+            "qwen_causal_conv1d_importable": False,
+            "qwen_force_torch_disabled": True,
+        },
+    )
+    with pytest.raises(RuntimeError, match="qwen_causal_conv1d_importable"):
+        enforce_qwen_backend(model, args)
+
+
+def test_official_qwen_result_row_enforces_all_six_acceptance_fields() -> None:
+    args = worker_args(
+        model_kind="qwen35",
+        qwen_conv_backend="causal_conv1d",
+        require_qwen_fast_path=True,
+    )
+    passing = {
+        "status": "pass",
+        "qwen_fast_path_available": True,
+        "qwen_fast_path_verified": True,
+        "qwen_full_fused_contract_pass": True,
+        "qwen_causal_conv1d_importable": True,
+        "qwen_conv_backend_effective": "causal_conv1d",
+        "qwen_force_torch": False,
+    }
+    validate_qwen_result_contract(args, passing)
+
+    invalid = {**passing, "qwen_conv_backend_effective": "fla_triton"}
+    with pytest.raises(RuntimeError, match="qwen_conv_backend_effective='fla_triton'"):
+        validate_qwen_result_contract(args, invalid)
 
 
 class FakeTokenizer:
