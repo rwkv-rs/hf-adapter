@@ -8,11 +8,28 @@ import sys
 import pytest
 
 from bench.bench_native_prefill_accum_ab import (
+    _prefill_call,
     mode_flags,
     model_shape_spec,
     route_effective_matches,
     sweep_orders,
 )
+
+
+class _PrefillRecorder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def rwkv7_prefill_chunks(self, ids, *, chunk_size: int, logits_to_keep: int):
+        self.calls.append(("chunks", chunk_size))
+        assert logits_to_keep == 1
+        return "chunked"
+
+    def rwkv7_prefill_native(self, ids, *, logits_to_keep: int, return_dict: bool):
+        self.calls.append(("native", int(ids.shape[1])))
+        assert logits_to_keep == 1
+        assert return_dict
+        return "native"
 
 
 @pytest.mark.parametrize(
@@ -54,6 +71,16 @@ def test_model_shape_spec_is_deterministic() -> None:
         "1024x24x1x128 1024x24x1x512 "
         "1024x24x8x128 1024x24x8x512"
     )
+
+
+def test_prefill_call_matches_final_matrix_chunking() -> None:
+    import torch
+
+    model = _PrefillRecorder()
+    ids = torch.zeros((1, 2048), dtype=torch.long)
+    assert _prefill_call(model, ids, 512) == "chunked"
+    assert _prefill_call(model, ids[:, :128], 512) == "native"
+    assert model.calls == [("chunks", 512), ("native", 128)]
 
 
 def test_direct_script_entrypoint_resolves_bench_package() -> None:

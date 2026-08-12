@@ -33,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--prompt-tokens", type=int, nargs="+", default=[128, 512, 2048]
     )
     parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=0,
+        help="Chunk long prompts through rwkv7_prefill_chunks; 0 disables chunking.",
+    )
+    parser.add_argument(
         "--orders", choices=("forward", "reverse", "both"), default="both"
     )
     parser.add_argument("--warmup", type=int, default=10)
@@ -141,17 +147,30 @@ def _cuda_sync(device: str) -> None:
         torch.cuda.synchronize()
 
 
-def _timed_call(model, ids: torch.Tensor, device: str) -> tuple[Any, float]:
+def _prefill_call(model, ids: torch.Tensor, chunk_size: int):
+    if chunk_size > 0 and int(ids.shape[1]) > chunk_size:
+        return model.rwkv7_prefill_chunks(
+            ids, chunk_size=chunk_size, logits_to_keep=1
+        )
+    return model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+
+
+def _timed_call(
+    model,
+    ids: torch.Tensor,
+    device: str,
+    chunk_size: int,
+) -> tuple[Any, float]:
     if device.startswith("cuda"):
         begin = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         begin.record()
-        output = model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+        output = _prefill_call(model, ids, chunk_size)
         end.record()
         end.synchronize()
         return output, float(begin.elapsed_time(end))
     started = time.perf_counter()
-    output = model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+    output = _prefill_call(model, ids, chunk_size)
     return output, (time.perf_counter() - started) * 1000.0
 
 
@@ -163,6 +182,7 @@ def _capture_mode(
     device: str,
     warmup: int,
     steps: int,
+    chunk_size: int,
 ) -> dict[str, Any]:
     global_flag, block_flag = mode_flags(mode)
     previous = {
@@ -181,12 +201,12 @@ def _capture_mode(
             torch.cuda.reset_peak_memory_stats()
         with torch.inference_mode():
             for _ in range(warmup):
-                model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+                _prefill_call(model, ids, chunk_size)
             _cuda_sync(device)
             times: list[float] = []
             output = None
             for _ in range(steps):
-                output, elapsed = _timed_call(model, ids, device)
+                output, elapsed = _timed_call(model, ids, device, chunk_size)
                 times.append(elapsed)
             assert output is not None
             prompt_logits = output.logits[:, -1].detach().float().cpu().clone()
@@ -279,6 +299,7 @@ def main() -> int:
                             device=args.device,
                             warmup=args.warmup,
                             steps=args.steps,
+                            chunk_size=args.chunk_size,
                         )
                         for mode in order
                     }
@@ -339,6 +360,7 @@ def main() -> int:
                             "num_hidden_layers": num_layers,
                             "batch_size": batch_size,
                             "prompt_tokens": prompt_tokens,
+                            "chunk_size": args.chunk_size,
                             "order_index": order_index,
                             "order": list(order),
                             "mode": mode,
