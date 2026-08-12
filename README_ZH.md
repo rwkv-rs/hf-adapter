@@ -8,9 +8,10 @@ W8/W4 量化、投机解码和多卡运行，并按设备选择原生或融合�
 
 ## 项目状态
 
-已发布的 **RWKV-7 HF Adapter `v0.6.0` 交付范围已经完成**。转换、Transformers
-标准接口、PEFT/TRL、状态缓存、Native/no-FLA、W8/W4、PP/TP、ZeRO 和已有精确
-硬件性能验收均有对应代码、测试或证据记录。
+已发布的 **RWKV-7 HF `v0.7.0` 正式版交付范围已经完成**。它保留 v0.6
+适配器里程碑的转换、Transformers 标准接口、PEFT/TRL、状态缓存、
+Native/no-FLA、W8/W4、PP/TP 和 ZeRO，并加入 Ascend、Biren、MetaX、MUSA
+边界以及最新的 NVIDIA 精确显卡性能路线。
 
 完成状态按模型、显卡、精度、batch 和序列形状声明；增加新的显卡或测试形状属于
 发布后的矩阵扩展，不会重新打开已经完成的版本里程碑。当前结论见
@@ -27,6 +28,14 @@ FP16-state 路径。这些均已有配对性能、正确性和回退边界证据
 
 新用户建议先使用 0.1B 或 0.4B 模型。下面的命令会创建独立环境、安装仓库并检查
 Python、PyTorch、Transformers 和可用设备。
+
+直接从 PyPI 安装正式版：
+
+```bash
+python -m pip install -U rwkv7-hf
+```
+
+需要开发当前源码时再克隆仓库：
 
 ### Linux / macOS
 

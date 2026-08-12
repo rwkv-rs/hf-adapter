@@ -118,7 +118,7 @@ modules = {
 }
 versions = {}
 for distribution in (
-    "rwkv7-hf-adapter",
+    "rwkv7-hf",
     "torch",
     "transformers",
     "peft",
@@ -158,8 +158,8 @@ except ValueError:
 else:
     raise SystemExit(f"clean-install import leaked into source tree: {module_path}")
 
-version = importlib.metadata.version("rwkv7-hf-adapter")
-print(f"installed rwkv7-hf-adapter={version} from {module_path}")
+version = importlib.metadata.version("rwkv7-hf")
+print(f"installed rwkv7-hf={version} from {module_path}")
 PY
 )
 

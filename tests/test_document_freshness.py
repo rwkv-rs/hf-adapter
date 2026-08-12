@@ -104,10 +104,12 @@ def main() -> int:
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme
-    assert "HF adapter `v0.6.0` deliverable is complete" in readme
+    assert "RWKV-7 HF `v0.7.0` release is complete" in readme
+    assert "python -m pip install -U rwkv7-hf" in readme
 
     readme_zh = read("README_ZH.md")
-    assert "RWKV-7 HF Adapter `v0.6.0` 交付范围已经完成" in readme_zh
+    assert "RWKV-7 HF `v0.7.0` 正式版交付范围已经完成" in readme_zh
+    assert "python -m pip install -U rwkv7-hf" in readme_zh
 
     required_current = [
         "README.md",

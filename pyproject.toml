@@ -1,15 +1,26 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rwkv7-hf-adapter"
-version = "0.6.0"
+name = "rwkv7-hf"
+version = "0.7.0"
 description = "Native Hugging Face adapter and converter for official RWKV-7 checkpoints."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
+keywords = ["rwkv", "transformers", "huggingface", "language-model", "pytorch"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
   "torch",
   "transformers>=5.12.1,<6",
@@ -41,6 +52,12 @@ train = ["peft>=0.19.1,<1", "accelerate", "datasets", "trl>=1.7,<2", "deepspeed"
 quant = ["bitsandbytes"]
 torchao = ["torchao; platform_system == 'Linux'"]
 mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
+
+[project.urls]
+Homepage = "https://github.com/rwkv-rs/hf-adapter"
+Documentation = "https://github.com/rwkv-rs/hf-adapter/tree/main/docs"
+Repository = "https://github.com/rwkv-rs/hf-adapter"
+Issues = "https://github.com/rwkv-rs/hf-adapter/issues"
 
 [tool.setuptools.packages.find]
 include = ["rwkv7_hf*"]

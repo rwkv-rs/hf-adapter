@@ -2,7 +2,7 @@ schema_version: 1
 project:
   name: RWKV-7 Hugging Face Adapter
   canonical_repository: https://github.com/rwkv-rs/hf-adapter
-  package: rwkv7-hf-adapter
+  package: rwkv7-hf
   license: MIT
   primary_maintainer:
     name: Wang Yue
