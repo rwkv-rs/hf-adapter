@@ -50,18 +50,24 @@ def _index(
     keys: set[tuple[int, int, int]],
     expected_device: str,
     errors: list[str],
+    cross_cache_full_greedy_policy: str = "strict",
 ) -> dict[tuple[int, int, int], dict[str, Any]]:
     for row in rows:
-        _validate_row(row, expected_device, errors)
-        if row.get("qwen_decode_optimization_effective") != route:
-            errors.append(
-                f"{row.get('_source', '<row>')}: route must be {route!r}"
-            )
-    observed = [_key(row) for row in rows]
-    if len(rows) != len(keys) or set(observed) != keys or len(set(observed)) != len(rows):
-        errors.append(
-            f"{route}: expected exactly {sorted(keys)!r}, got {observed!r}"
+        _validate_row(
+            row,
+            expected_device,
+            errors,
+            expected_cross_cache_full_greedy_policy=cross_cache_full_greedy_policy,
         )
+        if row.get("qwen_decode_optimization_effective") != route:
+            errors.append(f"{row.get('_source', '<row>')}: route must be {route!r}")
+    observed = [_key(row) for row in rows]
+    if (
+        len(rows) != len(keys)
+        or set(observed) != keys
+        or len(set(observed)) != len(rows)
+    ):
+        errors.append(f"{route}: expected exactly {sorted(keys)!r}, got {observed!r}")
     return {key: row for row in rows if (key := _key(row)) in keys}
 
 
@@ -82,6 +88,7 @@ def select_route(
     expected_device: str,
     inductor_boundary: list[dict[str, Any]] | None = None,
     raw_boundary: list[dict[str, Any]] | None = None,
+    cross_cache_full_greedy_policy: str = "strict",
 ) -> dict[str, Any]:
     errors: list[str] = []
     route_errors: dict[str, list[str]] = {INDUCTOR: [], RAW: []}
@@ -91,6 +98,7 @@ def select_route(
         keys=SHORT_KEYS,
         expected_device=expected_device,
         errors=route_errors[INDUCTOR],
+        cross_cache_full_greedy_policy=cross_cache_full_greedy_policy,
     )
     raw_short_index = _index(
         raw_short,
@@ -98,6 +106,7 @@ def select_route(
         keys=SHORT_KEYS,
         expected_device=expected_device,
         errors=route_errors[RAW],
+        cross_cache_full_greedy_policy=cross_cache_full_greedy_policy,
     )
     has_boundary = inductor_boundary is not None or raw_boundary is not None
     if has_boundary and (inductor_boundary is None or raw_boundary is None):
@@ -111,6 +120,7 @@ def select_route(
             keys=BOUNDARY_KEYS,
             expected_device=expected_device,
             errors=route_errors[INDUCTOR],
+            cross_cache_full_greedy_policy=cross_cache_full_greedy_policy,
         )
         raw_boundary_index = _index(
             raw_boundary,
@@ -118,6 +128,7 @@ def select_route(
             keys=BOUNDARY_KEYS,
             expected_device=expected_device,
             errors=route_errors[RAW],
+            cross_cache_full_greedy_policy=cross_cache_full_greedy_policy,
         )
 
     all_rows = [*inductor_short, *raw_short]
@@ -146,7 +157,9 @@ def select_route(
                     )
     signatures = {_signature(row) for row in signature_rows}
     if len(signatures) != 1:
-        errors.append("all route probes must use one model, commit, and runtime signature")
+        errors.append(
+            "all route probes must use one model, commit, and runtime signature"
+        )
 
     ratios: list[dict[str, Any]] = []
     for stage, left, right in (
@@ -187,7 +200,9 @@ def select_route(
     elif not errors and not valid_routes:
         errors.append("both graph routes failed correctness or coverage validation")
         decision = "fail"
-    short_ratios = [item["inductor_over_raw"] for item in ratios if item["stage"] == "short"]
+    short_ratios = [
+        item["inductor_over_raw"] for item in ratios if item["stage"] == "short"
+    ]
     if not errors and selected is None and len(short_ratios) == 2:
         if all(value >= 1.05 for value in short_ratios):
             selected, decision = INDUCTOR, "selected_unanimous_short_5pct"
@@ -213,6 +228,7 @@ def select_route(
             "short_unanimous_margin": 0.05,
             "four_cell_geometric_mean_margin": 0.02,
             "per_cell_route_mixing": False,
+            "cross_cache_full_greedy_policy": cross_cache_full_greedy_policy,
         },
         "selected_route": selected,
         "decision": decision,
@@ -229,6 +245,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inductor-boundary", type=Path)
     parser.add_argument("--raw-boundary", type=Path)
     parser.add_argument("--expected-device", default="NVIDIA GeForce RTX 4080")
+    parser.add_argument(
+        "--cross-cache-full-greedy-policy",
+        choices=["strict", "informational"],
+        default="strict",
+    )
     parser.add_argument("--summary", type=Path, required=True)
     return parser.parse_args()
 
@@ -252,6 +273,7 @@ def main() -> int:
         expected_device=args.expected_device,
         inductor_boundary=ind_boundary,
         raw_boundary=raw_boundary,
+        cross_cache_full_greedy_policy=args.cross_cache_full_greedy_policy,
     )
     summary["artifact_sha256"] = hashes
     args.summary.parent.mkdir(parents=True, exist_ok=True)

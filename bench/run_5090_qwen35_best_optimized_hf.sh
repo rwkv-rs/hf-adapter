@@ -15,6 +15,7 @@ FLA_SOURCE_COMMIT="${FLA_SOURCE_COMMIT:-}"
 CAUSAL_CONV1D_SOURCE_COMMIT="${CAUSAL_CONV1D_SOURCE_COMMIT:-}"
 QWEN_COMPILE_MODE="${QWEN_COMPILE_MODE:-max-autotune}"
 QWEN_DECODE_OPTIMIZATION="${QWEN_DECODE_OPTIMIZATION:-static_cache_inductor_cudagraph}"
+QWEN_CROSS_CACHE_FULL_GREEDY_POLICY="${QWEN_CROSS_CACHE_FULL_GREEDY_POLICY:-strict}"
 REPOSITORY_COMMIT="${REPOSITORY_COMMIT:-}"
 EXPECTED_GPU_MODEL="${EXPECTED_GPU_MODEL:-5090}"
 
@@ -36,6 +37,10 @@ if [[ "${QWEN_DECODE_OPTIMIZATION}" != "static_cache_inductor_cudagraph" && "${Q
 fi
 if [[ "${QWEN_DECODE_OPTIMIZATION}" == "static_cache_inductor_cudagraph" && "${QWEN_COMPILE_MODE}" != "reduce-overhead" && "${QWEN_COMPILE_MODE}" != "max-autotune" ]]; then
   echo "QWEN_COMPILE_MODE must be reduce-overhead or max-autotune" >&2
+  exit 2
+fi
+if [[ "${QWEN_CROSS_CACHE_FULL_GREEDY_POLICY}" != "strict" && "${QWEN_CROSS_CACHE_FULL_GREEDY_POLICY}" != "informational" ]]; then
+  echo "QWEN_CROSS_CACHE_FULL_GREEDY_POLICY must be strict or informational" >&2
   exit 2
 fi
 
@@ -78,6 +83,7 @@ cd "${ROOT}"
   --qwen-conv-backend causal_conv1d \
   --require-qwen-fast-path \
   --qwen-decode-optimization "${QWEN_DECODE_OPTIMIZATION}" \
+  --qwen-cross-cache-full-greedy-policy "${QWEN_CROSS_CACHE_FULL_GREEDY_POLICY}" \
   --qwen-compile-mode "${QWEN_COMPILE_MODE}" \
   --qwen-graph-probe-tokens 16 \
   --fail-fast \

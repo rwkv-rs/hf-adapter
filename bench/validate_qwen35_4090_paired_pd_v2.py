@@ -36,6 +36,7 @@ EXPECTED_DEVICE = "NVIDIA GeForce RTX 4090"
 REFERENCE_SHA256 = "7274b4ba3c549320740a4ea3bf7d72ce4dcafb1a671e6ab01e4fa1c1ba1db24f"
 CORRECTNESS_PROTOCOL = "rwkv_native_graph_fla_correctness_4090_v2"
 QWEN_CONTRACT = "official_fla_causal_conv1d_static_cache_cudagraph_same_cache_4090_v2"
+QWEN_CROSS_CACHE_FULL_GREEDY_POLICY = "strict"
 EXPECTED_RUNTIME = {
     "python": "3.12.8",
     "torch": "2.7.1+cu126",
@@ -398,6 +399,7 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         expected_causal_conv1d_importable=True,
         expected_fast_path_available=True,
         qwen_contract=QWEN_CONTRACT,
+        expected_cross_cache_full_greedy_policy=QWEN_CROSS_CACHE_FULL_GREEDY_POLICY,
     )
     if qwen_result.get("status") != "pass":
         errors.extend(f"Qwen reference: {x}" for x in qwen_result.get("errors", []))

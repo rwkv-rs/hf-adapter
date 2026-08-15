@@ -66,11 +66,21 @@ def references() -> list[dict]:
                 "qwen_cache_pointer_stable",
                 "qwen_cache_tensor_pointer_count",
                 "qwen_graph_parity_verified",
+                "qwen_cross_cache_full_greedy_policy_effective",
+                "qwen_cross_cache_full_greedy_required",
                 "qwen_graph_prefill_next_token_match",
                 "qwen_graph_greedy_match",
                 "qwen_same_cache_greedy_match",
+                "qwen_dynamic_static_full_greedy_mismatch_count",
+                "qwen_dynamic_static_full_greedy_first_mismatch_index",
+                "qwen_dynamic_candidate_full_greedy_mismatch_count",
+                "qwen_dynamic_candidate_full_greedy_first_mismatch_index",
+                "qwen_same_cache_full_greedy_mismatch_count",
+                "qwen_same_cache_full_greedy_first_mismatch_index",
                 "qwen_static_cache_eager_greedy_match",
                 "qwen_graph_logits_greedy_match",
+                "qwen_dynamic_static_logits_greedy_match",
+                "qwen_same_cache_logits_greedy_match",
                 "qwen_graph_logits_trace_finite",
                 "qwen_dynamic_static_logits_finite",
                 "qwen_same_cache_logits_finite",
@@ -262,7 +272,10 @@ def test_4b_reference_route_is_locked_to_continuous_dynamic_cache() -> None:
     row["qwen_decode_optimization_effective"] = "static_cache_raw_cudagraph"
     summary = validate_paired_pd(candidates(), reference)
     assert summary["status"] == "fail"
-    assert any("expected one of ['module_call_dynamic']" in error for error in summary["errors"])
+    assert any(
+        "expected one of ['module_call_dynamic']" in error
+        for error in summary["errors"]
+    )
 
 
 def test_cross_model_row_exports_exact_base_bmm_layer_sets() -> None:

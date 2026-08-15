@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 from bench.bench_cross_model_speed import (  # noqa: E402
     _logits_trace_metrics,
+    _token_trace_mismatch_metrics,
     QwenCudaGraphParityError,
     QwenStaticCacheRawCudaGraphDecode,
     build_exact_prompt,
@@ -79,6 +80,19 @@ def test_logits_trace_metrics_rejects_non_finite_later_step() -> None:
     assert metrics["max_abs_diff"] is None
     assert metrics["worst_index"] == 1
     assert metrics["greedy_match"] is False
+
+
+def test_token_trace_mismatch_metrics_records_count_and_first_index() -> None:
+    left = torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8]])
+    right = torch.tensor([[1, 9, 3, 4], [5, 6, 0, 8]])
+    assert _token_trace_mismatch_metrics(left, right) == {
+        "count": 2,
+        "first_index": 1,
+    }
+    assert _token_trace_mismatch_metrics(left, left.clone()) == {
+        "count": 0,
+        "first_index": None,
+    }
 
 
 def test_parity_failure_row_preserves_structured_diagnostics() -> None:
@@ -1843,10 +1857,18 @@ def test_qwen_inductor_cudagraph_lane_is_strict_and_fail_closed() -> None:
         "qwen_cuda_graph_effective": True,
         "qwen_decode_cuda_graph_verified": True,
         "qwen_graph_parity_verified": True,
+        "qwen_cross_cache_full_greedy_policy_effective": "strict",
+        "qwen_cross_cache_full_greedy_required": True,
         "qwen_graph_prefill_next_token_match": True,
         "qwen_graph_greedy_match": True,
         "qwen_same_cache_greedy_match": True,
+        "qwen_dynamic_static_full_greedy_mismatch_count": 0,
+        "qwen_dynamic_candidate_full_greedy_mismatch_count": 0,
+        "qwen_same_cache_full_greedy_mismatch_count": 0,
         "qwen_static_cache_eager_greedy_match": True,
+        "qwen_graph_logits_greedy_match": True,
+        "qwen_dynamic_static_logits_greedy_match": True,
+        "qwen_same_cache_logits_greedy_match": True,
         "qwen_graph_logits_trace_finite": True,
         "qwen_dynamic_static_logits_finite": True,
         "qwen_static_compiled_logits_finite": True,
@@ -1869,6 +1891,29 @@ def test_qwen_inductor_cudagraph_lane_is_strict_and_fail_closed() -> None:
     }
     args = graph_worker_args()
     validate_qwen_result_contract(args, passing)
+    with pytest.raises(
+        RuntimeError, match="qwen_same_cache_full_greedy_mismatch_count=False"
+    ):
+        validate_qwen_result_contract(
+            args,
+            {**passing, "qwen_same_cache_full_greedy_mismatch_count": False},
+        )
+    informational_args = graph_worker_args(
+        qwen_cross_cache_full_greedy_policy="informational"
+    )
+    validate_args(informational_args)
+    validate_qwen_result_contract(
+        informational_args,
+        {
+            **passing,
+            "qwen_cross_cache_full_greedy_policy_effective": "informational",
+            "qwen_cross_cache_full_greedy_required": False,
+            "qwen_graph_greedy_match": False,
+            "qwen_static_cache_eager_greedy_match": False,
+            "qwen_dynamic_static_full_greedy_mismatch_count": 1,
+            "qwen_dynamic_candidate_full_greedy_mismatch_count": 1,
+        },
+    )
     raw_args = graph_worker_args(qwen_decode_optimization="static_cache_raw_cudagraph")
     validate_args(raw_args)
     raw_passing = {

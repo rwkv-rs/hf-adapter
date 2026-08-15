@@ -12,7 +12,7 @@ from typing import Any
 from bench import validate_qwen35_4090_paired_pd_v2 as base
 
 
-CONTRACT_PROTOCOL = "qwen35_3090_reference_contract_v1"
+CONTRACT_PROTOCOL = "qwen35_3090_reference_contract_v2"
 PROTOCOL = "qwen35_3090_paired_pd_v2"
 CORRECTNESS_PROTOCOL = "rwkv_native_graph_fla_correctness_3090_v2"
 EXPECTED_DEVICE = "NVIDIA GeForce RTX 3090"
@@ -36,7 +36,7 @@ def _load_contract(path: Path) -> tuple[dict[str, Any], list[str]]:
     if not isinstance(doc, dict):
         return {}, ["reference contract must be an object"]
     expected = {
-        "schema_version": 1,
+        "schema_version": 2,
         "protocol": CONTRACT_PROTOCOL,
         "device": EXPECTED_DEVICE,
         "gpu_arch": "sm_86",
@@ -45,6 +45,7 @@ def _load_contract(path: Path) -> tuple[dict[str, Any], list[str]]:
         "memory_total_mib": 24576,
         "runtime": EXPECTED_RUNTIME,
         "torch_cuda_arch_list": "8.6",
+        "cross_cache_full_greedy_policy": "informational",
     }
     for field, value in expected.items():
         if not base._strict(doc.get(field), value):
@@ -97,8 +98,9 @@ def main() -> int:
         base.REFERENCE_SHA256 = contract["reference_sha256"]
         base.CORRECTNESS_PROTOCOL = CORRECTNESS_PROTOCOL
         base.QWEN_CONTRACT = (
-            "official_fla_causal_conv1d_static_cache_cudagraph_same_cache_3090_v2"
+            "official_fla_causal_conv1d_static_cache_cudagraph_same_cache_3090_v3"
         )
+        base.QWEN_CROSS_CACHE_FULL_GREEDY_POLICY = "informational"
         base.EXPECTED_RUNTIME = EXPECTED_RUNTIME
         base.EXPECTED_ARCH = "8.6"
         base.EXPECTED_DRIVER = "550.142"

@@ -24,10 +24,16 @@ def probe(route: str, batch: int, prompt: int, decode: int, rate: float) -> dict
     return item
 
 
-def rows(route: str, short_rates: tuple[float, float], *, boundary: bool = False) -> list[dict]:
-    shapes = ((1, 2048, 512), (8, 2048, 512)) if boundary else (
-        (1, 128, 128),
-        (8, 128, 128),
+def rows(
+    route: str, short_rates: tuple[float, float], *, boundary: bool = False
+) -> list[dict]:
+    shapes = (
+        ((1, 2048, 512), (8, 2048, 512))
+        if boundary
+        else (
+            (1, 128, 128),
+            (8, 128, 128),
+        )
     )
     return [
         probe(route, batch, prompt, decode, rate)
@@ -93,3 +99,28 @@ def test_correctness_failure_disqualifies_only_that_route() -> None:
     assert summary["selected_route"] == RAW
     assert summary["decision"] == "selected_alternate_after_correctness_failure"
     assert summary["route_errors"][INDUCTOR]
+
+
+def test_explicit_informational_cross_cache_policy_is_preserved() -> None:
+    inductor = rows(INDUCTOR, (120.0, 1200.0))
+    raw = rows(RAW, (100.0, 1000.0))
+    for item in [*inductor, *raw]:
+        item["qwen_cross_cache_full_greedy_policy_requested"] = "informational"
+        item["qwen_cross_cache_full_greedy_policy_effective"] = "informational"
+        item["qwen_cross_cache_full_greedy_required"] = False
+    raw[0]["qwen_graph_greedy_match"] = False
+    raw[0]["qwen_static_cache_eager_greedy_match"] = False
+    raw[0]["qwen_dynamic_static_full_greedy_mismatch_count"] = 1
+    raw[0]["qwen_dynamic_static_full_greedy_first_mismatch_index"] = 100
+    raw[0]["qwen_dynamic_candidate_full_greedy_mismatch_count"] = 1
+    raw[0]["qwen_dynamic_candidate_full_greedy_first_mismatch_index"] = 100
+    summary = select_route(
+        inductor,
+        raw,
+        expected_device="NVIDIA GeForce RTX 4080",
+        cross_cache_full_greedy_policy="informational",
+    )
+    assert summary["status"] == "pass"
+    assert summary["selection_policy"]["cross_cache_full_greedy_policy"] == (
+        "informational"
+    )

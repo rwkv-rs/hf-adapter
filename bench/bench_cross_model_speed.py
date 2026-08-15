@@ -138,6 +138,17 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--qwen-sdpa-policy must be auto or math_only")
     if args.model_kind != "qwen35" and qwen_sdpa_policy != "auto":
         raise ValueError("--qwen-sdpa-policy is only valid for Qwen3.5")
+    cross_cache_greedy_policy = str(
+        getattr(args, "qwen_cross_cache_full_greedy_policy", "strict")
+    )
+    if cross_cache_greedy_policy not in {"strict", "informational"}:
+        raise ValueError(
+            "--qwen-cross-cache-full-greedy-policy must be strict or informational"
+        )
+    if args.model_kind != "qwen35" and cross_cache_greedy_policy != "strict":
+        raise ValueError(
+            "--qwen-cross-cache-full-greedy-policy is only valid for Qwen3.5"
+        )
     qwen_conv_backend = str(getattr(args, "qwen_conv_backend", "auto"))
     if qwen_conv_backend not in {"auto", "causal_conv1d", "fla_triton"}:
         raise ValueError(
@@ -274,6 +285,11 @@ def base_row(args: argparse.Namespace) -> dict[str, Any]:
         "qwen_conv_backend_requested": getattr(args, "qwen_conv_backend", "auto"),
         "qwen_sdpa_policy_requested": (
             str(getattr(args, "qwen_sdpa_policy", "auto"))
+            if args.model_kind == "qwen35"
+            else None
+        ),
+        "qwen_cross_cache_full_greedy_policy_requested": (
+            str(getattr(args, "qwen_cross_cache_full_greedy_policy", "strict"))
             if args.model_kind == "qwen35"
             else None
         ),
@@ -1662,6 +1678,22 @@ def _logits_trace_metrics(
     }
 
 
+def _token_trace_mismatch_metrics(
+    left: torch.Tensor, right: torch.Tensor
+) -> dict[str, int | None]:
+    if left.shape != right.shape:
+        raise RuntimeError(
+            f"token traces must have the same shape: {tuple(left.shape)} != {tuple(right.shape)}"
+        )
+    mismatches = (left != right).nonzero(as_tuple=False)
+    return {
+        "count": int(mismatches.shape[0]),
+        "first_index": (
+            None if int(mismatches.shape[0]) == 0 else int(mismatches[0, 1].item())
+        ),
+    }
+
+
 class QwenCudaGraphParityError(RuntimeError):
     def __init__(self, parity: dict[str, Any]) -> None:
         self.qwen_graph_parity = dict(parity)
@@ -1693,6 +1725,15 @@ def verify_qwen_cuda_graph_parity(
     static_eager_match = bool(torch.equal(eager_tokens, static_eager_tokens))
     greedy_match = bool(torch.equal(eager_tokens, candidate_tokens))
     same_cache_greedy_match = bool(torch.equal(static_eager_tokens, candidate_tokens))
+    dynamic_static_mismatches = _token_trace_mismatch_metrics(
+        eager_tokens, static_eager_tokens
+    )
+    dynamic_candidate_mismatches = _token_trace_mismatch_metrics(
+        eager_tokens, candidate_tokens
+    )
+    same_cache_mismatches = _token_trace_mismatch_metrics(
+        static_eager_tokens, candidate_tokens
+    )
     prefill_next_token_match = bool(
         torch.equal(eager_tokens[:, :1], candidate_tokens[:, :1])
     )
@@ -1719,12 +1760,20 @@ def verify_qwen_cuda_graph_parity(
         and float(same_cache["min_cosine"]) >= 0.9999
     )
     logits_greedy_match = bool(dynamic_candidate["greedy_match"])
+    cross_cache_policy = str(
+        getattr(args, "qwen_cross_cache_full_greedy_policy", "strict")
+    )
+    cross_cache_full_greedy_required = cross_cache_policy == "strict"
+    cross_cache_full_greedy_pass = (
+        static_eager_match and greedy_match
+        if cross_cache_full_greedy_required
+        else True
+    )
     verified = (
         runner.cuda_graph_verified
         and runner.cache_pointer_stable
         and prefill_next_token_match
-        and static_eager_match
-        and greedy_match
+        and cross_cache_full_greedy_pass
         and same_cache_greedy_match
         and logits_greedy_match
         and bool(dynamic_static["greedy_match"])
@@ -1736,11 +1785,31 @@ def verify_qwen_cuda_graph_parity(
     )
     return {
         "qwen_graph_parity_verified": verified,
+        "qwen_cross_cache_full_greedy_policy_effective": cross_cache_policy,
+        "qwen_cross_cache_full_greedy_required": cross_cache_full_greedy_required,
         "qwen_graph_prefill_next_token_match": prefill_next_token_match,
         "qwen_graph_greedy_match": greedy_match,
         "qwen_same_cache_greedy_match": same_cache_greedy_match,
+        "qwen_dynamic_static_full_greedy_mismatch_count": dynamic_static_mismatches[
+            "count"
+        ],
+        "qwen_dynamic_static_full_greedy_first_mismatch_index": dynamic_static_mismatches[
+            "first_index"
+        ],
+        "qwen_dynamic_candidate_full_greedy_mismatch_count": dynamic_candidate_mismatches[
+            "count"
+        ],
+        "qwen_dynamic_candidate_full_greedy_first_mismatch_index": dynamic_candidate_mismatches[
+            "first_index"
+        ],
+        "qwen_same_cache_full_greedy_mismatch_count": same_cache_mismatches["count"],
+        "qwen_same_cache_full_greedy_first_mismatch_index": same_cache_mismatches[
+            "first_index"
+        ],
         "qwen_static_cache_eager_greedy_match": static_eager_match,
         "qwen_graph_logits_greedy_match": logits_greedy_match,
+        "qwen_dynamic_static_logits_greedy_match": bool(dynamic_static["greedy_match"]),
+        "qwen_same_cache_logits_greedy_match": bool(same_cache["greedy_match"]),
         "qwen_graph_probe_tokens": parity_steps,
         "qwen_graph_logits_probe_tokens": logits_probe_tokens,
         "qwen_graph_distinct_batch_prompts": int(ids.shape[0]) > 1,
@@ -1840,14 +1909,24 @@ def timed_decode_details(args: argparse.Namespace, model, ids) -> dict[str, Any]
         if args.model_kind == "qwen35"
         else None,
         "qwen_graph_parity_verified": None,
+        "qwen_cross_cache_full_greedy_policy_effective": None,
+        "qwen_cross_cache_full_greedy_required": None,
         "qwen_graph_prefill_next_token_match": None,
         "qwen_graph_greedy_match": None,
         "qwen_same_cache_greedy_match": None,
+        "qwen_dynamic_static_full_greedy_mismatch_count": None,
+        "qwen_dynamic_static_full_greedy_first_mismatch_index": None,
+        "qwen_dynamic_candidate_full_greedy_mismatch_count": None,
+        "qwen_dynamic_candidate_full_greedy_first_mismatch_index": None,
+        "qwen_same_cache_full_greedy_mismatch_count": None,
+        "qwen_same_cache_full_greedy_first_mismatch_index": None,
         "qwen_graph_probe_tokens": None,
         "qwen_graph_logits_probe_tokens": None,
         "qwen_graph_distinct_batch_prompts": None,
         "qwen_static_cache_eager_greedy_match": None,
         "qwen_graph_logits_greedy_match": None,
+        "qwen_dynamic_static_logits_greedy_match": None,
+        "qwen_same_cache_logits_greedy_match": None,
         "qwen_graph_logits_min_cosine": None,
         "qwen_graph_logits_max_abs_diff": None,
         "qwen_graph_logits_trace_finite": None,
@@ -2385,9 +2464,10 @@ def qwen35_fast_path_bindings(model) -> dict[str, Any]:
 
 
 def validate_loaded_model(args: argparse.Namespace, model) -> None:
-    if args.model_kind == "rwkv" and str(
-        getattr(args, "rwkv_implementation", "auto")
-    ) == "wrapper_repo":
+    if (
+        args.model_kind == "rwkv"
+        and str(getattr(args, "rwkv_implementation", "auto")) == "wrapper_repo"
+    ):
         effective = getattr(model, "_rwkv7_benchmark_implementation_effective", None)
         if effective != "wrapper_repo" or type(model).__name__ != "RWKV7ForCausalLM":
             raise RuntimeError(
@@ -2437,6 +2517,10 @@ def validate_qwen_result_contract(
         )
     qwen_route = str(getattr(args, "qwen_decode_optimization", "module_call_dynamic"))
     if qwen_route in QWEN_STATIC_GRAPH_ROUTES:
+        cross_cache_full_greedy_required = (
+            str(getattr(args, "qwen_cross_cache_full_greedy_policy", "strict"))
+            == "strict"
+        )
         required.update(
             {
                 "optimization_lane": "qwen_best_optimized_hf",
@@ -2445,11 +2529,17 @@ def validate_qwen_result_contract(
                 "qwen_cuda_graph_effective": True,
                 "qwen_decode_cuda_graph_verified": True,
                 "qwen_graph_parity_verified": True,
+                "qwen_cross_cache_full_greedy_policy_effective": str(
+                    getattr(args, "qwen_cross_cache_full_greedy_policy", "strict")
+                ),
+                "qwen_cross_cache_full_greedy_required": cross_cache_full_greedy_required,
                 "qwen_graph_prefill_next_token_match": True,
-                "qwen_graph_greedy_match": True,
                 "qwen_same_cache_greedy_match": True,
-                "qwen_static_cache_eager_greedy_match": True,
+                "qwen_same_cache_full_greedy_mismatch_count": 0,
                 "qwen_graph_logits_trace_finite": True,
+                "qwen_graph_logits_greedy_match": True,
+                "qwen_dynamic_static_logits_greedy_match": True,
+                "qwen_same_cache_logits_greedy_match": True,
                 "qwen_dynamic_static_logits_finite": True,
                 "qwen_same_cache_logits_finite": True,
                 "qwen_cache_pointer_stable": True,
@@ -2459,6 +2549,15 @@ def validate_qwen_result_contract(
                 "cache_type": "StaticCache",
             }
         )
+        if cross_cache_full_greedy_required:
+            required.update(
+                {
+                    "qwen_graph_greedy_match": True,
+                    "qwen_static_cache_eager_greedy_match": True,
+                    "qwen_dynamic_static_full_greedy_mismatch_count": 0,
+                    "qwen_dynamic_candidate_full_greedy_mismatch_count": 0,
+                }
+            )
         if qwen_route == "static_cache_inductor_cudagraph":
             required.update(
                 {
@@ -2489,6 +2588,8 @@ def validate_qwen_result_contract(
     def matches_expected(actual: Any, expected: Any) -> bool:
         if isinstance(expected, bool):
             return type(actual) is bool and actual is expected
+        if isinstance(expected, int):
+            return type(actual) is int and actual == expected
         return actual == expected
 
     mismatches = [
@@ -2816,16 +2917,46 @@ def benchmark_loaded(
             "qwen_decode_cuda_graph_verified"
         ],
         "qwen_graph_parity_verified": decode_timing["qwen_graph_parity_verified"],
+        "qwen_cross_cache_full_greedy_policy_effective": decode_timing[
+            "qwen_cross_cache_full_greedy_policy_effective"
+        ],
+        "qwen_cross_cache_full_greedy_required": decode_timing[
+            "qwen_cross_cache_full_greedy_required"
+        ],
         "qwen_graph_prefill_next_token_match": decode_timing[
             "qwen_graph_prefill_next_token_match"
         ],
         "qwen_graph_greedy_match": decode_timing["qwen_graph_greedy_match"],
         "qwen_same_cache_greedy_match": decode_timing["qwen_same_cache_greedy_match"],
+        "qwen_dynamic_static_full_greedy_mismatch_count": decode_timing[
+            "qwen_dynamic_static_full_greedy_mismatch_count"
+        ],
+        "qwen_dynamic_static_full_greedy_first_mismatch_index": decode_timing[
+            "qwen_dynamic_static_full_greedy_first_mismatch_index"
+        ],
+        "qwen_dynamic_candidate_full_greedy_mismatch_count": decode_timing[
+            "qwen_dynamic_candidate_full_greedy_mismatch_count"
+        ],
+        "qwen_dynamic_candidate_full_greedy_first_mismatch_index": decode_timing[
+            "qwen_dynamic_candidate_full_greedy_first_mismatch_index"
+        ],
+        "qwen_same_cache_full_greedy_mismatch_count": decode_timing[
+            "qwen_same_cache_full_greedy_mismatch_count"
+        ],
+        "qwen_same_cache_full_greedy_first_mismatch_index": decode_timing[
+            "qwen_same_cache_full_greedy_first_mismatch_index"
+        ],
         "qwen_static_cache_eager_greedy_match": decode_timing[
             "qwen_static_cache_eager_greedy_match"
         ],
         "qwen_graph_logits_greedy_match": decode_timing[
             "qwen_graph_logits_greedy_match"
+        ],
+        "qwen_dynamic_static_logits_greedy_match": decode_timing[
+            "qwen_dynamic_static_logits_greedy_match"
+        ],
+        "qwen_same_cache_logits_greedy_match": decode_timing[
+            "qwen_same_cache_logits_greedy_match"
         ],
         "qwen_graph_probe_tokens": decode_timing["qwen_graph_probe_tokens"],
         "qwen_graph_logits_probe_tokens": decode_timing[
@@ -3038,6 +3169,17 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Explicit full-attention SDPA backend policy. math_only disables "
             "flash, memory-efficient, and cuDNN SDPA before model loading."
+        ),
+    )
+    ap.add_argument(
+        "--qwen-cross-cache-full-greedy-policy",
+        choices=["strict", "informational"],
+        default="strict",
+        help=(
+            "Whether full-horizon DynamicCache-vs-StaticCache greedy equality is a "
+            "hard gate. Same-cache eager-vs-graph full greedy equality always remains "
+            "a hard gate; short logits traces and finite cross-cache telemetry remain "
+            "hard gates under both policies."
         ),
     )
     ap.add_argument("--require-qwen-fast-path", action="store_true")

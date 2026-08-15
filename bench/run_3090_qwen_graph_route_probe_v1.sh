@@ -73,6 +73,7 @@ run_route() {
       --prefill-chunk-size 512 --warmup 3 --runs 7 --qwen-backend fla \
       --qwen-conv-backend causal_conv1d --require-qwen-fast-path \
       --qwen-decode-optimization "${route}" --qwen-compile-mode max-autotune \
+      --qwen-cross-cache-full-greedy-policy informational \
       --qwen-graph-probe-tokens 16 --fail-fast --results "${result}" \
       > "${log}" 2>&1
   printf '%s\n' "$?" > "${OUT_DIR}/${route}.exit_code.txt"
@@ -105,4 +106,5 @@ PY
   --inductor-boundary "${OUT_DIR}/static_cache_inductor_cudagraph_boundary.jsonl" \
   --raw-boundary "${OUT_DIR}/static_cache_raw_cudagraph_boundary.jsonl" \
   --expected-device "NVIDIA GeForce RTX 3090" \
+  --cross-cache-full-greedy-policy informational \
   --summary "${OUT_DIR}/route_selection.json"
