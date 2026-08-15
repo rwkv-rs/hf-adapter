@@ -10,6 +10,7 @@ VALIDATOR_PATH = ROOT / "bench" / "validate_qwen35_3090_paired_pd_v2.py"
 QWEN_RUNNER_PATH = ROOT / "bench" / "run_5090_qwen35_best_optimized_hf.sh"
 QWEN_ROUTE_PROBE_PATH = ROOT / "bench" / "run_3090_qwen_graph_route_probe_v1.sh"
 QWEN_3090_RUNNER_PATH = ROOT / "bench" / "run_3090_qwen35_best_optimized_hf.sh"
+RWKV_3090_RUNNER_PATH = ROOT / "bench" / "run_3090_rwkv_paired_pd_v2.sh"
 
 
 def _load_validator():
@@ -73,6 +74,11 @@ def test_3090_validator_disables_4090_sm120_bundle() -> None:
     assert 'base.EXPECTED_ARCH = "8.6"' in source
     assert 'base.EXPECTED_MEMORY = "24576 MiB"' in source
     assert 'base.QWEN_CROSS_CACHE_FULL_GREEDY_POLICY = "informational"' in source
+
+
+def test_3090_rwkv_runner_invokes_non_executable_base_via_bash() -> None:
+    source = RWKV_3090_RUNNER_PATH.read_text(encoding="utf-8")
+    assert 'exec bash "${ROOT}/bench/run_4090_rwkv_paired_pd_v2.sh" "$@"' in source
 
 
 def test_qwen_formal_runner_accepts_an_exact_card_override() -> None:

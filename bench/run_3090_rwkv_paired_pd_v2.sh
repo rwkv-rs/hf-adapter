@@ -12,4 +12,4 @@ export SMALL_B8_MODE=base
 export SPLIT_7P2_B8=0
 export ADA_WAGV_BMM_OVERRIDE=0
 
-exec "${ROOT}/bench/run_4090_rwkv_paired_pd_v2.sh" "$@"
+exec bash "${ROOT}/bench/run_4090_rwkv_paired_pd_v2.sh" "$@"
