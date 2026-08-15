@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = ROOT / "bench" / "validate_qwen35_3090_paired_pd_v2.py"
 QWEN_RUNNER_PATH = ROOT / "bench" / "run_5090_qwen35_best_optimized_hf.sh"
+QWEN_ROUTE_PROBE_PATH = ROOT / "bench" / "run_3090_qwen_graph_route_probe_v1.sh"
 
 
 def _load_validator():
@@ -75,3 +76,14 @@ def test_qwen_formal_runner_accepts_an_exact_card_override() -> None:
     source = QWEN_RUNNER_PATH.read_text(encoding="utf-8")
     assert 'EXPECTED_GPU_MODEL="${EXPECTED_GPU_MODEL:-5090}"' in source
     assert '--model "${EXPECTED_GPU_MODEL}"' in source
+
+
+def test_3090_route_probe_compares_short_and_boundary_without_cell_mixing() -> None:
+    source = QWEN_ROUTE_PROBE_PATH.read_text(encoding="utf-8")
+    assert "--model 3090" in source
+    assert "TORCH_CUDA_ARCH_LIST=8.6" in source
+    assert "static_cache_inductor_cudagraph" in source
+    assert "static_cache_raw_cudagraph" in source
+    assert "1x128x128 8x128x128 1x2048x512 8x2048x512" in source
+    assert "select_qwen35_graph_route_v1.py" in source
+    assert '--expected-device "NVIDIA GeForce RTX 3090"' in source
