@@ -11,8 +11,14 @@ RWKV_04_MODEL="${RWKV_04_MODEL:-}"
 RWKV_15_MODEL="${RWKV_15_MODEL:-}"
 RWKV_29_MODEL="${RWKV_29_MODEL:-}"
 RWKV_72_MODEL="${RWKV_72_MODEL:-}"
-PROTOCOL=qwen35_4090_paired_pd_v2
-CORRECTNESS_PROTOCOL=rwkv_native_graph_fla_correctness_4090_v2
+PROTOCOL="${PROTOCOL:-qwen35_4090_paired_pd_v2}"
+CORRECTNESS_PROTOCOL="${CORRECTNESS_PROTOCOL:-rwkv_native_graph_fla_correctness_4090_v2}"
+EXPECTED_GPU_NAME="${EXPECTED_GPU_NAME:-NVIDIA GeForce RTX 4090}"
+EXPECTED_PYTHON="${EXPECTED_PYTHON:-3.12.8}"
+TORCH_CUDA_ARCH="${TORCH_CUDA_ARCH:-8.9}"
+SMALL_B8_MODE="${SMALL_B8_MODE:-sm89_bundle}"
+SPLIT_7P2_B8="${SPLIT_7P2_B8:-1}"
+ADA_WAGV_BMM_OVERRIDE="${ADA_WAGV_BMM_OVERRIDE:-}"
 
 if [[ -z "${OUT_DIR}" || -z "${CACHE_ROOT}" || -z "${REPOSITORY_COMMIT}" ]]; then
   echo "OUT_DIR, CACHE_ROOT and REPOSITORY_COMMIT are required" >&2
@@ -69,16 +75,16 @@ COMMON_ENV=(
   "PATH=$(dirname "${PYTHON_BIN}"):/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin"
   "CUDA_VISIBLE_DEVICES=0" "CUDA_DEVICE_ORDER=PCI_BUS_ID"
   "PYTHONPATH=${ROOT}" "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
-  "TORCH_CUDA_ARCH_LIST=8.9" "HF_HUB_OFFLINE=1" "TRANSFORMERS_OFFLINE=1"
+  "TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH}" "HF_HUB_OFFLINE=1" "TRANSFORMERS_OFFLINE=1"
   "TOKENIZERS_PARALLELISM=false" "REPOSITORY_COMMIT=${REPOSITORY_COMMIT}"
 )
 
 gpu_name="$(env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" -c 'import torch; print(torch.cuda.get_device_name(0))')"
-[[ "${gpu_name}" == "NVIDIA GeForce RTX 4090" ]] || { echo "unexpected GPU ${gpu_name}" >&2; exit 2; }
+[[ "${gpu_name}" == "${EXPECTED_GPU_NAME}" ]] || { echo "unexpected GPU ${gpu_name}" >&2; exit 2; }
 
 env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" -m pip freeze --all | LC_ALL=C sort > "${OUT_DIR}/pip-freeze.txt"
 nvidia-smi --query-gpu=name,uuid,pci.bus_id,compute_cap,driver_version,memory.total --format=csv > "${OUT_DIR}/system.csv"
-env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" - "${OUT_DIR}/runtime-lock.json" "${OUT_DIR}/pip-freeze.txt" "${PROTOCOL}" "${REPOSITORY_COMMIT}" <<'PY'
+env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" - "${OUT_DIR}/runtime-lock.json" "${OUT_DIR}/pip-freeze.txt" "${PROTOCOL}" "${REPOSITORY_COMMIT}" "${EXPECTED_PYTHON}" "${TORCH_CUDA_ARCH}" <<'PY'
 import hashlib, json, platform, sys
 from importlib.metadata import version
 import torch, transformers, triton
@@ -88,10 +94,10 @@ runtime={
  "transformers":str(transformers.__version__),
  "fla":version("flash-linear-attention"),"causal_conv1d":version("causal-conv1d"),
 }
-expected={"python":"3.12.8","torch":"2.7.1+cu126","torch_cuda":"12.6","triton":"3.3.1","transformers":"5.12.1","fla":"0.5.1","causal_conv1d":"1.6.2.post1"}
+expected={"python":sys.argv[5],"torch":"2.7.1+cu126","torch_cuda":"12.6","triton":"3.3.1","transformers":"5.12.1","fla":"0.5.1","causal_conv1d":"1.6.2.post1"}
 if runtime != expected: raise SystemExit(f"runtime mismatch: {runtime!r} != {expected!r}")
 pip=open(sys.argv[2],"rb").read()
-doc={"schema_version":1,"protocol":sys.argv[3],"repository_commit":sys.argv[4],"runtime":runtime,"pip_freeze_sha256":hashlib.sha256(pip).hexdigest(),"torch_cuda_arch_list":"8.9"}
+doc={"schema_version":1,"protocol":sys.argv[3],"repository_commit":sys.argv[4],"runtime":runtime,"pip_freeze_sha256":hashlib.sha256(pip).hexdigest(),"torch_cuda_arch_list":sys.argv[6]}
 open(sys.argv[1],"w",encoding="utf-8").write(json.dumps(doc,indent=2)+"\n")
 PY
 
@@ -122,6 +128,9 @@ run_lane() {
     "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=0"
     "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=0"
   )
+  if [[ -n "${ADA_WAGV_BMM_OVERRIDE}" ]]; then
+    route_env+=("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM=${ADA_WAGV_BMM_OVERRIDE}")
+  fi
   if [[ "${mode}" == sm89_bundle ]]; then
     route_env=(
       "RWKV7_FAST_TOKEN_BACKEND=native_graph" "RWKV7_NATIVE_MODEL_BACKEND=native_graph"
@@ -156,6 +165,9 @@ run_7p2_b8() {
     "RWKV7_FAST_TOKEN_BACKEND=native_graph" "RWKV7_NATIVE_MODEL_BACKEND=native_graph"
     "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=0" "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=0"
   )
+  if [[ -n "${ADA_WAGV_BMM_OVERRIDE}" ]]; then
+    common+=("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM=${ADA_WAGV_BMM_OVERRIDE}")
+  fi
   mkdir -p "${CACHE_ROOT}/7p2_b8_short" "${CACHE_ROOT}/7p2_b8_long"
   env -i "${COMMON_ENV[@]}" "${common[@]}" \
     "XDG_CACHE_HOME=${CACHE_ROOT}/7p2_b8_short" \
@@ -189,13 +201,17 @@ PY
 }
 
 run_lane 0p4 "${RWKV_04_MODEL}" rwkv-0.4b__qwen3.5-0.8b 0.4b 1 base
-run_lane 0p4 "${RWKV_04_MODEL}" rwkv-0.4b__qwen3.5-0.8b 0.4b 8 sm89_bundle
+run_lane 0p4 "${RWKV_04_MODEL}" rwkv-0.4b__qwen3.5-0.8b 0.4b 8 "${SMALL_B8_MODE}"
 run_lane 1p5 "${RWKV_15_MODEL}" rwkv-1.5b__qwen3.5-2b 1.5b 1 base
-run_lane 1p5 "${RWKV_15_MODEL}" rwkv-1.5b__qwen3.5-2b 1.5b 8 sm89_bundle
+run_lane 1p5 "${RWKV_15_MODEL}" rwkv-1.5b__qwen3.5-2b 1.5b 8 "${SMALL_B8_MODE}"
 run_lane 2p9 "${RWKV_29_MODEL}" rwkv-2.9b__qwen3.5-4b 2.9b 1 base
 run_lane 2p9 "${RWKV_29_MODEL}" rwkv-2.9b__qwen3.5-4b 2.9b 8 base
 run_lane 7p2 "${RWKV_72_MODEL}" rwkv-7.2b__qwen3.5-9b 7.2b 1 base
-run_7p2_b8
+if [[ "${SPLIT_7P2_B8}" == 1 ]]; then
+  run_7p2_b8
+else
+  run_lane 7p2 "${RWKV_72_MODEL}" rwkv-7.2b__qwen3.5-9b 7.2b 8 base
+fi
 
 env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" - "${OUT_DIR}/rwkv_candidate.jsonl" "${lane_results[@]}" <<'PY'
 import json,sys
@@ -241,7 +257,7 @@ for spec in \
   run_fla "${tag}" "${model}" "${pair}" "${size}" 8
 done
 
-env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" - "${OUT_DIR}" "${REPOSITORY_COMMIT}" "${OUT_DIR}/model_hashes.sha256" <<'PY'
+env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" - "${OUT_DIR}" "${REPOSITORY_COMMIT}" "${OUT_DIR}/model_hashes.sha256" "${CORRECTNESS_PROTOCOL}" <<'PY'
 import hashlib,json,sys
 from pathlib import Path
 import torch
@@ -263,7 +279,7 @@ for tag,pair in models:
   comp=root/f"decode_correctness_{tag}_b{batch}_compare.json"
   comp.write_text(json.dumps(comparison,indent=2)+"\n",encoding="utf-8")
   entries.append({"model_pair":pair,"batch_size":batch,"prompt_tokens":2048,"decode_tokens":512,"probe_tokens":512,"fla_probe":evidence(fla),"native_probe":evidence(native),"comparison":evidence(comp),"status":"pass"})
-doc={"schema_version":1,"protocol":"rwkv_native_graph_fla_correctness_4090_v2","benchmark_repository_commit":commit,"model_hashes_sha256":hashlib.sha256(model_hashes.read_bytes()).hexdigest(),"entries":entries}
+doc={"schema_version":1,"protocol":sys.argv[4],"benchmark_repository_commit":commit,"model_hashes_sha256":hashlib.sha256(model_hashes.read_bytes()).hexdigest(),"entries":entries}
 (root/"rwkv_native_graph_fla_correctness.json").write_text(json.dumps(doc,indent=2)+"\n",encoding="utf-8")
 PY
 

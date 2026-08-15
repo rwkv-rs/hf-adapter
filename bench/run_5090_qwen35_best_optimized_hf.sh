@@ -16,6 +16,7 @@ CAUSAL_CONV1D_SOURCE_COMMIT="${CAUSAL_CONV1D_SOURCE_COMMIT:-}"
 QWEN_COMPILE_MODE="${QWEN_COMPILE_MODE:-max-autotune}"
 QWEN_DECODE_OPTIMIZATION="${QWEN_DECODE_OPTIMIZATION:-static_cache_inductor_cudagraph}"
 REPOSITORY_COMMIT="${REPOSITORY_COMMIT:-}"
+EXPECTED_GPU_MODEL="${EXPECTED_GPU_MODEL:-5090}"
 
 if [[ -z "${OUT_DIR}" || -z "${MODEL}" || -z "${MODEL_PAIR}" || -z "${MODEL_SIZE_LABEL}" ]]; then
   echo "usage: $0 OUT_DIR MODEL MODEL_PAIR MODEL_SIZE_LABEL" >&2
@@ -49,7 +50,7 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-"${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" --model 5090 --name "${gpu_name}"
+"${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" --model "${EXPECTED_GPU_MODEL}" --name "${gpu_name}"
 
 result="${OUT_DIR}/${RESULT_NAME}"
 log="${OUT_DIR}/logs/${RESULT_NAME%.jsonl}.log"

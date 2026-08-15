@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = ROOT / "bench" / "validate_qwen35_4090_paired_pd_v2.py"
 RUNNER_PATH = ROOT / "bench" / "run_4090_rwkv_paired_pd_v2.sh"
+RUNNER_3090_PATH = ROOT / "bench" / "run_3090_rwkv_paired_pd_v2.sh"
 
 
 def _load_validator():
@@ -41,14 +42,26 @@ def test_4090_runner_locks_commit_runtime_and_small_b8_bundle() -> None:
     assert "validate_repository" in source
     assert 'python_dir="$(realpath -e -- "$(dirname -- "${PYTHON_BIN}")")"' in source
     assert 'PYTHON_BIN="${python_dir}/$(basename -- "${PYTHON_BIN}")"' in source
-    assert '"python":"3.12.8"' in source
+    assert 'EXPECTED_PYTHON="${EXPECTED_PYTHON:-3.12.8}"' in source
     assert '"torch":"2.7.1+cu126"' in source
-    assert '"TORCH_CUDA_ARCH_LIST=8.9"' in source
+    assert 'TORCH_CUDA_ARCH="${TORCH_CUDA_ARCH:-8.9}"' in source
+    assert '"TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH}"' in source
     assert '"RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM=1"' in source
     assert '"RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=1"' in source
     assert '"RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=1"' in source
     assert '"TORCH_COMPILE_DISABLE=1" "TORCHDYNAMO_DISABLE=1"' in source
     assert '--probe-tokens 512 --probe-batch-size "${batch}"' in source
+
+
+def test_3090_runner_locks_ampere_contract_and_disables_foreign_routes() -> None:
+    source = RUNNER_3090_PATH.read_text(encoding="utf-8")
+    assert "qwen35_3090_paired_pd_v2" in source
+    assert 'EXPECTED_GPU_NAME="NVIDIA GeForce RTX 3090"' in source
+    assert "EXPECTED_PYTHON=3.10.12" in source
+    assert "TORCH_CUDA_ARCH=8.6" in source
+    assert "SMALL_B8_MODE=base" in source
+    assert "SPLIT_7P2_B8=0" in source
+    assert "ADA_WAGV_BMM_OVERRIDE=0" in source
 
 
 def test_4090_validator_requires_strict_unrounded_four_axis_pass() -> None:

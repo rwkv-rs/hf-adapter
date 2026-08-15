@@ -34,6 +34,23 @@ except ModuleNotFoundError:
 PROTOCOL = "qwen35_4090_paired_pd_v2"
 EXPECTED_DEVICE = "NVIDIA GeForce RTX 4090"
 REFERENCE_SHA256 = "7274b4ba3c549320740a4ea3bf7d72ce4dcafb1a671e6ab01e4fa1c1ba1db24f"
+CORRECTNESS_PROTOCOL = "rwkv_native_graph_fla_correctness_4090_v2"
+QWEN_CONTRACT = "official_fla_causal_conv1d_static_cache_cudagraph_same_cache_4090_v2"
+EXPECTED_RUNTIME = {
+    "python": "3.12.8",
+    "torch": "2.7.1+cu126",
+    "torch_cuda": "12.6",
+    "triton": "3.3.1",
+    "transformers": "5.12.1",
+    "fla": "0.5.1",
+    "causal_conv1d": "1.6.2.post1",
+}
+EXPECTED_ARCH = "8.9"
+EXPECTED_DRIVER = "550.142"
+EXPECTED_MEMORY = "24564 MiB"
+SPECIAL_SMALL_B8_BUNDLE = True
+BASE_ADA_WAGV_BMM_EXPECTED: bool | None = None
+REPORT_TITLE = "RTX 4090 strict RWKV/Qwen Prefill+Decode v2"
 PAIRS = (
     "rwkv-0.4b__qwen3.5-0.8b",
     "rwkv-1.5b__qwen3.5-2b",
@@ -171,8 +188,19 @@ def _validate_candidate(row: dict[str, Any], errors: list[str]) -> None:
     _require(row, "model_size_label", SIZES[pair], errors)
     _require(row, "active_parameter_count", PARAMETERS[pair][0], errors)
     batch = row.get("batch_size")
-    small_b8 = pair in PAIRS[:2] and batch == 8
+    small_b8 = SPECIAL_SMALL_B8_BUNDLE and pair in PAIRS[:2] and batch == 8
     layers = list(range(LAYERS[pair])) if small_b8 else []
+    if BASE_ADA_WAGV_BMM_EXPECTED is not None:
+        for suffix, expected in (
+            ("requested", BASE_ADA_WAGV_BMM_EXPECTED),
+            ("selected", BASE_ADA_WAGV_BMM_EXPECTED),
+            ("effective", BASE_ADA_WAGV_BMM_EXPECTED),
+            ("selected_layers", []),
+            ("effective_layers", []),
+            ("effective_layer_count", 0),
+            ("full_model_effective", False),
+        ):
+            _require(row, f"rwkv_native_graph_ada_wagv_bmm_{suffix}", expected, errors)
     for route in ("sm120_wagv_bmm_g", "sm120_compiled_ffn"):
         for suffix, expected in (
             ("requested", small_b8),
@@ -241,7 +269,7 @@ def _validate_correctness(
         errors.append("correctness manifest must be an object")
         return {"status": "fail"}
     if (
-        doc.get("protocol") != "rwkv_native_graph_fla_correctness_4090_v2"
+        doc.get("protocol") != CORRECTNESS_PROTOCOL
         or doc.get("benchmark_repository_commit") != candidate_commit
     ):
         errors.append("correctness manifest protocol/commit mismatch")
@@ -369,7 +397,7 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         expected_conv_backend="causal_conv1d",
         expected_causal_conv1d_importable=True,
         expected_fast_path_available=True,
-        qwen_contract="official_fla_causal_conv1d_static_cache_cudagraph_same_cache_4090_v2",
+        qwen_contract=QWEN_CONTRACT,
     )
     if qwen_result.get("status") != "pass":
         errors.extend(f"Qwen reference: {x}" for x in qwen_result.get("errors", []))
@@ -434,19 +462,10 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
             "all 48 cells must strictly pass raw and adjusted Prefill and Decode"
         )
     runtime_doc = json.loads(args.runtime_lock.read_text(encoding="utf-8"))
-    expected_runtime = {
-        "python": "3.12.8",
-        "torch": "2.7.1+cu126",
-        "torch_cuda": "12.6",
-        "triton": "3.3.1",
-        "transformers": "5.12.1",
-        "fla": "0.5.1",
-        "causal_conv1d": "1.6.2.post1",
-    }
     if (
-        runtime_doc.get("runtime") != expected_runtime
+        runtime_doc.get("runtime") != EXPECTED_RUNTIME
         or runtime_doc.get("repository_commit") != candidate_commit
-        or runtime_doc.get("torch_cuda_arch_list") != "8.9"
+        or runtime_doc.get("torch_cuda_arch_list") != EXPECTED_ARCH
     ):
         errors.append("runtime lock mismatch")
     if args.model_hashes.read_bytes() != args.model_hashes_after.read_bytes():
@@ -456,9 +475,9 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
     if (
         len(rows) != 1
         or rows[0].get("name") != EXPECTED_DEVICE
-        or rows[0].get("compute_cap") != "8.9"
-        or rows[0].get("driver_version") != "550.142"
-        or rows[0].get("memory.total [MiB]") != "24564 MiB"
+        or rows[0].get("compute_cap") != EXPECTED_ARCH
+        or rows[0].get("driver_version") != EXPECTED_DRIVER
+        or rows[0].get("memory.total [MiB]") != EXPECTED_MEMORY
     ):
         errors.append("system identity is not the frozen RTX 4090 host")
     correctness_errors: list[str] = []
@@ -507,7 +526,7 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
 
 def render(summary: dict[str, Any]) -> str:
     lines = [
-        "# RTX 4090 strict RWKV/Qwen Prefill+Decode v2",
+        f"# {REPORT_TITLE}",
         "",
         f"Status: **{summary['status'].upper()}**",
         "",
