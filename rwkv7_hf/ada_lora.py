@@ -1,13 +1,13 @@
 # coding=utf-8
-"""Optional sm_89/sm_120 fused W/A/G/V low-rank decode kernels.
+"""Optional sm_86/sm_89/sm_120 fused W/A/G/V low-rank decode kernels.
 
 The layer>0 RWKV-7 time-mix path contains four independent rank-in projections
 and four rank-out projections.  For one to eight decode rows, separate
 tanh/sigmoid/interpolation launches around every projection are expensive.
 This module provides a grouped graph formulation through B8.  The custom
-rank-in/rank-out CUDA extension remains separately gated to its measured B1-B4
-range; B8 keeps cuBLAS projections and only folds the surrounding pointwise
-work.
+rank-in/rank-out CUDA extension remains separately gated to its exact-card
+B1-B4 range; B8 keeps cuBLAS projections and only folds the surrounding
+pointwise work. SM86 remains opt-in until its full-model evidence passes.
 
 The CUDA implementation is derived from Albatross' Apache-2.0
 ``linear_wagv_rank_{in,out}_f16_kernel``.  It uses the HF ``nn.Linear`` weight
@@ -555,7 +555,7 @@ _EXTENSION_LOCK = threading.Lock()
 
 
 def _is_small_row_cuda_device(device: Any = None) -> bool:
-    return _small_row_capability(device) in {(8, 9), (12, 0)}
+    return _small_row_capability(device) in {(8, 6), (8, 9), (12, 0)}
 
 
 def _small_row_capability(device: Any = None) -> tuple[int, int] | None:
@@ -574,7 +574,7 @@ def _small_row_capability(device: Any = None) -> tuple[int, int] | None:
 def _load_extension(device: Any = None) -> Any | None:
     global _EXTENSION, _EXTENSION_ERROR
     capability = _small_row_capability(device)
-    if capability not in {(8, 9), (12, 0)}:
+    if capability not in {(8, 6), (8, 9), (12, 0)}:
         return None
     if capability in _EXTENSIONS:
         return _EXTENSIONS[capability]
@@ -625,16 +625,18 @@ def ada_wagv_lora_available(device: Any = None, *, build: bool = False) -> bool:
 
 
 def ada_wagv_bmm_available(device: Any = None) -> bool:
-    """Return whether the measured grouped-BMM formulation may be selected.
+    """Return whether the grouped-BMM formulation may be selected.
 
     Unlike :func:`ada_wagv_lora_available`, this route uses ordinary PyTorch
     ``bmm``/``baddbmm`` operators and does not require the custom extension to
     build.  Keep the capability allowlist explicit so an environment request
     cannot be reported as selected while the implementation silently falls
-    back on an unsupported device.
+    back on an unsupported device. SM86 is admitted only for explicit
+    exact-card validation; policy selection remains disabled until that
+    end-to-end evidence passes.
     """
 
-    return _small_row_capability(device) in {(8, 9), (12, 0)}
+    return _small_row_capability(device) in {(8, 6), (8, 9), (12, 0)}
 
 
 def ada_wagv_lora_build_error(device: Any = None) -> str | None:
@@ -657,7 +659,7 @@ def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
 
 
 def sm120_wagv_bmm_g_available(device: Any = None) -> bool:
-    """Whether the measured Ada/Blackwell all-W/A/G/V BMM probe may run.
+    """Whether the Ampere/Ada/Blackwell all-W/A/G/V BMM probe may run.
 
     The route is one indivisible experiment: both padded BMMs and both Triton
     pointwise epilogues must be available.  Returning false when Triton is
@@ -665,12 +667,12 @@ def sm120_wagv_bmm_g_available(device: Any = None) -> bool:
     """
 
     return bool(
-        _HAS_TRITON and _small_row_capability(device) in {(8, 9), (12, 0)}
+        _HAS_TRITON and _small_row_capability(device) in {(8, 6), (8, 9), (12, 0)}
     )
 
 
 def sm120_wagv_bmm_g_should_use(rows: int, hidden: int, max_rank: int) -> bool:
-    """Exact SM89/SM120 shapes admitted to the all-group microprobe."""
+    """Exact SM86/SM89/SM120 shapes admitted to the all-group microprobe."""
 
     return bool(
         int(rows) == 8
