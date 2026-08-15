@@ -601,6 +601,7 @@ def test_resident_worker_direct_entrypoint_imports_sibling_worker() -> None:
     assert "--probe-output" in proc.stdout
     assert "--probe-cell" in proc.stdout
     assert "--rwkv-implementation" in proc.stdout
+    assert "--qwen-cross-cache-full-greedy-policy" in proc.stdout
     assert "{auto,fla,torch}" in proc.stdout
 
 
@@ -639,15 +640,18 @@ def test_resident_worker_forwards_probe_defaults_to_shared_worker() -> None:
     assert forwarded.qwen_conv_backend == "fla_triton"
     assert forwarded.qwen_sdpa_policy == "auto"
     assert forwarded._qwen_sdpa_policy_effective == "auto"
+    assert forwarded.qwen_cross_cache_full_greedy_policy == "strict"
     validate_args(forwarded)
 
     qwen_args = Namespace(**vars(args))
     qwen_args.model_kind = "qwen35"
     qwen_args.qwen_sdpa_policy = "math_only"
     qwen_args._qwen_sdpa_policy_effective = "math_only"
+    qwen_args.qwen_cross_cache_full_greedy_policy = "informational"
     qwen_forwarded = cell_args(qwen_args, 8, 128, 128)
     assert qwen_forwarded.qwen_sdpa_policy == "math_only"
     assert qwen_forwarded._qwen_sdpa_policy_effective == "math_only"
+    assert qwen_forwarded.qwen_cross_cache_full_greedy_policy == "informational"
     validate_args(qwen_forwarded)
 
 

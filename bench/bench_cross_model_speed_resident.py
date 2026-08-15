@@ -110,6 +110,11 @@ def parse_args() -> argparse.Namespace:
         choices=["module_call_dynamic", *sorted(speed.QWEN_STATIC_GRAPH_ROUTES)],
         default="module_call_dynamic",
     )
+    ap.add_argument(
+        "--qwen-cross-cache-full-greedy-policy",
+        choices=["strict", "informational"],
+        default="strict",
+    )
     ap.add_argument("--qwen-graph-probe-tokens", type=int, default=16)
     ap.add_argument(
         "--qwen-compile-mode",
@@ -257,6 +262,9 @@ def cell_args(args: argparse.Namespace, batch_size: int, prompt_tokens: int, dec
         require_qwen_fast_path=args.require_qwen_fast_path,
         qwen_decode_optimization=getattr(
             args, "qwen_decode_optimization", "module_call_dynamic"
+        ),
+        qwen_cross_cache_full_greedy_policy=getattr(
+            args, "qwen_cross_cache_full_greedy_policy", "strict"
         ),
         qwen_graph_probe_tokens=getattr(args, "qwen_graph_probe_tokens", 16),
         qwen_compile_mode=getattr(args, "qwen_compile_mode", "max-autotune"),
