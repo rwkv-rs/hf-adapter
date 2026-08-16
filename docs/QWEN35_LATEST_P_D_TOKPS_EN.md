@@ -1,13 +1,14 @@
-# 最新 Qwen3.5 对齐：全卡 Prefill / Decode tok/s
+# Latest Qwen3.5 Alignment: All-GPU Prefill / Decode tok/s
 
-[English version](QWEN35_LATEST_P_D_TOKPS_EN.md)
+[中文版本](QWEN35_LATEST_P_D_TOKPS.md)
 
-更新日期：**2026-08-16**。
+Updated: **2026-08-16**.
 
-排序：模型尺寸 → 显卡 → B1/B8。`P / D` 为六个测试单元的 Prefill / Decode
-中位 tok/s；B8 为聚合吞吐。`>=100` 取整数，`<100` 保留一位小数。
+Order: model size → GPU → B1/B8. `P / D` is the median Prefill / Decode tok/s
+across six benchmark cells; B8 is aggregate throughput. Values `>=100` are
+shown as integers; values `<100` use one decimal place.
 
-| 模型对（RWKV / Qwen） | 显卡 | Batch | RWKV P / D tok/s | Qwen P / D tok/s | 参数调整 P / D | 严格门 | 证据 |
+| Model pair (RWKV / Qwen) | GPU | Batch | RWKV raw P / D tok/s | Qwen raw P / D tok/s | Parameter-adjusted P / D ratio | Gate | Evidence |
 |---|---|---:|---:|---:|---:|---|---|
 | 0.4B / 0.8B | V100 32GB | B1 | **17,822 / 434** | **4,117 / 111** | 2.626x / 2.342x | P+D 6/6 PASS | [artifact](../bench/v100_qwen35_paired_pd_v1_20260814/README.md) |
 | 0.4B / 0.8B | V100 32GB | B8 | **56,270 / 1,784** | **4,140 / 688** | 8.062x / 1.555x | P+D 6/6 PASS | [artifact](../bench/v100_qwen35_paired_pd_v1_20260814/README.md) |
@@ -48,23 +49,26 @@
 | 7.2B / 9B | RTX 5090 | B1 | **14,775 / 146** | **10,461 / 79.2** | 1.143x / 1.481x | P+D 6/6 PASS* | [artifact](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
 | 7.2B / 9B | RTX 5090 | B8 | **19,053 / 867** | **12,199 / 518** | 1.208x / 1.345x | P+D 6/6 PASS* | [artifact](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
 
-数据覆盖：RTX 5090 原始 Prefill 48/48、参数调整 Prefill 48/48；参数调整
-最小值/中位数/最大值为 `1.089713x/1.354606x/4.590900x`。
-RTX 4080 受 16 GiB 容量限制，覆盖前三个模型参数档。
+Coverage: RTX 5090 raw Prefill passes 48/48 and parameter-adjusted Prefill
+passes 48/48; adjusted minimum/median/maximum is
+`1.089713x/1.354606x/4.590900x`. RTX 4080 covers the first three model-size
+tiers because of its 16 GiB capacity.
 
-## 复现方法
+## Reproduction
 
-| 显卡 | 正式运行与校验 |
+| GPU | Formal runner and validator |
 |---|---|
-| V100 32GB | [完整复现命令](../bench/v100_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
+| V100 32GB | [Full commands](../bench/v100_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
 | RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_3090_paired_pd_v2.py`](../bench/validate_qwen35_3090_paired_pd_v2.py) |
-| RTX 4080 | [完整复现命令](../bench/4080_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
+| RTX 4080 | [Full commands](../bench/4080_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
 | RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_4090_paired_pd_v2.py`](../bench/validate_qwen35_4090_paired_pd_v2.py) |
-| RTX 5090 | [完整复现命令](../bench/5090_qwen35_paired_decode_v1_20260813/README.md#reproduce) |
+| RTX 5090 | [Full commands](../bench/5090_qwen35_paired_decode_v1_20260813/README.md#reproduce) |
 
-使用已提交的 artifact 复算本文全部中位数、参数调整比和排序：
+Recompute every displayed median, parameter-adjusted ratio, ordering rule, and
+link from the committed artifacts:
 
 ```bash
 python -m pytest -q tests/test_qwen35_comparison_layout.py
 python tests/test_markdown_links.py
 ```
+
