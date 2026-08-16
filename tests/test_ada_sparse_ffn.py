@@ -120,6 +120,14 @@ def test_scalar_fallback_preserves_shape() -> None:
     assert actual.shape == residual.shape
 
 
+def test_ada_linear_required_extension_is_fail_closed(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_ADA_LINEAR_REQUIRE_EXTENSION", "1")
+    x = torch.randn(1, 1024)
+    weight = torch.randn(1024, 1024)
+    with pytest.raises(RuntimeError, match="fallback is forbidden"):
+        ada_linear(x, weight)
+
+
 def test_fallback_out_buffer_is_reused() -> None:
     preact = torch.randn(3, 1024)
     weight = torch.randn(256, 1024)

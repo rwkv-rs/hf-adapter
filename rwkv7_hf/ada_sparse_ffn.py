@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Optional sm_89/sm_120 fp16 sparse FFN contraction for small-row decode.
+"""Optional fp16 sparse FFN contraction for measured small-row decode cards.
 
 RWKV-7 applies ``ReLU(key(x)) ** 2`` before the FFN value projection.  At
 decode batch sizes the activation is naturally sparse, so reading only the
@@ -9,9 +9,10 @@ Albatross' Apache-2.0 ``cmix_sparse_spmv_relu_rows_kernel`` and adds the
 residual while initializing the output, avoiding a separate residual-add
 launch.
 
-The extension is deliberately narrow: fp16, exact sm_89 or sm_120, at most 19
-rows, and the normal RWKV ``ffn == 4 * hidden`` shape. Unsupported shapes,
-training, and build failures retain the ordinary PyTorch implementation. Value
+The extension is deliberately narrow: fp16, exact sm_70/sm_86/sm_89/sm_120,
+at most 19 rows, and the normal RWKV ``ffn == 4 * hidden`` shape. Unsupported
+shapes, training, and build failures retain the ordinary PyTorch
+implementation unless a benchmark explicitly requires the extension. Value
 weights are transposed once and cached; callers can prewarm the cache before
 CUDA graph capture with :func:`ada_sparse_ffn_pack_weight`.
 """
@@ -1677,6 +1678,15 @@ def ada_linear(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
         and _is_sparse_ffn_device(x2.device)
     )
     extension = _load_extension(x2.device) if valid else None
+    if extension is None and _policy_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_LINEAR_REQUIRE_EXTENSION",
+        "ada_linear_require_extension",
+        x2.device,
+    ):
+        raise RuntimeError(
+            "RWKV7_NATIVE_GRAPH_ADA_LINEAR_REQUIRE_EXTENSION=1 requires the "
+            "exact-card CUDA extension; fallback is forbidden"
+        )
     if extension is None:
         return F.linear(x, weight)
     output = extension.linear(x2, weight)
