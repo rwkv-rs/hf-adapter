@@ -1221,9 +1221,11 @@ _PACKED_WEIGHTS: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] =
 _FP32_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
 _DETERMINISTIC_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
 
+_SUPPORTED_SPARSE_FFN_CAPABILITIES = {(7, 0), (8, 6), (8, 9), (12, 0)}
+
 
 def _is_sparse_ffn_device(device: Any = None) -> bool:
-    return _sparse_ffn_capability(device) in {(7, 0), (8, 9), (12, 0)}
+    return _sparse_ffn_capability(device) in _SUPPORTED_SPARSE_FFN_CAPABILITIES
 
 
 def _sparse_ffn_capability(device: Any = None) -> tuple[int, int] | None:
@@ -1276,7 +1278,7 @@ def _blackwell_cmix_enabled(device: Any = None) -> bool:
 def _load_extension(device: Any = None) -> Any | None:
     global _EXTENSION, _EXTENSION_ERROR
     capability = _sparse_ffn_capability(device)
-    if capability not in {(7, 0), (8, 9), (12, 0)}:
+    if capability not in _SUPPORTED_SPARSE_FFN_CAPABILITIES:
         return None
     if capability in _EXTENSIONS:
         return _EXTENSIONS[capability]

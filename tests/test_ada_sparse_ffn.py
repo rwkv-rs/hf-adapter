@@ -24,7 +24,7 @@ from rwkv7_hf.ada_sparse_ffn import (
 )
 
 
-@pytest.mark.parametrize("capability", [(7, 0), (8, 9), (12, 0)])
+@pytest.mark.parametrize("capability", [(7, 0), (8, 6), (8, 9), (12, 0)])
 def test_cuda_extension_capability_gate_includes_measured_cards(monkeypatch, capability) -> None:
     class FakeCuda:
         @staticmethod
