@@ -59,9 +59,24 @@ def test_3090_runner_locks_ampere_contract_and_disables_foreign_routes() -> None
     assert 'EXPECTED_GPU_NAME="NVIDIA GeForce RTX 3090"' in source
     assert "EXPECTED_PYTHON=3.10.12" in source
     assert "TORCH_CUDA_ARCH=8.6" in source
-    assert "SMALL_B8_MODE=base" in source
+    assert "ROUTE_PROFILE=sm86_qwen_alignment" in source
+    assert "SMALL_B8_MODE=sm86_qwen_alignment" in source
     assert "SPLIT_7P2_B8=0" in source
-    assert "ADA_WAGV_BMM_OVERRIDE=0" in source
+    assert "unset ADA_WAGV_BMM_OVERRIDE" in source
+
+
+def test_4090_runner_contains_exact_sm86_per_lane_routes() -> None:
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert 'if [[ "${ROUTE_PROFILE}" != sm86_qwen_alignment ]]' in source
+    assert '[[ "${tag}" == 7p2 ]] && rkv_policy=manual' in source
+    assert 'if [[ "${batch}" == 1 ]]' in source
+    assert 'elif [[ "${tag}" == 0p4 || "${tag}" == 1p5 ]]' in source
+    assert 'elif [[ "${tag}" == 2p9 ]]' in source
+    assert (
+        '"RWKV7_NATIVE_GRAPH_ADA_LINEAR_REQUIRE_EXTENSION=${ada_linear_required}"'
+        in source
+    )
+    assert '"RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM=${base_bmm}"' in source
 
 
 def test_4090_validator_requires_strict_unrounded_four_axis_pass() -> None:

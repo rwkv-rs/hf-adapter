@@ -19,6 +19,7 @@ TORCH_CUDA_ARCH="${TORCH_CUDA_ARCH:-8.9}"
 SMALL_B8_MODE="${SMALL_B8_MODE:-sm89_bundle}"
 SPLIT_7P2_B8="${SPLIT_7P2_B8:-1}"
 ADA_WAGV_BMM_OVERRIDE="${ADA_WAGV_BMM_OVERRIDE:-}"
+ROUTE_PROFILE="${ROUTE_PROFILE:-default}"
 
 if [[ -z "${OUT_DIR}" || -z "${CACHE_ROOT}" || -z "${REPOSITORY_COMMIT}" ]]; then
   echo "OUT_DIR, CACHE_ROOT and REPOSITORY_COMMIT are required" >&2
@@ -117,14 +118,11 @@ hash_models "${OUT_DIR}/model_hashes.sha256"
 
 lane_results=()
 lane_probes=()
-run_lane() {
-  local tag="$1" model="$2" pair="$3" size="$4" batch="$5" mode="$6"
-  local result="${OUT_DIR}/rwkv_${tag}_b${batch}.jsonl"
-  local probe="${OUT_DIR}/decode_correctness_${tag}_b${batch}_native.pt"
-  local cache="${CACHE_ROOT}/${tag}_b${batch}"
-  mkdir -p "${cache}/inductor" "${cache}/triton" "${cache}/xdg"
-  local route_env=(
+build_route_env() {
+  local tag="$1" batch="$2" mode="$3"
+  route_env=(
     "RWKV7_FAST_TOKEN_BACKEND=native_graph" "RWKV7_NATIVE_MODEL_BACKEND=native_graph"
+    "RWKV7_BENCHMARK_ROUTE_PROFILE=${ROUTE_PROFILE}"
     "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=0"
     "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=0"
   )
@@ -134,12 +132,73 @@ run_lane() {
   if [[ "${mode}" == sm89_bundle ]]; then
     route_env=(
       "RWKV7_FAST_TOKEN_BACKEND=native_graph" "RWKV7_NATIVE_MODEL_BACKEND=native_graph"
+      "RWKV7_BENCHMARK_ROUTE_PROFILE=${ROUTE_PROFILE}"
       "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM=1" "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=1"
       "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=1" "RWKV7_NATIVE_GRAPH_RKV_POLICY=vkwr_auto"
       "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN=0" "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK=0"
       "RWKV7_BLACKWELL_TORCH_COMPILE=1"
     )
   fi
+  if [[ "${ROUTE_PROFILE}" != sm86_qwen_alignment ]]; then
+    return
+  fi
+
+  local rkv_policy=vkwr_auto state_dtype=fp16 fp16_recurrent=1
+  local require_wagv_extension=0 ada_linear=0 ada_linear_required=0
+  local base_bmm=0 fused_g=0 compiled_ffn=0
+  [[ "${tag}" == 7p2 ]] && rkv_policy=manual
+  if [[ "${batch}" == 1 ]]; then
+    require_wagv_extension=1
+    if [[ "${tag}" == 0p4 || "${tag}" == 7p2 ]]; then
+      ada_linear=1
+      ada_linear_required=1
+    fi
+  elif [[ "${tag}" == 0p4 || "${tag}" == 1p5 ]]; then
+    state_dtype=fp32
+    fp16_recurrent=0
+    base_bmm=1
+    fused_g=1
+    compiled_ffn=1
+  elif [[ "${tag}" == 2p9 ]]; then
+    base_bmm=1
+  fi
+  route_env=(
+    "RWKV7_FAST_TOKEN_BACKEND=native_graph" "RWKV7_NATIVE_MODEL_BACKEND=native_graph"
+    "RWKV7_BENCHMARK_ROUTE_PROFILE=${ROUTE_PROFILE}"
+    "RWKV7_NATIVE_GRAPH_RKV_POLICY=${rkv_policy}"
+    "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX=1"
+    "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS=8"
+    "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW=1"
+    "RWKV7_NATIVE_GRAPH_STATE_DTYPE=${state_dtype}"
+    "RWKV7_NATIVE_GRAPH_FP16_RECURRENT=${fp16_recurrent}"
+    "RWKV7_NATIVE_PREFILL_FP16_RECURRENT=${fp16_recurrent}"
+    "RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0=1"
+    "RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT=0"
+    "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA=0"
+    "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA=1"
+    "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_REQUIRE_EXTENSION=${require_wagv_extension}"
+    "RWKV7_NATIVE_GRAPH_ADA_LINEAR=${ada_linear}"
+    "RWKV7_NATIVE_GRAPH_ADA_LINEAR_REQUIRE_EXTENSION=${ada_linear_required}"
+    "RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS=1"
+    "RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES=hidden,ffn_up,ffn_down"
+    "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN=0"
+    "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK=0"
+    "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM=${base_bmm}"
+    "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=${fused_g}"
+    "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=${compiled_ffn}"
+  )
+  if [[ "${compiled_ffn}" == 1 ]]; then
+    route_env+=("RWKV7_BLACKWELL_TORCH_COMPILE=1")
+  fi
+}
+
+run_lane() {
+  local tag="$1" model="$2" pair="$3" size="$4" batch="$5" mode="$6"
+  local result="${OUT_DIR}/rwkv_${tag}_b${batch}.jsonl"
+  local probe="${OUT_DIR}/decode_correctness_${tag}_b${batch}_native.pt"
+  local cache="${CACHE_ROOT}/${tag}_b${batch}"
+  mkdir -p "${cache}/inductor" "${cache}/triton" "${cache}/xdg"
+  build_route_env "${tag}" "${batch}" "${mode}"
   env -i "${COMMON_ENV[@]}" "${route_env[@]}" \
     "XDG_CACHE_HOME=${cache}/xdg" "TORCHINDUCTOR_CACHE_DIR=${cache}/inductor" "TRITON_CACHE_DIR=${cache}/triton" \
     "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \

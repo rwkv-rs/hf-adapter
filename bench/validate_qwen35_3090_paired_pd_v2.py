@@ -106,7 +106,8 @@ def main() -> int:
         base.EXPECTED_DRIVER = "550.142"
         base.EXPECTED_MEMORY = "24576 MiB"
         base.SPECIAL_SMALL_B8_BUNDLE = False
-        base.BASE_ADA_WAGV_BMM_EXPECTED = False
+        base.BASE_ADA_WAGV_BMM_EXPECTED = None
+        base.CANDIDATE_ROUTE_PROFILE = "sm86_qwen_alignment"
         base.QWEN_ROUTES = dict(contract["routes_by_pair"])
         summary = base.validate(args)
     else:

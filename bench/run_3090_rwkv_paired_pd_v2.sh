@@ -8,8 +8,9 @@ export CORRECTNESS_PROTOCOL=rwkv_native_graph_fla_correctness_3090_v2
 export EXPECTED_GPU_NAME="NVIDIA GeForce RTX 3090"
 export EXPECTED_PYTHON=3.10.12
 export TORCH_CUDA_ARCH=8.6
-export SMALL_B8_MODE=base
+export ROUTE_PROFILE=sm86_qwen_alignment
+export SMALL_B8_MODE=sm86_qwen_alignment
 export SPLIT_7P2_B8=0
-export ADA_WAGV_BMM_OVERRIDE=0
+unset ADA_WAGV_BMM_OVERRIDE
 
 exec bash "${ROOT}/bench/run_4090_rwkv_paired_pd_v2.sh" "$@"

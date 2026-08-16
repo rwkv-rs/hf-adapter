@@ -51,6 +51,7 @@ EXPECTED_DRIVER = "550.142"
 EXPECTED_MEMORY = "24564 MiB"
 SPECIAL_SMALL_B8_BUNDLE = True
 BASE_ADA_WAGV_BMM_EXPECTED: bool | None = None
+CANDIDATE_ROUTE_PROFILE: str | None = None
 REPORT_TITLE = "RTX 4090 strict RWKV/Qwen Prefill+Decode v2"
 PAIRS = (
     "rwkv-0.4b__qwen3.5-0.8b",
@@ -105,6 +106,26 @@ def _require(row: dict[str, Any], field: str, expected: Any, errors: list[str]) 
         )
 
 
+def _require_full_model_route(
+    row: dict[str, Any],
+    route: str,
+    enabled: bool,
+    layer_count: int,
+    errors: list[str],
+) -> None:
+    layers = list(range(layer_count)) if enabled else []
+    for suffix, expected in (
+        ("requested", enabled),
+        ("selected", enabled),
+        ("effective", enabled),
+        ("selected_layers", layers),
+        ("effective_layers", layers),
+        ("effective_layer_count", len(layers)),
+        ("full_model_effective", enabled),
+    ):
+        _require(row, f"rwkv_native_graph_{route}_{suffix}", expected, errors)
+
+
 def _read_jsonl(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
     data = path.read_bytes()
     rows = []
@@ -153,6 +174,8 @@ def _validate_samples(
 
 
 def _validate_candidate(row: dict[str, Any], errors: list[str]) -> None:
+    capability = [int(part) for part in EXPECTED_ARCH.split(".")]
+    gpu_arch = "sm_" + "".join(str(part) for part in capability)
     for field, expected in (
         ("axis", "qwen35_cross_model_speed"),
         ("benchmark_matrix", PROTOCOL),
@@ -166,8 +189,8 @@ def _validate_candidate(row: dict[str, Any], errors: list[str]) -> None:
         ("quantization_backend", "dense"),
         ("native_quant_kernel_active", False),
         ("device", EXPECTED_DEVICE),
-        ("gpu_arch", "sm_89"),
-        ("gpu_compute_capability", [8, 9]),
+        ("gpu_arch", gpu_arch),
+        ("gpu_compute_capability", capability),
         ("prefill_chunk_size", 512),
         ("warmup", 3),
         ("runs", 7),
@@ -189,6 +212,87 @@ def _validate_candidate(row: dict[str, Any], errors: list[str]) -> None:
     _require(row, "model_size_label", SIZES[pair], errors)
     _require(row, "active_parameter_count", PARAMETERS[pair][0], errors)
     batch = row.get("batch_size")
+    if CANDIDATE_ROUTE_PROFILE == "sm86_qwen_alignment":
+        b8 = batch == 8
+        small_b8 = pair in PAIRS[:2] and b8
+        bmm = small_b8 or (pair == PAIRS[2] and b8)
+        layer_count = LAYERS[pair]
+        _require(row, "rwkv_decode_route_profile", CANDIDATE_ROUTE_PROFILE, errors)
+        _require_full_model_route(row, "ada_wagv_bmm", bmm, layer_count, errors)
+        _require_full_model_route(
+            row, "sm120_wagv_bmm_g", small_b8, layer_count, errors
+        )
+        _require_full_model_route(
+            row, "sm120_compiled_ffn", small_b8, layer_count, errors
+        )
+        _require_full_model_route(
+            row, "ada_wagv_lora_extension", not b8, layer_count, errors
+        )
+        ada_linear = not b8 and pair in {PAIRS[0], PAIRS[3]}
+        for field, expected in (
+            (
+                "rwkv_native_graph_rkv_policy",
+                "manual" if pair == PAIRS[3] else "vkwr_auto",
+            ),
+            ("rwkv_native_graph_fused_norm_mix_num_warps", 8),
+            (
+                "rwkv_native_graph_state_dtype",
+                "torch.float32" if small_b8 else "torch.float16",
+            ),
+            ("rwkv_native_graph_fp16_recurrent", not small_b8),
+            ("rwkv_native_graph_ada_linear_requested", ada_linear),
+            ("rwkv_native_graph_ada_linear_extension_required", ada_linear),
+            ("rwkv_native_graph_ada_linear_rows_requested", "1"),
+            (
+                "rwkv_native_graph_ada_linear_roles_requested",
+                "hidden,ffn_up,ffn_down",
+            ),
+            ("rwkv_native_graph_ada_sparse_ffn_requested", False),
+            ("rwkv_native_graph_ada_wagv_lora_extension_required", not b8),
+        ):
+            _require(row, field, expected, errors)
+        if small_b8:
+            for field, expected in (
+                ("rwkv_native_graph_sm120_compiled_ffn_compile_effective", True),
+                ("rwkv_native_graph_sm120_compiled_ffn_compile_reused", True),
+                ("rwkv_native_graph_sm120_compiled_ffn_unique_graphs", 1),
+                ("rwkv_native_graph_sm120_compiled_ffn_graph_breaks", 0),
+                (
+                    "rwkv_native_graph_sm120_compiled_ffn_compile_mode",
+                    "max-autotune-no-cudagraphs",
+                ),
+                ("rwkv_native_graph_sm120_compiled_ffn_prewarm_all_finite", True),
+                (
+                    "rwkv_native_graph_sm120_compiled_ffn_prewarm_argmax_all_equal",
+                    True,
+                ),
+            ):
+                _require(row, field, expected, errors)
+            cosine = row.get("rwkv_native_graph_sm120_compiled_ffn_prewarm_min_cosine")
+            if not _finite(cosine) or cosine < 0.9999:
+                errors.append(
+                    f"{row.get('_source')}: compiled FFN prewarm cosine failed"
+                )
+    else:
+        _validate_default_candidate_routes(row, pair, batch, errors)
+    shape = (row.get("batch_size"), row.get("prompt_tokens"), row.get("decode_tokens"))
+    if shape not in EXPECTED_SHAPES:
+        errors.append(f"{row.get('_source')}: unexpected shape {shape!r}")
+        return
+    _validate_samples(row, "prefill", int(shape[0]) * int(shape[1]), errors)
+    _validate_samples(row, "decode", int(shape[0]) * int(shape[2]), errors)
+    commit = row.get("benchmark_repository_commit")
+    if (
+        type(commit) is not str
+        or len(commit) != 40
+        or any(c not in "0123456789abcdef" for c in commit.lower())
+    ):
+        errors.append(f"{row.get('_source')}: invalid repository commit")
+
+
+def _validate_default_candidate_routes(
+    row: dict[str, Any], pair: str, batch: Any, errors: list[str]
+) -> None:
     small_b8 = SPECIAL_SMALL_B8_BUNDLE and pair in PAIRS[:2] and batch == 8
     layers = list(range(LAYERS[pair])) if small_b8 else []
     if BASE_ADA_WAGV_BMM_EXPECTED is not None:
@@ -231,19 +335,6 @@ def _validate_candidate(row: dict[str, Any], errors: list[str]) -> None:
         cosine = row.get("rwkv_native_graph_sm120_compiled_ffn_prewarm_min_cosine")
         if not _finite(cosine) or cosine < 0.9999:
             errors.append(f"{row.get('_source')}: compiled FFN prewarm cosine failed")
-    shape = (row.get("batch_size"), row.get("prompt_tokens"), row.get("decode_tokens"))
-    if shape not in EXPECTED_SHAPES:
-        errors.append(f"{row.get('_source')}: unexpected shape {shape!r}")
-        return
-    _validate_samples(row, "prefill", int(shape[0]) * int(shape[1]), errors)
-    _validate_samples(row, "decode", int(shape[0]) * int(shape[2]), errors)
-    commit = row.get("benchmark_repository_commit")
-    if (
-        type(commit) is not str
-        or len(commit) != 40
-        or any(c not in "0123456789abcdef" for c in commit.lower())
-    ):
-        errors.append(f"{row.get('_source')}: invalid repository commit")
 
 
 def _index(

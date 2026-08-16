@@ -266,6 +266,7 @@ def model_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]:
 
 
 def base_row(args: argparse.Namespace) -> dict[str, Any]:
+    rwkv = args.model_kind == "rwkv"
     return {
         "axis": "qwen35_cross_model_speed",
         "benchmark_matrix": args.benchmark_matrix,
@@ -277,8 +278,33 @@ def base_row(args: argparse.Namespace) -> dict[str, Any]:
         "rwkv_implementation_requested": str(
             getattr(args, "rwkv_implementation", "auto")
         )
-        if args.model_kind == "rwkv"
+        if rwkv
         else None,
+        "rwkv_decode_route_profile": (
+            os.environ.get("RWKV7_BENCHMARK_ROUTE_PROFILE") if rwkv else None
+        ),
+        "rwkv_native_graph_ada_linear_requested": (
+            os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR") == "1" if rwkv else None
+        ),
+        "rwkv_native_graph_ada_linear_extension_required": (
+            os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_REQUIRE_EXTENSION") == "1"
+            if rwkv
+            else None
+        ),
+        "rwkv_native_graph_ada_linear_rows_requested": (
+            os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS") if rwkv else None
+        ),
+        "rwkv_native_graph_ada_linear_roles_requested": (
+            os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES") if rwkv else None
+        ),
+        "rwkv_native_graph_ada_sparse_ffn_requested": (
+            os.environ.get("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN") == "1" if rwkv else None
+        ),
+        "rwkv_native_graph_ada_wagv_lora_extension_required": (
+            os.environ.get("RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_REQUIRE_EXTENSION") == "1"
+            if rwkv
+            else None
+        ),
         "dtype": args.dtype,
         "quantization": args.quantization,
         "qwen_backend_requested": args.qwen_backend,
