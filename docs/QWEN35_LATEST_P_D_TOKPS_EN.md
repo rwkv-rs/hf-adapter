@@ -71,4 +71,3 @@ link from the committed artifacts:
 python -m pytest -q tests/test_qwen35_comparison_layout.py
 python tests/test_markdown_links.py
 ```
-
