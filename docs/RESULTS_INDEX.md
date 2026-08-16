@@ -8,6 +8,11 @@ it does not imply an unbounded all-card or all-shape claim.
 Last updated: **2026-08-16**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
+The canonical current cross-card throughput view is
+[`QWEN35_LATEST_P_D_TOKPS.md`](QWEN35_LATEST_P_D_TOKPS.md). It reports the
+latest strict artifacts in model-size -> GPU -> B1/B8 order and renders every
+Prefill/Decode tok/s value with zero or one decimal place.
+
 ## Inference performance and quantization
 
 | Evidence ID | Platform | Scope | Promoted conclusion | Source |

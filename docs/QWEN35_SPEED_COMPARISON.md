@@ -1,5 +1,9 @@
 # RWKV-7 vs Qwen3.5: Unified HF Fast-Path Benchmark
 
+For a compact current-only view of raw Prefill/Decode throughput, use
+[`QWEN35_LATEST_P_D_TOKPS.md`](QWEN35_LATEST_P_D_TOKPS.md). It is sorted by
+model size, GPU, then B1/B8; historical protocols remain below for provenance.
+
 Updated: **2026-08-16**. [中文版](QWEN35_SPEED_COMPARISON_ZH.md)
 
 ## Current status
