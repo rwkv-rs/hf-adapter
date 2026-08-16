@@ -9,7 +9,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from bench import validate_qwen35_4090_paired_pd_v2 as base
+if __name__ == "__main__" and not __package__:
+    import validate_qwen35_4090_paired_pd_v2 as base
+else:
+    from bench import validate_qwen35_4090_paired_pd_v2 as base
 
 
 CONTRACT_PROTOCOL = "qwen35_3090_reference_contract_v2"

@@ -5,7 +5,7 @@ not replace [`../BENCHMARK.md`](../BENCHMARK.md), the hardware matrix, or raw
 dated artifacts. A row means only that the linked, exact profile has evidence;
 it does not imply an unbounded all-card or all-shape claim.
 
-Last updated: **2026-08-14**. The released baseline was audited at `main`
+Last updated: **2026-08-16**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
 ## Inference performance and quantization
@@ -19,6 +19,7 @@ Last updated: **2026-08-14**. The released baseline was audited at `main`
 | `v100-paired-pd-v1` | V100 32GB | Frozen-reference 0.4B/0.8B through 7.2B/9B, B1/B8, P128/512/2048, D128/512 | Raw and parameter-adjusted Prefill/Decode all pass 48/48; adjusted minima `1.808536x/1.120373x`; 8/8 FLA/native probes plus 7.2B/B8 graph closure pass. Speed only, not quality/E2E | [`v100_qwen35_paired_pd_v1_20260814`](../bench/v100_qwen35_paired_pd_v1_20260814/README.md) |
 | `t4-production` | Tesla T4 | 0.1B-2.9B dense/cache/quant/training | Compatibility and head-quant lanes pass; dense/full-model performance limits remain explicit | [`t4_production_close_20260720`](../bench/t4_production_close_20260720/README.md) |
 | `3090-g1h-b8` | RTX 3090 | 7.2B vs Qwen3.5-9B, dense/W8/W4 B8 | Strict current B8 matrix passes 18/18 | [`3090_g1h_7p2_bsz8_20260714`](../bench/3090_g1h_7p2_bsz8_20260714/README.md) |
+| `3090-paired-pd-v2` | RTX 3090 | Current optimized Qwen3.5 0.8B/2B/4B/9B versus RWKV 0.4B/1.5B/2.9B/7.2B, B1/B8, P128/512/2048, D128/512 | Raw and parameter-adjusted Prefill/Decode pass 48/48 at minima `1.574925x/1.208324x/1.253926x/1.017763x`; 8/8 512-token FLA/native checks pass. Speed only, not quality/E2E | [`3090_qwen35_paired_pd_v2_20260816`](../bench/3090_qwen35_paired_pd_v2_20260816/README.md) |
 | `3090-latest-prefill-pd` | RTX 3090 | latest g1d/g1i 0.4B-7.2B versus full-FLA Qwen3.5, B1/B8 | Strict parameter-adjusted prefill passes 24/24 at minimum/median `1.227477x/1.467758x`; correctness passes 25/25 | [`3090_g1i_qwen35_maxperf_20260812`](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
 | `4080-qwen-pairs` | RTX 4080 | 0.4B/1.5B/2.9B versus Qwen3.5 B1/B8 | Six dense pair matrices and exact output-head quant lanes pass | [`4080_full_model_ladder_20260719`](../bench/4080_full_model_ladder_20260719/README.md) |
 | `4080-adjusted-pd` | RTX 4080 | 0.4B/1.5B/2.9B versus Qwen3.5 B1/B8 | Adjusted Prefill and Decode each pass 36/36 cells; minima `1.068520x/1.140700x` | [`4080_adjusted_pd_20260811`](../bench/4080_adjusted_pd_20260811/README.md) |

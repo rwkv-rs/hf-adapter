@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -151,6 +153,18 @@ def test_3090_contract_is_current_48_cell_protocol(tmp_path: Path) -> None:
     doc, errors = module._load_contract(path)
     assert errors == []
     assert doc["compute_cap"] == "8.6"
+
+
+def test_3090_validator_supports_direct_cli_execution() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(VALIDATOR_PATH), "--help"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--reference-contract" in completed.stdout
 
 
 def test_3090_reference_contract_rejects_bool_and_partial_routes(

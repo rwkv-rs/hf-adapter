@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Guard the canonical-vs-historical documentation boundaries."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,11 +16,11 @@ def main() -> int:
     canonical_dates = {
         "HF_STATUS.md": "2026-08-12",
         "HF_TODO.md": "2026-08-12",
-        "BENCHMARK.md": "2026-08-14",
+        "BENCHMARK.md": "2026-08-16",
         "docs/ACCEPTANCE.md": "2026-08-12",
         "docs/HARDWARE_MATRIX.md": "2026-08-12",
         "docs/PROJECT_SUMMARY.md": "2026-08-12",
-        "docs/RESULTS_INDEX.md": "2026-08-14",
+        "docs/RESULTS_INDEX.md": "2026-08-16",
     }
     for relative, expected_date in canonical_dates.items():
         text = read(relative)
@@ -53,7 +54,9 @@ def main() -> int:
     normalized_todo = " ".join(todo.split())
     assert "## Scope and current boundary" in todo
     assert "The current HF milestone is complete" in todo
-    assert "there are **no remaining blocking items**".lower() in normalized_todo.lower()
+    assert (
+        "there are **no remaining blocking items**".lower() in normalized_todo.lower()
+    )
     assert "045bac1b769240facd290e1ac8232e8b1ca39778" in todo
     assert "## Post-release expansion projects" in todo
     assert "- [x]" not in todo
@@ -88,6 +91,7 @@ def main() -> int:
         "v100_exact_card_20260811",
         "3090_g1i_qwen35_prefill_pd_20260812",
         "3090_g1i_qwen35_maxperf_20260812",
+        "3090_qwen35_paired_pd_v2_20260816",
         "4090_qwen35_paired_pd_v2_20260815",
         "4080_qwen35_paired_pd_v1_20260814",
         "v100_qwen35_paired_pd_v1_20260814",

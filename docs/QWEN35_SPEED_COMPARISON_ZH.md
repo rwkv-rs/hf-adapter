@@ -1,6 +1,6 @@
 # RWKV-7 vs Qwen3.5：统一 HF 快速路径测试协议
 
-更新日期：**2026-08-15**。[English version](QWEN35_SPEED_COMPARISON.md)
+更新日期：**2026-08-16**。[English version](QWEN35_SPEED_COMPARISON.md)
 
 ## 当前状态
 
@@ -9,7 +9,10 @@ causal-convolution 实现、运行时版本和 RWKV CUDA Graph 设置；即使�
 FLA，实际也可能绑定仓库 Triton convolution 或静默回退到慢速 PyTorch 路径。
 这些证据只保留为历史复现和回归资料。
 
-新的主表按卡逐张写入。RTX 4090 已于 2026-08-15 完成新的
+新的主表按卡逐张写入。RTX 3090 已于 2026-08-16 完成
+`qwen35_3090_paired_pd_v2`：把 SHA 锁定的 48 行当前最优 Qwen 参考与
+48 行精确显卡 RWKV 新结果配对，原始与参数校正 Prefill/Decode 四项都逐格
+通过。RTX 4090 已于 2026-08-15 完成新的
 `qwen35_4090_paired_pd_v2`：把 SHA 锁定的 48 行当前最优 Qwen 参考与
 48 行同运行时、精确显卡 RWKV 结果配对，原始与参数校正 Prefill/Decode
 四项都逐格通过。RTX 5090 现在同时有不可变的 48 行 Qwen 最佳优化 HF
@@ -19,8 +22,8 @@ FLA，实际也可能绑定仓库 Triton convolution 或静默回退到慢速 Py
 校正 Decode 门槛 48/48 通过。这只完成 Decode 子表，不等于完整 Prefill/Decode
 主表：冻结参考线独立选择最快 Prefill 与 Decode 路径，本次没有提升 Prefill 或
 连续 E2E 门槛。RTX 4080 也已完成同运行时 36 格严格配对 P+D：覆盖 16 GiB
-可容纳的三个模型对，原始与参数校正 Prefill/Decode 四项都逐格通过。RTX 3090
-仍为待测；后端回退和旧结果都不能混入当前主表。
+可容纳的三个模型对，原始与参数校正 Prefill/Decode 四项都逐格通过。后端回退
+和旧结果都不能混入当前主表。
 
 Tesla V100 也已完成四模型对、48 格严格 P+D。新测 RWKV 行与同服务器、同运行时
 的 SHA 锁定 Qwen 参考配对，原始与参数校正 Prefill/Decode 全部 48/48 通过。
@@ -50,7 +53,7 @@ Tesla V100 也已完成四模型对、48 格严格 P+D。新测 RWKV 行与同�
 | GPU | 行数 | Qwen 官方快速路径 | RWKV 性能线 | 参数校正 Prefill 超过 Qwen | 原始 / 参数校正 Decode 超过 Qwen | 证据 |
 |---|---:|---|---|---:|---:|---|
 | RTX 4090 | Qwen 48 + RWKV 48；P+D 配对 48 格 | 48/48 通过；每模型固定 Graph 路线 | 48/48 `best_optimized_hf`；Native Graph Decode | 48/48 | 48/48 / 48/48 | [严格配对 P+D v2 证据](../bench/4090_qwen35_paired_pd_v2_20260815/README.md) |
-| RTX 3090 | 待测 | 待测 | 待测 | — | — | — |
+| RTX 3090 | Qwen 48 + RWKV 48；P+D 配对 48 格 | 48/48 通过；每模型固定 Graph 路线 | 48/48 `best_optimized_hf`；Native Graph Decode | 48/48 | 48/48 / 48/48 | [严格配对 P+D v2 证据](../bench/3090_qwen35_paired_pd_v2_20260816/README.md) |
 | RTX 4080 | Qwen 36 + RWKV 36；P+D 配对 36 格 | 36/36 通过，无 fallback | 36/36 `best_optimized_hf`；Native Graph Decode | 36/36 | 36/36 / 36/36 | [严格配对 P+D 证据](../bench/4080_qwen35_paired_pd_v1_20260814/README.md) |
 | Tesla V100 | Qwen 48 + RWKV 48；P+D 配对 48 格 | 48/48 通过，无 fallback | 48/48 `best_optimized_hf`；Native Graph Decode | 48/48 | 48/48 / 48/48 | [严格配对 P+D 证据](../bench/v100_qwen35_paired_pd_v1_20260814/README.md) |
 | RTX 5090 | Qwen 48 + RWKV 48；Decode 配对 48 格 | 48/48 通过，无 fallback | 48/48 `best_optimized_hf`；Decode Graph 开启 | 未验收 | 48/48 遥测 / 48/48 严格通过 | [配对 Decode 证据](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
@@ -63,6 +66,15 @@ RTX 4090 现在对当前优化 Qwen 参考的每一格都超过：原始 Prefill
 RWKV `449 tok/s`，Qwen `352 tok/s`，参数校正后仍有 `+2.6173%`
 余量。8/8 个 512-token FLA/native 检查均保持 greedy 完全一致、Decode
 logits finite，prompt/final 最低 cosine 为 `0.999992967`。
+
+RTX 3090 的每个匹配格也全部超过。原始 Prefill 最小值/中位数/最大值为
+`1.574925x/2.182651x/8.428073x`，参数校正后为
+`1.208324x/1.535161x/5.049362x`；原始 Decode 为
+`1.253926x/1.740275x/3.094400x`，参数校正后为
+`1.017763x/1.207730x/1.853893x`。最窄格是 1.5B/2B B1/P128/D128：
+RWKV `232 tok/s`，Qwen `185 tok/s`，参数校正后仍有 `+1.7763%` 余量。
+8/8 个 512-token FLA/native 检查均保持 greedy 完全一致、Decode logits
+finite，prompt/final 最低 cosine 为 `0.999987364`。
 
 RTX 5090 配对 Decode 子表的参数校正最小值/中位数/最大值为
 `1.029966x/1.409279x/2.063849x`。最窄格是 0.4B/0.8B B1/P128/D128：
@@ -109,6 +121,20 @@ RWKV 全部 48 行使用 Native Graph；小模型 B8 的投影与 compiled-FFN �
 [`README`](../bench/4090_qwen35_paired_pd_v2_20260815/README.md)、
 [`完整配对表`](../bench/4090_qwen35_paired_pd_v2_20260815/paired_pd_table.jsonl) 和
 [`validator 结果`](../bench/4090_qwen35_paired_pd_v2_20260815/paired_validation.json)。
+这是推理速度结果，不代表模型质量或连续 E2E 优势。
+
+### RTX 3090 冻结参考严格配对 Prefill/Decode v2
+
+2026-08-16 产物为每个 Qwen 模型固定一条通过正确性门的 StaticCache Graph
+路线；RWKV 使用精确 `sm86_qwen_alignment` 路线配置和 Native Graph。
+validator 读取未舍入值，要求每格原始及参数校正 Prefill/Decode 都严格超过
+Qwen。四项门禁全部 48/48 通过，另外 8/8 个 P2048/D512、512-token
+FLA/native 独立对照也通过。详见
+[`README`](../bench/3090_qwen35_paired_pd_v2_20260816/README.md)、
+[`RWKV candidate`](../bench/3090_qwen35_paired_pd_v2_20260816/rwkv_candidate.jsonl)、
+[`Qwen 参考`](../bench/3090_qwen35_paired_pd_v2_20260816/qwen_reference.jsonl)、
+[`完整配对表`](../bench/3090_qwen35_paired_pd_v2_20260816/paired_pd_table.jsonl) 和
+[`validator 结果`](../bench/3090_qwen35_paired_pd_v2_20260816/validation.json)。
 这是推理速度结果，不代表模型质量或连续 E2E 优势。
 
 ### RTX 4080 同运行时严格配对 Prefill/Decode v1
@@ -412,7 +438,7 @@ RTX 4090 的最新严格门槛通过：**原始和参数校正 Prefill 48/48、�
 这张长表按模型尺寸、显卡和 B1/B8 保留全部正式对照，便于直接查看不同参数档位的
 原始吞吐和参数规模校正速度。
 
-### RTX 3090 最新检查点严格门槛
+### 历史 RTX 3090 最新检查点严格门槛（2026-08-12）
 
 最新 RTX 3090 证据使用 RWKV-7 g1d 0.4B 和 2026-08-05 g1i
 1.5B/2.9B/7.2B，对照官方 Qwen3.5 0.8B/2B/4B/9B，并逐格检查
@@ -610,6 +636,7 @@ Qwen 行显示 full-FLA 优化路径；结果按中位值和两位小数进行�
 |---|---|---|
 | V100 历史 active-pair 路线 | [V100 证据中的命令](../bench/v100_active_b1b8_20260715/README.md#reproduce) | 1.5B/2B，B1/B8 |
 | V100 严格配对 P+D v1 | [`bench/run_v100_rwkv_paired_pd_v1.sh`](../bench/run_v100_rwkv_paired_pd_v1.sh) + [`bench/run_v100_qwen35_paired_pd_v1.sh`](../bench/run_v100_qwen35_paired_pd_v1.sh) + [`bench/validate_qwen35_v100_paired_pd_v1.py`](../bench/validate_qwen35_v100_paired_pd_v1.py) | 冻结参考 48+48 行；原始与参数校正 Prefill/Decode 必须全部 48/48 通过 |
+| RTX 3090 当前优化 Qwen 配对 P+D v2 | [`bench/run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh) + [`bench/validate_qwen35_3090_paired_pd_v2.py`](../bench/validate_qwen35_3090_paired_pd_v2.py) | 四个模型对、48 个冻结参考格；原始和参数校正 Prefill/Decode 均严格 `>1.0x`，并要求 8/8 长程正确性通过 |
 | RTX 3090 最新检查点 | [`bench/run_3090_adjusted_prefill_pd.sh`](../bench/run_3090_adjusted_prefill_pd.sh) | 四个模型对、B1/B8、P128/512/2048、D128；逐格校正 Prefill 门槛与 25 格正确性门禁 |
 | RTX 4080 | [`bench/run_4080_adjusted_pd.sh`](../bench/run_4080_adjusted_pd.sh) | 一次运行 3 个模型对、B1/B8 全部 36 格，并强制每格参数校正 P/D 均 `>1.00x` |
 | RTX 4080 严格配对 P+D v1 | [`bench/run_4080_rwkv_paired_pd_v1.sh`](../bench/run_4080_rwkv_paired_pd_v1.sh) + [`bench/run_4080_qwen35_paired_pd_v1.sh`](../bench/run_4080_qwen35_paired_pd_v1.sh) + [`bench/validate_qwen35_paired_pd_v1.py`](../bench/validate_qwen35_paired_pd_v1.py) | 同运行时 36+36 行；原始与参数校正 Prefill/Decode 必须全部 36/36 通过 |

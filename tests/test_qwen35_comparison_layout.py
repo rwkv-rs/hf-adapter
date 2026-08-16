@@ -118,6 +118,25 @@ def test_comparison_docs_link_full_precision_4090_pd_evidence() -> None:
         assert "0.999992967" in text
 
 
+def test_comparison_docs_link_full_precision_3090_pd_evidence() -> None:
+    artifact_root = "../bench/3090_qwen35_paired_pd_v2_20260816/"
+    for relative in (
+        "docs/QWEN35_SPEED_COMPARISON.md",
+        "docs/QWEN35_SPEED_COMPARISON_ZH.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        for artifact in (
+            "rwkv_candidate.jsonl",
+            "qwen_reference.jsonl",
+            "paired_pd_table.jsonl",
+            "validation.json",
+        ):
+            assert f"]({artifact_root}{artifact})" in text
+        assert "1.208324x/1.535161x/5.049362x" in text
+        assert "1.017763x/1.207730x/1.853893x" in text
+        assert "0.999987364" in text
+
+
 def test_comparison_docs_scope_5090_paired_decode_claim() -> None:
     artifact_root = "../bench/5090_qwen35_paired_decode_v1_20260813/"
     for relative in (
