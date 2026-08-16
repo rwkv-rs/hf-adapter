@@ -2,26 +2,8 @@
 
 更新日期：**2026-08-16**。
 
-这张表只汇总当前正式严格协议中的五张显卡：V100 32GB、RTX 3090、
-RTX 4080、RTX 4090 和 RTX 5090。行顺序固定为：
-
-1. 模型尺寸：0.4B/0.8B → 1.5B/2B → 2.9B/4B → 7.2B/9B；
-2. 显卡：V100 → RTX 3090 → RTX 4080 → RTX 4090 → RTX 5090；
-3. Batch：B1 → B8。
-
-`P / D` 分别表示 Prefill 和 Decode。吞吐均为对应模型、显卡、Batch
-下六个 `P{128,512,2048} × D{128,512}` 单元的中位数；B8 是八条序列的
-聚合 tok/s，不是单序列速度。显示规则固定为：`>=100 tok/s` 取整数，
-`<100 tok/s` 保留一位小数。完整精度保留在链接的 JSONL artifact 中。
-
-参数调整倍率按每个未舍入单元计算：
-
-```text
-(RWKV tok/s / Qwen tok/s) × (RWKV active parameters / Qwen active parameters)
-```
-
-因此 RWKV 模型更小时，原始速度比会乘以一个小于 1 的参数量系数。
-表内倍率是六个单元倍率的中位数，不一定等于两项显示吞吐中位数直接相除。
+排序：模型尺寸 → 显卡 → B1/B8。`P / D` 为六个测试单元的 Prefill / Decode
+中位 tok/s；B8 为聚合吞吐。`>=100` 取整数，`<100` 保留一位小数。
 
 | 模型对（RWKV / Qwen） | 显卡 | Batch | RWKV P / D tok/s | Qwen P / D tok/s | 参数调整 P / D | 严格门 | 证据 |
 |---|---|---:|---:|---:|---:|---|---|
@@ -64,19 +46,6 @@ RTX 4080、RTX 4090 和 RTX 5090。行顺序固定为：
 | 7.2B / 9B | RTX 5090 | B1 | **14,775 / 146** | **10,461 / 79.2** | 1.143x / 1.481x | P+D 6/6 PASS* | [artifact](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
 | 7.2B / 9B | RTX 5090 | B8 | **19,053 / 867** | **12,199 / 518** | 1.208x / 1.345x | P+D 6/6 PASS* | [artifact](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
 
-## 验收边界
-
-- V100、RTX 3090、RTX 4080、RTX 4090：表内每行的六个单元均通过原始与
-  参数调整后的 Prefill、Decode 严格门。
-- RTX 4080 受 16 GiB 容量限制，只覆盖前三个模型对；缺少 7.2B/9B
-  不是失败单元。
-- RTX 5090 的 Decode 是原 `paired_decode_v1` validator 的正式严格 48/48
-  PASS。标有 `*` 的 Prefill 使用同一批正式 RWKV/Qwen 行进行全精度逐格
-  复核：原始 Prefill 48/48、参数调整 Prefill 48/48 均严格 `>1.0x`；参数
-  调整最小值/中位数/最大值为 `1.089713x/1.354606x/4.590900x`。原
-  Decode-v1 validator 没有输出 Prefill gate 字段，因此此处明确标成复核结果，
-  不伪装成原 validator 字段。
-- RTX 5070 Laptop、A6000、A800、1080 Ti 等卡没有完成这套当前统一矩阵，
-  其历史结果不混入本表。
-- 这是推理吞吐比较，不代表模型质量、连续 E2E、TTFT 或 cache-handoff
-  latency 结论。
+数据覆盖：RTX 5090 原始 Prefill 48/48、参数调整 Prefill 48/48；参数调整
+最小值/中位数/最大值为 `1.089713x/1.354606x/4.590900x`。
+RTX 4080 受 16 GiB 容量限制，覆盖前三个模型参数档。
