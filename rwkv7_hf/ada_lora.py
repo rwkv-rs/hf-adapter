@@ -659,7 +659,7 @@ def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
 
 
 def sm120_wagv_bmm_g_available(device: Any = None) -> bool:
-    """Whether the Ampere/Ada/Blackwell all-W/A/G/V BMM probe may run.
+    """Whether the supported-GPU all-W/A/G/V BMM probe may run.
 
     The route is one indivisible experiment: both padded BMMs and both Triton
     pointwise epilogues must be available.  Returning false when Triton is
@@ -1224,7 +1224,7 @@ def ada_wagv_lora(
     if require_extension and extension is None:
         detail = ada_wagv_lora_build_error(xw2.device)
         raise RuntimeError(
-            "Ada W/A/G/V extension was required for native_graph decode, "
+            "W/A/G/V extension was required for native_graph decode, "
             "but its exact device/dtype/layout/build contract was not satisfied; "
             f"fallback is forbidden; build_error={detail!r}"
         )

@@ -480,7 +480,8 @@ def test_coreml_masked_prefill_chunks_exact_tokens() -> None:
 def test_coreml_runtime_static_contract() -> None:
     text = RUNTIME.read_text(encoding="utf-8")
     assert RUNTIME.exists()
-    assert RUNTIME.stat().st_mode & stat.S_IXUSR
+    if sys.platform != "win32":
+        assert RUNTIME.stat().st_mode & stat.S_IXUSR
     assert "qwen35_apple_baseline" in text
     assert "rwkv7_coreml_runtime_plan" in text
     assert "partial_reason" in text
@@ -495,7 +496,8 @@ def test_coreml_runtime_static_contract() -> None:
 def test_coreml_export_static_contract() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     assert SCRIPT.exists()
-    assert SCRIPT.stat().st_mode & stat.S_IXUSR
+    if sys.platform != "win32":
+        assert SCRIPT.stat().st_mode & stat.S_IXUSR
     assert "SUPPORTED_QUANTIZATION" in text
     assert '"int8"' in text
     assert '"int4"' in text

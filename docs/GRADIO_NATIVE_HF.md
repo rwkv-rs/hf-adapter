@@ -60,7 +60,7 @@ python app.py
 
 浏览器打开终端打印的 Gradio 地址。普通用户先使用上述保守配置。RTX 5090、
 官方 g1h 7.2B、FP16 权重和 FP32 state 的精确性能配置见
-[`5090_native_decode_fused_20260718`](../bench/5090_native_decode_fused_20260718/README.md)；
+[`5090_native_official_fp16_production_20260718`](../bench/5090_native_official_fp16_production_20260718/README.md)；
 它不是其他型号或显卡的通用默认值。
 
 页面默认只监听本机且不创建公开分享链接。远程机器需要临时浏览器验收时，可以显式
@@ -86,8 +86,9 @@ python app.py
 作为 HTML generation 验收通过。
 
 需要记录速度时，预热后每个 batch 至少重复一次，并同时保存页面截图、标签和
-`nvidia-smi` 进程显存。已有官方/Native 普通文本页面 smoke、浏览器截图和原始日志见
-[`5090_gradio_native_hf_frontend_ab_20260719`](../bench/5090_gradio_native_hf_frontend_ab_20260719/README.md)。
+`nvidia-smi` 进程显存。界面 smoke 应在当前机器上重新采集；底层 Native/官方
+性能与正确性参考见
+[`5090_native_official_fp16_production_20260718`](../bench/5090_native_official_fp16_production_20260718/README.md)。
 
 ## 5. 失败恢复和当前限制
 

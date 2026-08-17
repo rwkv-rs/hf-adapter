@@ -29,8 +29,8 @@ FFN key/value pair dense to preserve the `0.9995` prompt/final cosine floor.
 | g1h 13.3B | same | 8 | `0.5347x` | `1.1549x` | `1.4670x` | `0.99955201` | `0.99955237` | yes |
 
 The 13.3B B1 row uses nine timing repeats because prefill is its tightest
-gate. The 7.2B values are the already promoted post-audit rows in
-[`../5090_bn_tn_tensorcore_20260716/`](../5090_bn_tn_tensorcore_20260716/README.md).
+gate. The committed matrix in this directory includes the promoted 7.2B
+post-audit rows.
 
 The separate three-repeat B1 automatic-profile smokes for 1.5B, 2.9B and
 13.3B pass without supplying `--quantize-head` or a layer exception. They

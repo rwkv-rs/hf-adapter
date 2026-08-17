@@ -1,7 +1,0 @@
-{
-  "architectures": [
-    "NativeRWKV7ForCausalLM"
-  ],
-  "model_type": "rwkv7_native",
-  "auto_model": "native_model.NativeRWKV7ForCausalLM"
-}

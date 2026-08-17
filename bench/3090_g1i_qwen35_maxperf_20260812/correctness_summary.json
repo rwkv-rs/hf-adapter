@@ -1,8 +1,0 @@
-{
-  "status": "pass",
-  "rows": 25,
-  "min_prompt_cosine": 0.99999321,
-  "min_decode_after_prefill_cosine": 0.99999356,
-  "prompt_greedy_matches": 25,
-  "decode_after_prefill_greedy_matches": 25
-}

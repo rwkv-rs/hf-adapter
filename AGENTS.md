@@ -32,11 +32,10 @@ Read current documents in this order:
 3. [`BENCHMARK.md`](BENCHMARK.md) — promoted numeric results.
 4. [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) — completion criteria.
 5. [`docs/HARDWARE_MATRIX.md`](docs/HARDWARE_MATRIX.md) — card coverage.
-6. Dated raw artifacts under `bench/` — exact evidence.
+6. [`bench/CURRENT_ARTIFACTS.json`](bench/CURRENT_ARTIFACTS.json) - retained exact evidence.
 
 Historical plans and milestone prose do not override newer accepted evidence.
-The previous long-form agent history is preserved in
-[`docs/archive/AGENTS_MILESTONES_202607.md`](docs/archive/AGENTS_MILESTONES_202607.md).
+Superseded benchmark history is intentionally not retained; use [`docs/RESULTS_INDEX.md`](docs/RESULTS_INDEX.md).
 
 ## Ordinary-user requests
 
@@ -135,7 +134,7 @@ Current exact-card dispatch additions:
   exact-card best-optimized HF matrix uses official FLA plus Dao-AILab
   causal-conv1d Qwen and passes all 48/48 adjusted Prefill plus 48/48 adjusted
   Decode cells, with minima `1.060506x/1.829468x`, in
-  `bench/4090_hf_best_optimized_v1_20260812/`. Decode remains `native_graph`
+  `bench/4090_qwen35_paired_pd_v2_20260815/`. Decode remains `native_graph`
   throughout; only 7.2B/B8/P2048 disables Prefill Graph to fit 24 GiB. Other
   batches, model shapes, RTX 4090 variants, and adjacent Ada cards must not
   inherit these routes without exact-card evidence.
@@ -148,9 +147,8 @@ Current exact-card dispatch additions:
 - NVIDIA GeForce RTX 5090 (`sm_120`): exact dense-FP16 0.4B/1.5B/2.9B/7.2B
   B1/B8 P128/P512/P2048 rows may use the graph, scoped full-prefill FP16 GEMM
   accumulation, and fused boundaries allowlisted in `kernel_policy.py`. The
-  latest 24/24 parameter-adjusted Qwen3.5 prefill gate and P2048
-  graph-versus-eager continuation evidence live in
-  `bench/5090_g1i_qwen35_prefill_pd_sota_20260811/`. Dense chunk continuation
+  latest exact-shape paired evidence and route contract live in
+  `bench/5090_qwen35_paired_decode_v1_20260813/`. Dense chunk continuation
   may carry recurrent state inside its exact-shape CUDA graph, but quantized
   continuation must remain eager until it has a matching correctness route.
   Stacked RKV must remain disabled for 7.2B because exact-card rows show lower

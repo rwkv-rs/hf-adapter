@@ -1,8 +1,0 @@
-trainable 1769472 total 452537344 pct 0.391
-loss 2.3399295806884766
-nonzero_grad_count 144
-nonzero_grad base_model.model.model.layers.0.attn.r_proj.lora_B.default.weight 0.6487976312637329
-nonzero_grad base_model.model.model.layers.0.attn.k_proj.lora_B.default.weight 0.5438004732131958
-nonzero_grad base_model.model.model.layers.0.attn.v_proj.lora_B.default.weight 5.990245819091797
-nonzero_grad base_model.model.model.layers.0.attn.o_proj.lora_B.default.weight 5.8666205406188965
-nonzero_grad base_model.model.model.layers.0.ffn.key.lora_B.default.weight 5.216097354888916

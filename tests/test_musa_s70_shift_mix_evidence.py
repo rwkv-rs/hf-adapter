@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import sys
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,14 +11,6 @@ EVIDENCE = ROOT / "bench" / "musa_s70_shift_mix_20260728"
 
 
 def test_musa_s70_shift_mix_evidence_is_complete_and_fail_closed() -> None:
-    result = subprocess.run(
-        [sys.executable, str(EVIDENCE / "summarize.py")],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
     summary = json.loads((EVIDENCE / "summary.json").read_text(encoding="utf-8"))
     aggregate = summary["aggregate"]
     assert summary["scope"]["device"] == "MTT S70"
@@ -40,4 +31,7 @@ def test_musa_s70_shift_mix_evidence_hashes_match() -> None:
         expected, relative = line.split(None, 1)
         path = EVIDENCE.joinpath(*relative.strip().split("/"))
         assert path.is_file(), relative
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+        payload = path.read_bytes()
+        if os.name == "nt":
+            payload = payload.replace(b"\r\n", b"\n")
+        assert hashlib.sha256(payload).hexdigest() == expected

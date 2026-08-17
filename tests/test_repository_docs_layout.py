@@ -24,7 +24,7 @@ def test_split_documents_exist_and_are_linked() -> None:
     split_documents = (
         "docs/architecture/REPOSITORY_LAYOUT.md",
         "docs/contributing/APPLE_VALIDATION.md",
-        "docs/archive/AGENTS_MILESTONES_202607.md",
+        "docs/RESULTS_INDEX.md",
     )
     for relative in split_documents:
         assert (ROOT / relative).is_file(), relative
@@ -35,7 +35,7 @@ def test_split_documents_exist_and_are_linked() -> None:
     docs_index = _read("docs/README.md")
 
     assert "docs/architecture/REPOSITORY_LAYOUT.md" in readme
-    assert "docs/archive/AGENTS_MILESTONES_202607.md" in agents
+    assert "docs/RESULTS_INDEX.md" in agents
     assert "docs/contributing/APPLE_VALIDATION.md" in contributing
     for relative in split_documents:
         assert Path(relative).name in docs_index

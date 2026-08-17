@@ -130,66 +130,19 @@ Decode speed — `bench/bench_speed.py`, prompt=128, decode=64, fp16, single V10
   matrix, but full-memory quantization with the larger footprint reduction is
   still not universally fp16-or-faster.
 
-## 2026-07-10 fused-decode addendum
+## Current Native performance close
 
-The Volta-native graph path now combines norm/mix kernels, shape-routed sm70
-projection/FFN kernels, and raw recurrent-output preparation. On the idle
-V100 GPU1, matching-checkpoint FP16 decode passes P1 (`>=0.55x` Albatross) for
-all 0.1B/0.4B/1.5B and bsz=1/2/4/8 rows. All three bsz=8 rows pass P3; 0.4B
-and 1.5B bsz=8 exceed the measured Albatross throughput. The 0.4B and 1.5B
-raw-recurrent A/B windows retain 32-step greedy equality. See the raw evidence
-and ratio table in
-[`bench/v100_sm70_decode_gap_20260710/README.md`](../../bench/v100_sm70_decode_gap_20260710/README.md).
+The retained V100 production matrix covers 0.1B/0.4B/1.5B at B1/B2/B4/B8.
+Dense Decode reaches `0.908x-1.248x` and prompt512 Prefill reaches
+`0.930x-1.047x` the recorded same-host Albatross reference. Native W8/W4
+Decode passes 24/24 no-slower rows, payload falls to `0.803x-0.956x` FP16,
+and every quant row preserves the next token. Evidence:
+[`v100_production_close_20260711`](../../bench/v100_production_close_20260711/README.md).
 
-This addendum closed the V100 decode P1 floor at the time. The subsequent
-2026-07-11 production-close artifact closes the selected native W8/W4 speed
-lane; cross-card promotion, full-memory quant and universal P3 parity remain
-separate requirements.
+## Current Qwen3.5 paired Prefill/Decode
 
-## 2026-07-15 full-FLA Qwen3.5 active-parameter addendum
-
-The current optimized-reference comparison uses RWKV-7 g1g 1.5B and official
-Qwen3.5-2B on one Tesla V100-PCIE-32GB (`sm_70`), dense fp16, prompt 512,
-decode 64 and batch 1/8. It is target-only: no draft model, speculative
-acceptance, prefix-state reuse or hidden cache warm-start.
-
-Qwen fails closed unless all 18 linear-attention layers bind FLA chunk prefill,
-FLA fused-recurrent decode, fused gated RMS norm and the repository Triton
-causal-convolution prefill/update path. Both rows report
-`qwen_full_fused_contract_pass=true` and effective backend
-`qwen_fla_gated_delta_rule_fla_triton_conv`.
-
-The acceptance metric is `aggregate tok/s * active text parameters`. Active
-counts are 1,527,404,544 for RWKV and 1,881,825,088 for Qwen (`0.811661x`), so
-the raw break-even ratio is `1.232041x`.
-
-| Bsz | Prefill RWKV/Qwen | Prefill active work | Decode RWKV/Qwen | Decode active work | Peak VRAM RWKV/Qwen |
-|---:|---:|---:|---:|---:|---:|
-| 1 | `2.815921x` | `2.285574x` | `5.913307x` | `4.799514x` | `1.024885x` |
-| 8 | `5.407762x` | `4.389270x` | `5.270432x` | `4.277804x` | `0.837248x` |
-
-All four raw and normalized phase gates pass. Qwen full-FLA/Triton-conv versus
-its oracle and RWKV native graph versus its FLA-backed HF route each preserve
-32/32 greedy tokens and pass cosine gates. Static RWKV footprint is
-`0.811662x` Qwen, but the B1 peak-VRAM ratio is explicitly a loss and must not
-be presented as a universal memory win.
-
-Canonical evidence and reproduction commands:
-[`bench/v100_active_b1b8_20260715/README.md`](../../bench/v100_active_b1b8_20260715/README.md).
-
-## 2026-07-16 historical evidence snapshot
-
-The repository can revalidate this dated V100 evidence bundle without a GPU
-via `bench/summarize_v100_acceptance.py`. The snapshot keeps these contracts
-separate without overriding later V100 work:
-
-- production-close: dense Albatross P1, selected-module W8/W4, serving and
-  training smokes;
-- optimized Qwen: exactly 2/2 full-FLA cells for 1.5B/2B, P512/D64 and B1/B8;
-- historical Qwen: 216/216 cells pinned to Transformers torch fallback.
-
-At the snapshot date, remaining V100 work included broader full-FLA coverage,
-quality-safe full-memory MM4, a real Volta W8A16/deeper MM8 fusion, and
-larger/longer training plus Albatross P2/P3. Historical PR #21 execution
-completeness was not quant acceptance. Use current status documents and newer
-packed-MM4 artifacts for the post-snapshot conclusion.
+The current V100 matrix compares four RWKV/Qwen model pairs at B1/B8,
+P128/P512/P2048 and D128/D512. Raw and parameter-adjusted Prefill/Decode all
+pass 48/48. RWKV performance uses Native; FLA remains a compatibility route
+and correctness oracle. Canonical evidence and reproduction commands:
+[`v100_qwen35_paired_pd_v1_20260814`](../../bench/v100_qwen35_paired_pd_v1_20260814/README.md).

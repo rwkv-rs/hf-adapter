@@ -1,9 +1,0 @@
-ids_shape=(3, 32) modes=['forward']
-forward prefill batch-vs-individual max_abs_diff=0.0625
-forward heterogeneous decode step=1 max_abs_diff=0.0625
-forward heterogeneous decode step=2 max_abs_diff=0.0625
-forward reordered decode max_abs_diff=0.046875
-forward inplace-reordered decode max_abs_diff=0.09375
-forward compacted decode max_abs_diff=0.0625
-forward PASS cache_type=NativeRWKV7Cache perm=[1, 0, 2]
-PASS

@@ -255,6 +255,8 @@ def test_strict_cli_exits_nonzero_and_appends_summary(tmp_path: Path) -> None:
 
 
 def test_one_command_wrapper_can_run_nonstrict_audit(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("requires a POSIX shell")
     results = tmp_path / "wrapper.jsonl"
     env = os.environ.copy()
     env.update(
@@ -266,10 +268,12 @@ def test_one_command_wrapper_can_run_nonstrict_audit(tmp_path: Path) -> None:
         }
     )
     result = subprocess.run(
-        [str(ROOT / "scripts" / "run_apple_production_acceptance.sh")],
+        ["bash", str(ROOT / "scripts" / "run_apple_production_acceptance.sh")],
         cwd=ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )

@@ -1,8 +1,0 @@
-{
-  "status": "pass",
-  "protocol": "hf_fast_path_v1",
-  "gpu_model": "4090",
-  "device": "NVIDIA GeForce RTX 4090",
-  "main_table_eligible": true,
-  "fallback_attempted": false
-}

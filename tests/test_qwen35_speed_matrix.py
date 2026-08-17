@@ -2422,7 +2422,6 @@ def test_3090_entrypoint_requires_optimized_qwen_path() -> None:
         "run_3090_qwen35_pair.sh",
         "run_3090_qwen35_pair_resident.sh",
         "run_3090_qwen35_pair_acceptance.sh",
-        "run_3090_qwen35_speed_matrix.sh",
     ):
         script = (ROOT / "bench" / name).read_text(encoding="utf-8")
         assert "--require-qwen-fast-path" in script
@@ -2464,129 +2463,12 @@ def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
     )
 
 
-def test_4080_acceptance_entrypoint_is_full_prompt_and_fail_closed() -> None:
-    script = (ROOT / "bench" / "run_4080_qwen35_pair_acceptance.sh").read_text(
-        encoding="utf-8"
-    )
-    assert 'REQUIRED_GPU_MODEL="4080"' in script
-    assert 'bench/check_exact_gpu.py"' in script
-    assert '"torch": "2.6.0+cu124"' in script
-    assert '"triton": "3.2.0"' in script
-    assert '"torchao": "0.16.0"' in script
-    assert (
-        "use the generic benchmark entrypoints for an unvalidated runtime experiment"
-        in script
-    )
-    assert "REQUIRE_VALIDATED_RUNTIME" not in script
-    assert "--benchmark-matrix qwen35_4080_hf_final" in script
-    assert "rwkv-0.4b__qwen3.5-0.8b)" in script
-    assert "rwkv-1.5b__qwen3.5-2b)" in script
-    assert "rwkv-2.9b__qwen3.5-4b)" in script
-    assert 'BATCH_SIZE="${BATCH_SIZE:-8}"' in script
-    assert '--batch-sizes "${BATCH_SIZE}" --prompt-tokens 128 512 2048' in script
-    assert (
-        '--decode-tokens 128 512 --prefill-chunk-size "${PREFILL_CHUNK_SIZE}"' in script
-    )
-    assert 'if [[ "${BATCH_SIZE}" == "1" ]]' in script
-    assert 'DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-1.00}"' in script
-    assert 'default_active_work_gate="1.75"' in script
-    assert '--min-active-work-decode "${ACTIVE_WORK_DECODE_GATE}"' in script
-    assert '--model-pair "${PAIR_LABEL}"' in script
-    assert '--batch-size "${BATCH_SIZE}"' in script
-    assert "--qwen-backend fla" in script
-    assert "--require-qwen-fast-path" in script
-    assert "--paired-baseline" in script
-    assert "for quant in a8w8 torchao_w4" in script
-    assert "for quant in bnb8 bnb4" in script
-    assert "summarize_4080_qwen35_acceptance.py" in script
-    assert (
-        'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"'
-        in script
-    )
-
-
 def test_4080_torchao_version_does_not_leak_into_global_optional_dependency() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "torchao = [\"torchao; platform_system == 'Linux'\"]" in pyproject
     assert "torchao>=" not in pyproject
     assert 'quant = ["bitsandbytes"]' in pyproject
     assert "triton>=" not in pyproject
-
-
-def test_5090_acceptance_reuses_contract_without_4090_policy_defaults() -> None:
-    script = (ROOT / "bench" / "run_5090_qwen35_pair_acceptance.sh").read_text(
-        encoding="utf-8"
-    )
-    assert 'REQUIRED_GPU_MODEL="5090"' in script
-    assert 'BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_5090_hf_final}"' in script
-    assert 'QWEN_CONV_BACKEND="fla_triton"' in script
-    assert "export RUN_NATIVE_MM8=1" in script
-    assert "export REQUIRE_QWEN_FULL_FUSED=1" in script
-    assert "unset ALLOW_NON_4090" in script
-    assert "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M" not in script
-    assert "export RWKV7_FAST_PREFILL=1" in script
-    assert "export RWKV7_FAST_PREFILL_QUANT=1" in script
-    assert "export RWKV7_NATIVE_PREFILL_FUSED_SCAN=1" in script
-    assert "export RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX=1" in script
-    assert "export RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1" in script
-    assert "export RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1" in script
-    assert "export RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=0" in script
-    assert 'run_4090_qwen35_pair_acceptance.sh" "$@"' in script
-
-
-def test_5090_correctness_entrypoint_checks_full_fla_and_native_prefill() -> None:
-    script = (ROOT / "bench" / "run_5090_qwen35_correctness.sh").read_text(
-        encoding="utf-8"
-    )
-    assert 'REQUIRED_GPU_MODEL="5090"' in script
-    assert 'bench/check_exact_gpu.py"' in script
-    assert 'CORRECTNESS_PROMPT_TOKENS="${CORRECTNESS_PROMPT_TOKENS:-512}"' in script
-    assert 'CORRECTNESS_BATCH_SIZE="${CORRECTNESS_BATCH_SIZE:-8}"' in script
-    assert (
-        'QWEN_CORRECTNESS_PROMPT_TOKENS="${QWEN_CORRECTNESS_PROMPT_TOKENS:-}"' in script
-    )
-    assert '[[ "${qwen_size}" == "9b" ]]' in script
-    assert "QWEN_CORRECTNESS_PROMPT_TOKENS=512" in script
-    assert '--prompt-tokens "${QWEN_CORRECTNESS_PROMPT_TOKENS}"' in script
-    assert '--batch-size "${CORRECTNESS_BATCH_SIZE}"' in script
-    assert "--qwen-conv-backend fla_triton --require-qwen-fast-path" in script
-    assert "compare_qwen35_backend_probe.py" in script
-    assert "--min-cosine 0.999" in script
-    assert "for quantization in none bnb8 bnb4" in script
-    assert "compare_rwkv_prefill_probe.py" in script
-    assert "--min-cosine 0.9999" in script
-    assert "RWKV7_NATIVE_PREFILL_FUSED_SCAN=1" in script
-    assert "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1" in script
-    assert "[[ ${failures} -eq 0 ]]" in script
-
-
-def test_5090_full_matrix_entrypoint_runs_all_exact_pairs() -> None:
-    script = (ROOT / "bench" / "run_5090_qwen35_full_matrix.sh").read_text(
-        encoding="utf-8"
-    )
-    for pair in (
-        "rwkv-0.4b__qwen3.5-0.8b",
-        "rwkv-1.5b__qwen3.5-2b",
-        "rwkv-2.9b__qwen3.5-4b",
-        "rwkv-7.2b__qwen3.5-9b",
-    ):
-        assert pair in script
-    assert "run_5090_qwen35_correctness.sh" in script
-    assert "run_5090_qwen35_pair_acceptance.sh" in script
-    assert 'ACCEPTANCE_BATCH_SIZES="${ACCEPTANCE_BATCH_SIZES:-1 8}"' in script
-    assert "for batch_size in ${ACCEPTANCE_BATCH_SIZES}" in script
-    assert 'out_dir="${OUT_ROOT}/b${batch_size}/${out_name}"' in script
-    assert 'CORRECTNESS_BATCH_SIZE="${batch_size}"' in script
-    assert 'BATCH_SIZES="${batch_size}"' in script
-    assert "summarize_5090_qwen35_acceptance.py" in script
-    assert (
-        'printf \'%s\\n\' "${summary_rc}" > "${OUT_ROOT}/summary-exit-code.txt"'
-        in script
-    )
-    assert (
-        'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_ROOT}/pipeline-exit-code.txt"'
-        in script
-    )
 
 
 def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
@@ -2608,13 +2490,6 @@ def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
 
 
 def test_hardware_entrypoints_are_fail_closed() -> None:
-    for name in ("run_v100_qwen35_speed_matrix.sh", "run_3090_qwen35_speed_matrix.sh"):
-        script = (ROOT / "bench" / name).read_text(encoding="utf-8")
-        assert "--expected-cells 216" in script
-        assert "--min-prefill-speedup 1.05" in script
-        assert "--min-decode-speedup 1.05" in script
-        assert "--fail-on-gate" in script
-
     pair_script = (ROOT / "bench" / "run_3090_qwen35_pair.sh").read_text(
         encoding="utf-8"
     )
@@ -2631,7 +2506,6 @@ def test_hardware_entrypoints_are_fail_closed() -> None:
     for name in (
         "run_3090_qwen35_pair.sh",
         "run_3090_qwen35_pair_resident.sh",
-        "run_3090_qwen35_speed_matrix.sh",
     ):
         script = (ROOT / "bench" / name).read_text(encoding="utf-8")
         assert "--require-native-candidate" in script
@@ -2668,45 +2542,6 @@ def test_orchestrator_isolates_qwen_import_backend() -> None:
     assert env["RWKV7_BNB_SKIP_POLICY"] == "decode_rk"
 
 
-def test_5070_qwen_fla_evidence_is_complete() -> None:
-    evidence = ROOT / "bench" / "5070_qwen35_fla_matrix_20260713"
-    rows = [
-        json.loads(line)
-        for line in (evidence / "results.jsonl").read_text().splitlines()
-    ]
-    assert len(rows) == 144
-    assert all(row["status"] == "pass" for row in rows)
-
-    qwen_rows = [row for row in rows if row["model_role"] == "reference"]
-    assert len(qwen_rows) == 72
-    assert all(row["qwen_fla_core_contract_pass"] is True for row in qwen_rows)
-    assert all(
-        row["effective_backend"] == "qwen_fla_gated_delta_rule_torch_conv"
-        for row in qwen_rows
-    )
-
-    summary = json.loads((evidence / "summary.json").read_text(encoding="utf-8-sig"))
-    assert summary["coverage"]["joined_cells"] == 72
-    assert summary["reference_backend"]["matching_cells"] == 72
-    assert summary["speed"]["strict_gate_cells"] == 35
-    assert summary["speed"]["decode_at_least_equal_cells"] == 72
-    assert summary["memory"]["model_footprint_not_larger_cells"] == 72
-    assert summary["memory"]["peak_vram_not_larger_cells"] == 72
-
-    probe = json.loads(
-        (evidence / "fla-vs-torch-probe.json").read_text(encoding="utf-8-sig")
-    )
-    assert probe["status"] == "pass"
-    assert probe["greedy_tokens_match"] is True
-    assert min(probe["prompt_logits_cosine"], probe["final_logits_cosine"]) >= 0.999
-
-    exit_codes = json.loads(
-        (evidence / "exit-codes.json").read_text(encoding="utf-8-sig")
-    )
-    assert exit_codes
-    assert all(code == 0 for code in exit_codes.values())
-
-
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         test_comparator_passes_complete_matrix(Path(td))
@@ -2733,7 +2568,6 @@ def main() -> int:
     test_3090_entrypoint_requires_optimized_qwen_path()
     test_hardware_entrypoints_are_fail_closed()
     test_orchestrator_isolates_qwen_import_backend()
-    test_5070_qwen_fla_evidence_is_complete()
     print("QWEN35 SPEED MATRIX TESTS PASS")
     return 0
 

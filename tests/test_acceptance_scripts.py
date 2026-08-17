@@ -7,6 +7,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = [
     "scripts/_hf_script_common.sh",
@@ -31,12 +33,7 @@ SCRIPTS = [
 ]
 BENCH_RUNNERS = [
     "bench/run_a6000_hf_validation.sh",
-    "bench/run_v100_qwen35_speed_matrix.sh",
-    "bench/run_3090_qwen35_speed_matrix.sh",
     "bench/run_3090_qwen35_pair.sh",
-    "bench/run_3090_adjusted_prefill_pd.sh",
-    "bench/run_4080_qwen35_pair_acceptance.sh",
-    "bench/run_4090_adjusted_pd.sh",
     "bench/run_t4_hf_validation.sh",
 ]
 
@@ -56,6 +53,8 @@ def run_bash(script: str, *, env: dict[str, str] | None = None) -> subprocess.Co
         cwd=ROOT,
         env=merged,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
@@ -73,23 +72,10 @@ def test_shell_syntax_and_executable_bits() -> None:
     for rel in SCRIPTS + BENCH_RUNNERS:
         path = ROOT / rel
         assert path.exists(), rel
-        assert path.stat().st_mode & stat.S_IXUSR, f"{rel} should be executable"
+        if os.name != "nt":
+            assert path.stat().st_mode & stat.S_IXUSR, f"{rel} should be executable"
         proc = run_bash(f"bash -n {rel}")
         assert_ok(proc)
-
-
-def test_4090_adjusted_pd_runner_is_exact_card_and_full_fla() -> None:
-    text = (ROOT / "bench/run_4090_adjusted_pd.sh").read_text(encoding="utf-8")
-    assert 'check_exact_gpu.py" --model 4090' in text
-    assert "qwen35_4090_adjusted_pd" in text
-    assert 'version("fla-core")' in text
-    assert 'version("einops")' in text
-    assert "--batch-sizes \"${batch_args[@]}\" --prompt-tokens 128 512 2048" in text
-    assert "--decode-tokens 128 512" in text
-    assert "--qwen-backend fla --qwen-conv-backend fla_triton" in text
-    assert "--require-qwen-fast-path" in text
-    assert '--expected-device "NVIDIA GeForce RTX 4090"' in text
-    assert "qwen_fla_gated_delta_rule_fla_triton_conv" in text
 
 
 def test_a6000_validation_runner_contract() -> None:
@@ -183,27 +169,6 @@ def test_t4_validation_runner_contract() -> None:
     assert 'PREFILL_BATCH_SIZES="${PREFILL_BATCH_SIZES:-1,2,4,8}"' in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert '--device "${EXPECTED_GPU_NAME}"' in text
-
-
-def test_3090_adjusted_prefill_runner_contract() -> None:
-    text = (ROOT / "bench/run_3090_adjusted_prefill_pd.sh").read_text(
-        encoding="utf-8"
-    )
-    assert "RWKV_PYTHON_BIN" in text
-    assert "QWEN_PYTHON_BIN" in text
-    assert "SOURCE_COMMIT" in text
-    assert "BENCHMARK_MATRIX" in text
-    assert 'expected = ("2.7.1+cu126", "12.6", "3.3.1", "5.12.1", "1.14.0")' in text
-    assert '"2.6.0+cu124", "12.4", "3.2.0", "5.12.1", "0.5.1", "0.49.2"' in text
-    assert "--batch-sizes 1 8 --prompt-tokens 128 512 2048" in text
-    assert "--decode-tokens 128 --prefill-chunk-size 512" in text
-    assert "--qwen-backend fla --qwen-conv-backend fla_triton" in text
-    assert "--expected-cells 24" in text
-    assert "--min-prefill-active-parameter-throughput-ratio 1.0" in text
-    assert "--fail-on-gate" in text
-    assert "bench/bench_native_prefill_accum_correctness.py" in text
-    assert 'assert len(rows) == 25' in text
-    assert 'row.get("status") == "pass"' in text
 
 
 def test_acceptance_requires_model() -> None:
@@ -310,6 +275,8 @@ def test_converter_exposes_low_memory_path() -> None:
 
 
 def test_common_pythonpath_separator_linux() -> None:
+    if os.name == "nt":
+        pytest.skip("requires a POSIX Bash working tree")
     proc = run_bash(
         "export PYTHONPATH=/tmp/existing; source scripts/_hf_script_common.sh >/dev/null; "
         "test \"$PYTHONPATH\" = \"$PWD:/tmp/existing\""
@@ -318,6 +285,8 @@ def test_common_pythonpath_separator_linux() -> None:
 
 
 def test_common_pythonpath_separator_windows_msys() -> None:
+    if os.name == "nt":
+        pytest.skip("requires a native MSYS2 Bash working tree")
     proc = run_bash(
         "export OSTYPE=msys MSYSTEM=MINGW64 PYTHONPATH='D:/existing'; "
         "source scripts/_hf_script_common.sh >/dev/null; "

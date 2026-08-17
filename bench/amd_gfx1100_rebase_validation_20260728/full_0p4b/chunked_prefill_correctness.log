@@ -1,4 +1,0 @@
-chunked_prefill chunk_size 1 max_abs_diff 0.046875 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
-chunked_prefill chunk_size 4 max_abs_diff 0.0625 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
-chunked_prefill chunk_size 8 max_abs_diff 0.0625 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
-PASS

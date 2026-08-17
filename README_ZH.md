@@ -155,7 +155,7 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 > 历史复现证据，不能进入新的统一主表。新的 RTX 3090/4090/5090 结果必须使用
 > 相同锁定环境、官方 FLA + Dao-AILab `causal_conv1d`，以及 RWKV `native_jit`
 > 且关闭 CUDA Graph 的公平线。详见
-> [统一测试协议](docs/QWEN35_SPEED_COMPARISON_ZH.md)。
+> [最新 Prefill/Decode 对比](docs/QWEN35_LATEST_P_D_TOKPS.md)。
 
 - **Native 对 Albatross/v3a：**官方 g1h 7.2B FP16 缓存解码在 B1/B8 达到
   `146.42/899.51 tok/s`，v3a 对照为 `146.28/890.21`，即
@@ -185,8 +185,8 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 
 证据：
 [`Native/v3a`](bench/5090_native_official_fp16_production_20260718/README.md)、
-[`Qwen3.5`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)、
-[`最新检查点 Qwen3.5 Prefill PD`](bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md)、
+[`Qwen3.5 配对 Decode`](bench/5090_qwen35_paired_decode_v1_20260813/README.md)、
+[`Qwen3.5 冻结参考`](bench/5090_qwen35_best_optimized_hf_v1_20260813/README.md)、
 [`W4`](bench/5090_bntn_all_models_20260716/README.md)、
 以及 [`训练`](bench/5090_native_train_temp_real_minipile_20260718/README.md)。
 
@@ -252,7 +252,7 @@ kernel 内部变量名保持不变。完整规则见
 | 壁仞 BR106M、BIRENSUPA | [壁仞 BR106M 使用与验收边界](docs/hardware/BIREN_BR106M.md) |
 | 沐曦 MetaX C500、MXMACA | [MetaX C500 使用与验收边界](docs/hardware/METAX_C500.md) |
 | Apple MPS、MLX、CoreML | [Apple 使用教程](docs/APPLE_USAGE.md) |
-| RWKV-7 与 Qwen3.5 谁更快、如何复现 | [完整参数、速度对比及 GPU 实测复现](docs/QWEN35_SPEED_COMPARISON_ZH.md)（[English](docs/QWEN35_SPEED_COMPARISON.md)） |
+| RWKV-7 与 Qwen3.5 最新速度及复现 | [Prefill/Decode 对比](docs/QWEN35_LATEST_P_D_TOKPS.md)（[English](docs/QWEN35_LATEST_P_D_TOKPS_EN.md)） |
 | 让 AI 帮你安装、运行或排错 | [统一 AI 操作入口](docs/AI_ASSISTED_SETUP.md) |
 | 选择显卡与后端配置 | [硬件矩阵](docs/HARDWARE_MATRIX.md) |
 | 查看性能结果与复现命令 | [性能指南](docs/PERFORMANCE.md) 与 [benchmark 索引](bench/INDEX.md) |

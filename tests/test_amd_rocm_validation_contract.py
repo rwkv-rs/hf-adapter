@@ -37,4 +37,4 @@ def test_amd_validation_doc_does_not_promote_unmeasured_kernels() -> None:
     assert "Exact-gfx1100 output-head W8/W4 decode" in doc
     assert "all 40 output-head rows" in doc
     assert "Full-model memory quantization remains open" in doc
-    assert "amd_gfx1100_rebase_validation_20260728" in doc
+    assert "amd_gfx1100_full_close_20260730" in doc

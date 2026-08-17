@@ -3,12 +3,30 @@
 """Static guards for Apple Silicon / no-FLA packaging and docs."""
 from __future__ import annotations
 
-import stat
+import os
 import re
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _assert_executable(path: Path) -> None:
+    stage = subprocess.run(
+        ["git", "ls-files", "--stage", "--", str(path.relative_to(ROOT))],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert stage.startswith("100755 "), f"{path.relative_to(ROOT)} should be executable"
+
+
+def _check_bash_syntax(path: Path) -> None:
+    if os.name != "nt":
+        subprocess.run(["bash", "-n", str(path)], cwd=ROOT, check=True)
 
 
 def test_fla_is_optional_dependency() -> None:
@@ -36,8 +54,8 @@ def test_mlx_extra_is_apple_optional_dependency() -> None:
 def test_apple_smoke_script_static() -> None:
     script = ROOT / "scripts/run_apple_silicon_smoke.sh"
     assert script.exists()
-    assert script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(script)], cwd=ROOT, check=True)
+    _assert_executable(script)
+    _check_bash_syntax(script)
     text = script.read_text(encoding="utf-8")
     assert "RWKV7_NATIVE_MODEL" in text
     assert "PYTORCH_ENABLE_MPS_FALLBACK" in text
@@ -48,52 +66,52 @@ def test_apple_smoke_script_static() -> None:
     assert "--skip-tiny" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
-    assert train_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(train_script)], cwd=ROOT, check=True)
+    _assert_executable(train_script)
+    _check_bash_syntax(train_script)
     trainer_script = ROOT / "scripts/run_apple_silicon_trainer_smoke.sh"
     assert trainer_script.exists()
-    assert trainer_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(trainer_script)], cwd=ROOT, check=True)
+    _assert_executable(trainer_script)
+    _check_bash_syntax(trainer_script)
     model_train_script = ROOT / "scripts/run_apple_silicon_model_training_smoke.sh"
     assert model_train_script.exists()
-    assert model_train_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(model_train_script)], cwd=ROOT, check=True)
+    _assert_executable(model_train_script)
+    _check_bash_syntax(model_train_script)
     trl_sft_script = ROOT / "scripts/run_apple_silicon_model_trl_sft_smoke.sh"
     assert trl_sft_script.exists()
-    assert trl_sft_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(trl_sft_script)], cwd=ROOT, check=True)
+    _assert_executable(trl_sft_script)
+    _check_bash_syntax(trl_sft_script)
     rl_script = ROOT / "scripts/run_apple_silicon_model_rl_smoke.sh"
     assert rl_script.exists()
-    assert rl_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(rl_script)], cwd=ROOT, check=True)
+    _assert_executable(rl_script)
+    _check_bash_syntax(rl_script)
     sweep_script = ROOT / "scripts/run_apple_silicon_model_sweep.sh"
     assert sweep_script.exists()
-    assert sweep_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(sweep_script)], cwd=ROOT, check=True)
+    _assert_executable(sweep_script)
+    _check_bash_syntax(sweep_script)
     quant_script = ROOT / "scripts/run_apple_silicon_quant_smoke.sh"
     assert quant_script.exists()
-    assert quant_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(quant_script)], cwd=ROOT, check=True)
+    _assert_executable(quant_script)
+    _check_bash_syntax(quant_script)
     mlx_script = ROOT / "scripts/run_apple_silicon_mlx_smoke.sh"
     assert mlx_script.exists()
-    assert mlx_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_script)], cwd=ROOT, check=True)
+    _assert_executable(mlx_script)
+    _check_bash_syntax(mlx_script)
     mlx_model_script = ROOT / "scripts/run_apple_silicon_mlx_model_smoke.sh"
     assert mlx_model_script.exists()
-    assert mlx_model_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_model_script)], cwd=ROOT, check=True)
+    _assert_executable(mlx_model_script)
+    _check_bash_syntax(mlx_model_script)
     mlx_session_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_smoke.sh"
     assert mlx_session_wrapper.exists()
-    assert mlx_session_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_session_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(mlx_session_wrapper)
+    _check_bash_syntax(mlx_session_wrapper)
     mlx_session_wrapper_text = mlx_session_wrapper.read_text(encoding="utf-8")
     assert "QUANT_BACKEND" in mlx_session_wrapper_text
     assert "WKV_BACKEND" in mlx_session_wrapper_text
     assert "--wkv-backend" in mlx_session_wrapper_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
-    assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_session_batch_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(mlx_session_batch_wrapper)
+    _check_bash_syntax(mlx_session_batch_wrapper)
     mlx_session_batch_text = mlx_session_batch_wrapper.read_text(encoding="utf-8")
     assert "SESSION_COUNT" in mlx_session_batch_text
     assert "PROMPTS_FILE" in mlx_session_batch_text
@@ -116,16 +134,16 @@ def test_apple_smoke_script_static() -> None:
     assert "--mismatch-topk" in mlx_session_batch_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
-    assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_session_batch_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(mlx_session_batch_wrapper)
+    _check_bash_syntax(mlx_session_batch_wrapper)
     mlx_sweep_wrapper = ROOT / "scripts/run_apple_silicon_mlx_generation_sweep.sh"
     assert mlx_sweep_wrapper.exists()
-    assert mlx_sweep_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_sweep_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(mlx_sweep_wrapper)
+    _check_bash_syntax(mlx_sweep_wrapper)
     qwen_acceptance_wrapper = ROOT / "scripts/run_qwen35_apple_acceptance.sh"
     assert qwen_acceptance_wrapper.exists()
-    assert qwen_acceptance_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(qwen_acceptance_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(qwen_acceptance_wrapper)
+    _check_bash_syntax(qwen_acceptance_wrapper)
     qwen_acceptance_text = qwen_acceptance_wrapper.read_text(encoding="utf-8")
     assert "bench/run_qwen35_apple_baseline.py" in qwen_acceptance_text
     assert "bench/compare_qwen35_apple_baseline.py" in qwen_acceptance_text
@@ -157,36 +175,36 @@ def test_apple_smoke_script_static() -> None:
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
-    assert mlx_prefill_eval_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_prefill_eval_bench)
     mlx_dplr_prefill_bench = ROOT / "scripts/mlx_dplr_prefill_bench.py"
     assert mlx_dplr_prefill_bench.exists()
-    assert mlx_dplr_prefill_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_dplr_prefill_bench)
     mlx_dplr_model_bench = ROOT / "scripts/mlx_dplr_model_prefill_bench.py"
     assert mlx_dplr_model_bench.exists()
-    assert mlx_dplr_model_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_dplr_model_bench)
     mlx_decode_compile_bench = ROOT / "scripts/mlx_decode_compile_bench.py"
     assert mlx_decode_compile_bench.exists()
-    assert mlx_decode_compile_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_decode_compile_bench)
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
-    assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(convert_mlx_script)
     mlx_generate_script = ROOT / "scripts/mlx_generate.py"
     assert mlx_generate_script.exists()
-    assert mlx_generate_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_generate_script)
     mlx_generate_text = mlx_generate_script.read_text(encoding="utf-8")
     assert "--prepare-compiled-decode" in mlx_generate_text
     assert "--decode-norm-backend" in mlx_generate_text
     assert "load_mlx_generation_session" in mlx_generate_text
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
-    assert mlx_session_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_session_script)
     mlx_session_text = mlx_session_script.read_text(encoding="utf-8")
     assert 'choices=["affine", "reference", "metal", "auto", "groupwise"]' in mlx_session_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_text
     assert "--quant-rkv-min-params" in mlx_session_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
-    assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_session_batch_script)
     mlx_session_batch_text = mlx_session_batch_script.read_text(encoding="utf-8")
     assert 'choices=["affine", "reference", "metal", "auto", "groupwise"]' in mlx_session_batch_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
@@ -250,10 +268,10 @@ def test_apple_smoke_script_static() -> None:
     assert "auto_metal_max_rows" in session_runtime_text
     quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
     assert quant_bench_script.exists()
-    assert quant_bench_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(quant_bench_script)
     coreml_export_script = ROOT / "scripts/export_rwkv7_coreml.py"
     assert coreml_export_script.exists()
-    assert coreml_export_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(coreml_export_script)
     coreml_export_text = coreml_export_script.read_text(encoding="utf-8")
     assert "rwkv7_coreml_export" in coreml_export_text
     assert "full-logits" in coreml_export_text
@@ -269,10 +287,10 @@ def test_apple_smoke_script_static() -> None:
     assert "round_backend_reasons" in session_runtime_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
-    assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_session_batch_script)
     mlx_sweep_script = ROOT / "scripts/mlx_generation_sweep.py"
     assert mlx_sweep_script.exists()
-    assert mlx_sweep_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_sweep_script)
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -310,52 +328,52 @@ def test_apple_doc_links_entry_points() -> None:
     assert "tests/test_apple_silicon_mlx_model_smoke.py" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
-    assert train_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(train_script)], cwd=ROOT, check=True)
+    _assert_executable(train_script)
+    _check_bash_syntax(train_script)
     trainer_script = ROOT / "scripts/run_apple_silicon_trainer_smoke.sh"
     assert trainer_script.exists()
-    assert trainer_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(trainer_script)], cwd=ROOT, check=True)
+    _assert_executable(trainer_script)
+    _check_bash_syntax(trainer_script)
     model_train_script = ROOT / "scripts/run_apple_silicon_model_training_smoke.sh"
     assert model_train_script.exists()
-    assert model_train_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(model_train_script)], cwd=ROOT, check=True)
+    _assert_executable(model_train_script)
+    _check_bash_syntax(model_train_script)
     trl_sft_script = ROOT / "scripts/run_apple_silicon_model_trl_sft_smoke.sh"
     assert trl_sft_script.exists()
-    assert trl_sft_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(trl_sft_script)], cwd=ROOT, check=True)
+    _assert_executable(trl_sft_script)
+    _check_bash_syntax(trl_sft_script)
     rl_script = ROOT / "scripts/run_apple_silicon_model_rl_smoke.sh"
     assert rl_script.exists()
-    assert rl_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(rl_script)], cwd=ROOT, check=True)
+    _assert_executable(rl_script)
+    _check_bash_syntax(rl_script)
     sweep_script = ROOT / "scripts/run_apple_silicon_model_sweep.sh"
     assert sweep_script.exists()
-    assert sweep_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(sweep_script)], cwd=ROOT, check=True)
+    _assert_executable(sweep_script)
+    _check_bash_syntax(sweep_script)
     quant_script = ROOT / "scripts/run_apple_silicon_quant_smoke.sh"
     assert quant_script.exists()
-    assert quant_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(quant_script)], cwd=ROOT, check=True)
+    _assert_executable(quant_script)
+    _check_bash_syntax(quant_script)
     mlx_script = ROOT / "scripts/run_apple_silicon_mlx_smoke.sh"
     assert mlx_script.exists()
-    assert mlx_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_script)], cwd=ROOT, check=True)
+    _assert_executable(mlx_script)
+    _check_bash_syntax(mlx_script)
     mlx_model_script = ROOT / "scripts/run_apple_silicon_mlx_model_smoke.sh"
     assert mlx_model_script.exists()
-    assert mlx_model_script.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_model_script)], cwd=ROOT, check=True)
+    _assert_executable(mlx_model_script)
+    _check_bash_syntax(mlx_model_script)
     mlx_session_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_smoke.sh"
     assert mlx_session_wrapper.exists()
-    assert mlx_session_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_session_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(mlx_session_wrapper)
+    _check_bash_syntax(mlx_session_wrapper)
     mlx_sweep_wrapper = ROOT / "scripts/run_apple_silicon_mlx_generation_sweep.sh"
     assert mlx_sweep_wrapper.exists()
-    assert mlx_sweep_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(mlx_sweep_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(mlx_sweep_wrapper)
+    _check_bash_syntax(mlx_sweep_wrapper)
     qwen_acceptance_wrapper = ROOT / "scripts/run_qwen35_apple_acceptance.sh"
     assert qwen_acceptance_wrapper.exists()
-    assert qwen_acceptance_wrapper.stat().st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(qwen_acceptance_wrapper)], cwd=ROOT, check=True)
+    _assert_executable(qwen_acceptance_wrapper)
+    _check_bash_syntax(qwen_acceptance_wrapper)
     qwen_acceptance_text = qwen_acceptance_wrapper.read_text(encoding="utf-8")
     assert "bench/run_qwen35_apple_baseline.py" in qwen_acceptance_text
     assert "bench/compare_qwen35_apple_baseline.py" in qwen_acceptance_text
@@ -387,32 +405,32 @@ def test_apple_doc_links_entry_points() -> None:
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
-    assert mlx_prefill_eval_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_prefill_eval_bench)
     mlx_dplr_prefill_bench = ROOT / "scripts/mlx_dplr_prefill_bench.py"
     assert mlx_dplr_prefill_bench.exists()
-    assert mlx_dplr_prefill_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_dplr_prefill_bench)
     mlx_dplr_model_bench = ROOT / "scripts/mlx_dplr_model_prefill_bench.py"
     assert mlx_dplr_model_bench.exists()
-    assert mlx_dplr_model_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_dplr_model_bench)
     mlx_decode_compile_bench = ROOT / "scripts/mlx_decode_compile_bench.py"
     assert mlx_decode_compile_bench.exists()
-    assert mlx_decode_compile_bench.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_decode_compile_bench)
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
-    assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(convert_mlx_script)
     mlx_generate_script = ROOT / "scripts/mlx_generate.py"
     assert mlx_generate_script.exists()
-    assert mlx_generate_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_generate_script)
     mlx_generate_text = mlx_generate_script.read_text(encoding="utf-8")
     assert "--prepare-compiled-decode" in mlx_generate_text
     assert "--decode-norm-backend" in mlx_generate_text
     assert "load_mlx_generation_session" in mlx_generate_text
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
-    assert mlx_session_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_session_script)
     mlx_sweep_script = ROOT / "scripts/mlx_generation_sweep.py"
     assert mlx_sweep_script.exists()
-    assert mlx_sweep_script.stat().st_mode & stat.S_IXUSR
+    _assert_executable(mlx_sweep_script)
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "rwkv7-g1d-0.4b-hf" in text

@@ -262,7 +262,7 @@ class NativeGraphRunner:
                     else "extension module unavailable"
                 )
                 raise RuntimeError(
-                    "Ada W/A/G/V extension was required before native CUDA "
+                    "W/A/G/V extension was required before native CUDA "
                     f"graph capture, but it could not be built; fallback is forbidden: {detail}"
                 )
             self.ada_wagv_lora_extension_available = True
