@@ -10,6 +10,8 @@
 - [Current results index](RESULTS_INDEX.md)
 - [Latest Qwen3.5 P/D table](QWEN35_LATEST_P_D_TOKPS.md)
 - [Latest Qwen3.5 P/D table (English)](QWEN35_LATEST_P_D_TOKPS_EN.md)
+- [Qwen3.5 GPU reproduction tutorial](QWEN35_SPEED_REPRODUCTION_ZH.md)
+- [Qwen3.5 GPU reproduction tutorial (English)](QWEN35_SPEED_REPRODUCTION.md)
 
 ## Use and integration
 

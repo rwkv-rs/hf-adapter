@@ -1,8 +1,9 @@
 # Latest Qwen3.5 Alignment: All-GPU Prefill / Decode tok/s
 
-[中文版本](QWEN35_LATEST_P_D_TOKPS.md)
+[中文版本](QWEN35_LATEST_P_D_TOKPS.md) ·
+[Standalone GPU reproduction guide](QWEN35_SPEED_REPRODUCTION.md)
 
-Updated: **2026-08-16**.
+Updated: **2026-08-17**.
 
 Order: model size → GPU → B1/B8. `P / D` is the median Prefill / Decode tok/s
 across six benchmark cells; B8 is aggregate throughput. Values `>=100` are
@@ -55,6 +56,10 @@ passes 48/48; adjusted minimum/median/maximum is
 tiers because of its 16 GiB capacity.
 
 ## Reproduction
+
+For a first run, use the [standalone GPU reproduction guide](QWEN35_SPEED_REPRODUCTION.md).
+It includes environment setup, model conversion, complete RTX 4090 B8 six-cell
+commands, result aggregation, and backend verification.
 
 | GPU | Formal runner and validator |
 |---|---|

@@ -1,8 +1,9 @@
 # 最新 Qwen3.5 对齐：全卡 Prefill / Decode tok/s
 
-[English version](QWEN35_LATEST_P_D_TOKPS_EN.md)
+[English version](QWEN35_LATEST_P_D_TOKPS_EN.md) ·
+[从零 GPU 复现教程](QWEN35_SPEED_REPRODUCTION_ZH.md)
 
-更新日期：**2026-08-16**。
+更新日期：**2026-08-17**。
 
 排序：模型尺寸 → 显卡 → B1/B8。`P / D` 为六个测试单元的 Prefill / Decode
 中位 tok/s；B8 为聚合吞吐。`>=100` 取整数，`<100` 保留一位小数。
@@ -53,6 +54,9 @@
 RTX 4080 受 16 GiB 容量限制，覆盖前三个模型参数档。
 
 ## 复现方法
+
+首次复现请直接使用[从零 GPU 复现教程](QWEN35_SPEED_REPRODUCTION_ZH.md)：
+包含环境安装、模型转换、RTX 4090 B8 六格完整命令、结果汇总和后端验收。
 
 | 显卡 | 正式运行与校验 |
 |---|---|
