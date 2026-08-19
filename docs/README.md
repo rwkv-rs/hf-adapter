@@ -2,6 +2,7 @@
 
 ## Start here
 
+- [Published RWKV7-G1 models](PUBLISHED_MODELS.md) / [中文](PUBLISHED_MODELS_ZH.md)
 - [Project summary](PROJECT_SUMMARY.md)
 - [Complete adapter guide](COMPLETE_ADAPTER_GUIDE.md)
 - [Acceptance contract](ACCEPTANCE.md)

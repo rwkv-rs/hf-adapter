@@ -1,6 +1,6 @@
 # RWKV-7 Hugging Face adapter status
 
-Last audited: **2026-08-17**.
+Last audited: **2026-08-19**.
 
 ## Release status
 
@@ -13,9 +13,19 @@ Last audited: **2026-08-17**.
 | PEFT, Trainer and TRL workflows | **PASS** |
 | Dense HF inference PP/TP boundary | **PASS for declared scope** |
 | Native W8/W4 | **PASS for recorded exact-card lines** |
+| Public FP16 model family (0.1B through 13.3B) | **PUBLISHED AND VERIFIED** |
 
 Completion is reported by named scope; there is no official repository-wide
 completion percentage.
+
+## Public model distribution
+
+The six ready-to-load model repositories are grouped in the
+[`RWKV7-G1 Transformers` Collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1).
+They use `rwkv7-hf==0.7.0`, FP16 Safetensors, pinned source revisions, and
+repository-local conversion manifests. The complete matrix, memory guidance,
+direct loading example, and public verification command are maintained in
+[`docs/PUBLISHED_MODELS.md`](docs/PUBLISHED_MODELS.md).
 
 ## Current performance evidence
 
