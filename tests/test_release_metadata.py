@@ -11,20 +11,20 @@ except ModuleNotFoundError:  # Python 3.10 compatibility lane.
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v070_distribution_metadata_is_consistent() -> None:
+def test_v071_distribution_metadata_is_consistent() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
         "project"
     ]
     assert project["name"] == "rwkv7-hf"
-    assert project["version"] == "0.7.0"
+    assert project["version"] == "0.7.1"
     assert project["scripts"]["rwkv7-hf-doctor"] == "rwkv7_hf.doctor:cli"
 
     citation = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
-    assert "version: 0.7.0" in citation
-    assert "date-released: 2026-08-12" in citation
+    assert "version: 0.7.1" in citation
+    assert "date-released: 2026-08-19" in citation
 
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [v0.7.0]" in changelog
+    assert "## [v0.7.1]" in changelog
     assert "Published the first PyPI distribution as `rwkv7-hf`" in changelog
 
 

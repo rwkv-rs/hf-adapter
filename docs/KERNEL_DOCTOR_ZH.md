@@ -2,7 +2,11 @@
 
 英文版：[`KERNEL_DOCTOR.md`](KERNEL_DOCTOR.md)
 
-安装当前源码后、加载大模型前，先运行只读检查：
+安装补丁版后、加载大模型前，先运行只读检查：
+
+```bash
+python -m pip install "rwkv7-hf==0.7.1"
+```
 
 ```bash
 python -m rwkv7_hf.doctor

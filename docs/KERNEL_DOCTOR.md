@@ -2,8 +2,12 @@
 
 Chinese version: [`KERNEL_DOCTOR_ZH.md`](KERNEL_DOCTOR_ZH.md)
 
-Run the read-only doctor after installing the current source tree and before a
-large checkpoint load:
+Install the patch release, then run the read-only doctor before a large
+checkpoint load:
+
+```bash
+python -m pip install "rwkv7-hf==0.7.1"
+```
 
 ```bash
 python -m rwkv7_hf.doctor
