@@ -6,6 +6,14 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ## Unreleased
 
+### Runtime diagnostics
+
+- Added `python -m rwkv7_hf.doctor` and the `rwkv7-hf-doctor` console command
+  to report installed runtime versions, visible accelerator profiles, CUDA and
+  Triton build prerequisites, cache paths, and exact-card kernel-policy
+  candidates without compiling kernels or downloading model weights.
+- Added JSON output for reproducible hardware and policy issue reports.
+
 ### Distribution and published models
 
 - Published the complete RWKV7-G1 FP16 Transformers family (0.1B, 0.4B,

@@ -12,9 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_v070_distribution_metadata_is_consistent() -> None:
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
     assert project["name"] == "rwkv7-hf"
     assert project["version"] == "0.7.0"
+    assert project["scripts"]["rwkv7-hf-doctor"] == "rwkv7_hf.doctor:cli"
 
     citation = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
     assert "version: 0.7.0" in citation

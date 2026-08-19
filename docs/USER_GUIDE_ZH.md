@@ -107,9 +107,12 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 python -m pip install -U pip
 python -m pip install -e .
 python examples/check_environment.py
+python -m rwkv7_hf.doctor
 ```
 
-最后一条命令必须显示 `RESULT: READY`。如果出现 `FAIL`，先修复第一项再继续。
+两个检查命令都必须显示 `RESULT: READY`。第二条会显示当前加速设备、编译工具链和
+候选算子策略，详细解释见[算子检查指南](KERNEL_DOCTOR_ZH.md)。如果出现 `FAIL`，
+先修复第一项再继续。
 
 只有 Linux + NVIDIA 用户需要安装原生 CUDA 优化依赖：
 
