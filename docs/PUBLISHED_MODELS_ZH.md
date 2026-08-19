@@ -4,8 +4,8 @@
 
 全部可直接加载的 FP16 模型已经汇总到
 [`RWKV7-G1 Transformers` Collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1)。
-每个尺寸都是独立的 Transformers 模型仓库，并固定使用
-`rwkv7-hf==0.7.0`。
+每个尺寸都是独立的 Transformers 模型仓库。不可变的 `v0.7.0` manifest 记录发布
+时所用运行库；这些模型仓库与当前 `rwkv7-hf==0.8.0` 运行库兼容。
 
 ## 模型矩阵
 
@@ -25,7 +25,7 @@
 ## 直接安装和加载
 
 ```bash
-python -m pip install "rwkv7-hf==0.7.0"
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
 ```python
@@ -50,7 +50,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 ```
 
 模型仓库只包含权重、配置、Tokenizer 以及三个很小的 remote-code 入口；维护中的
-模型实现和优化算子来自固定版本的 PyPI 包，不在六个模型仓库里重复复制。
+模型实现和优化算子来自兼容的 PyPI 包，不在六个模型仓库里重复复制。
 
 ## 一条命令验收公开发布
 

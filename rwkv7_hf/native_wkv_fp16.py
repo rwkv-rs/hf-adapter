@@ -5,6 +5,7 @@ The production Native/HF cache keeps FP32 recurrent state by default. This
 module owns the lower-precision compatibility lane used only when callers
 explicitly request FP16 state and the exact CUDA shape is supported.
 """
+
 from __future__ import annotations
 
 import os
@@ -15,6 +16,31 @@ try:
     from .extension_build import cuda_extension_build_environment
 except ImportError:  # pragma: no cover - direct remote-file execution
     from extension_build import cuda_extension_build_environment
+
+try:
+    from .kernel_package import (
+        jit_extensions_allowed,
+        load_prebuilt_extension,
+        record_jit_extension,
+    )
+except ImportError:  # pragma: no cover - direct remote-file execution
+    try:
+        from kernel_package import (
+            jit_extensions_allowed,
+            load_prebuilt_extension,
+            record_jit_extension,
+        )
+    except ImportError:  # pragma: no cover - old converted-model closure
+
+        def jit_extensions_allowed():
+            return True
+
+        def load_prebuilt_extension(*_args, **_kwargs):
+            return None
+
+        def record_jit_extension(*_args, **_kwargs):
+            return None
+
 
 try:  # pragma: no cover - optional in lightweight environments
     import torch
@@ -593,6 +619,11 @@ def _load_extension() -> Any | None:
             return _EXTENSION
         if _EXTENSION_ERROR is not None:
             return None
+        _EXTENSION = load_prebuilt_extension("native_wkv_fp16", torch_module=torch)
+        if _EXTENSION is not None:
+            return _EXTENSION
+        if not jit_extensions_allowed():
+            return None
         try:
             capability = torch.cuda.get_device_capability()
             with cuda_extension_build_environment(
@@ -601,9 +632,7 @@ def _load_extension() -> Any | None:
                 from torch.utils.cpp_extension import load_inline
 
                 extra_ldflags = (
-                    [f"-Wl,-rpath,{runtime_lib}"]
-                    if runtime_lib is not None
-                    else []
+                    [f"-Wl,-rpath,{runtime_lib}"] if runtime_lib is not None else []
                 )
                 _EXTENSION = load_inline(
                     name="rwkv7_native_wkv_fp16_v7",
@@ -626,8 +655,12 @@ def _load_extension() -> Any | None:
                     ).lower()
                     in {"1", "true", "yes", "on"},
                 )
+            record_jit_extension("native_wkv_fp16", selected=True)
         except Exception as exc:  # pragma: no cover - host toolchain dependent
             _EXTENSION_ERROR = f"{type(exc).__name__}: {exc}"
+            record_jit_extension(
+                "native_wkv_fp16", selected=False, error=_EXTENSION_ERROR
+            )
             return None
     return _EXTENSION
 
@@ -669,7 +702,9 @@ def native_fp16_recurrent_output_prepare_raw(
         input_dtype=r.dtype,
         head_dim=int(state.shape[-1]),
     ):
-        raise ValueError("native FP16 recurrence received an unsupported dtype or shape")
+        raise ValueError(
+            "native FP16 recurrence received an unsupported dtype or shape"
+        )
     extension = _load_extension()
     if extension is None:
         raise RuntimeError(
@@ -696,9 +731,7 @@ def native_fp16_recurrent_output_prepare_raw(
     ):
         raise ValueError("native FP16 recurrence requires contiguous CUDA fp16 tensors")
     if not (
-        elapsed.is_cuda
-        and elapsed.dtype == torch.int32
-        and elapsed.is_contiguous()
+        elapsed.is_cuda and elapsed.dtype == torch.int32 and elapsed.is_contiguous()
     ):
         raise ValueError("elapsed must be a contiguous CUDA int32 tensor")
     return extension.recurrent_output_raw(

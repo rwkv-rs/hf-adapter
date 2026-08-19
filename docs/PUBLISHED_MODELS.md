@@ -4,8 +4,9 @@ Chinese version: [`PUBLISHED_MODELS_ZH.md`](PUBLISHED_MODELS_ZH.md)
 
 The ready-to-load FP16 family is grouped in the
 [`RWKV7-G1 Transformers` collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1).
-Each model is an independent Transformers repository pinned to
-`rwkv7-hf==0.7.0`.
+Each model is an independent Transformers repository. Its immutable `v0.7.0`
+manifest records the publishing runtime; the repositories are compatible with
+the current `rwkv7-hf==0.8.0` runtime.
 
 ## Model matrix
 
@@ -26,7 +27,7 @@ a new environment.
 ## Install and load directly
 
 ```bash
-python -m pip install "rwkv7-hf==0.7.0"
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
 ```python
@@ -52,8 +53,8 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 
 The model repositories contain weights, config, tokenizer assets, and three
 small remote-code entrypoints. The maintained implementation and optimized
-operators come from the pinned PyPI package instead of being copied into every
-model repository.
+operators come from the compatible PyPI package instead of being copied into
+every model repository.
 
 ## One-command release verification
 

@@ -8,7 +8,7 @@ W8/W4 量化、投机解码和多卡运行，并按设备选择原生或融合�
 
 ## 项目状态
 
-已发布的 **RWKV-7 HF `v0.7.0` 正式版交付范围已经完成**。它保留 v0.6
+已发布的 **RWKV-7 HF `v0.8.0` 正式版交付范围已经完成**。它保留 v0.6
 适配器里程碑的转换、Transformers 标准接口、PEFT/TRL、状态缓存、
 Native/no-FLA、W8/W4、PP/TP 和 ZeRO，并加入 Ascend、Biren、MetaX、MUSA
 边界以及最新的 NVIDIA 精确显卡性能路线。
@@ -32,7 +32,7 @@ Python、PyTorch、Transformers 和可用设备。
 直接从 PyPI 安装正式版：
 
 ```bash
-python -m pip install "rwkv7-hf==0.7.0"
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
 然后直接加载公开 Collection 里的最小模型，不需要先下载 `.pth` 或执行转换：

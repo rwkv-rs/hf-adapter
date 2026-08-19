@@ -55,6 +55,12 @@ Install `.[fla-reference]` only for a benchmark that explicitly verifies the
 reference class and effective operators. Qwen full-FLA comparisons are also
 reference workloads and do not change the RWKV user runtime.
 
+Optional binary CUDA extensions are distributed independently as exact-runtime
+`rwkv7-kernels` wheels. They are discovered through a versioned manifest and
+loaded before the historical JIT path; an incompatible wheel is never imported.
+The base package and every conservative fallback remain usable without this
+binary companion. See [prebuilt kernel wheels](KERNEL_WHEELS.md).
+
 `RWKV7_NATIVE_MODEL` is retained only for old converted directories and
 historical scripts. New conversions and refreshed model directories must work
 without setting it. Use `scripts/sync_hf_adapter_code.py MODEL` to migrate old
@@ -97,6 +103,7 @@ supported release. Silent removal is forbidden.
 | Old module paths kept as import shims after source splits | Compatibility | Import the documented new owner; converted `auto_map` remains stable | First release after replacement | Two minor releases after replacement |
 | `RWKV7_NATIVE_MODEL` selector | Compatibility; deprecated in 0.6 | Refresh the model with `scripts/sync_hf_adapter_code.py MODEL`; native is already the default | 0.6 | 0.8 |
 | `RWKV7_NATIVE_MODEL_BACKEND` and `RWKV7_NATIVE_MODEL_JIT` | Experimental | Use default auto routing unless collecting an explicit A/B artifact | Not scheduled | Not scheduled |
+| `RWKV7_KERNELS_MODE` and the `rwkv7-kernel-package-v1` manifest | Experimental in 0.8 | Default `auto`; use `prebuilt` only for strict acceptance | Not scheduled | Not scheduled |
 | Historical FLA-backed RWKV wrapper | Reference only | Canonical Native/no-FLA Auto* model | Not scheduled | Not scheduled |
 
 Adding a new experimental flag does not reserve it forever. Before deleting or

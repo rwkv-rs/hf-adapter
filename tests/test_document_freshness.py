@@ -25,8 +25,9 @@ def main() -> int:
         "docs/RESULTS_INDEX.md",
     )
     expected_audit_dates = {relative: "2026-08-17" for relative in current_docs}
-    for relative in ("HF_STATUS.md", "docs/RESULTS_INDEX.md"):
-        expected_audit_dates[relative] = "2026-08-19"
+    expected_audit_dates["HF_STATUS.md"] = "2026-08-20"
+    expected_audit_dates["HF_TODO.md"] = "2026-08-20"
+    expected_audit_dates["docs/RESULTS_INDEX.md"] = "2026-08-19"
     for relative, expected_date in expected_audit_dates.items():
         assert expected_date in read(relative), relative
 
@@ -37,7 +38,7 @@ def main() -> int:
         )
 
     status = read("HF_STATUS.md")
-    assert "HF v0.7 adapter deliverable | **COMPLETE**" in status
+    assert "HF v0.8 adapter deliverable | **COMPLETE**" in status
     assert "FLA wrapper/reference | **COMPATIBILITY AND ORACLE ONLY**" in status
 
     todo = " ".join(read("HF_TODO.md").split()).lower()
@@ -60,10 +61,10 @@ def main() -> int:
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme
-    assert 'python -m pip install "rwkv7-hf==0.7.0"' in readme
+    assert 'python -m pip install "rwkv7-hf==0.8.0"' in readme
 
     readme_zh = read("README_ZH.md")
-    assert 'python -m pip install "rwkv7-hf==0.7.0"' in readme_zh
+    assert 'python -m pip install "rwkv7-hf==0.8.0"' in readme_zh
 
     print("DOCUMENT FRESHNESS PASS")
     return 0

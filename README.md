@@ -1,7 +1,6 @@
 # RWKV-7 HF Adapter
 
 [**English**](README.md) | [中文](README_ZH.md)
-
 Native Hugging Face / Transformers support for official RWKV-7 checkpoints.
 The repository provides conversion, standard HF loading and generation,
 recurrent-state cache helpers, PEFT/Trainer/TRL/DeepSpeed compatibility,
@@ -20,7 +19,7 @@ resolver result inside those major-version bounds.
 Install the published package from PyPI:
 
 ```bash
-python -m pip install "rwkv7-hf==0.7.0"
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
 Load `wangyue114514/rwkv7-g1d-0.1b-hf` first. The copy-paste example, six-size
@@ -56,6 +55,7 @@ User guides:
 - [Windows and CPU guide](docs/WINDOWS_CPU.md)
 - [Complete feature guide](docs/COMPLETE_ADAPTER_GUIDE.md)
 - [AI-assisted setup and troubleshooting](docs/AI_ASSISTED_SETUP.md)
+- [Prebuilt CUDA kernel wheels and one-command smoke](docs/KERNEL_WHEELS.md)
 - [Advanced training, speculative decoding, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [Apple MPS, MLX, and CoreML](docs/APPLE_USAGE.md)
 - RWKV-7 vs Qwen3.5: [latest Prefill/Decode table](docs/QWEN35_LATEST_P_D_TOKPS_EN.md) and [standalone GPU reproduction tutorial](docs/QWEN35_SPEED_REPRODUCTION.md) ([中文](docs/QWEN35_SPEED_REPRODUCTION_ZH.md))
@@ -119,7 +119,7 @@ public compatibility contract.
 
 ## Current status
 
-The published **RWKV-7 HF `v0.7.0` release is complete** for its declared,
+The published **RWKV-7 HF `v0.8.0` release is complete** for its declared,
 evidence-backed scope. It retains the accepted v0.6 adapter milestone and adds
 the integrated Ascend, Biren, MetaX and MUSA boundaries plus the latest
 exact-card NVIDIA performance routes.
@@ -166,7 +166,7 @@ For exact numbers and caveats use [`BENCHMARK.md`](BENCHMARK.md), not this
 landing page.
 
 Completion is reported by **named scope**, not as a single repository-wide
-percentage. `v0.7.0` is complete; exact hardware and benchmark claims remain
+percentage. `v0.8.0` is complete; exact hardware and benchmark claims remain
 limited to their promoted profiles.
 
 Canonical project state:

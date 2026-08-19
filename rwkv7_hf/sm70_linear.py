@@ -11,6 +11,7 @@ The extension is compiled lazily, only on exact sm_70 devices and only when a
 caller requests the route.  Every unsupported or failed-build case falls back
 to ``torch.nn.functional.linear``.
 """
+
 from __future__ import annotations
 
 import os
@@ -21,6 +22,31 @@ try:
     from .extension_build import cuda_extension_build_environment
 except ImportError:  # pragma: no cover - direct remote-file execution
     from extension_build import cuda_extension_build_environment
+
+try:
+    from .kernel_package import (
+        jit_extensions_allowed,
+        load_prebuilt_extension,
+        record_jit_extension,
+    )
+except ImportError:  # pragma: no cover - direct remote-file execution
+    try:
+        from kernel_package import (
+            jit_extensions_allowed,
+            load_prebuilt_extension,
+            record_jit_extension,
+        )
+    except ImportError:  # pragma: no cover - old converted-model closure
+
+        def jit_extensions_allowed():
+            return True
+
+        def load_prebuilt_extension(*_args, **_kwargs):
+            return None
+
+        def record_jit_extension(*_args, **_kwargs):
+            return None
+
 
 try:  # pragma: no cover - optional in lightweight environments
     import torch
@@ -313,7 +339,11 @@ def _is_sm70(device: Any = None) -> bool:
         return False
     try:
         resolved = torch.device("cuda" if device is None else device)
-        index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
+        index = (
+            torch.cuda.current_device()
+            if resolved.index is None
+            else int(resolved.index)
+        )
         return tuple(int(v) for v in torch.cuda.get_device_capability(index)) == (7, 0)
     except Exception:
         return False
@@ -330,14 +360,19 @@ def _load_extension() -> Any | None:
             return _EXTENSION
         if _EXTENSION_ERROR is not None:
             return None
+        _EXTENSION = load_prebuilt_extension(
+            "sm70_linear", torch_module=torch, device="cuda"
+        )
+        if _EXTENSION is not None:
+            return _EXTENSION
+        if not jit_extensions_allowed():
+            return None
         try:
             with cuda_extension_build_environment(arch_list="7.0") as runtime_lib:
                 from torch.utils.cpp_extension import load_inline
 
                 extra_ldflags = (
-                    [f"-Wl,-rpath,{runtime_lib}"]
-                    if runtime_lib is not None
-                    else []
+                    [f"-Wl,-rpath,{runtime_lib}"] if runtime_lib is not None else []
                 )
                 _EXTENSION = load_inline(
                     name="rwkv7_sm70_linear_v3",
@@ -348,10 +383,13 @@ def _load_extension() -> Any | None:
                     extra_cuda_cflags=["-O3", "--use_fast_math"],
                     extra_ldflags=extra_ldflags,
                     with_cuda=True,
-                    verbose=os.environ.get("RWKV7_SM70_LINEAR_BUILD_VERBOSE", "0") in {"1", "true", "yes", "on"},
+                    verbose=os.environ.get("RWKV7_SM70_LINEAR_BUILD_VERBOSE", "0")
+                    in {"1", "true", "yes", "on"},
                 )
+            record_jit_extension("sm70_linear", selected=True)
         except Exception as exc:  # pragma: no cover - depends on host toolchain
             _EXTENSION_ERROR = f"{type(exc).__name__}: {exc}"
+            record_jit_extension("sm70_linear", selected=False, error=_EXTENSION_ERROR)
             return None
     return _EXTENSION
 
@@ -465,13 +503,18 @@ def sm70_rkv(
     if torch is None or F is None:
         raise RuntimeError("sm70_rkv requires torch")
     scalar = xr.dim() == 1
-    activations = tuple(value.reshape(1, -1) if scalar else value for value in (xr, xk, xv))
+    activations = tuple(
+        value.reshape(1, -1) if scalar else value for value in (xr, xk, xv)
+    )
     rows, hidden = int(activations[0].shape[0]), int(activations[0].shape[1])
     weights = (wr, wk, wv)
     valid = bool(
         not force_fallback
         and sm70_rkv_should_use(rows, hidden)
-        and all(value.is_cuda and value.dtype == torch.float16 and value.is_contiguous() for value in activations)
+        and all(
+            value.is_cuda and value.dtype == torch.float16 and value.is_contiguous()
+            for value in activations
+        )
         and all(
             value.is_cuda
             and value.dtype == torch.float16

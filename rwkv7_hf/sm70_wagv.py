@@ -16,6 +16,31 @@ except ImportError:  # pragma: no cover - direct remote-file execution
     from extension_build import cuda_extension_build_environment
 
 try:
+    from .kernel_package import (
+        jit_extensions_allowed,
+        load_prebuilt_extension,
+        record_jit_extension,
+    )
+except ImportError:  # pragma: no cover - direct remote-file execution
+    try:
+        from kernel_package import (
+            jit_extensions_allowed,
+            load_prebuilt_extension,
+            record_jit_extension,
+        )
+    except ImportError:  # pragma: no cover - old converted-model closure
+
+        def jit_extensions_allowed():
+            return True
+
+        def load_prebuilt_extension(*_args, **_kwargs):
+            return None
+
+        def record_jit_extension(*_args, **_kwargs):
+            return None
+
+
+try:
     import torch
     import torch.nn.functional as F
 except Exception:
@@ -519,6 +544,13 @@ def _load_extension():
     with _LOCK:
         if _EXTENSION is not None:
             return _EXTENSION
+        _EXTENSION = load_prebuilt_extension(
+            "sm70_wagv", torch_module=torch, device="cuda"
+        )
+        if _EXTENSION is not None:
+            return _EXTENSION
+        if not jit_extensions_allowed():
+            return None
         try:
             with cuda_extension_build_environment(arch_list="7.0") as rt:
                 from torch.utils.cpp_extension import load_inline
@@ -539,8 +571,10 @@ def _load_extension():
                     with_cuda=True,
                     verbose=False,
                 )
+            record_jit_extension("sm70_wagv", selected=True)
         except Exception as e:
             _EXTENSION_ERROR = f"{type(e).__name__}: {e}"
+            record_jit_extension("sm70_wagv", selected=False, error=_EXTENSION_ERROR)
     return _EXTENSION
 
 

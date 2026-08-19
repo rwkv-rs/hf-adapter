@@ -8,6 +8,7 @@ the measured sm7x profiles; exact-card name gating remains centralized in
 ``kernel_policy`` rather than capability-wide. The extension is lazy,
 graph-safe, and has CPU/unsupported-device fallbacks.
 """
+
 from __future__ import annotations
 import os
 import threading
@@ -16,6 +17,31 @@ try:
     from .extension_build import cuda_extension_build_environment
 except ImportError:  # pragma: no cover - direct remote-file execution
     from extension_build import cuda_extension_build_environment
+
+try:
+    from .kernel_package import (
+        jit_extensions_allowed,
+        load_prebuilt_extension,
+        record_jit_extension,
+    )
+except ImportError:  # pragma: no cover - direct remote-file execution
+    try:
+        from kernel_package import (
+            jit_extensions_allowed,
+            load_prebuilt_extension,
+            record_jit_extension,
+        )
+    except ImportError:  # pragma: no cover - old converted-model closure
+
+        def jit_extensions_allowed():
+            return True
+
+        def load_prebuilt_extension(*_args, **_kwargs):
+            return None
+
+        def record_jit_extension(*_args, **_kwargs):
+            return None
+
 
 try:
     import torch
@@ -27,7 +53,9 @@ except Exception:
 try:
     from .kernel_policy import is_tesla_t4_name
 except Exception:  # pragma: no cover - standalone remote-code fallback
-    is_tesla_t4_name = lambda _name: False  # type: ignore[assignment]
+
+    def is_tesla_t4_name(_name):
+        return False
 
 
 _CPP = r"""
@@ -278,10 +306,7 @@ def _sm7x_quant_device_supported(major: int, minor: int, name: str) -> bool:
 
     return bool(
         (int(major), int(minor)) == (7, 0)
-        or (
-            (int(major), int(minor)) == (7, 5)
-            and is_tesla_t4_name(name)
-        )
+        or ((int(major), int(minor)) == (7, 5) and is_tesla_t4_name(name))
     )
 
 
@@ -391,8 +416,7 @@ def sm70_w4_group_bn_tn_config(
     """Resolve the independent exact-sm70 groupwise output tile."""
 
     explicit = (
-        "RWKV7_SM70_W4_GROUP_BN" in os.environ
-        or "RWKV7_SM70_W4_GROUP_TN" in os.environ
+        "RWKV7_SM70_W4_GROUP_BN" in os.environ or "RWKV7_SM70_W4_GROUP_TN" in os.environ
     )
     if explicit:
         bn = int(os.environ.get("RWKV7_SM70_W4_GROUP_BN", "8"))
@@ -420,6 +444,11 @@ def _load():
     if _ERR is not None or not is_sm7x_quant_device():
         return None
     with _LOCK:
+        _EXT = load_prebuilt_extension("sm70_quant", torch_module=torch, device="cuda")
+        if _EXT is not None:
+            return _EXT
+        if not jit_extensions_allowed():
+            return None
         try:
             # Build a portable sm7x fatbin by default.  An explicit deployment
             # value still wins, which keeps packaged/offline builds in control.
@@ -442,8 +471,10 @@ def _load():
                     with_cuda=True,
                     verbose=False,
                 )
+            record_jit_extension("sm70_quant", selected=True)
         except Exception as e:
             _ERR = f"{type(e).__name__}: {e}"
+            record_jit_extension("sm70_quant", selected=False, error=_ERR)
     return _EXT
 
 
@@ -524,14 +555,11 @@ def w4_linear(x, q, s, out_features, in_features, out=None):
         return result
     if (
         out is None
-        and sm70_w4_prefill_backend(int(x2.shape[0]), x2.device)
-        == "dequant_blas"
+        and sm70_w4_prefill_backend(int(x2.shape[0]), x2.device) == "dequant_blas"
     ):
         y = F.linear(x2, e.w4_dequant(q, s, int(in_features), 0))
         return y.reshape(*x.shape[:-1], out_features)
-    bn, tn = sm70_w4_bn_tn_config(
-        int(x2.shape[0]), int(in_features), int(out_features)
-    )
+    bn, tn = sm70_w4_bn_tn_config(int(x2.shape[0]), int(in_features), int(out_features))
     y = (
         e.w4(x2.contiguous(), q, s, int(out_features), bn, tn)
         if out is None
@@ -582,8 +610,7 @@ def w4_groupwise_linear(
         return result
     if (
         out is None
-        and sm70_w4_prefill_backend(int(x2.shape[0]), x2.device)
-        == "dequant_blas"
+        and sm70_w4_prefill_backend(int(x2.shape[0]), x2.device) == "dequant_blas"
     ):
         y = F.linear(
             x2,
@@ -629,9 +656,7 @@ def w4_linear_relu2(x, q, s, out_features, in_features):
     e = _load() if x2.is_cuda and is_sm7x_quant_device(x2.device) else None
     if e is None:
         return torch.relu(w4_linear(x, q, s, out_features, in_features)) ** 2
-    bn, tn = sm70_w4_bn_tn_config(
-        int(x2.shape[0]), int(in_features), int(out_features)
-    )
+    bn, tn = sm70_w4_bn_tn_config(int(x2.shape[0]), int(in_features), int(out_features))
     y = e.w4_relu2(x2.contiguous(), q, s, int(out_features), bn, tn)
     return y.reshape(out_features) if scalar else y.reshape(*x.shape[:-1], out_features)
 
@@ -645,10 +670,6 @@ def w4_linear_add(x, q, s, residual, out_features, in_features):
     e = _load() if x2.is_cuda and is_sm7x_quant_device(x2.device) else None
     if e is None:
         return w4_linear(x, q, s, out_features, in_features) + residual
-    bn, tn = sm70_w4_bn_tn_config(
-        int(x2.shape[0]), int(in_features), int(out_features)
-    )
-    y = e.w4_add(
-        x2.contiguous(), q, s, residual2, int(out_features), bn, tn
-    )
+    bn, tn = sm70_w4_bn_tn_config(int(x2.shape[0]), int(in_features), int(out_features))
+    y = e.w4_add(x2.contiguous(), q, s, residual2, int(out_features), bn, tn)
     return y.reshape(out_features) if scalar else y.reshape(*residual.shape)

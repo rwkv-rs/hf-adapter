@@ -6,6 +6,33 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ## Unreleased
 
+## [v0.8.0](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.8.0) - 2026-08-20
+
+### Prebuilt CUDA kernel distribution
+
+- Added the versioned `rwkv7-kernel-package-v1` manifest and exact runtime
+  compatibility checks for Python ABI, platform, PyTorch, CUDA, C++ ABI, GPU
+  architecture, and adapter version.
+- Added the stable optional `rwkv7-kernels` distribution, reproducible
+  exact-architecture wheel builder, wheel inspector, SHA256 release index, and
+  two initial validated lanes: CPython 3.11 / CUDA 12.4 / Torch 2.5 / SM70 and
+  CPython 3.11 / CUDA 12.4 / Torch 2.6 / SM89.
+- Native CUDA operators now select a compatible prebuilt extension before JIT
+  compilation and preserve the portable fallback. `RWKV7_KERNELS_MODE`
+  provides explicit `auto`, `prebuilt`, `jit`, and `portable` policies.
+
+### User validation and diagnostics
+
+- Extended `rwkv7-hf-doctor` with per-device prebuilt-package compatibility,
+  selected build lanes, and strict prebuilt readiness.
+- Added `rwkv7-hf-kernels` for status, exact-build recommendation, release-index
+  inspection, and hash-pinned wheel installation.
+- Added `rwkv7-hf-smoke` for a one-command public-model load, prefill, greedy
+  decode, finite-logit check, timing, memory, and runtime-backend report.
+- Added exact-card release validation for V100/SM70 and RTX 4080/SM89 plus a
+  self-hosted GitHub Actions workflow for rebuilding and attaching verified
+  wheels to a release.
+
 ## [v0.7.1](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.7.1) - 2026-08-19
 
 ### Runtime diagnostics

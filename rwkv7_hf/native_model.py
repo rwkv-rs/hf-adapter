@@ -113,6 +113,7 @@ if False:  # pragma: no cover
     from .fused_prefill import fused_prefill_state_prep as _native_fused_prefill_dependency_sentinel
     from .fused_recurrent_update import fused_recurrent_update as _native_fused_recurrent_dependency_sentinel
     from .fused_time_mix import fused_attn_shift_mix as _native_fused_time_mix_dependency_sentinel
+    from .kernel_package import kernel_runtime_report as _native_kernel_package_dependency_sentinel
     from .kernel_policy import current_kernel_policy as _native_kernel_policy_dependency_sentinel
     from .native_quant_bnb8 import fused_bnb8_relu_square_quant as _native_bnb8_dependency_sentinel
     from .native_quant_mm4 import quantize_model_mm4 as _native_mm4_dependency_sentinel
