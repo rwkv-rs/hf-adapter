@@ -20,8 +20,11 @@ resolver result inside those major-version bounds.
 Install the published package from PyPI:
 
 ```bash
-python -m pip install -U rwkv7-hf
+python -m pip install "rwkv7-hf==0.7.0"
 ```
+
+Load `wangyue114514/rwkv7-g1d-0.1b-hf` first. The copy-paste example, six-size
+matrix, memory guidance, and verification gate are in [published models](docs/PUBLISHED_MODELS.md) and the [`RWKV7-G1 Transformers` collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1).
 
 Or install the current source tree for development:
 
@@ -45,12 +48,9 @@ python examples/generate.py \
   --max-new-tokens 64
 ```
 
-Start with a 0.1B or 0.4B checkpoint when validating a new installation.
-Converted model directories use `trust_remote_code=True`; load only repositories
-or local model directories you trust.
-
 User guides:
 
+- [Published models and direct Hub loading](docs/PUBLISHED_MODELS.md)
 - [English step-by-step guide](docs/USER_GUIDE.md)
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
 - [Windows and CPU guide](docs/WINDOWS_CPU.md)

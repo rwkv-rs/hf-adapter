@@ -21,11 +21,41 @@ Setup is complete only when the environment doctor reports `RESULT: READY`,
 the model-directory check passes, and `examples/generate.py` exits with code 0
 and prints newly generated text.
 
+## Published-model fast path
+
+Normal users no longer need to convert a `.pth` checkpoint first. Install the
+release and load the 0.1B public model directly:
+
+```bash
+python -m pip install "rwkv7-hf==0.7.0"
+```
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_id = "wangyue114514/rwkv7-g1d-0.1b-hf"
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    model_id, trust_remote_code=True, dtype="auto"
+).eval()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = model.to(device)
+inputs = tokenizer("User: Hello! Assistant:", return_tensors="pt")
+inputs = {name: value.to(device) for name, value in inputs.items()}
+with torch.inference_mode():
+    output = model.generate(**inputs, max_new_tokens=16)
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+```
+
+Use the [published model matrix](PUBLISHED_MODELS.md) to select another size.
+The conversion path below remains available for new or custom checkpoints.
+
 ## What you need
 
 - Python 3.10 or newer.
-- A converted RWKV-7 Hugging Face model directory, or an official `.pth`
-  checkpoint that you can convert.
+- A published RWKV-7 Hugging Face model ID, a converted local model directory,
+  or an official `.pth` checkpoint that you can convert.
 - Enough RAM or VRAM for the selected model. A dense fp16 checkpoint uses
   roughly 2 bytes per parameter before runtime buffers: approximately 0.8 GB
   for 0.4B, 3 GB for 1.5B, 5.8 GB for 2.9B, 14.4 GB for 7.2B, and 26.6 GB for
