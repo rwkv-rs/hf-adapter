@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 from scripts.convert_rwkv7_to_hf import convert, prepare_translated_weight
@@ -109,12 +109,14 @@ def test_real_width_split_checkpoint_conversion_and_hf_reload() -> None:
         root = Path(td)
         checkpoint = root / "width-split.pth"
         output = root / "hf"
+        vocab = root / "rwkv_vocab_v20230424.txt"
+        vocab.write_text("1 b'a' 1\n2 b' ' 1\n", encoding="utf-8")
         torch.save(official, checkpoint)
         convert(
             argparse.Namespace(
                 input=str(checkpoint),
                 output=str(output),
-                vocab_file=None,
+                vocab_file=str(vocab),
                 precision="fp32",
                 attn_mode="fused_recurrent",
                 fuse_norm=False,
@@ -143,7 +145,28 @@ def test_real_width_split_checkpoint_conversion_and_hf_reload() -> None:
 
         reloaded_dir = root / "reloaded"
         loaded.save_pretrained(reloaded_dir, safe_serialization=True)
+        tokenizer = AutoTokenizer.from_pretrained(output, trust_remote_code=True)
+        assert tokenizer("a a", add_special_tokens=False)["input_ids"] == [1, 2, 1]
+        tokenizer.save_pretrained(reloaded_dir)
+        assert sorted(path.name for path in reloaded_dir.glob("*.py")) == [
+            "configuration_rwkv7.py",
+            "modeling_rwkv7.py",
+            "tokenization_rwkv7.py",
+        ]
+        reloaded_config = AutoConfig.from_pretrained(
+            reloaded_dir, trust_remote_code=True
+        )
+        assert reloaded_config.rwkv7_hf_adapter_layout == "thin"
+        assert reloaded_config.rwkv7_hf_runtime_version == "0.8.0"
         reloaded = AutoModelForCausalLM.from_pretrained(reloaded_dir, trust_remote_code=True).eval()
+        reloaded_tokenizer = AutoTokenizer.from_pretrained(
+            reloaded_dir, trust_remote_code=True
+        )
+        assert reloaded_tokenizer("a a", add_special_tokens=False)["input_ids"] == [
+            1,
+            2,
+            1,
+        ]
         with torch.no_grad():
             reloaded_logits = reloaded(input_ids=input_ids, use_cache=True).logits
         assert torch.allclose(reloaded_logits, actual, atol=1e-6, rtol=1e-6)

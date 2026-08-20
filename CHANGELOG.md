@@ -21,7 +21,8 @@ model, dtype, batch and sequence shape named by their linked artifact.
 - Made package-backed `thin` Hugging Face entrypoints the default converter
   output, matching the published model repositories. The explicit
   `--adapter-layout bundled` mode retains self-contained runtime snapshots for
-  offline and archival workflows.
+  offline and archival workflows. Thin wrapper classes remain thin after model
+  and tokenizer `save_pretrained()` round trips.
 
 ## [v0.8.0](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.8.0) - 2026-08-20
 

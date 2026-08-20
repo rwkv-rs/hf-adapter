@@ -90,28 +90,49 @@ def thin_adapter_sources(runtime_version: str) -> dict[str, str]:
         "configuration_rwkv7.py": (
             header
             + "try:\n"
-            + "    from rwkv7_hf.native_model import NativeRWKV7Config\n"
+            + "    from rwkv7_hf.native_model import NativeRWKV7Config as _NativeRWKV7Config\n"
             + guard
-            + "RWKV7Config = NativeRWKV7Config\n\n"
+            + "class RWKV7Config(_NativeRWKV7Config):\n"
+            + '    """Thin package-backed config preserved by ``save_pretrained``."""\n\n'
+            + "    pass\n\n"
+            + "try:\n"
+            + "    RWKV7Config.register_for_auto_class()\n"
+            + "except Exception:\n"
+            + "    pass\n\n"
             + '__all__ = ["RWKV7Config"]\n'
         ),
         "modeling_rwkv7.py": (
             header
             + "try:\n"
             + "    from rwkv7_hf.native_model import (\n"
-            + "        NativeRWKV7ForCausalLM,\n"
-            + "        NativeRWKV7Model,\n"
+            + "        NativeRWKV7ForCausalLM as _NativeRWKV7ForCausalLM,\n"
+            + "        NativeRWKV7Model as _NativeRWKV7Model,\n"
             + "    )\n"
+            + "    from .configuration_rwkv7 import RWKV7Config\n"
             + guard
-            + "RWKV7Model = NativeRWKV7Model\n"
-            + "RWKV7ForCausalLM = NativeRWKV7ForCausalLM\n\n"
+            + "class RWKV7Model(_NativeRWKV7Model):\n"
+            + "    config_class = RWKV7Config\n\n"
+            + "class RWKV7ForCausalLM(_NativeRWKV7ForCausalLM):\n"
+            + "    config_class = RWKV7Config\n\n"
+            + "try:\n"
+            + '    RWKV7Model.register_for_auto_class("AutoModel")\n'
+            + '    RWKV7ForCausalLM.register_for_auto_class("AutoModelForCausalLM")\n'
+            + "except Exception:\n"
+            + "    pass\n\n"
             + '__all__ = ["RWKV7Model", "RWKV7ForCausalLM"]\n'
         ),
         "tokenization_rwkv7.py": (
             header
             + "try:\n"
-            + "    from rwkv7_hf.tokenization_rwkv7 import RWKV7Tokenizer\n"
+            + "    from rwkv7_hf.tokenization_rwkv7 import RWKV7Tokenizer as _PackageRWKV7Tokenizer\n"
             + guard
+            + "class RWKV7Tokenizer(_PackageRWKV7Tokenizer):\n"
+            + '    """Thin package-backed tokenizer preserved by ``save_pretrained``."""\n\n'
+            + "    pass\n\n"
+            + "try:\n"
+            + '    RWKV7Tokenizer.register_for_auto_class("AutoTokenizer")\n'
+            + "except Exception:\n"
+            + "    pass\n\n"
             + '__all__ = ["RWKV7Tokenizer"]\n'
         ),
     }

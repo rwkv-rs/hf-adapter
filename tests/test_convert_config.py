@@ -161,6 +161,8 @@ def main() -> int:
             source = (output / name).read_text(encoding="utf-8")
             assert "rwkv7_hf" in source
             assert "0.8.0" in source
+            assert "class RWKV7" in source
+            compile(source, name, "exec")
         conv.patch_hf_metadata(
             output,
             adapter_layout="thin",
