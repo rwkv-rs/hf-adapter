@@ -10,6 +10,16 @@ loss 和 mask、模型保存迁移、循环状态复用、动态批处理以及�
 前置条件：先完成 [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)，并把下文的 `MODEL`
 替换成已经通过目录检查的 HF 模型路径。
 
+普通公开模型生成直接使用 PyPI 的 `rwkv7-hf-smoke` 或标准 Transformers API，
+不需要本页。由于这里会调用 `scripts/`、`examples/` 和 `tests/`，继续前必须 clone
+源码并使用 editable 安装：
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
+python -m pip install -e .
+```
+
 ## 1. 批量转换 checkpoint
 
 先只枚举文件、计算 SHA256 并生成 manifest，不加载模型权重：

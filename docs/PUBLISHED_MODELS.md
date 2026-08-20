@@ -28,7 +28,24 @@ a new environment.
 
 ```bash
 python -m pip install "rwkv7-hf==0.8.0"
+rwkv7-hf-doctor
 ```
+
+Normal users do not need this repository or the original `.pth` files. On
+Linux NVIDIA, inspect the exact runtime before installing an optional prebuilt
+binary:
+
+```bash
+rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
+# Run only when one exact compatible wheel is listed:
+rwkv7-hf-kernels install
+rwkv7-hf-doctor
+```
+
+The base package never guesses a GPU wheel. Once an exact wheel is present,
+runtime selection is automatic; otherwise the JIT/portable fallbacks remain
+available.
 
 ```python
 import torch
@@ -50,6 +67,19 @@ with torch.inference_mode():
     output = model.generate(**inputs, max_new_tokens=16)
 print(tokenizer.decode(output[0], skip_special_tokens=True))
 ```
+
+For a first-run acceptance report without writing Python:
+
+```bash
+rwkv7-hf-smoke \
+  --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 \
+  --device auto \
+  --output rwkv7-smoke.json
+```
+
+The command must end with `RESULT: PASS`. Its timings are installation
+telemetry rather than a general benchmark claim.
 
 The model repositories contain weights, config, tokenizer assets, and three
 small remote-code entrypoints. The maintained implementation and optimized

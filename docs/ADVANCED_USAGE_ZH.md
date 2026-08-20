@@ -12,9 +12,13 @@
 
 ## 共同准备
 
-第一次仍然使用转换好的 0.1B 或 0.4B 模型。激活仓库 `.venv` 后检查模型和显卡：
+第一次使用公开或本地转换的 0.1B/0.4B。本页会调用仓库测试文件，因此先 clone
+源码并进入仓库 `.venv`，再检查模型和显卡：
 
 ```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
+python -m pip install -e .
 python examples/check_environment.py --model /path/to/model-hf
 python -c "import torch; print(torch.__version__, torch.cuda.device_count(), [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])"
 ```
@@ -24,6 +28,9 @@ python -c "import torch; print(torch.__version__, torch.cuda.device_count(), [to
 ```bash
 python -m pip install -e ".[train]"
 ```
+
+普通应用不运行仓库测试时，直接安装发布 extra：
+`python -m pip install "rwkv7-hf[train]==0.8.0"`。
 
 ## 1. 投机解码
 

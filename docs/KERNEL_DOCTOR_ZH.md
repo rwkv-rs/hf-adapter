@@ -24,7 +24,8 @@ rwkv7-hf-doctor
 
 报告中的算子是**候选路线**，不代表该算子已经实际执行。最终路线还取决于模型
 形状、dtype、batch、序列长度、可选依赖和环境变量。本命令不会下载权重、编译扩展、
-捕获 CUDA Graph 或运行性能测试。
+捕获 CUDA Graph、运行性能测试或安装算子 wheel；存在精确匹配时再执行
+`rwkv7-hf-kernels recommend` 和 `rwkv7-hf-kernels install`。
 
 ## 检查指定设备
 
@@ -53,8 +54,9 @@ python -m rwkv7_hf.doctor \
 - **CUDA 扩展工具链不完整：** 没有同时找到 NVCC 和 Ninja；依赖它们的 JIT
   扩展无法构建，但 Torch/Triton 路线可能仍然可用。如果兼容的预编译 wheel 已
   就绪，则 wheel 内包含的扩展不再需要本地编译器。
-- **预编译算子缺失或不兼容：** 运行 `rwkv7-hf-kernels status`。只有 Python、
-  Torch、CUDA、ABI 和 compute capability 全部匹配公开哈希索引时才会提供安装。
+- **预编译算子缺失或不兼容：** 运行 `rwkv7-hf-kernels status` 和
+  `rwkv7-hf-kernels recommend`。只有 Python、Torch、CUDA、ABI 和 compute
+  capability 全部匹配公开哈希索引时才会提供安装。
   详见 [`KERNEL_WHEELS_ZH.md`](KERNEL_WHEELS_ZH.md)。
 - **PyTorch CUDA 二进制不支持当前计算能力：** 需要安装覆盖该 GPU 架构的
   PyTorch；这是硬性 `RESULT: FAIL`，否则后续 CUDA tensor 执行也会失败。

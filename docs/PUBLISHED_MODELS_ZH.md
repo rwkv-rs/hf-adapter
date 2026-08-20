@@ -26,7 +26,22 @@
 
 ```bash
 python -m pip install "rwkv7-hf==0.8.0"
+rwkv7-hf-doctor
 ```
+
+普通用户不需要克隆本仓库，也不需要下载原始 `.pth`。Linux NVIDIA 用户可以先检查
+精确运行环境，再决定是否安装可选预编译二进制：
+
+```bash
+rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
+# 只有列出一个完全匹配 wheel 时才执行：
+rwkv7-hf-kernels install
+rwkv7-hf-doctor
+```
+
+基础包不会猜测 GPU wheel。存在精确 wheel 时运行时会自动选择；否则继续使用
+JIT/可移植正确回退。
 
 ```python
 import torch
@@ -48,6 +63,19 @@ with torch.inference_mode():
     output = model.generate(**inputs, max_new_tokens=16)
 print(tokenizer.decode(output[0], skip_special_tokens=True))
 ```
+
+第一次使用也可以不写 Python，直接生成完整验收报告：
+
+```bash
+rwkv7-hf-smoke \
+  --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 \
+  --device auto \
+  --output rwkv7-smoke.json
+```
+
+命令必须以 `RESULT: PASS` 结束；时间字段只用于安装 smoke，不是通用 benchmark
+结论。
 
 模型仓库只包含权重、配置、Tokenizer 以及三个很小的 remote-code 入口；维护中的
 模型实现和优化算子来自兼容的 PyPI 包，不在六个模型仓库里重复复制。

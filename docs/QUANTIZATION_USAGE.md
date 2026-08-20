@@ -11,7 +11,18 @@ English version: [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md)
 
 ## 1. 安装并建立 dense baseline
 
+普通应用只需要安装发布 extra：
+
 ```bash
+python -m pip install "rwkv7-hf[quant]==0.8.0"
+```
+
+下面的配对验收命令调用仓库测试文件，因此需要 clone 源码，并有意使用 editable
+安装；这与普通用户加载公开模型的流程不同：
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
 python -m pip install -e ".[quant]"
 python tests/test_quantized_inference.py --model MODEL \
   --device cuda --dtype fp16 --quantization none --max-new-tokens 4
@@ -19,6 +30,7 @@ python tests/test_quantized_inference.py --model MODEL \
 
 保存 JSON 行，其中包含 `model_footprint_mb`、`peak_vram_mb`、生成 token 和
 时间遥测。没有匹配 dense 行的量化结果，不能证明更省内存或更快。
+`MODEL` 可以是公开 `wangyue114514/rwkv7-g1d-0.1b-hf`，也可以是可信本地目录。
 
 ## 2. 标准 HF bitsandbytes W8/W4
 

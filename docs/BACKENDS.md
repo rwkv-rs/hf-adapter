@@ -61,6 +61,17 @@ loaded before the historical JIT path; an incompatible wheel is never imported.
 The base package and every conservative fallback remain usable without this
 binary companion. See [prebuilt kernel wheels](KERNEL_WHEELS.md).
 
+For users, detection is automatic but installation is explicit:
+
+```bash
+rwkv7-hf-kernels recommend
+# Install only when the command lists one exact build.
+rwkv7-hf-kernels install
+```
+
+No card name or backend flag is added to model-loading code after installation.
+The default `auto` policy performs the manifest check and safe route selection.
+
 `RWKV7_NATIVE_MODEL` is retained only for old converted directories and
 historical scripts. New conversions and refreshed model directories must work
 without setting it. Use `scripts/sync_hf_adapter_code.py MODEL` to migrate old

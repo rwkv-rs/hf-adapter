@@ -15,6 +15,20 @@ PowerShell 脚本；Linux 和 macOS 用户可以运行同一个 Python 示例。
 一键脚本会把依赖安装在仓库内的 `.venv-cpu-demo`，不会修改系统 Python。已有
 可用环境时可以不安装，直接运行示例。
 
+如果目标只是运行公开自然语言模型，不需要 clone 仓库或执行下面的随机 tiny
+演示。Windows PowerShell 直接使用：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install "rwkv7-hf==0.8.0"
+rwkv7-hf-doctor
+rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf --revision v0.7.0 --device cpu --output rwkv7-smoke.json
+```
+
+最后必须显示 `RESULT: PASS`。CPU 不需要也不应该安装 CUDA kernel wheel；后面的
+仓库脚本用于额外验证推理、梯度、参数更新和保存重载接口。
+
 ## 2. 最小安全模型和输入
 
 默认示例在内存中创建一个随机初始化的两层 RWKV-7：`hidden_size=16`、

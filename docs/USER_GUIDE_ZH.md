@@ -6,144 +6,113 @@
 
 ## 先选入口
 
-- **我自己操作**：继续按本文档从第 1 步执行，不要跳步。
-- **让 AI 帮我操作**：把 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)
-  里的完整提示词发给有终端权限的 Codex、Claude Code、Cursor 等工具。
-- **已经有转换好的 HF 模型目录**：直接跳到[第 4 步](#4-生成第一段文本)。
-- **第一次生成已经成功**：打开
-  [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md)，按总表选择
-  缓存、训练、量化、Apple、投机解码或多卡教程。
+- **普通用户首次运行**：完成[第 1 步](#1-安装)，直接验收公开 0.1B 模型；不需要
+  clone 仓库，也不需要转换 `.pth`。
+- **接入 Python 项目**：smoke 通过后跳到 [Python API](#5-python-api)。
+- **新 checkpoint 或定制权重**：使用可选的
+  [转换流程](#2-可选下载并转换模型)。
+- **让 AI 帮忙**：把 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 发给有
+  终端权限的助手。
+- **训练、量化、Apple、多卡等高级任务**：首次生成成功后从
+  [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md) 选择一个流程。
 
 ## 完成标准
 
-只有下面三项都满足，才算安装完成：
+普通用户只有下面三项都满足才算安装完成：
 
-1. `python examples/check_environment.py` 显示 `RESULT: READY`。
-2. 带 `--model` 再检查时显示 `[PASS] Model directory`。
-3. `examples/generate.py` 退出码为 0，并真正打印出新文本。
+1. `rwkv7-hf-doctor` 显示 `RESULT: READY`；
+2. `rwkv7-hf-smoke` 显示 `RESULT: PASS` 并写出合法 JSON；
+3. 报告中的 `rwkv7_hf` 为 `0.8.0`，且确实生成了新 token。
 
-文件存在不等于模型能运行。遇到错误时只处理屏幕上的第一个 `FAIL` 或
-第一段 traceback，然后重新执行同一条命令。
-
-## 公开模型最快路径
-
-普通用户现在不需要先转换 `.pth`。安装正式版并直接加载公开的 0.1B 模型：
-
-```bash
-python -m pip install "rwkv7-hf==0.8.0"
-```
-
-```python
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-model_id = "wangyue114514/rwkv7-g1d-0.1b-hf"
-tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(
-    model_id, trust_remote_code=True, dtype="auto"
-).eval()
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = model.to(device)
-inputs = tokenizer("User: 你好！ Assistant:", return_tensors="pt")
-inputs = {name: value.to(device) for name, value in inputs.items()}
-with torch.inference_mode():
-    output = model.generate(**inputs, max_new_tokens=16)
-print(tokenizer.decode(output[0], skip_special_tokens=True))
-```
-
-其它尺寸见[已发布模型矩阵](PUBLISHED_MODELS_ZH.md)。后面的转换流程继续保留，供
-新 checkpoint、定制模型或转换复现使用。
+自行转换与源码开发还有模型目录、转换 manifest 和仓库测试门槛。文件存在、命令已
+启动或“理论上可用”都不算通过。
 
 ## 新手选择规则
 
-- 第一次只用 **0.4B**。不要用 7.2B 或 13.3B 验证环境。
-- Windows、macOS、CPU 用户先安装基础版并使用 `native` 后端。
-- Linux + NVIDIA 用户可以安装原生 CUDA 优化版；安装失败时先退回基础版。
-- 全程使用仓库里的 `.venv`，不要把依赖安装到系统 Python。
-- fp16 权重大约占用每参数 2 字节，运行时还需要额外 RAM/VRAM。
-- 本文使用公开文件，不需要填写 Hugging Face token。
+- 第一次固定使用公开 **0.1B**，不要用 7.2B/13.3B 排查安装。
+- Windows、macOS、CPU 和没有预编译 wheel 的 GPU 都可使用基础包。
+- Linux NVIDIA 只有在精确匹配时才安装预编译 wheel，不要强装相近版本。
+- 使用独立 `.venv`，不要把依赖安装到系统 Python。
+- 普通推理不需要 FLA，也不需要 Hugging Face token。
+- fp16 权重约占每参数 2 字节，运行时还要为状态和临时缓冲预留空间。
 
 ## 1. 安装
 
-先确认 Python。输出必须是 `3.10` 或更高版本：
+先确认 Python 为 3.10 或更高版本，然后创建独立环境：
 
 ```bash
 python --version
-```
-
-如果提示找不到 `python`，先从 [python.org](https://www.python.org/downloads/)
-安装 Python，并在 Windows 安装器中勾选 **Add Python to PATH**，然后关闭并
-重新打开终端。
-
-```bash
-git clone https://github.com/rwkv-rs/hf-adapter.git
-cd hf-adapter
 python -m venv .venv
+source .venv/bin/activate                 # Windows：.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
-Linux/macOS 激活环境：
-
-```bash
-source .venv/bin/activate
-```
-
-Windows PowerShell 激活环境：
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-如果 PowerShell 提示禁止运行脚本，只对当前窗口临时放行后再激活：
+Windows PowerShell 如果禁止激活脚本，只对当前窗口临时放行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 ```
 
-先安装基础版。它适用于 Windows、CPU、macOS，也可在 CUDA 上使用 native
-后端完成首次验证：
+不下载模型，先检查安装和自动路由候选：
 
 ```bash
-python -m pip install -U pip
-python -m pip install -e .
-python examples/check_environment.py
-python -m rwkv7_hf.doctor
+rwkv7-hf-doctor
+rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
 ```
 
-两个检查命令都必须显示 `RESULT: READY`。第二条会显示当前加速设备、编译工具链和
-候选算子策略，详细解释见[算子检查指南](KERNEL_DOCTOR_ZH.md)。如果出现 `FAIL`，
-先修复第一项再继续。
-
-如果当前 Linux NVIDIA 环境存在精确匹配的预编译算子，可继续执行：
+Doctor 必须显示 `RESULT: READY`。Linux NVIDIA 只有在推荐命令列出一个完全匹配
+wheel 时才继续：
 
 ```bash
-rwkv7-hf-kernels status
 rwkv7-hf-kernels install
 rwkv7-hf-doctor
-rwkv7-hf-smoke --device cuda
 ```
 
-精确环境矩阵和回退顺序见[预编译 CUDA 算子 wheel](KERNEL_WHEELS_ZH.md)。没有
-匹配项时不要强装相近 wheel；基础 adapter 仍可正常使用。
+安装器会同时检查 Python ABI、系统与机器架构、PyTorch 主次版本和 C++ ABI、
+CUDA runtime、GPU compute capability 以及 adapter 版本。`pip install rwkv7-hf`
+本身不会猜测或静默安装 GPU 二进制。运行时默认 `auto` 会依次选择：
 
-只有 Linux + NVIDIA 用户需要安装原生 CUDA 优化依赖：
+```text
+兼容的预编译算子 → 允许时按需 JIT → Triton/tensor/PyTorch 正确回退
+```
+
+因此没有匹配 wheel 也不影响基础 adapter 使用。详细矩阵见
+[预编译 CUDA 算子 wheel](KERNEL_WHEELS_ZH.md)。
+
+现在运行公开 0.1B 一键验收：
 
 ```bash
-python -m pip install -e ".[cuda]"
+rwkv7-hf-smoke \
+  --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 \
+  --device auto \
+  --output rwkv7-smoke.json
 ```
 
-普通 RWKV 推理不需要安装 FLA。只有复现专用 FLA 参考 benchmark 时才安装
-`.[fla-reference]`；基础安装和 `--backend native` 可直接使用。
+第一次会自动下载模型。`RESULT: PASS` 表示加载、Prefill、贪心 Decode、有限
+logits 和实际运行路线报告全部完成；其中时间只用于安装 smoke，不是通用性能结论。
 
-训练、量化、Apple MLX 是首次生成之后的可选项，不要一次全部安装：
+后续任务需要时再安装对应 PyPI extra，不要一次全部安装：
 
 ```bash
-python -m pip install -e ".[train]"
-python -m pip install -e ".[quant]"
-python -m pip install -e ".[mlx]"
+python -m pip install "rwkv7-hf[cuda]==0.8.0"    # Linux NVIDIA JIT 工具
+python -m pip install "rwkv7-hf[train]==0.8.0"   # PEFT/TRL/DeepSpeed
+python -m pip install "rwkv7-hf[quant]==0.8.0"   # bitsandbytes
+python -m pip install "rwkv7-hf[mlx]==0.8.0"     # Apple Silicon MLX
 ```
 
-## 2. 下载并转换模型
+## 2. 可选：下载并转换模型
+
+转换脚本和仓库检查脚本不是 PyPI 控制台命令。先克隆源码并切换为 editable 安装：
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
+python -m pip install -e .
+```
 
 官方权重位于
 [`BlinkDL/rwkv7-g1`](https://huggingface.co/BlinkDL/rwkv7-g1)。首次验证固定使用
@@ -319,7 +288,7 @@ python examples/generate.py --help
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-model_path = "models/rwkv7-g1d-0.4b-hf"
+model_path = "wangyue114514/rwkv7-g1d-0.1b-hf"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float16 if device.type == "cuda" else torch.float32
 
@@ -346,8 +315,9 @@ new_tokens = output[0, inputs["input_ids"].shape[1]:]
 print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 ```
 
-转换后的模型目录包含 remote-code 适配文件，因此必须设置
-`trust_remote_code=True`。只对可信的本地目录或 Hugging Face 仓库使用该选项。
+公开成品仓库与本地转换目录都包含很小的 remote-code 入口，因此必须设置
+`trust_remote_code=True`；实际维护中的实现来自已安装的 `rwkv7-hf`。只对可信的
+本地目录或 Hugging Face 仓库使用该选项。
 
 ### 公开参数与配置命名
 
@@ -384,21 +354,23 @@ assert config.num_heads == config.num_attention_heads
 
 ## 常见问题
 
-- **旧模型提示缺少 `fla`**：先运行
+- **旧的本地转换目录提示缺少 `fla`**：在源码仓库中运行
   `python scripts/sync_hf_adapter_code.py /path/to/model-hf` 更新 Auto metadata，
-  再使用 `--backend native`。
+  再使用 native；公开成品模型和普通 0.8.0 推理不需要 FLA。
 - **CUDA 不可用**：运行
   `python -c "import torch; print(torch.cuda.is_available())"` 检查 PyTorch。
 - **显存不足**：先换小模型。量化可以省显存，但不同显卡的速度和支持情况
   不同，请阅读 [`QUANTIZATION.md`](QUANTIZATION.md)。
-- **第一次运行很慢**：CUDA/Triton 内核可能需要首次编译和预热。
+- **第一次运行很慢**：运行 `rwkv7-hf-kernels recommend`；精确预编译 wheel 可
+  避免其中已包含扩展的本地 JIT。CUDA/Triton 和图路线仍可能需要首次预热。
 - **输出不像聊天模型**：适配器不会改变模型训练性质。基础模型并不会因为接入 HF
   自动变成指令模型，请选择合适的 checkpoint 和提示格式。
 - **Windows CUDA 安装困难**：先使用基础安装和 native 后端；优化后端主要在
   Linux 上验证，也可以考虑 WSL2。
-- **不知道把错误发给别人时该发什么**：运行
-  `python examples/check_environment.py`，提供该命令输出、失败命令和第一段完整
-  traceback。不要发送密码、token 或 SSH 私钥。
+- **不知道把错误发给别人时该发什么**：普通安装运行
+  `rwkv7-hf-doctor --json --output rwkv7-doctor.json`；源码转换再运行
+  `python examples/check_environment.py`。提供失败命令和第一段完整 traceback，
+  不要发送密码、token 或 SSH 私钥。
 
 更多图文流程：投机解码、训练和多卡使用见
 [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md)。训练状态见

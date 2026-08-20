@@ -1,15 +1,17 @@
 # RWKV-7 HF Adapter 全功能使用指南
 
 本页帮助你按目标找到对应教程。第一次使用建议先完成
-[`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)，确认模型能够生成 8 个新 token，
+[`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)，确认 Doctor 和公开 0.1B smoke 均通过，
 再继续训练、量化、多卡或部署流程。
 
 ## 教程总表
 
 | 用户目标 | 教程 | 完成标志 | 使用建议 |
 |---|---|---|---|
-| 安装、检查环境、下载、转换和生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、模型目录 `PASS`、输出新文本 | 新环境建议从 0.1B/0.4B 开始；CUDA、MPS 和 CPU 都有对应路线 |
-| Windows/CPU 无下载推理、微型训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 四个 `CPU ... PASS` 标记；loss 下降、梯度/参数变化非零、重载 logits 差为 0 | 随机两层 tiny 模型用于接口和更新演示；真实自然语言生成从 0.1B 已转换模型开始 |
+| PyPI 安装、自动设备/算子检查、公开模型首次生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | Doctor `RESULT: READY`、smoke `RESULT: PASS`、版本 0.8.0、生成 token | 普通用户固定从公开 0.1B 开始，不需要 clone、`.pth` 或转换 |
+| 新 checkpoint 下载、转换和本地目录验证 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md#2-可选下载并转换模型) | 转换 manifest、模型目录 `PASS`、输出新文本 | 只用于新/定制权重或转换复现；先 clone 源码 |
+| 精确预编译 CUDA 算子自动识别与安装 | [`KERNEL_WHEELS_ZH.md`](KERNEL_WHEELS_ZH.md) | recommendation 唯一匹配、Doctor package `ready`、真实 smoke 记录 `prebuilt` | 没有精确 wheel 时保持默认 JIT/可移植回退，禁止强装相近构建 |
+| Windows/CPU 无下载推理、微型训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 四个 `CPU ... PASS` 标记；loss 下降、梯度/参数变化非零、重载 logits 差为 0 | 随机两层 tiny 模型用于接口演示；真实自然语言生成从公开 0.1B 开始 |
 | 单个/批量/大模型转换、保存重载、离线运行 | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 转换退出码 0、manifest 成功、重载测试打印 `PASS` | 转换大模型时可使用 `--low-memory` 降低主机内存占用 |
 | 使用 `AutoModelForCausalLM`、loss、mask 和无 FLA 原生后端 | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | API 命令退出码 0；原生 smoke 打印对应通过标记 | 原生后端适合便携运行；CUDA 优化后端适合已验证的 NVIDIA 环境 |
 | 复用循环状态、批量缓存、动态批处理和分块 prefill | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 每个缓存/prefill 测试打印 `PASS` | 可直接用于构建 HF serving 的状态与批处理层 |
@@ -27,8 +29,8 @@
 
 ## 如何选择合适路线
 
-1. **先完成首次生成。** 使用 0.1B 或 0.4B 模型确认环境、模型目录和 tokenizer
-   都能通过，再换成目标模型。
+1. **先完成首次生成。** 使用公开 0.1B 和 `rwkv7-hf-smoke` 确认安装、Tokenizer、
+   Prefill、Decode 与生成都通过，再换成目标模型；普通用户不先转换 `.pth`。
 2. **按任务选择多卡方案。** 推理时从 `device_map` 开始；Trainer/TRL 训练时从
    DeepSpeed ZeRO-2 或 ZeRO-3 开始。
 3. **按目标选择量化方案。** 显存优先时查看 footprint；速度优先时查看同显卡、
