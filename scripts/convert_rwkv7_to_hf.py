@@ -2,10 +2,10 @@
 # coding=utf-8
 """Convert official RWKV-7 .pth checkpoints to a Hugging Face model directory.
 
-The converted directory uses the repository-native RWKV-7 PreTrainedModel by
-default and does not require FLA at load time. It contains config.json,
-generation_config.json, model.safetensors, remote-code files,
-tokenizer_config.json, and the RWKV trie vocab.
+The default ``thin`` layout stores three small Hugging Face remote-code
+entrypoints backed by the versioned ``rwkv7-hf`` package. The optional
+``bundled`` layout retains the historical self-contained runtime snapshot for
+offline and archival workflows. Neither layout requires FLA at load time.
 """
 from __future__ import annotations
 
@@ -44,6 +44,77 @@ DTYPES = {
     "fp32": ("float32", torch.float32),
     "float32": ("float32", torch.float32),
 }
+
+ADAPTER_LAYOUTS = ("thin", "bundled")
+THIN_ADAPTER_FILES = (
+    "configuration_rwkv7.py",
+    "modeling_rwkv7.py",
+    "tokenization_rwkv7.py",
+)
+
+
+def project_runtime_version() -> str:
+    """Read the runtime version from this checkout without extra TOML deps."""
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    in_project = False
+    for raw_line in pyproject.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("["):
+            in_project = line == "[project]"
+            continue
+        if in_project:
+            match = re.fullmatch(r'version\s*=\s*["\']([^"\']+)["\']', line)
+            if match:
+                return match.group(1)
+    raise RuntimeError(f"Could not read [project].version from {pyproject}")
+
+
+def thin_adapter_sources(runtime_version: str) -> dict[str, str]:
+    """Return the three package-backed remote-code entrypoints."""
+
+    version_literal = json.dumps(runtime_version)
+    header = (
+        "# coding=utf-8\n"
+        '"""Thin Hugging Face remote-code entrypoint backed by ``rwkv7-hf``."""\n\n'
+        f"_REQUIRED_RUNTIME_VERSION = {version_literal}\n\n"
+    )
+    guard = (
+        "except ImportError as exc:  # pragma: no cover - user environment guard\n"
+        "    raise ImportError(\n"
+        "        f\"This model requires rwkv7-hf=={_REQUIRED_RUNTIME_VERSION}. \"\n"
+        "        f\"Install it with `pip install rwkv7-hf=={_REQUIRED_RUNTIME_VERSION}`.\"\n"
+        "    ) from exc\n\n"
+    )
+    return {
+        "configuration_rwkv7.py": (
+            header
+            + "try:\n"
+            + "    from rwkv7_hf.native_model import NativeRWKV7Config\n"
+            + guard
+            + "RWKV7Config = NativeRWKV7Config\n\n"
+            + '__all__ = ["RWKV7Config"]\n'
+        ),
+        "modeling_rwkv7.py": (
+            header
+            + "try:\n"
+            + "    from rwkv7_hf.native_model import (\n"
+            + "        NativeRWKV7ForCausalLM,\n"
+            + "        NativeRWKV7Model,\n"
+            + "    )\n"
+            + guard
+            + "RWKV7Model = NativeRWKV7Model\n"
+            + "RWKV7ForCausalLM = NativeRWKV7ForCausalLM\n\n"
+            + '__all__ = ["RWKV7Model", "RWKV7ForCausalLM"]\n'
+        ),
+        "tokenization_rwkv7.py": (
+            header
+            + "try:\n"
+            + "    from rwkv7_hf.tokenization_rwkv7 import RWKV7Tokenizer\n"
+            + guard
+            + '__all__ = ["RWKV7Tokenizer"]\n'
+        ),
+    }
 
 
 def tensor_shape(weights: Dict[str, torch.Tensor], name: str) -> tuple[int, ...]:
@@ -278,6 +349,8 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
 
 
 def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
+    """Install the historical self-contained runtime snapshot."""
+
     root = Path(__file__).resolve().parents[1]
     remove_manifest_files(output, LEGACY_REMOTE_CODE_FILES)
     copy_manifest_files(root / "rwkv7_hf", output, ADAPTER_FILES)
@@ -285,16 +358,75 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         shutil.copyfile(vocab_file, output / "rwkv_vocab_v20230424.txt")
 
 
-def patch_hf_metadata(output: Path) -> None:
+def write_thin_adapter_files(
+    output: Path,
+    vocab_file: Path | None,
+    *,
+    runtime_version: str,
+) -> None:
+    """Replace bundled code with the three package-backed entrypoints."""
+
+    remove_manifest_files(output, ADAPTER_FILES)
+    remove_manifest_files(output, LEGACY_REMOTE_CODE_FILES)
+    for name, source in thin_adapter_sources(runtime_version).items():
+        (output / name).write_text(source, encoding="utf-8")
+    if vocab_file is not None:
+        shutil.copyfile(vocab_file, output / "rwkv_vocab_v20230424.txt")
+
+
+def install_adapter_layout(
+    output: Path,
+    vocab_file: Path | None,
+    *,
+    adapter_layout: str,
+    runtime_version: str,
+) -> None:
+    if adapter_layout == "thin":
+        write_thin_adapter_files(
+            output,
+            vocab_file,
+            runtime_version=runtime_version,
+        )
+        return
+    if adapter_layout == "bundled":
+        copy_adapter_files(output, vocab_file)
+        return
+    raise ValueError(
+        f"Unsupported adapter layout {adapter_layout!r}; choose one of {ADAPTER_LAYOUTS}"
+    )
+
+
+def patch_hf_metadata(
+    output: Path,
+    *,
+    adapter_layout: str = "thin",
+    runtime_version: str | None = None,
+) -> None:
     cfg_path = output / "config.json"
     cfg = json.loads(cfg_path.read_text())
-    cfg["architectures"] = ["NativeRWKV7ForCausalLM"]
     cfg["model_type"] = "rwkv7_native"
-    cfg["auto_map"] = {
-        "AutoConfig": "native_model.NativeRWKV7Config",
-        "AutoModel": "native_model.NativeRWKV7Model",
-        "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
-    }
+    cfg["rwkv7_hf_adapter_layout"] = adapter_layout
+    if adapter_layout == "thin":
+        runtime_version = runtime_version or project_runtime_version()
+        cfg["architectures"] = ["RWKV7ForCausalLM"]
+        cfg["rwkv7_hf_runtime_version"] = runtime_version
+        cfg["auto_map"] = {
+            "AutoConfig": "configuration_rwkv7.RWKV7Config",
+            "AutoModel": "modeling_rwkv7.RWKV7Model",
+            "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
+        }
+    elif adapter_layout == "bundled":
+        cfg["architectures"] = ["NativeRWKV7ForCausalLM"]
+        cfg.pop("rwkv7_hf_runtime_version", None)
+        cfg["auto_map"] = {
+            "AutoConfig": "native_model.NativeRWKV7Config",
+            "AutoModel": "native_model.NativeRWKV7Model",
+            "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
+        }
+    else:
+        raise ValueError(
+            f"Unsupported adapter layout {adapter_layout!r}; choose one of {ADAPTER_LAYOUTS}"
+        )
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
 
     tok_cfg = {
@@ -414,6 +546,12 @@ def save_low_memory_model(
 
 def convert(args: argparse.Namespace) -> None:
     dtype_name, dtype = DTYPES[args.precision]
+    adapter_layout = getattr(args, "adapter_layout", "thin")
+    runtime_version = getattr(args, "runtime_package_version", None) or project_runtime_version()
+    if adapter_layout not in ADAPTER_LAYOUTS:
+        raise ValueError(
+            f"Unsupported adapter layout {adapter_layout!r}; choose one of {ADAPTER_LAYOUTS}"
+        )
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     weights = torch.load(
@@ -432,9 +570,21 @@ def convert(args: argparse.Namespace) -> None:
             max_shard_size=args.max_shard_size,
         )
         vocab = Path(args.vocab_file) if args.vocab_file else None
-        copy_adapter_files(output, vocab)
-        patch_hf_metadata(output)
-        print(f"Saved HF RWKV-7 model to: {output} (low-memory path)")
+        install_adapter_layout(
+            output,
+            vocab,
+            adapter_layout=adapter_layout,
+            runtime_version=runtime_version,
+        )
+        patch_hf_metadata(
+            output,
+            adapter_layout=adapter_layout,
+            runtime_version=runtime_version,
+        )
+        print(
+            f"Saved HF RWKV-7 model to: {output} "
+            f"(low-memory path, adapter layout: {adapter_layout})"
+        )
         return
 
     model = build_template_model(config, dtype)
@@ -469,9 +619,18 @@ def convert(args: argparse.Namespace) -> None:
         vocab = Path(args.vocab_file)
     else:
         vocab = None
-    copy_adapter_files(output, vocab)
-    patch_hf_metadata(output)
-    print(f"Saved HF RWKV-7 model to: {output}")
+    install_adapter_layout(
+        output,
+        vocab,
+        adapter_layout=adapter_layout,
+        runtime_version=runtime_version,
+    )
+    patch_hf_metadata(
+        output,
+        adapter_layout=adapter_layout,
+        runtime_version=runtime_version,
+    )
+    print(f"Saved HF RWKV-7 model to: {output} (adapter layout: {adapter_layout})")
 
 
 def main() -> None:
@@ -481,6 +640,20 @@ def main() -> None:
     parser.add_argument("--vocab-file", default=None, help="rwkv_vocab_v20230424.txt to copy into the model dir")
     parser.add_argument("--precision", choices=sorted(DTYPES), default="fp16")
     parser.add_argument("--attn-mode", choices=["chunk", "fused_recurrent"], default="chunk")
+    parser.add_argument(
+        "--adapter-layout",
+        choices=ADAPTER_LAYOUTS,
+        default="thin",
+        help=(
+            "thin writes three entrypoints backed by the rwkv7-hf package "
+            "(default); bundled copies a self-contained runtime snapshot"
+        ),
+    )
+    parser.add_argument(
+        "--runtime-package-version",
+        default=project_runtime_version(),
+        help="rwkv7-hf version named by thin entrypoints (default: checkout version)",
+    )
     norm_group = parser.add_mutually_exclusive_group()
     norm_group.add_argument("--fuse-norm", dest="fuse_norm", action="store_true", help="Use FLA fused norm modules in the generated config")
     norm_group.add_argument("--no-fuse-norm", dest="fuse_norm", action="store_false", help="Use native PyTorch norm modules; faster for V100 decode in current tests")

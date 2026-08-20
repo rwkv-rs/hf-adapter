@@ -140,14 +140,40 @@ def main() -> int:
         conv.copy_adapter_files(output, None)
         assert (output / "remote_code" / "__init__.py").is_file()
         assert not (output / "modeling_rwkv7.py").exists()
-        conv.patch_hf_metadata(output)
+        conv.patch_hf_metadata(output, adapter_layout="bundled")
         metadata = json.loads(config_path.read_text(encoding="utf-8"))
         assert metadata["architectures"] == ["NativeRWKV7ForCausalLM"]
         assert metadata["model_type"] == "rwkv7_native"
+        assert metadata["rwkv7_hf_adapter_layout"] == "bundled"
         assert metadata["auto_map"] == {
             "AutoConfig": "native_model.NativeRWKV7Config",
             "AutoModel": "native_model.NativeRWKV7Model",
             "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
+        }
+
+        conv.write_thin_adapter_files(
+            output,
+            None,
+            runtime_version="0.8.0",
+        )
+        assert not (output / "remote_code" / "__init__.py").exists()
+        for name in conv.THIN_ADAPTER_FILES:
+            source = (output / name).read_text(encoding="utf-8")
+            assert "rwkv7_hf" in source
+            assert "0.8.0" in source
+        conv.patch_hf_metadata(
+            output,
+            adapter_layout="thin",
+            runtime_version="0.8.0",
+        )
+        metadata = json.loads(config_path.read_text(encoding="utf-8"))
+        assert metadata["architectures"] == ["RWKV7ForCausalLM"]
+        assert metadata["rwkv7_hf_adapter_layout"] == "thin"
+        assert metadata["rwkv7_hf_runtime_version"] == "0.8.0"
+        assert metadata["auto_map"] == {
+            "AutoConfig": "configuration_rwkv7.RWKV7Config",
+            "AutoModel": "modeling_rwkv7.RWKV7Model",
+            "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
         }
 
     assert conv.infer_num_layers(weights) == 3

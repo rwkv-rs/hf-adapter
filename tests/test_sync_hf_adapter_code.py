@@ -79,10 +79,12 @@ def _relative_import_files(root: Path, path: Path) -> set[str]:
 
 
 def _assert_adapter_file_closure() -> None:
-    """Every runtime module transitively imported by the shipped adapter files
-    must itself be shipped, else ``trust_remote_code`` load breaks. Catches the
-    dplr_*/fused_norm_mix/fused_prefill/native_quant_mm4/mm8 drift. Does NOT
-    force optional non-runtime modules (e.g. ``sglang_quant``) to ship."""
+    """Every module used by the optional bundled layout must be shipped.
+
+    Missing transitive files break self-contained ``trust_remote_code`` loads.
+    This does not force optional non-runtime modules such as ``sglang_quant``
+    into the bundle.
+    """
     root = Path(__file__).resolve().parents[1] / "rwkv7_hf"
     known = set(ADAPTER_FILES)
     pending = [name for name in ADAPTER_FILES if PurePosixPath(name).suffix == ".py"]
@@ -216,9 +218,9 @@ def test_nested_manifest_copy_remove_and_validation() -> None:
 
 
 def test_adapter_manifest_closure_and_sync() -> None:
-    # Converted model dirs must include every runtime remote-code module the
-    # shipped files transitively import, and the converter and sync lists must
-    # stay aligned. (Does not force optional non-runtime files like sglang_quant.)
+    # Explicit bundled model dirs must include every runtime remote-code module
+    # reached by their entrypoint. The default thin layout does not use this
+    # manifest, but bundled conversion and the legacy sync tool must stay aligned.
     _assert_adapter_file_closure()
     _assert_remote_code_direct_import_closure()
     validate_manifest_paths(ADAPTER_FILES)
@@ -260,6 +262,8 @@ def test_adapter_manifest_closure_and_sync() -> None:
         cfg = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
         assert cfg["architectures"] == ["NativeRWKV7ForCausalLM"]
         assert cfg["model_type"] == "rwkv7_native"
+        assert cfg["rwkv7_hf_adapter_layout"] == "bundled"
+        assert "rwkv7_hf_runtime_version" not in cfg
         assert cfg["auto_map"] == {
             "AutoConfig": "native_model.NativeRWKV7Config",
             "AutoModel": "native_model.NativeRWKV7Model",

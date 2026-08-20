@@ -63,7 +63,7 @@ python scripts/convert_rwkv7_to_hf.py \
   --input /path/to/rwkv7-model.pth \
   --output /path/to/rwkv7-model-hf \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
-  --precision fp16 \
+  --precision fp16 --adapter-layout thin \
   --low-memory
 ```
 

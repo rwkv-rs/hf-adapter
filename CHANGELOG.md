@@ -16,6 +16,13 @@ model, dtype, batch and sequence shape named by their linked artifact.
   hints with the current runtime while preserving their immutable v0.7.0
   conversion manifests and release tags.
 
+### Conversion
+
+- Made package-backed `thin` Hugging Face entrypoints the default converter
+  output, matching the published model repositories. The explicit
+  `--adapter-layout bundled` mode retains self-contained runtime snapshots for
+  offline and archival workflows.
+
 ## [v0.8.0](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.8.0) - 2026-08-20
 
 ### Prebuilt CUDA kernel distribution

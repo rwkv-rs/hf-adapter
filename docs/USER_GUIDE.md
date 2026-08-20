@@ -161,8 +161,15 @@ python scripts/convert_rwkv7_to_hf.py \
   --vocab-file models/source/rwkv_vocab_v20230424.txt \
   --precision fp16 \
   --attn-mode fused_recurrent \
+  --adapter-layout thin \
   --no-fuse-norm
 ```
+
+`thin` is the default and matches the published Hub repositories: the output
+contains three small remote-code entrypoints backed by the `rwkv7-hf` package.
+Use `--adapter-layout bundled` only when an offline or archival model directory
+must carry a complete runtime-code snapshot. The weights are identical in both
+layouts.
 
 For 7.2B and 13.3B checkpoints, reduce conversion RAM and bound output shard
 size:
@@ -174,6 +181,7 @@ python scripts/convert_rwkv7_to_hf.py \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
   --precision fp16 \
   --attn-mode fused_recurrent \
+  --adapter-layout thin \
   --no-fuse-norm \
   --low-memory \
   --max-shard-size 5GB
