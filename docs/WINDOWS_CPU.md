@@ -21,9 +21,9 @@ PowerShell 脚本；Linux 和 macOS 用户可以运行同一个 Python 示例。
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-doctor
-rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf --revision v0.7.0 --device cpu --output rwkv7-smoke.json
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf doctor
+rwkv7-hf smoke --model wangyue114514/rwkv7-g1d-0.1b-hf --revision v0.7.0 --device cpu --output rwkv7-smoke.json
 ```
 
 最后必须显示 `RESULT: PASS`。CPU 不需要也不应该安装 CUDA kernel wheel；后面的

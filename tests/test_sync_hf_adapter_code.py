@@ -19,13 +19,13 @@ from scripts.sync_hf_adapter_code import sync_one
 
 def _converter_uses_shared_manifest() -> bool:
     """Confirm the converter imports and calls the shared manifest helpers."""
-    script = Path(__file__).resolve().parents[1] / "scripts" / "convert_rwkv7_to_hf.py"
+    script = Path(__file__).resolve().parents[1] / "rwkv7_hf" / "converter.py"
     tree = ast.parse(script.read_text(encoding="utf-8"))
     imported: set[str] = set()
     called: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in {
-            "scripts.adapter_manifest",
+            "rwkv7_hf.adapter_manifest",
             "adapter_manifest",
         }:
             imported.update(alias.name for alias in node.names)

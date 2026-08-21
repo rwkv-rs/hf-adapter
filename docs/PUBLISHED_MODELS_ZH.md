@@ -5,7 +5,7 @@
 全部可直接加载的 FP16 模型已经汇总到
 [`RWKV7-G1 Transformers` Collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1)。
 每个尺寸都是独立的 Transformers 模型仓库。不可变的 `v0.7.0` manifest 记录发布
-时所用运行库；这些模型仓库与当前 `rwkv7-hf==0.8.0` 运行库兼容。
+时所用运行库；这些模型仓库与当前 `rwkv7-hf==0.8.1` 运行库兼容。
 
 ## 模型矩阵
 
@@ -25,19 +25,19 @@
 ## 直接安装和加载
 
 ```bash
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-doctor
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf doctor
 ```
 
 普通用户不需要克隆本仓库，也不需要下载原始 `.pth`。Linux NVIDIA 用户可以先检查
 精确运行环境，再决定是否安装可选预编译二进制：
 
 ```bash
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
 # 只有列出一个完全匹配 wheel 时才执行：
-rwkv7-hf-kernels install
-rwkv7-hf-doctor
+rwkv7-hf kernels install
+rwkv7-hf doctor
 ```
 
 基础包不会猜测 GPU wheel。存在精确 wheel 时运行时会自动选择；否则继续使用
@@ -67,7 +67,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 第一次使用也可以不写 Python，直接生成完整验收报告：
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device auto \

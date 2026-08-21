@@ -24,9 +24,9 @@ cleanup.
 
 | Path | Purpose | Lifecycle |
 |---|---|---|
-| `rwkv7_hf/` | Installable adapter, runtime, kernels, quantization, MLX, training helpers | Active product code |
+| `rwkv7_hf/` | Installable adapter, converter, CLI, runtime, kernels, quantization, MLX, training helpers | Active product code |
 | `examples/` | Small user-facing examples | Stable public entry points |
-| `scripts/` | Conversion, sync, acceptance and specialized runners | Active tooling |
+| `scripts/` | Compatibility wrappers, sync, acceptance and specialized runners | Active tooling |
 | `tests/` | Unit, API, integration, hardware-policy and artifact tests | Active verification |
 | `docs/` | Canonical guides, architecture, hardware, validation and history | Lifecycle-classified |
 | `bench/` | Benchmark tools plus immutable dated evidence | Append-only evidence |
@@ -53,10 +53,19 @@ These paths and exported classes must remain available:
 rwkv7_hf/native_model.py
 rwkv7_hf/tokenization_rwkv7.py
 rwkv7_hf/__init__.py
+rwkv7_hf/cli.py
+rwkv7_hf/converter.py
+rwkv7_hf/adapter_manifest.py
 scripts/adapter_manifest.py
 scripts/convert_rwkv7_to_hf.py
 scripts/sync_hf_adapter_code.py
 ```
+
+`rwkv7_hf/converter.py` is the installed and canonical single-checkpoint
+converter. `scripts/convert_rwkv7_to_hf.py` remains a source-checkout wrapper
+for existing automation. The package and script manifest lists are kept in
+sync by tests so both installed conversion and repository tooling copy the
+same bundled runtime surface.
 
 Canonical converted `config.json` contains:
 

@@ -268,7 +268,7 @@ def test_official_prefill_matrix_forwards_low_memory_runtime() -> None:
 
 
 def test_converter_exposes_low_memory_path() -> None:
-    converter = (ROOT / "scripts/convert_rwkv7_to_hf.py").read_text(encoding="utf-8")
+    converter = (ROOT / "rwkv7_hf/converter.py").read_text(encoding="utf-8")
     assert '"--low-memory"' in converter
     assert 'with torch.device("meta")' in converter
     assert "save_torch_state_dict(" in converter

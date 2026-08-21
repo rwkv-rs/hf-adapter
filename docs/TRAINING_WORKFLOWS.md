@@ -13,7 +13,7 @@ Native/no-FLA 全参数 CUDA 训练时，使用 `scripts/train_native.py`。官�
 
 前置条件：
 
-普通 Python 项目可以直接安装 `rwkv7-hf[train]==0.8.0`。本页命令调用仓库内
+普通 Python 项目可以直接安装 `rwkv7-hf[train]==0.8.1`。本页命令调用仓库内
 测试和训练脚本，所以验收环境需要 clone 源码并使用 editable 安装：
 
 ```bash

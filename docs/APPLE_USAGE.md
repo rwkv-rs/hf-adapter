@@ -14,9 +14,9 @@ Apple 用户可以选择三层路线：
 普通用户直接安装发布包并验收公开 0.1B：
 
 ```bash
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-doctor --device mps
-rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf doctor --device mps
+rwkv7-hf smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 --device mps --output rwkv7-smoke.json
 ```
 

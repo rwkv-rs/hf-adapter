@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rwkv7-hf"
-version = "0.8.0"
+version = "0.8.1"
 description = "Native Hugging Face adapter and converter for official RWKV-7 checkpoints."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,8 @@ dependencies = [
 ]
 
 [project.scripts]
+rwkv7-hf = "rwkv7_hf.cli:cli"
+rwkv7-hf-convert = "rwkv7_hf.converter:cli"
 rwkv7-hf-doctor = "rwkv7_hf.doctor:cli"
 rwkv7-hf-kernels = "rwkv7_hf.kernels_cli:cli"
 rwkv7-hf-smoke = "rwkv7_hf.smoke:cli"

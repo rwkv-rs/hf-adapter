@@ -38,7 +38,7 @@ Use the vendor container or source its environment before Python starts:
 
 ```bash
 source /usr/local/birensupa/sdk/latest/scripts/brsw_set_env.sh
-python -m pip install "rwkv7-hf[biren]==0.8.0"
+python -m pip install "rwkv7-hf[biren]==0.8.1"
 python -c 'from rwkv7_hf import biren_available; print(biren_available())'
 ```
 
@@ -62,7 +62,7 @@ python -m pip install -e '.[biren]'
 ```
 
 ```bash
-python scripts/convert_rwkv7_to_hf.py \
+rwkv7-hf convert \
   --input /path/to/rwkv7-model.pth \
   --output /path/to/rwkv7-model-hf \
   --precision bf16 --adapter-layout thin --no-fuse-norm

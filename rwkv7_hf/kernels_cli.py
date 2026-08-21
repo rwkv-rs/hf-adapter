@@ -134,7 +134,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     subprocess.check_call(command)
     print(
-        "Kernel wheel installed. Run `rwkv7-hf-doctor` in a new process to verify it."
+        "Kernel wheel installed. Run `rwkv7-hf doctor` in a new process to verify it."
     )
     return 0
 

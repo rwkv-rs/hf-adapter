@@ -6,7 +6,7 @@ Install the patch release, then run the read-only doctor before a large
 checkpoint load:
 
 ```bash
-python -m pip install "rwkv7-hf==0.8.0"
+python -m pip install "rwkv7-hf==0.8.1"
 ```
 
 ```bash
@@ -16,7 +16,7 @@ python -m rwkv7_hf.doctor
 An installed wheel also exposes the equivalent console command:
 
 ```bash
-rwkv7-hf-doctor
+rwkv7-hf doctor
 ```
 
 The report identifies the Python, PyTorch, Transformers, CUDA/ROCm, Triton,
@@ -28,8 +28,8 @@ Policy features are reported as **candidates**, not as a claim that a kernel
 has executed. The final route also depends on model shape, dtype, batch size,
 sequence length, optional packages, and environment overrides. The doctor does
 not download weights, compile an extension, capture a graph, or benchmark the
-device. It also does not install a kernel wheel; use `rwkv7-hf-kernels
-recommend` and then `rwkv7-hf-kernels install` when an exact match exists.
+device. It also does not install a kernel wheel; use `rwkv7-hf kernels
+recommend` and then `rwkv7-hf kernels install` when an exact match exists.
 
 ## One device
 
@@ -63,7 +63,7 @@ include local compiler and cache paths; review it before sharing publicly.
   may remain available. A compatible prebuilt wheel removes this requirement
   for the extensions included in that wheel.
 - **Prebuilt kernel package missing/incompatible:** run
-  `rwkv7-hf-kernels status` and `rwkv7-hf-kernels recommend`. Installation is
+  `rwkv7-hf kernels status` and `rwkv7-hf kernels recommend`. Installation is
   offered only when Python, Torch, CUDA, ABI, and compute capability all match
   the public hash index. See
   [`KERNEL_WHEELS.md`](KERNEL_WHEELS.md).

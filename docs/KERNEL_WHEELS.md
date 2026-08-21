@@ -13,10 +13,10 @@ exact runtime lane.
 Install the adapter and inspect the current environment:
 
 ```bash
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
-rwkv7-hf-doctor
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
+rwkv7-hf doctor
 ```
 
 The base PyPI installation intentionally does not install a GPU wheel. On a
@@ -24,8 +24,8 @@ supported Linux NVIDIA lane, `recommend` lists one exact build; then install
 the hash-pinned wheel selected from the public release index:
 
 ```bash
-rwkv7-hf-kernels install
-rwkv7-hf-doctor
+rwkv7-hf kernels install
+rwkv7-hf doctor
 ```
 
 The installer matches all of these fields before invoking pip:
@@ -94,7 +94,7 @@ records successful binary or JIT selection after a route has executed.
 The smallest public checkpoint provides the one-command end-to-end gate:
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device cuda \

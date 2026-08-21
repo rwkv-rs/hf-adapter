@@ -11,7 +11,7 @@ project:
 reference_implementation:
   model: rwkv7_hf/native_model.py
   token_step_math: rwkv7_hf/native.py
-  checkpoint_converter: scripts/convert_rwkv7_to_hf.py
+  checkpoint_converter: rwkv7_hf/converter.py
   hardware_policy: rwkv7_hf/kernel_policy.py
   native_quantization:
     - rwkv7_hf/native_quant.py

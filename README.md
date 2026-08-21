@@ -22,27 +22,31 @@ Normal users do **not** need to clone this repository or convert a `.pth`:
 python -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-doctor
-rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf doctor
+rwkv7-hf smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 --device auto --output rwkv7-smoke.json
 ```
 
 The smoke must end with `RESULT: PASS`. Linux NVIDIA users can optionally run:
 
 ```bash
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
-rwkv7-hf-kernels install  # only when one exact compatible wheel is listed
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
+rwkv7-hf kernels install  # only when one exact compatible wheel is listed
 ```
 
 The base package never guesses a GPU binary. After optional installation, `auto` selects a compatible prebuilt extension, then JIT where allowed, then a
 portable fallback. See [published models](docs/PUBLISHED_MODELS.md), the
 [full user guide](docs/USER_GUIDE.md), and [kernel wheels](docs/KERNEL_WHEELS.md).
-Clone the repository only for conversion, development, repository tests, or
-benchmark reproduction.
+Clone the repository only for development, repository tests, batch tooling, or
+benchmark reproduction. The wheel includes single-checkpoint conversion.
+
+The unified CLI is `rwkv7-hf`; the historical `rwkv7-hf-doctor`,
+`rwkv7-hf-kernels`, and `rwkv7-hf-smoke` commands remain compatible.
 
 - [Published models and direct Hub loading](docs/PUBLISHED_MODELS.md)
+- [Unified CLI reference](docs/CLI.md)
 - [English step-by-step guide](docs/USER_GUIDE.md)
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
 - [Windows and CPU guide](docs/WINDOWS_CPU.md)
@@ -58,8 +62,11 @@ benchmark reproduction.
 
 ## Convert an official checkpoint
 
+Conversion is part of the installed wheel and works from any directory; no Git
+clone is required:
+
 ```bash
-python scripts/convert_rwkv7_to_hf.py \
+rwkv7-hf convert \
   --input /path/to/rwkv7-model.pth \
   --output /path/to/rwkv7-model-hf \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
@@ -70,12 +77,12 @@ python scripts/convert_rwkv7_to_hf.py \
 Then verify the produced directory:
 
 ```bash
-python examples/check_environment.py --model /path/to/rwkv7-model-hf
-python examples/generate.py \
-  --model /path/to/rwkv7-model-hf \
-  --prompt "The future of language models is" \
-  --max-new-tokens 32
+rwkv7-hf doctor
+rwkv7-hf smoke --model /path/to/rwkv7-model-hf --device auto
 ```
+
+`rwkv7-hf-convert` is an equivalent compatibility alias for
+`rwkv7-hf convert`.
 
 See [inference workflows](docs/INFERENCE_WORKFLOWS.md) for batch conversion,
 cache continuation, dynamic batching, chunked prefill, `device_map`, and
@@ -112,7 +119,7 @@ public compatibility contract.
 
 ## Current status
 
-The published **RWKV-7 HF `v0.8.0` release is complete** for its declared,
+The published **RWKV-7 HF `v0.8.1` release is complete** for its declared,
 evidence-backed scope. It retains the accepted v0.6 adapter milestone and adds
 the integrated Ascend, Biren, MetaX and MUSA boundaries plus the latest
 exact-card NVIDIA performance routes.
@@ -159,7 +166,7 @@ For exact numbers and caveats use [`BENCHMARK.md`](BENCHMARK.md), not this
 landing page.
 
 Completion is reported by **named scope**, not as a single repository-wide
-percentage. `v0.8.0` is complete; exact hardware and benchmark claims remain
+percentage. `v0.8.1` is complete; exact hardware and benchmark claims remain
 limited to their promoted profiles.
 
 Canonical project state:
@@ -196,26 +203,20 @@ python -m pip install -e ".[fla-reference]"   # optional comparison only
 Optional backends must not be required merely to import the base package.
 
 ## Architecture and repository map
-
 ```text
-rwkv7_hf/     installable model, runtime, kernels, quantization and backends
+rwkv7_hf/     installable model, converter, CLI, runtime, kernels and backends
 examples/     small user-facing entry points
-scripts/      conversion, sync, acceptance and specialized runners
+scripts/      compatibility wrappers, sync, acceptance and specialized runners
 tests/        API, unit, integration, policy and artifact verification
 docs/         guides, architecture, hardware, validation and history
 bench/        benchmark tools and immutable dated evidence
 configs/      reproducible training/runtime configurations
 ```
 
-Important stable files:
-
-```text
-rwkv7_hf/native_model.py
-rwkv7_hf/tokenization_rwkv7.py
-scripts/adapter_manifest.py
-scripts/convert_rwkv7_to_hf.py
-scripts/sync_hf_adapter_code.py
-```
+Stable runtime and conversion surfaces live in `rwkv7_hf/native_model.py`,
+`rwkv7_hf/tokenization_rwkv7.py`, `rwkv7_hf/cli.py`,
+`rwkv7_hf/converter.py`, and `rwkv7_hf/adapter_manifest.py`; source-tooling
+compatibility wrappers remain under `scripts/`.
 
 Converted checkpoints depend on these remote-code entry points. Structural
 refactors must preserve them through compatibility facades. See
@@ -223,7 +224,6 @@ refactors must preserve them through compatibility facades. See
 and the [operator specification](docs/architecture/RWKV7_OPERATOR_SPEC.md).
 
 ## Training and quantization
-
 Training tutorials:
 
 - [Training workflows](docs/TRAINING_WORKFLOWS.md)

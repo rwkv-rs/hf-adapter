@@ -41,7 +41,7 @@ source /usr/local/Ascend/cann-8.5.0/set_env.sh
 python3.11 -m venv .venv
 . .venv/bin/activate
 # Install the exact Huawei torch + torch_npu wheel pair here.
-python -m pip install "rwkv7-hf[ascend]==0.8.0"
+python -m pip install "rwkv7-hf[ascend]==0.8.1"
 python -c 'from rwkv7_hf import ascend_available; print(ascend_available())'
 ```
 

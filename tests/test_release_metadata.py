@@ -11,22 +11,25 @@ except ModuleNotFoundError:  # Python 3.10 compatibility lane.
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v080_distribution_metadata_is_consistent() -> None:
+def test_v081_distribution_metadata_is_consistent() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
         "project"
     ]
     assert project["name"] == "rwkv7-hf"
-    assert project["version"] == "0.8.0"
+    assert project["version"] == "0.8.1"
+    assert project["scripts"]["rwkv7-hf"] == "rwkv7_hf.cli:cli"
+    assert project["scripts"]["rwkv7-hf-convert"] == "rwkv7_hf.converter:cli"
     assert project["scripts"]["rwkv7-hf-doctor"] == "rwkv7_hf.doctor:cli"
     assert project["scripts"]["rwkv7-hf-kernels"] == "rwkv7_hf.kernels_cli:cli"
     assert project["scripts"]["rwkv7-hf-smoke"] == "rwkv7_hf.smoke:cli"
 
     citation = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
-    assert "version: 0.8.0" in citation
-    assert "date-released: 2026-08-20" in citation
+    assert "version: 0.8.1" in citation
+    assert "date-released: 2026-08-21" in citation
 
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [v0.8.0]" in changelog
+    assert "## [v0.8.1]" in changelog
+    assert "rwkv7-hf convert" in changelog
     assert "Published the first PyPI distribution as `rwkv7-hf`" in changelog
 
 

@@ -499,17 +499,17 @@ without FLA:
 python3 -m venv .venv-apple-torch
 source .venv-apple-torch/bin/activate
 python -m pip install -U pip setuptools wheel
-python -m pip install "rwkv7-hf==0.8.0"
+python -m pip install "rwkv7-hf==0.8.1"
 python -m pip install accelerate
-rwkv7-hf-doctor --device mps
-rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+rwkv7-hf doctor --device mps
+rwkv7-hf smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 --device mps --output rwkv7-smoke.json
 ```
 
 For ordinary MLX dependencies, install the published extra:
 
 ```bash
-python -m pip install "rwkv7-hf[mlx]==0.8.0"
+python -m pip install "rwkv7-hf[mlx]==0.8.1"
 ```
 
 The remaining commands in this document invoke repository scripts and retained

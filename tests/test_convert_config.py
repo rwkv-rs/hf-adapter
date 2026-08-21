@@ -40,6 +40,7 @@ class MissingFlaModel:
 
 
 def install_stubs() -> None:
+    package_root = Path(__file__).resolve().parents[1] / "rwkv7_hf"
     torch_mod = types.ModuleType("torch")
     torch_mod.Tensor = ShapeTensor
     torch_mod.float16 = "float16"
@@ -49,7 +50,7 @@ def install_stubs() -> None:
     sys.modules["torch"] = torch_mod
 
     hf_mod = types.ModuleType("rwkv7_hf")
-    hf_mod.__path__ = []
+    hf_mod.__path__ = [str(package_root)]
     hf_mod.RWKV7Config = DummyConfig
     hf_mod.RWKV7ForCausalLM = DummyModel
     sys.modules["rwkv7_hf"] = hf_mod
@@ -66,12 +67,13 @@ def install_stubs() -> None:
     manifest_mod.remove_manifest_files = real_remove_manifest_files
     sys.modules["adapter_manifest"] = manifest_mod
     sys.modules["scripts.adapter_manifest"] = manifest_mod
+    sys.modules["rwkv7_hf.adapter_manifest"] = manifest_mod
 
 
 def import_converter():
     install_stubs()
-    path = Path(__file__).resolve().parents[1] / "scripts" / "convert_rwkv7_to_hf.py"
-    spec = importlib.util.spec_from_file_location("convert_rwkv7_to_hf_under_test", path)
+    path = Path(__file__).resolve().parents[1] / "rwkv7_hf" / "converter.py"
+    spec = importlib.util.spec_from_file_location("rwkv7_hf.converter", path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)

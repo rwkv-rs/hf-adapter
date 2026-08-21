@@ -57,9 +57,9 @@ cp "$ADAPTER/examples/gradio/native_hf_v3a_compat.py" "$SPACE/"
 
 python -m pip install -e "$ADAPTER[cuda]"
 python -m pip install -r "$SPACE/requirements.txt"
-rwkv7-hf-doctor
-rwkv7-hf-kernels recommend
-# 只有精确匹配时才运行 rwkv7-hf-kernels install
+rwkv7-hf doctor
+rwkv7-hf kernels recommend
+# 只有精确匹配时才运行 rwkv7-hf kernels install
 
 cd "$SPACE"
 APP3_BACKEND=native_hf \

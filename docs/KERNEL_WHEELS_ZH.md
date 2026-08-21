@@ -11,18 +11,18 @@
 先安装运行库并检查环境：
 
 ```bash
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
-rwkv7-hf-doctor
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
+rwkv7-hf doctor
 ```
 
 基础 PyPI 安装有意不自动安装 GPU wheel。如果当前 Linux NVIDIA 环境存在经过
 验证的精确 wheel，`recommend` 会列出唯一构建，再用一条命令安装：
 
 ```bash
-rwkv7-hf-kernels install
-rwkv7-hf-doctor
+rwkv7-hf kernels install
+rwkv7-hf doctor
 ```
 
 安装器会同时匹配：
@@ -85,7 +85,7 @@ Doctor 只检查 manifest，不导入二进制；模型报告记录算子真正�
 ## 一条命令公开模型验收
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device cuda \

@@ -6,7 +6,7 @@ The ready-to-load FP16 family is grouped in the
 [`RWKV7-G1 Transformers` collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1).
 Each model is an independent Transformers repository. Its immutable `v0.7.0`
 manifest records the publishing runtime; the repositories are compatible with
-the current `rwkv7-hf==0.8.0` runtime.
+the current `rwkv7-hf==0.8.1` runtime.
 
 ## Model matrix
 
@@ -27,8 +27,8 @@ a new environment.
 ## Install and load directly
 
 ```bash
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-doctor
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf doctor
 ```
 
 Normal users do not need this repository or the original `.pth` files. On
@@ -36,11 +36,11 @@ Linux NVIDIA, inspect the exact runtime before installing an optional prebuilt
 binary:
 
 ```bash
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
 # Run only when one exact compatible wheel is listed:
-rwkv7-hf-kernels install
-rwkv7-hf-doctor
+rwkv7-hf kernels install
+rwkv7-hf doctor
 ```
 
 The base package never guesses a GPU wheel. Once an exact wheel is present,
@@ -71,7 +71,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 For a first-run acceptance report without writing Python:
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device auto \
