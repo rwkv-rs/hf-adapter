@@ -82,7 +82,7 @@ def test_package_public_classes_are_native() -> None:
 
 
 def test_repo_code_benchmark_overlay_migrates_config_without_touching_source(tmp_path) -> None:
-    from bench.bench_native_quant_e2e_decode import prepare_model_dir
+    from bench.runners.bench_native_quant_e2e_decode import prepare_model_dir
 
     source = tmp_path / "converted"
     source.mkdir()

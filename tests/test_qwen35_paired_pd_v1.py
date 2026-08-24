@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from itertools import product
 
-from bench.validate_qwen35_best_optimized_hf_v1 import PAIRS as QWEN_PAIRS
-from bench.validate_qwen35_paired_pd_v1 import (
+from bench.validators.validate_qwen35_best_optimized_hf_v1 import PAIRS as QWEN_PAIRS
+from bench.validators.validate_qwen35_paired_pd_v1 import (
     PAIRS,
     PARAMETERS,
     RWKV_SIZES,
     validate_paired_pd,
 )
 from tests.test_qwen35_best_optimized_hf_v1 import row as qwen_row
-from bench.bench_cross_model_speed import rwkv_native_graph_decode_route
+from bench.runners.bench_cross_model_speed import rwkv_native_graph_decode_route
 
 
 COMMIT = "a" * 40

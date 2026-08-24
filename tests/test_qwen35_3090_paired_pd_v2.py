@@ -8,9 +8,9 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VALIDATOR_PATH = ROOT / "bench" / "validate_qwen35_3090_paired_pd_v2.py"
+VALIDATOR_PATH = ROOT / "bench" / "validators" / "validate_qwen35_3090_paired_pd_v2.py"
 QWEN_RUNNER_PATH = ROOT / "bench" / "run_5090_qwen35_best_optimized_hf.sh"
-QWEN_ROUTE_PROBE_PATH = ROOT / "bench" / "run_3090_qwen_graph_route_probe_v1.sh"
+QWEN_ROUTE_PROBE_PATH = ROOT / "bench" / "runners" / "run_3090_qwen_graph_route_probe_v1.sh"
 QWEN_3090_RUNNER_PATH = ROOT / "bench" / "run_3090_qwen35_best_optimized_hf.sh"
 RWKV_3090_RUNNER_PATH = ROOT / "bench" / "run_3090_rwkv_paired_pd_v2.sh"
 

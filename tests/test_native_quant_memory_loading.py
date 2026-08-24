@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from bench import bench_native_quant_e2e_decode as decode_bench
+from bench.runners import bench_native_quant_e2e_decode as decode_bench
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -3,8 +3,8 @@ from __future__ import annotations
 from itertools import product
 from pathlib import Path
 
-from bench.capture_hf_fast_path_v1_environment import capture, compare_runtime_lock
-from bench.validate_hf_fast_path_v1 import PAIRS, validate_matrix
+from bench.tools.capture_hf_fast_path_v1_environment import capture, compare_runtime_lock
+from bench.validators.validate_hf_fast_path_v1 import PAIRS, validate_matrix
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -180,13 +180,13 @@ def test_runtime_lock_comparison_is_exact() -> None:
 
 def test_environment_capture_accepts_an_explicit_protocol(monkeypatch) -> None:
     monkeypatch.setattr(
-        "bench.capture_hf_fast_path_v1_environment.pip_freeze", lambda: "torch==test\n"
+        "bench.tools.capture_hf_fast_path_v1_environment.pip_freeze", lambda: "torch==test\n"
     )
     monkeypatch.setattr(
-        "bench.capture_hf_fast_path_v1_environment.git_commit", lambda _root: "abc123"
+        "bench.tools.capture_hf_fast_path_v1_environment.git_commit", lambda _root: "abc123"
     )
     monkeypatch.setattr(
-        "bench.capture_hf_fast_path_v1_environment.package_source", lambda _name: None
+        "bench.tools.capture_hf_fast_path_v1_environment.package_source", lambda _name: None
     )
     manifest, _freeze = capture(
         ROOT, protocol="qwen35_best_optimized_hf_v1"
@@ -197,16 +197,16 @@ def test_environment_capture_accepts_an_explicit_protocol(monkeypatch) -> None:
 def test_environment_capture_accepts_explicit_repository_commit(monkeypatch) -> None:
     monkeypatch.setenv("REPOSITORY_COMMIT", "explicit-sha")
     monkeypatch.setattr(
-        "bench.capture_hf_fast_path_v1_environment.subprocess.check_output",
+        "bench.tools.capture_hf_fast_path_v1_environment.subprocess.check_output",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("git called")),
     )
-    from bench.capture_hf_fast_path_v1_environment import git_commit
+    from bench.tools.capture_hf_fast_path_v1_environment import git_commit
 
     assert git_commit(ROOT) == "explicit-sha"
 
 
 def test_single_card_script_is_official_and_fail_closed() -> None:
-    text = (ROOT / "bench" / "run_hf_fast_path_v1.sh").read_text(encoding="utf-8")
+    text = (ROOT / "bench" / "runners" / "run_hf_fast_path_v1.sh").read_text(encoding="utf-8")
     assert "--qwen-conv-backend causal_conv1d" in text
     assert "--require-qwen-fast-path" in text
     assert "--qwen-conv-backend fla_triton" not in text
@@ -231,7 +231,7 @@ def test_single_card_script_is_official_and_fail_closed() -> None:
 
 
 def test_extension_build_script_pins_sources_and_all_card_arches() -> None:
-    text = (ROOT / "bench" / "build_hf_fast_path_v1_extensions.sh").read_text(
+    text = (ROOT / "bench" / "runners" / "build_hf_fast_path_v1_extensions.sh").read_text(
         encoding="utf-8"
     )
     assert 'TORCH_CUDA_ARCH_LIST="8.6;8.9;12.0"' in text

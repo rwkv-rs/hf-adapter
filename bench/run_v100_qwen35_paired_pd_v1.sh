@@ -158,7 +158,7 @@ PY
   }
 fi
 
-"${PYTHON_BIN}" "${ROOT}/bench/validate_qwen35_v100_paired_pd_v1.py" \
+"${PYTHON_BIN}" "${ROOT}/bench/validators/validate_qwen35_v100_paired_pd_v1.py" \
   --candidate "${OUT_DIR}/rwkv_candidate.jsonl" \
   --reference "${reference}" \
   --correctness-manifest "${OUT_DIR}/rwkv_native_graph_fla_correctness.json" \

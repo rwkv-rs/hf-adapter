@@ -32,9 +32,9 @@ SCRIPTS = [
     "scripts/run_apple_silicon_mlx_generation_sweep.sh",
 ]
 BENCH_RUNNERS = [
-    "bench/run_a6000_hf_validation.sh",
-    "bench/run_3090_qwen35_pair.sh",
-    "bench/run_t4_hf_validation.sh",
+    "bench/runners/run_a6000_hf_validation.sh",
+    "bench/runners/run_3090_qwen35_pair.sh",
+    "bench/runners/run_t4_hf_validation.sh",
 ]
 
 
@@ -79,7 +79,7 @@ def test_shell_syntax_and_executable_bits() -> None:
 
 
 def test_a6000_validation_runner_contract() -> None:
-    text = (ROOT / "bench/run_a6000_hf_validation.sh").read_text(encoding="utf-8")
+    text = (ROOT / "bench/runners/run_a6000_hf_validation.sh").read_text(encoding="utf-8")
     assert "PYTHON_BIN=\"${PYTHON_BIN:-/home/zhiyuanzhou/draft/venv/bin/python}\"" in text
     assert "MODEL_ROOT=\"${MODEL_ROOT:-/home/zhiyuanzhou/rwkv_models}\"" in text
     assert "A6000_SINGLE_VISIBLE_DEVICES=\"${A6000_SINGLE_VISIBLE_DEVICES:-2}\"" in text
@@ -91,15 +91,15 @@ def test_a6000_validation_runner_contract() -> None:
     assert "rwkv7-g1g-2.9b-20260526-ctx8192.pth" in text
     assert "rwkv7-g1g-7.2b-20260523-ctx8192.pth" in text
     assert "scripts/convert_rwkv7_to_hf.py" in text
-    assert "bench/bench_larger_model_smoke.py" in text
-    assert "bench/bench_batch_sweep.py" in text
-    assert "bench/bench_quantization.py" in text
-    assert "bench/bench_native_mm_quant_decode.py" in text
+    assert "bench/probes/bench_larger_model_smoke.py" in text
+    assert "bench/runners/bench_batch_sweep.py" in text
+    assert "bench/probes/bench_quantization.py" in text
+    assert "bench/runners/bench_native_mm_quant_decode.py" in text
     assert "scripts/run_hf_training_matrix.sh" in text
     assert "scripts/run_zero_training_smoke.sh" in text
     assert "tests/test_deepspeed_resume_smoke.py" in text
     assert "scripts/print_env.sh" in text
-    assert "RESULTS=\"${RESULTS:-bench/results.jsonl}\"" in text
+    assert "RESULTS=\"${RESULTS:-bench/_runs/results.jsonl}\"" in text
     assert "VALIDATION_MODEL_LABELS=\"${VALIDATION_MODEL_LABELS:-0.4b 1.5b 2.9b 7.2b}\"" in text
     assert "TRAIN_MODEL_LABELS=\"${TRAIN_MODEL_LABELS:-0.4b 1.5b 2.9b}\"" in text
     assert "ZERO_MODEL_LABELS=\"${ZERO_MODEL_LABELS:-0.4b 1.5b 2.9b}\"" in text
@@ -109,8 +109,8 @@ def test_a6000_validation_runner_contract() -> None:
 
 
 def test_t4_validation_runner_contract() -> None:
-    text = (ROOT / "bench/run_t4_hf_validation.sh").read_text(encoding="utf-8")
-    assert 'REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"' in text
+    text = (ROOT / "bench/runners/run_t4_hf_validation.sh").read_text(encoding="utf-8")
+    assert 'REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"' in text
     assert 'export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"' in text
     assert 'cd "${REPO_ROOT}"' in text
     assert 'MODEL_ROOT="${MODEL_ROOT:-/opt/models}"' in text
@@ -157,14 +157,14 @@ def test_t4_validation_runner_contract() -> None:
     assert "tests/test_chunked_prefill.py" in text
     assert "tests/test_native_trainer_smoke.py" in text
     assert "tests/test_native_peft_save_load_merge.py" in text
-    assert "bench/bench_batch_sweep.py" in text
-    assert "bench/bench_native_graph_overhead.py" in text
-    assert "bench/bench_chunked_prefill.py" in text
-    assert "bench/bench_native_graph_fused_output.py" in text
-    assert "bench/bench_native_graph_fused_recurrent_output.py" in text
-    assert "bench/bench_quantization.py" in text
-    assert "bench/bench_native_mm_quant_decode.py" in text
-    assert "bench/bench_native_quant_e2e_decode.py" in text
+    assert "bench/runners/bench_batch_sweep.py" in text
+    assert "bench/runners/bench_native_graph_overhead.py" in text
+    assert "bench/probes/bench_chunked_prefill.py" in text
+    assert "bench/probes/bench_native_graph_fused_output.py" in text
+    assert "bench/probes/bench_native_graph_fused_recurrent_output.py" in text
+    assert "bench/probes/bench_quantization.py" in text
+    assert "bench/runners/bench_native_mm_quant_decode.py" in text
+    assert "bench/runners/bench_native_quant_e2e_decode.py" in text
     assert 'BATCH_SIZES="${BATCH_SIZES:-1 2 4 8}"' in text
     assert 'PREFILL_BATCH_SIZES="${PREFILL_BATCH_SIZES:-1,2,4,8}"' in text
     assert "RWKV7_NATIVE_MODEL=1" in text
@@ -243,8 +243,8 @@ def test_math500_acceptance_defaults_are_final_benchmark() -> None:
 
 
 def test_blackwell_matrix_supports_paired_baselines() -> None:
-    matrix = (ROOT / "bench/run_blackwell_quant_matrix.py").read_text(encoding="utf-8")
-    decode = (ROOT / "bench/bench_native_quant_e2e_decode.py").read_text(encoding="utf-8")
+    matrix = (ROOT / "bench/runners/run_blackwell_quant_matrix.py").read_text(encoding="utf-8")
+    decode = (ROOT / "bench/runners/bench_native_quant_e2e_decode.py").read_text(encoding="utf-8")
     assert '"--paired-baseline"' in matrix
     assert 'cmd.append("--paired-baseline")' in matrix
     assert '"--timing-repeats"' in matrix
@@ -255,7 +255,7 @@ def test_blackwell_matrix_supports_paired_baselines() -> None:
 
 
 def test_official_prefill_matrix_forwards_low_memory_runtime() -> None:
-    matrix = (ROOT / "bench/run_official_native_prefill_matrix.py").read_text(
+    matrix = (ROOT / "bench/runners/run_official_native_prefill_matrix.py").read_text(
         encoding="utf-8"
     )
     assert '"--official-emb"' in matrix

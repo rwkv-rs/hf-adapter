@@ -130,7 +130,7 @@ reward 只是确定性测试数据，真实对齐训练必须换成经过审查�
 在 Linux/WSL2 上对一个或多个模型运行 PEFT、Trainer/SFT、DPO/GRPO：
 
 ```bash
-DEVICE=cuda TRAIN_DTYPE=bf16 RESULTS=bench/results.jsonl \
+DEVICE=cuda TRAIN_DTYPE=bf16 RESULTS=bench/_runs/results.jsonl \
   bash scripts/run_hf_training_matrix.sh MODEL_A MODEL_B
 ```
 

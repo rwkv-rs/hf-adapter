@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from bench.bench_native_graph_overhead import (
+from bench.runners.bench_native_graph_overhead import (
     resolve_native_graph_runner,
     runner_token_buffer,
 )

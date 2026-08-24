@@ -52,7 +52,7 @@ rwkv7_print_env
 rwkv7_log "MATH500 acceptance model=${MODEL} dataset=${DATASET} out=${OUT_DIR} rollout=${ROLLOUT} bsz=${BSZ} seed=${SEED}"
 
 cmd=(
-  "${PYTHON_BIN}" bench/eval_math500_hf.py
+  "${PYTHON_BIN}" bench/probes/eval_math500_hf.py
   --hf-dir "${MODEL}"
   --dataset "${DATASET}"
   --out-dir "${OUT_DIR}"
@@ -89,7 +89,7 @@ if [[ -n "${ALBATROSS_SUMMARY:-}" ]]; then
   COMPARISON_OUT_DIR="${COMPARISON_OUT_DIR:-${OUT_DIR}/comparison}"
   mkdir -p "${COMPARISON_OUT_DIR}"
   compare_cmd=(
-    "${PYTHON_BIN}" bench/compare_math500_summaries.py
+    "${PYTHON_BIN}" bench/analyzers/compare_math500_summaries.py
     --hf-summary "${OUT_DIR}/summary.json"
     --albatross-summary "${ALBATROSS_SUMMARY}"
     --require-compatible-shape

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from bench.bench_native_prefill_scan import (
+from bench.runners.bench_native_prefill_scan import (
     native_jit_packs,
     prepare_model_dir,
     reported_effective_model_path,

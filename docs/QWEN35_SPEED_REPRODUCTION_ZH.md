@@ -141,7 +141,7 @@ export RWKV7_BLACKWELL_TORCH_COMPILE=1
 
 TORCHINDUCTOR_CACHE_DIR="$OUT/rwkv-cache" \
 TRITON_CACHE_DIR="$OUT/rwkv-cache" \
-python bench/bench_cross_model_speed_resident.py \
+python bench/runners/bench_cross_model_speed_resident.py \
   --model "$RWKV_MODEL" \
   --model-kind rwkv --model-role candidate \
   --model-pair rwkv-1.5b__qwen3.5-2b --model-size-label 1.5b \
@@ -165,7 +165,7 @@ while IFS= read -r name; do unset "$name"; done \
 
 TORCHINDUCTOR_CACHE_DIR="$OUT/qwen-cache" \
 TRITON_CACHE_DIR="$OUT/qwen-cache" \
-python bench/bench_cross_model_speed_resident.py \
+python bench/runners/bench_cross_model_speed_resident.py \
   --model "$QWEN_MODEL" \
   --model-kind qwen35 --model-role reference \
   --model-pair rwkv-1.5b__qwen3.5-2b --model-size-label 2b \
@@ -240,10 +240,10 @@ RTX 4090 正式产物中，这一组 B8 六格的中位结果约为：
 | GPU | 正式入口 | 结果与精确环境 |
 |---|---|---|
 | V100 | [`run_v100_qwen35_paired_pd_v1.sh`](../bench/run_v100_qwen35_paired_pd_v1.sh) | [P+D v1](../bench/v100_qwen35_paired_pd_v1_20260814/README.md) |
-| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh)、[`run_3090_qwen35_best_optimized_hf.sh`](../bench/run_3090_qwen35_best_optimized_hf.sh)、[`validate_qwen35_3090_paired_pd_v2.py`](../bench/validate_qwen35_3090_paired_pd_v2.py) | [P+D v2](../bench/3090_qwen35_paired_pd_v2_20260816/README.md) |
+| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh)、[`run_3090_qwen35_best_optimized_hf.sh`](../bench/run_3090_qwen35_best_optimized_hf.sh)、[`validate_qwen35_3090_paired_pd_v2.py`](../bench/validators/validate_qwen35_3090_paired_pd_v2.py) | [P+D v2](../bench/3090_qwen35_paired_pd_v2_20260816/README.md) |
 | RTX 4080 | [`run_4080_qwen35_paired_pd_v1.sh`](../bench/run_4080_qwen35_paired_pd_v1.sh) | [P+D v1](../bench/4080_qwen35_paired_pd_v1_20260814/README.md) |
-| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh)、[`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh)、[`validate_qwen35_4090_paired_pd_v2.py`](../bench/validate_qwen35_4090_paired_pd_v2.py) | [P+D v2](../bench/4090_qwen35_paired_pd_v2_20260815/README.md) |
-| RTX 5090 | [`run_5090_rwkv_paired_decode_v1.sh`](../bench/run_5090_rwkv_paired_decode_v1.sh)、[`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh)、[`validate_qwen35_paired_decode_v1.py`](../bench/validate_qwen35_paired_decode_v1.py) | [Decode v1](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
+| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh)、[`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh)、[`validate_qwen35_4090_paired_pd_v2.py`](../bench/validators/validate_qwen35_4090_paired_pd_v2.py) | [P+D v2](../bench/4090_qwen35_paired_pd_v2_20260815/README.md) |
+| RTX 5090 | [`run_5090_rwkv_paired_decode_v1.sh`](../bench/run_5090_rwkv_paired_decode_v1.sh)、[`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh)、[`validate_qwen35_paired_decode_v1.py`](../bench/validators/validate_qwen35_paired_decode_v1.py) | [Decode v1](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
 
 以 RTX 4080 为例，准备全新输出目录和模型变量后即可一次跑完：
 
@@ -273,7 +273,7 @@ cat "$OUT_DIR/paired_validation.json"
 ```bash
 export FLA_SOURCE_COMMIT=2e38c1fab332174d056928feaf29f8c5fd5ac550
 export CAUSAL_CONV1D_SOURCE_COMMIT=4f6ae4e26ae5fe8af9372f8d312ab25cc4595223
-bash bench/build_hf_fast_path_v1_extensions.sh
+bash bench/runners/build_hf_fast_path_v1_extensions.sh
 ```
 
 ## 7. 常见问题

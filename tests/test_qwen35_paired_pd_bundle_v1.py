@@ -7,8 +7,8 @@ from pathlib import Path
 
 import torch
 
-from bench.compare_rwkv_prefill_probe import compare
-from bench.validate_qwen35_paired_pd_bundle_v1 import main, validate_bundle
+from bench.analyzers.compare_rwkv_prefill_probe import compare
+from bench.validators.validate_qwen35_paired_pd_bundle_v1 import main, validate_bundle
 from tests.test_qwen35_paired_pd_v1 import COMMIT, PAIRS, candidates, references
 
 

@@ -44,7 +44,7 @@ CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python tests/test_official_alignment.py \
   --device cuda \
   --official-strategy "cuda fp16" \
   --greedy-window 64 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 CUDA_VISIBLE_DEVICES=5 PYTHONPATH=. python tests/test_hf_rl_training_smoke.py \
   --model "$MODEL_0P1B_HF" \
@@ -58,9 +58,9 @@ CUDA_VISIBLE_DEVICES=5 PYTHONPATH=. python tests/test_hf_rl_training_smoke.py \
   --dataset-repeats 2 \
   --max-length 32 \
   --grpo-max-completion-length 2 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/bench_larger_model_smoke.py \
+CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/probes/bench_larger_model_smoke.py \
   --hf-dir "$MODEL_7P2B_HF" \
   --model-size-label 7.2b \
   --checkpoint-path "$MODEL_7P2B_PTH" \
@@ -69,9 +69,9 @@ CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/bench_larger_model_smoke.py \
   --attn-mode fused_recurrent \
   --fast-token-backend auto \
   --max-new-tokens 4 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/bench_native_mm_quant_decode.py \
+CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/runners/bench_native_mm_quant_decode.py \
   --hf-dir "$MODEL_HF" \
   --model-size-label "$MODEL_SIZE_LABEL" \
   --dtype fp16 \
@@ -82,9 +82,9 @@ CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/bench_native_mm_quant_decode.py
   --decode-tokens 64 \
   --warmup 1 \
   --runs 1 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/bench_quantization.py \
+CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/probes/bench_quantization.py \
   --hf-dir "$MODEL_13P3B_HF" \
   --model-size-label 13.3b \
   --dtype fp16 \
@@ -97,7 +97,7 @@ CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python bench/bench_quantization.py \
   --warmup 0 \
   --runs 1 \
   --quant-skip-policy memory \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python tests/test_deepspeed_training_smoke.py \
   --model "$MODEL_0P4B_HF" \
@@ -108,7 +108,7 @@ CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python tests/test_deepspeed_training_smoke.p
   --max-steps 1 \
   --batch-size 1 \
   --max-length 64 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python tests/test_deepspeed_resume_smoke.py \
   --model "$MODEL_0P4B_HF" \
@@ -120,7 +120,7 @@ CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. python tests/test_deepspeed_resume_smoke.py 
   --resume-steps 2 \
   --batch-size 1 \
   --max-length 16 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 CUDA_VISIBLE_DEVICES=4,5 torchrun --standalone --nproc_per_node=2 \
   tests/test_deepspeed_training_smoke.py \
@@ -132,7 +132,7 @@ CUDA_VISIBLE_DEVICES=4,5 torchrun --standalone --nproc_per_node=2 \
   --max-steps 1 \
   --batch-size 1 \
   --max-length 64 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 CUDA_VISIBLE_DEVICES=4,5 torchrun --standalone --nproc_per_node=2 \
   tests/test_deepspeed_resume_smoke.py \
@@ -145,7 +145,7 @@ CUDA_VISIBLE_DEVICES=4,5 torchrun --standalone --nproc_per_node=2 \
   --resume-steps 2 \
   --batch-size 1 \
   --max-length 16 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 ```
 
 ## Native mm8/mm4 quantization
@@ -263,7 +263,7 @@ Checkpoint resume rows:
 | 0.4B | 2 | 2 | 1 | 2 | 2 | 5.1328 | 2.4336 | 0.0625 |
 | 0.4B | 3 | 2 | 1 | 2 | 2 | 5.1328 | 2.4453 | 0.000100 |
 
-Rank-0 rows are shown in the tables and appended to `bench/results.jsonl`.
+Rank-0 rows are shown in the tables and appended to `bench/cross_hardware_reference_rows_20260704/results.jsonl`.
 
 ## Cross-card comparison
 

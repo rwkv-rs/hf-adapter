@@ -3,7 +3,7 @@
 math (BlinkDL/RWKV-LM), driven by the FLA-loaded weights. Same math as FLA
 (verified equal at fp32), but written as tight per-layer functions so the whole
 step can later be torch.jit.script-ed to remove inter-op Python dispatch — the
-decode bottleneck (see bench/profile_decode.py).
+decode bottleneck (see bench/probes/profile_decode.py).
 
 Run `python -m rwkv7_hf.native <hf_dir>` to check correctness vs FLA.
 """

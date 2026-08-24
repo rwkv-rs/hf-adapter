@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from bench.bench_train_temp_alignment import build_parser
+from bench.runners.bench_train_temp_alignment import build_parser
 from rwkv7_hf import train_temp_cuda
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 

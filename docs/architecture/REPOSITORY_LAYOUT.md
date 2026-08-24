@@ -29,7 +29,7 @@ cleanup.
 | `scripts/` | Compatibility wrappers, sync, acceptance and specialized runners | Active tooling |
 | `tests/` | Unit, API, integration, hardware-policy and artifact tests | Active verification |
 | `docs/` | Canonical guides, architecture, hardware, validation and history | Lifecycle-classified |
-| `bench/` | Benchmark tools plus immutable dated evidence | Append-only evidence |
+| `bench/` | Categorized benchmark tools plus immutable dated evidence | Active tooling; append-only promoted evidence |
 | `configs/` | Reproducible training/runtime configurations | Active configuration |
 
 Root documents are entry points, not storage for long experiment logs:
@@ -288,8 +288,10 @@ slow
 model_required
 ```
 
-Move benchmark-specific executables only after documentation and CI stop
-depending on their old paths, or leave wrapper scripts at the old paths.
+Benchmark executables are categorized under `bench/runners/`, `bench/probes/`,
+`bench/validators/`, `bench/analyzers/`, and `bench/tools/`. Stable exact-card
+shell protocols remain at the benchmark root. Every executable is registered
+in `bench/BENCH_SCRIPTS.json`, and CI rejects unclassified scripts.
 
 ## Documentation placement
 
@@ -311,6 +313,11 @@ depending on their old paths, or leave wrapper scripts at the old paths.
 Existing `bench/<artifact>/` paths are immutable because many canonical
 documents link to them. Do not reorganize historical artifacts merely for a
 cleaner tree.
+
+Previously standalone root JSONL/log files were grouped once into declared
+supporting bundles without rewriting their payloads. New raw output must go to
+the ignored `bench/_runs/` scratch directory and may enter the root namespace
+only as a complete promoted `<line>_<hardware>_<yyyymmdd>/` bundle.
 
 New artifacts should continue to include:
 

@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from bench.probe_sm120_b8_dense_ffn_compile import (
+from bench.probes.probe_sm120_b8_dense_ffn_compile import (
     choose_fastest_passing_candidate,
     correctness_gate_pass,
     is_exact_rtx5090,

@@ -68,7 +68,7 @@ rwkv7_print_env
 rwkv7_log "final MATH500 acceptance model=${MODEL} dataset=${DATASET} out=${OUT_DIR} bsz_list=${BSZ_LIST}"
 
 cmd=(
-  "${PYTHON_BIN}" bench/run_math500_final_acceptance.py
+  "${PYTHON_BIN}" bench/runners/run_math500_final_acceptance.py
   --hf-dir "${MODEL}"
   --dataset "${DATASET}"
   --out-dir "${OUT_DIR}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from bench.summarize_blackwell_quant_matrix import acceptance_failures
+from bench.analyzers.summarize_blackwell_quant_matrix import acceptance_failures
 
 
 def row(quant: str, **overrides):

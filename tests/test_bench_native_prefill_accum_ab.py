@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from bench.bench_native_prefill_accum_ab import (
+from bench.probes.bench_native_prefill_accum_ab import (
     mode_flags,
     model_shape_spec,
     route_effective_matches,
@@ -70,7 +70,7 @@ def test_direct_script_entrypoint_resolves_bench_package() -> None:
     completed = subprocess.run(
         [
             sys.executable,
-            str(repo_root / "bench" / "bench_native_prefill_accum_ab.py"),
+            str(repo_root / "bench" / "probes" / "bench_native_prefill_accum_ab.py"),
             "--help",
         ],
         cwd=repo_root,

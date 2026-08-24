@@ -141,7 +141,7 @@ export RWKV7_BLACKWELL_TORCH_COMPILE=1
 
 TORCHINDUCTOR_CACHE_DIR="$OUT/rwkv-cache" \
 TRITON_CACHE_DIR="$OUT/rwkv-cache" \
-python bench/bench_cross_model_speed_resident.py \
+python bench/runners/bench_cross_model_speed_resident.py \
   --model "$RWKV_MODEL" --model-kind rwkv --model-role candidate \
   --model-pair rwkv-1.5b__qwen3.5-2b --model-size-label 1.5b \
   --benchmark-matrix external_repro_v1 --optimization-lane best_optimized_hf \
@@ -160,7 +160,7 @@ while IFS= read -r name; do unset "$name"; done \
 
 TORCHINDUCTOR_CACHE_DIR="$OUT/qwen-cache" \
 TRITON_CACHE_DIR="$OUT/qwen-cache" \
-python bench/bench_cross_model_speed_resident.py \
+python bench/runners/bench_cross_model_speed_resident.py \
   --model "$QWEN_MODEL" --model-kind qwen35 --model-role reference \
   --model-pair rwkv-1.5b__qwen3.5-2b --model-size-label 2b \
   --benchmark-matrix external_repro_v1 --optimization-lane qwen_best_optimized_hf \
@@ -234,10 +234,10 @@ runtime, model hashes, backend telemetry, and correctness evidence.
 | GPU | Formal entry point | Result and exact environment |
 |---|---|---|
 | V100 | [`run_v100_qwen35_paired_pd_v1.sh`](../bench/run_v100_qwen35_paired_pd_v1.sh) | [P+D v1](../bench/v100_qwen35_paired_pd_v1_20260814/README.md) |
-| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh), [`run_3090_qwen35_best_optimized_hf.sh`](../bench/run_3090_qwen35_best_optimized_hf.sh), and [`validate_qwen35_3090_paired_pd_v2.py`](../bench/validate_qwen35_3090_paired_pd_v2.py) | [P+D v2](../bench/3090_qwen35_paired_pd_v2_20260816/README.md) |
+| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh), [`run_3090_qwen35_best_optimized_hf.sh`](../bench/run_3090_qwen35_best_optimized_hf.sh), and [`validate_qwen35_3090_paired_pd_v2.py`](../bench/validators/validate_qwen35_3090_paired_pd_v2.py) | [P+D v2](../bench/3090_qwen35_paired_pd_v2_20260816/README.md) |
 | RTX 4080 | [`run_4080_qwen35_paired_pd_v1.sh`](../bench/run_4080_qwen35_paired_pd_v1.sh) | [P+D v1](../bench/4080_qwen35_paired_pd_v1_20260814/README.md) |
-| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh), [`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh), and [`validate_qwen35_4090_paired_pd_v2.py`](../bench/validate_qwen35_4090_paired_pd_v2.py) | [P+D v2](../bench/4090_qwen35_paired_pd_v2_20260815/README.md) |
-| RTX 5090 | [`run_5090_rwkv_paired_decode_v1.sh`](../bench/run_5090_rwkv_paired_decode_v1.sh), [`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh), and [`validate_qwen35_paired_decode_v1.py`](../bench/validate_qwen35_paired_decode_v1.py) | [Decode v1](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
+| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh), [`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh), and [`validate_qwen35_4090_paired_pd_v2.py`](../bench/validators/validate_qwen35_4090_paired_pd_v2.py) | [P+D v2](../bench/4090_qwen35_paired_pd_v2_20260815/README.md) |
+| RTX 5090 | [`run_5090_rwkv_paired_decode_v1.sh`](../bench/run_5090_rwkv_paired_decode_v1.sh), [`run_5090_qwen35_best_optimized_hf.sh`](../bench/run_5090_qwen35_best_optimized_hf.sh), and [`validate_qwen35_paired_decode_v1.py`](../bench/validators/validate_qwen35_paired_decode_v1.py) | [Decode v1](../bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
 
 Example full RTX 4080 run:
 
@@ -268,7 +268,7 @@ extension sources can be built with:
 ```bash
 export FLA_SOURCE_COMMIT=2e38c1fab332174d056928feaf29f8c5fd5ac550
 export CAUSAL_CONV1D_SOURCE_COMMIT=4f6ae4e26ae5fe8af9372f8d312ab25cc4595223
-bash bench/build_hf_fast_path_v1_extensions.sh
+bash bench/runners/build_hf_fast_path_v1_extensions.sh
 ```
 
 ## 7. Troubleshooting

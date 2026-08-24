@@ -201,7 +201,7 @@ run_lane() {
   build_route_env "${tag}" "${batch}" "${mode}"
   env -i "${COMMON_ENV[@]}" "${route_env[@]}" \
     "XDG_CACHE_HOME=${cache}/xdg" "TORCHINDUCTOR_CACHE_DIR=${cache}/inductor" "TRITON_CACHE_DIR=${cache}/triton" \
-    "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+    "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
       --model "${model}" --model-kind rwkv --model-role candidate \
       --model-pair "${pair}" --model-size-label "${size}" \
       --benchmark-matrix "${PROTOCOL}" --optimization-lane best_optimized_hf \
@@ -230,7 +230,7 @@ run_7p2_b8() {
   mkdir -p "${CACHE_ROOT}/7p2_b8_short" "${CACHE_ROOT}/7p2_b8_long"
   env -i "${COMMON_ENV[@]}" "${common[@]}" \
     "XDG_CACHE_HOME=${CACHE_ROOT}/7p2_b8_short" \
-    "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+    "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
       --model "${RWKV_72_MODEL}" --model-kind rwkv --model-role candidate \
       --model-pair rwkv-7.2b__qwen3.5-9b --model-size-label 7.2b \
       --benchmark-matrix "${PROTOCOL}" --optimization-lane best_optimized_hf \
@@ -241,7 +241,7 @@ run_7p2_b8() {
       > "${OUT_DIR}/logs/rwkv_7p2_b8_short.log" 2>&1
   env -i "${COMMON_ENV[@]}" "${common[@]}" "RWKV7_NATIVE_PREFILL_GRAPH=0" \
     "XDG_CACHE_HOME=${CACHE_ROOT}/7p2_b8_long" \
-    "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+    "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
       --model "${RWKV_72_MODEL}" --model-kind rwkv --model-role candidate \
       --model-pair rwkv-7.2b__qwen3.5-9b --model-size-label 7.2b \
       --benchmark-matrix "${PROTOCOL}" --optimization-lane best_optimized_hf \
@@ -296,7 +296,7 @@ run_fla() {
     "RWKV7_NATIVE_MODEL_BACKEND=eager" "RWKV7_FAST_PREFILL=0" "RWKV7_NATIVE_PREFILL_GRAPH=0" \
     "TORCH_COMPILE_DISABLE=1" "TORCHDYNAMO_DISABLE=1" \
     "XDG_CACHE_HOME=${cache}/xdg" "TORCHINDUCTOR_CACHE_DIR=${cache}/inductor" "TRITON_CACHE_DIR=${cache}/triton" \
-    "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+    "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
       --model "${model}" --model-kind rwkv --model-role candidate --model-pair "${pair}" \
       --model-size-label "${size}" --benchmark-matrix "${CORRECTNESS_PROTOCOL}" \
       --optimization-lane fla_reference --dtype fp16 --quantization none --device cuda \
@@ -320,7 +320,7 @@ env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" - "${OUT_DIR}" "${REPOSITORY_COMMIT}" 
 import hashlib,json,sys
 from pathlib import Path
 import torch
-from bench.compare_rwkv_prefill_probe import compare
+from bench.analyzers.compare_rwkv_prefill_probe import compare
 root=Path(sys.argv[1]); commit=sys.argv[2]; model_hashes=Path(sys.argv[3])
 models=(
  ("0p4","rwkv-0.4b__qwen3.5-0.8b"),("1p5","rwkv-1.5b__qwen3.5-2b"),

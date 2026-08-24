@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_amd_runner_targets_decoupled_native_hf_adapter() -> None:
-    runner = (ROOT / "bench" / "run_amd_rocm_hf_validation.sh").read_text(
+    runner = (ROOT / "bench" / "runners" / "run_amd_rocm_hf_validation.sh").read_text(
         encoding="utf-8"
     )
 

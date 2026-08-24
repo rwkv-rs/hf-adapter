@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bench.summarize_native_official_decode import summarize
+from bench.analyzers.summarize_native_official_decode import summarize
 
 
 def make_row(batch_size: int, speed: float) -> dict:

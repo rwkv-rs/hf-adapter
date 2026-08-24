@@ -86,7 +86,7 @@ def main() -> int:
     effective_model = args.model
     temporary = None
     if args.code_source == "repo":
-        from bench.bench_native_prefill_scan import prepare_model_dir
+        from bench.runners.bench_native_prefill_scan import prepare_model_dir
 
         effective_model, temporary = prepare_model_dir(args.model, code_source="repo")
     tok = AutoTokenizer.from_pretrained(effective_model, trust_remote_code=True)

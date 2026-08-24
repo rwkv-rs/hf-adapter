@@ -62,7 +62,7 @@ Transformers remote-code relative imports were preseeded into `HF_MODULES_CACHE`
 Representative commands for the extended A100 pass:
 
 ```bash
-python bench/bench_larger_model_smoke.py \
+python bench/probes/bench_larger_model_smoke.py \
   --hf-dir "$MODEL" \
   --model-size-label "$MODEL_SIZE_LABEL" \
   --checkpoint-path "$CHECKPOINT" \
@@ -71,9 +71,9 @@ python bench/bench_larger_model_smoke.py \
   --attn-mode fused_recurrent \
   --fast-token-backend auto \
   --max-new-tokens 2 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-python bench/bench_batch_sweep.py \
+python bench/runners/bench_batch_sweep.py \
   --hf-dir "$MODEL" \
   --dtype fp16 \
   --device cuda \
@@ -82,16 +82,16 @@ python bench/bench_batch_sweep.py \
   --batch-sizes 1 2 4 8 \
   --warmup 1 \
   --runs 1 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-python bench/bench_quantization.py \
+python bench/probes/bench_quantization.py \
   --hf-dir "$MODEL" \
   --device cuda \
   --dtype fp16 \
   --quantizations none 8bit 4bit \
   --prompt-tokens 128 \
   --decode-tokens 16 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 RUN_PEFT=1 RUN_TRAINER=1 RUN_RL=0 RUN_RESUME=1 TRAIN_DTYPE=bf16 \
   MAX_STEPS=2 RESUME_FIRST_STEPS=1 RESUME_STEPS=2 \
@@ -104,7 +104,7 @@ python tests/test_hf_rl_training_smoke.py \
   --backend dpo \
   --train-dtype bf16 \
   --max-steps 1 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 CUDA_VISIBLE_DEVICES=0,1 NPROC_PER_NODE=2 ZERO_STAGE=both TRAIN_DTYPE=bf16 \
   MAX_LENGTH=16 MAX_STEPS=2 BATCH_SIZE=1 DATASET_REPEATS=4 \
@@ -118,7 +118,7 @@ CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.run --standalone --nproc_pe
   --first-steps 1 \
   --resume-steps 2 \
   --max-length 16 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 ```
 
 The batch-size upper bound was reduced for larger checkpoints to stay within the A100 40GB memory envelope: 0.4B used up to batch 8, 1.5B up to batch 4, and 2.9B/7.2B up to batch 2.
@@ -167,7 +167,7 @@ The table reports the `rwkv7_forward_token` rows. The same JSONL block also keep
 | 7.2B | 4bit | 4515.3 | 5195.6 | 15.3 | interim | 10.11 |
 
 All quantized rows are functional and reduce memory. W8/W4 decode-speed rows
-are also tagged with `quant_speed_status=interim` in `bench/results.jsonl`.
+are also tagged with `quant_speed_status=interim` in `bench/cross_hardware_reference_rows_20260704/results.jsonl`.
 They do not close the production speed target; W8/W4 still need a native
 packed/fused serving path.
 
@@ -199,7 +199,7 @@ HF Trainer checkpoint resume:
 
 ## DeepSpeed on 2 x A100 40GB
 
-Rank-0 rows are shown below; `bench/results.jsonl` stores rank-local rows for both ranks.
+Rank-0 rows are shown below; `bench/cross_hardware_reference_rows_20260704/results.jsonl` stores rank-local rows for both ranks.
 
 | Model | ZeRO stage | Max length | Steps | Loss | Runtime s | Trainable delta |
 |---|---:|---:|---:|---:|---:|---:|
@@ -223,7 +223,7 @@ ZeRO2 checkpoint resume:
 
 ## Result rows
 
-After this validation pass, `bench/results.jsonl` contains 134 A100 rows:
+After this validation pass, `bench/cross_hardware_reference_rows_20260704/results.jsonl` contains 134 A100 rows:
 
 - 68 `batch_sweep` rows, including both ordinary cached `forward` and `rwkv7_forward_token` rows.
 - 20 `deepspeed_training_smoke` rows.

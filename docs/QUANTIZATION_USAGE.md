@@ -171,7 +171,7 @@ assert model._rwkv7_native_mm_replaced_modules > 0
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
-python bench/run_v100_sm70_mm4_production_matrix.py \
+python bench/runners/run_v100_sm70_mm4_production_matrix.py \
   --model 2.9b=/path/to/rwkv7-g1g-2.9b-hf \
   --policy speed --group-size 256 --group-policy lm_head \
   --fused-epilogue false \
@@ -199,7 +199,7 @@ Tesla T4 默认使用精确设备名保护的 DP4A W8/W4 内核。不要在 RTX 
 `sm_75` 显卡强制打开这条路线。端到端验收：
 
 ```bash
-PYTHONPATH=. python bench/bench_native_quant_e2e_decode.py \
+PYTHONPATH=. python bench/runners/bench_native_quant_e2e_decode.py \
   --hf-dir /path/to/rwkv7-hf --model-size-label 0.4b \
   --device cuda --dtype fp16 --attn-mode fused_recurrent \
   --fast-token-backend native_graph \
@@ -282,7 +282,7 @@ export CUDA_HOME=/usr/local/cuda-12.8
 export TORCH_CUDA_ARCH_LIST=12.0
 export PYTHONPATH=$PWD
 
-python bench/bench_native_quant_e2e_decode.py \
+python bench/runners/bench_native_quant_e2e_decode.py \
   --hf-dir /path/to/rwkv7-g1h-7.2b-hf \
   --model-size-label 7.2b --dtype bf16 --device cuda \
   --attn-mode fused_recurrent --fast-cache true \
@@ -299,8 +299,8 @@ decode 是 1.5B B1 `1.1854x`，最大 footprint 是 1.5B `0.6250x`，最低新�
 prompt/final cosine 是 13.3B B8 `0.99955201/0.99955237`。原始证据：
 [`../bench/5090_bntn_all_models_20260716/`](../bench/5090_bntn_all_models_20260716/README.md)。
 
-需要为新的 shape 做实验时，先运行 `bench/bench_marlin_bn_tn.py`，再用
-`bench/build_marlin_autotune_profile.py` 生成精确 GPU/runtime JSON。只有显式设置
+需要为新的 shape 做实验时，先运行 `bench/probes/bench_marlin_bn_tn.py`，再用
+`bench/tools/build_marlin_autotune_profile.py` 生成精确 GPU/runtime JSON。只有显式设置
 `RWKV7_MARLIN_AUTOTUNE_PROFILE` 才会读取该文件；未知或版本不匹配的 profile
 自动回退，不会改动生产默认值。
 

@@ -25,6 +25,9 @@ env/
 models/
 checkpoints/
 
+# Unpromoted benchmark scratch output
+bench/_runs/
+
 # OS / editor
 .DS_Store
 .idea/

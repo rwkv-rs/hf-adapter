@@ -97,7 +97,7 @@ Training must exit 0, print finite loss telemetry, and print
 Measure the resulting draft against normal target generation:
 
 ```bash
-python bench/bench_speculative_decode.py \
+python bench/probes/bench_speculative_decode.py \
   --target-model /path/to/target-model-hf \
   --draft-model /path/to/aligned-draft-hf \
   --draft-tag trained --device cuda --dtype fp16 \
@@ -221,12 +221,12 @@ NPROC_PER_NODE=2 \
 ZERO_STAGE=both \
 MODEL=/path/to/model-hf \
 TRAIN_DTYPE=fp16 \
-RESULTS=bench/results.jsonl \
+RESULTS=bench/_runs/results.jsonl \
 bash scripts/run_zero_training_smoke.sh
 ```
 
 Success requires exit code 0, `PASS` rows for the requested stages, and result
-rows written to `bench/results.jsonl`. ZeRO smoke evidence must not be described
+rows written to `bench/cross_hardware_reference_rows_20260704/results.jsonl`. ZeRO smoke evidence must not be described
 as tensor-parallel inference evidence. One step also does not prove long-run
 convergence, checkpoint continuity, or optimizer/scheduler/RNG resume fidelity.
 

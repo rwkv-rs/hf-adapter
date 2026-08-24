@@ -4,8 +4,8 @@ from itertools import product
 
 import pytest
 
-from bench.validate_qwen35_best_optimized_hf_v1 import PAIRS, validate_matrix
-from bench.summarize_qwen35_best_optimized_hf_v1 import (
+from bench.validators.validate_qwen35_best_optimized_hf_v1 import PAIRS, validate_matrix
+from bench.analyzers.summarize_qwen35_best_optimized_hf_v1 import (
     build_summary,
     display_rate,
     ordered_rows,

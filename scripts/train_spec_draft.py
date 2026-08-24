@@ -10,7 +10,7 @@ the verify path, and does NOT touch ``rwkv7_speculative_generate`` itself.
 The trained draft is a drop-in replacement for the off-the-shelf small RWKV
 draft; removing the ``--draft-model`` argument restores the original behavior
 with zero loss. The existing 0.1B -> 0.4B path, its tests, and its
-``bench/results.jsonl`` rows stay intact as a permanent safe fallback.
+``bench/_runs/results.jsonl`` rows stay intact as a permanent safe fallback.
 
 Recipe: LoRA-align the draft's next-token distribution to the target's (KL +
 cross-entropy-to-target-argmax over a prompt corpus), then merge LoRA back
@@ -33,10 +33,10 @@ Usage (GPU, real models)::
 After training, measure acceptance with the EXISTING bench (the verify path is
 unchanged)::
 
-    python bench/bench_speculative_decode.py \
+    python bench/probes/bench_speculative_decode.py \
         --target-model /path/to/rwkv7-0.4b-hf \
         --draft-model /path/to/rwkv7-0.1b-draft-aligned \
-        ... --results bench/results.jsonl
+        ... --results bench/_runs/results.jsonl
 """
 from __future__ import annotations
 
@@ -285,7 +285,7 @@ def main() -> int:
     ap.add_argument("--ce-weight", type=float, default=1.0)
     ap.add_argument("--kl-weight", type=float, default=1.0)
     ap.add_argument("--max-grad-norm", type=float, default=1.0)
-    ap.add_argument("--results", default=None, help="Optional bench/results.jsonl path to append a traceability row")
+    ap.add_argument("--results", default=None, help="Optional bench/_runs/results.jsonl path to append a traceability row")
     ap.add_argument("--log-every", type=int, default=0)
     args = ap.parse_args()
 

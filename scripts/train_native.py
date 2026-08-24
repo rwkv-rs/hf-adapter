@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bench.bench_train_temp_alignment import (  # noqa: E402
+from bench.runners.bench_train_temp_alignment import (  # noqa: E402
     converge_hf,
     make_official_dataset_batch,
     make_official_dataset_sequence,

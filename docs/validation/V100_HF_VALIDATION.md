@@ -50,13 +50,13 @@ Notes:
 - 0.4B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.416867`.
 - 1.5B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.682713`.
 - 2.9B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.671991`.
-- 0.1B ZeRO3 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.542516`, `first_max_trainable_delta=9.999999e-05` on rank 0, `resume_max_trainable_delta=0.0719312`, fp32 native/HF path, `max_length=8` (`bench/results_v100_zero3_resume_2gpu_20260703.jsonl`, log `bench/v100_zero3_resume_2gpu_20260703.log`).
+- 0.1B ZeRO3 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.542516`, `first_max_trainable_delta=9.999999e-05` on rank 0, `resume_max_trainable_delta=0.0719312`, fp32 native/HF path, `max_length=8` (`bench/v100_training_resume_20260722/results_v100_zero3_resume_2gpu_20260703.jsonl`, log `bench/v100_training_resume_20260722/v100_zero3_resume_2gpu_20260703.log`).
 - 0.1B variable-rank-length resume on 2 x V100: ZeRO2 and ZeRO3 both pass,
   `global_step=2`, `first_loss=4.857278`, `resume_loss=2.093085`, and both
   trainable deltas are `9.9999997e-05` on both ranks. The two rank-local
   examples tokenize to 11 and 14 tokens with `max_length=16`, directly
   exercising global-length normalization rather than equal-length truncation.
-  Evidence: `bench/results_v100_zero23_resume_variable_length_20260722.jsonl`.
+  Evidence: `bench/v100_training_resume_20260722/results_v100_zero23_resume_variable_length_20260722.jsonl`.
   The post-fix V100 suite is `615 passed, 8 skipped`.
 
 ZeRO3 resume addendum command:
@@ -70,7 +70,7 @@ python -m torch.distributed.run --standalone --nproc_per_node=2 \
   --zero-stage 3 --attn-mode fused_recurrent --train-dtype fp32 \
   --first-steps 1 --resume-steps 2 --max-length 8 --batch-size 1 \
   --gradient-accumulation-steps 1 --dataset-repeats 2 \
-  --results bench/results_v100_zero3_resume_2gpu_20260703.jsonl
+  --results bench/v100_training_resume_20260722/results_v100_zero3_resume_2gpu_20260703.jsonl
 ```
 
 The resume harness saves a full DeepSpeed checkpoint, then removes RNG state files to avoid the torch 2.5 `weights_only=True` numpy RNG incompatibility. It only bypasses the torch-load safety guard for checkpoints created locally inside this smoke.
@@ -104,7 +104,7 @@ Official alignment — `tests/test_official_alignment.py`, HF fp16 on GPU vs off
 
 `use_l2warp=true` is baked into the converted weights by the converter (the adapter has no runtime l2warp code); HF output still matches the official model bit-for-bit (cos~1.0), confirming the conversion is correct.
 
-Decode speed — `bench/bench_speed.py`, prompt=128, decode=64, fp16, single V100-32GB, `rwkv7_forward_token` + fast cache:
+Decode speed — `bench/probes/bench_speed.py`, prompt=128, decode=64, fp16, single V100-32GB, `rwkv7_forward_token` + fast cache:
 
 | fast-token backend | prefill tok/s | decode tok/s | decode ms/tok | peak VRAM |
 |---|---:|---:|---:|---:|

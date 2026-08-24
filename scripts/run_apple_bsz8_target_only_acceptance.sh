@@ -29,7 +29,7 @@ sleep "$INITIAL_COOLDOWN_SECONDS"
 # This command deliberately omits a draft model. The Python benchmark exits
 # non-zero unless target-only RWKV passes both active-normalized speed gates,
 # the raw peak-memory gate, and every measured row.
-"$PYTHON_BIN" "$ROOT/bench/run_apple_bsz8_active_compare.py" \
+"$PYTHON_BIN" "$ROOT/bench/runners/run_apple_bsz8_active_compare.py" \
   --rwkv-model "$RWKV_15" --qwen-model "$QWEN_2" --rwkv-draft-model "" \
   --batch-size 8 --prompt-chars 512 --decode-tokens 64 \
   --warmup 1 --repeat 3 --order balanced --cooldown-seconds "$COOLDOWN_SECONDS" \

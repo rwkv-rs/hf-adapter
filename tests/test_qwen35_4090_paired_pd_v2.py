@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VALIDATOR_PATH = ROOT / "bench" / "validate_qwen35_4090_paired_pd_v2.py"
+VALIDATOR_PATH = ROOT / "bench" / "validators" / "validate_qwen35_4090_paired_pd_v2.py"
 RUNNER_PATH = ROOT / "bench" / "run_4090_rwkv_paired_pd_v2.sh"
 RUNNER_3090_PATH = ROOT / "bench" / "run_3090_rwkv_paired_pd_v2.sh"
 

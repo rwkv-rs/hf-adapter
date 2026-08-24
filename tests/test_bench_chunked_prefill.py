@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import pytest
 
-from bench.bench_chunked_prefill import alignment_passes, minimum_row_cosine
+from bench.probes.bench_chunked_prefill import alignment_passes, minimum_row_cosine
 
 
 def test_minimum_row_cosine_uses_each_batch_row() -> None:

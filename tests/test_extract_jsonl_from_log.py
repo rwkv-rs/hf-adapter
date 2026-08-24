@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bench.extract_jsonl_from_log import extract_json_rows
+from bench.analyzers.extract_jsonl_from_log import extract_json_rows
 
 
 def test_extract_json_rows_ignores_progress_and_python_dicts():

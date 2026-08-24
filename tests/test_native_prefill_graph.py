@@ -8,7 +8,7 @@ from rwkv7_hf import native_model
 
 
 def test_prefill_breakdown_accepts_native_model_pack_api() -> None:
-    from bench.bench_native_prefill_breakdown import native_jit_packs
+    from bench.probes.bench_native_prefill_breakdown import native_jit_packs
 
     expected = [(0, 1, 64)]
     owner = SimpleNamespace(_native_graph_packs=lambda: expected)

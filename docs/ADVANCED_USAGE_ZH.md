@@ -91,7 +91,7 @@ python scripts/train_spec_draft.py \
 追踪，不是投机解码验收。继续与普通 target generation 配对测试：
 
 ```bash
-python bench/bench_speculative_decode.py \
+python bench/probes/bench_speculative_decode.py \
   --target-model /path/to/target-model-hf \
   --draft-model /path/to/aligned-draft-hf \
   --draft-tag trained --device cuda --dtype fp16 \
@@ -204,11 +204,11 @@ NPROC_PER_NODE=2 \
 ZERO_STAGE=both \
 MODEL=/path/to/model-hf \
 TRAIN_DTYPE=fp16 \
-RESULTS=bench/results.jsonl \
+RESULTS=bench/_runs/results.jsonl \
 bash scripts/run_zero_training_smoke.sh
 ```
 
-成功要求退出码为 0、请求的 stage 均有 `PASS`，并在 `bench/results.jsonl` 写入结果。
+成功要求退出码为 0、请求的 stage 均有 `PASS`，并在 `bench/cross_hardware_reference_rows_20260704/results.jsonl` 写入结果。
 ZeRO 是训练状态切分，不是多卡推理 tensor parallel。一步 smoke 也不能证明长期收敛、
 checkpoint 连续性或 optimizer/scheduler/RNG 完整恢复。
 

@@ -67,9 +67,9 @@ allowed because it exceeds the 32GB card; its measured graph-off route remains
 the exact default. Explicit environment overrides still win, and other cards
 or shapes do not inherit the 5090 profile.
 
-Reproduce with `bench/bench_native_model_decode.py
---require-active-extensions`, `bench/bench_native_model_decode_alignment.py`,
-and `bench/run_official_native_prefill_matrix.py`. The `cuda` extra installs
+Reproduce with `bench/probes/bench_native_model_decode.py
+--require-active-extensions`, `bench/probes/bench_native_model_decode_alignment.py`,
+and `bench/runners/run_official_native_prefill_matrix.py`. The `cuda` extra installs
 Ninja so extension failures cannot silently become fallback results. Canonical
 evidence is
 [`bench/5090_native_official_fp16_production_20260718`](../../bench/5090_native_official_fp16_production_20260718/README.md).
@@ -109,7 +109,7 @@ Metal seams after same-device end-to-end evidence.  The first such seam is
 `relu²`; it is still not a global default for `MLXRWKV7Model`.
 
 Minimum validation for promotable work: RTX 4090 fp16 bsz=1/4 prompt512 prefill,
-decode, correctness, peak memory/VRAM, and `bench/analyze_results.py` output
+decode, correctness, peak memory/VRAM, and `bench/analyzers/analyze_results.py` output
 with `fused_backend_targets` / Albatross ratios.
 
 ## Albatross target ladder
@@ -130,7 +130,7 @@ three-process confirmation, while matching-checkpoint 0.4B/1.5B rows reach
 | P3 | `>=0.90x` Albatross | follow measured bottlenecks | near-Albatross HF path |
 
 The analyzer reports this under `fused_backend_targets` so progress is visible
-from `bench/results.jsonl` instead of living only in notes.
+from `bench/cross_hardware_reference_rows_20260704/results.jsonl` instead of living only in notes.
 
 ## Quantized backend targets
 
@@ -150,27 +150,27 @@ serving speed.
 
 1. Fused-backend target/reporting gate.
 2. Matrix-level projection/LoRA profiler and candidate shapes.
-   - `bench/bench_projection_lora.py` emits `sample_matrix_profile`,
+   - `bench/probes/bench_projection_lora.py` emits `sample_matrix_profile`,
      `sample_matrix_profile_summary`, and `fused_kernel_plan`.
-   - `bench/analyze_results.py` surfaces the first fused fp16 target in
+   - `bench/analyzers/analyze_results.py` surfaces the first fused fp16 target in
      `projection_lora` and `next_focus`.
 3. Fused fp16 projection prototype.
    - `rwkv7_hf.fused_projection.fused_rkv_projection()` provides an optional
      Triton single-launch R/K/V GEMV prototype with torch fallback.
-   - `bench/bench_fused_projection.py` records correctness and speed telemetry
+   - `bench/probes/bench_fused_projection.py` records correctness and speed telemetry
      as `fused_projection_proto`. The first V100 prototype is correct but still
      slower than three cuBLAS-backed linears, so it is not integrated into the
      HF fast path yet.
 4. Fused W/A LoRA prototype.
    - `rwkv7_hf.fused_lora.fused_wa_lora()` computes the W/A LoRA pair with
      grouped down/activation and up/bias Triton kernels.
-   - `bench/bench_fused_wa_lora.py` records `fused_wa_lora_proto`. The first
+   - `bench/probes/bench_fused_wa_lora.py` records `fused_wa_lora_proto`. The first
      V100 row is correctness-clean but slower, proving two-kernel LoRA grouping
      alone is insufficient and should be fused deeper with R/K/V.
 5. Fused W/A/G LoRA prototype.
    - `rwkv7_hf.fused_lora.fused_wag_lora()` expands LoRA grouping to W/A/G,
      including mixed ranks such as W/A rank 64 plus G rank 128.
-   - `bench/bench_fused_wag_lora.py` records `fused_wag_lora_proto`. The first
+   - `bench/probes/bench_fused_wag_lora.py` records `fused_wag_lora_proto`. The first
      stable V100 row is correctness-clean and faster than the current W/A/G
      LoRA modules, so this is a useful sub-kernel building block for the next
      combined R/K/V + LoRA fusion target.
@@ -178,7 +178,7 @@ serving speed.
    - `rwkv7_hf.fused_attention_projection.fused_rkv_wag_projection()` combines
      R/K/V dense projection with W/A/G LoRA down in one launch and W/A/G up in a
      second launch.
-   - `bench/bench_fused_rkv_wag_projection.py` records
+   - `bench/probes/bench_fused_rkv_wag_projection.py` records
      `fused_rkv_wag_projection_proto` and now supports prefill-shaped
      `[B,T,H]` rows. The first V100 decode-shaped row was correctness-clean and
      slightly faster, but the 4090 / 0.4B / fp16 / prompt512 prefill-shaped
@@ -190,7 +190,7 @@ serving speed.
    - `rwkv7_hf.fused_output.fused_attn_output_prepare()` fuses group norm over
      recurrent output, recurrent correction, and gate multiply while leaving the
      final `o_proj` on cuBLAS.
-   - `bench/bench_fused_attn_output.py` records `fused_attn_output_proto`. The
+   - `bench/probes/bench_fused_attn_output.py` records `fused_attn_output_proto`. The
      first V100 row is correctness-clean and faster than the current output
      prep plus cuBLAS output path, making it a useful target for full attention
      fusion after projection/LoRA and recurrent-state work.
@@ -198,7 +198,7 @@ serving speed.
    - `rwkv7_hf.fused_ffn.fused_ffn()` combines FFN shift-mix, key projection,
      and relu² in one launch, then computes the value projection in a second
      launch.
-   - `bench/bench_fused_ffn.py` records `fused_ffn_proto`. The first V100 row is
+   - `bench/probes/bench_fused_ffn.py` records `fused_ffn_proto`. The first V100 row is
      correctness-clean but slower than the cuBLAS-backed FFN path, so this
      two-kernel FFN stays telemetry unless it is folded into a larger graph.
      RTX 4090 prefill-shaped rows confirm the same conclusion more strongly:
@@ -208,7 +208,7 @@ serving speed.
 9. Fused fp16 attention shift-mix prototype.
    - `rwkv7_hf.fused_time_mix.fused_attn_shift_mix()` provides an optional
      Triton single-launch prototype for the six decode time-mix inputs.
-   - `bench/bench_fused_shift_mix.py` records `fused_shift_mix_proto`. The
+   - `bench/probes/bench_fused_shift_mix.py` records `fused_shift_mix_proto`. The
      first V100 row is exact but slower than the current torch pointwise ops,
      so shift-mix alone should stay telemetry; the next implementation should
      fuse deeper across shift-mix + projection/LoRA/state update.
@@ -216,14 +216,14 @@ serving speed.
    - `rwkv7_hf.fused_recurrent_update.fused_recurrent_update()` exploits the
      rank-1 structure of the RWKV-7 state transition and fuses state update plus
      readout in one Triton launch.
-   - `bench/bench_fused_recurrent.py` records `fused_recurrent_proto`. The
+   - `bench/probes/bench_fused_recurrent.py` records `fused_recurrent_proto`. The
      first V100 row is profitable, so the next implementation step is
      correctness-gated native-graph integration.
 11. Native-graph integration for the recurrent fused fp16 path.
    - `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT=1` makes native-graph capture use the
      recurrent prototype. The graph-runner cache key includes this flag so
      default and experimental captures cannot be reused accidentally.
-   - `bench/bench_native_graph_fused_recurrent.py` records
+   - `bench/probes/bench_native_graph_fused_recurrent.py` records
      `native_graph_fused_recurrent` A/B rows. The first V100 integration row is
      correctness-clean but end-to-end neutral, so the flag remains opt-in while
      deeper projection/LoRA fusion is developed.
@@ -232,7 +232,7 @@ serving speed.
      default. `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=0` disables it for A/B or
      fallback testing. The graph-runner cache key includes both recurrent and
      output fusion flags plus the active batch size.
-   - `bench/bench_native_graph_fused_output.py` records
+   - `bench/probes/bench_native_graph_fused_output.py` records
      `native_graph_fused_output` A/B rows. The first V100 integration row is
      correctness-clean and moves full token replay latency by about 1.10x. The
      V100 bsz=1/2/4/8 matrix is also correctness-clean with minimum speedup
@@ -249,11 +249,11 @@ serving speed.
    - `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M` controls the output-row
      tile and is part of the graph-runner cache key together with the project
      flag, so captures for different tiles cannot be reused accidentally.
-   - `bench/bench_fused_attn_output_project.py` records isolated
+   - `bench/probes/bench_fused_attn_output_project.py` records isolated
      `fused_attn_output_project_proto` rows. V100 bsz=1 shows `1.5965x` over
      the old output path and `1.2931x` over fused-prep+cuBLAS with
      `max_abs_diff=0.001953125`.
-   - `bench/bench_native_graph_fused_output_project.py` records full
+   - `bench/probes/bench_native_graph_fused_output_project.py` records full
      `native_graph_fused_output_project` A/B rows. The first V100 bsz=1/2/4/8
      matrix is greedy-exact, but end-to-end speed is only `0.95x`-`0.97x` of
      the default output-fused graph. This proves the one-launch project kernel
@@ -266,7 +266,7 @@ serving speed.
      R/K/V dense projections on cuBLAS. Tile envs
      `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_{M,R,K}` are part of the
      graph-runner cache key.
-   - `bench/bench_native_graph_fused_wag_lora.py` records
+   - `bench/probes/bench_native_graph_fused_wag_lora.py` records
      `native_graph_fused_wag_lora` rows. V100 bsz=1/2/4/8 with `block_m=16`,
      `block_r=64`, `block_k=64` is greedy-exact, but only bsz=8 is slightly
      faster (`1.0059x`) while bsz=1/2/4 are `0.9406x`/`0.9637x`/`0.9615x`.
@@ -282,11 +282,11 @@ serving speed.
      default for this combined path; set it to `0` for A/B or fallback testing.
      The graph-runner cache key includes the flag, so default output-fused
      runners and recurrent+output runners are isolated.
-   - `bench/bench_fused_recurrent_output.py` records
+   - `bench/probes/bench_fused_recurrent_output.py` records
      `fused_recurrent_output_proto` rows. The first V100 row is
      correctness-clean and reaches `1.7956x` versus split fused
      recurrent/output kernels (`4.1916x` versus the torch current path).
-   - `bench/bench_native_graph_fused_recurrent_output.py` records
+   - `bench/probes/bench_native_graph_fused_recurrent_output.py` records
      `native_graph_fused_recurrent_output` A/B rows. V100 bsz=1/2/4/8 is
      greedy-exact and improves full native-graph decode by
      `1.2129x`/`1.1805x`/`1.2416x`/`1.2504x`. A normal batch sweep with the
@@ -298,11 +298,11 @@ serving speed.
    - Follow-up flag sweeps with this default path show current opt-in projection
      and W/A/G LoRA probes are still slower: W/A/G LoRA reaches only
      `0.94x`-`0.99x` of default and fused projection reaches `0.84x`-`0.91x`.
-     `bench/analyze_results.py` therefore anchors Albatross decode gates to
+     `bench/analyzers/analyze_results.py` therefore anchors Albatross decode gates to
      default native-graph batch rows and reports experimental flag rows
      separately.
    - RTX 4090 / Ada (`sm_89`) validation now uses
-     `bench/run_4090_fused_backend_validation.sh`. On 0.4B fp16, the default
+     `bench/runners/run_4090_fused_backend_validation.sh`. On 0.4B fp16, the default
      fused recurrent+output path is greedy-exact across bsz=1/2/4/8 and improves
      full native-graph decode by `1.2408x`/`1.1981x`/`1.2268x`/`1.2226x`
      versus the output-only baseline. The same run confirms the current
@@ -328,7 +328,7 @@ serving speed.
      `395.6`/`1143.4`/`2257.5` aggregate tok/s for bsz=1/4/8.
      `test_fast_decode_api` with native_graph bsz=1/2/4 still passes greedy,
      sequence-length, and fallback compatibility checks.
-   - Dynamic batching telemetry is now part of `bench/bench_dynamic_batch.py`.
+   - Dynamic batching telemetry is now part of `bench/probes/bench_dynamic_batch.py`.
      The benchmark records state-cache select counters, native-graph LRU
      requests/hits/misses, active batch sizes, and runner copy/bind fast-skip
      rates. `select_batch()` now keeps the cache bound when the active batch is
@@ -350,7 +350,7 @@ serving speed.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the
      two-kernel `fused_rkv_wag_projection()` prototype. The graph-runner cache
      key includes this flag so default runners are never reused for the probe.
-   - `bench/bench_native_graph_fused_projection.py` records
+   - `bench/probes/bench_native_graph_fused_projection.py` records
      `native_graph_fused_projection` A/B rows. The first V100 bsz=1/2/4/8
      matrix is correctness-clean, but speed is only 0.86-0.93x of the default
      output-fused graph. This proves the current two-kernel projection grouping
@@ -361,7 +361,7 @@ serving speed.
      signed int8 plus row-wise fp32 scales.
    - `rwkv7_hf.native_quant.int8_rowwise_gemv()` provides an optional Triton
      fused dequant-GEMV prototype with torch fallback.
-   - `bench/bench_native_quant_gemv.py` records `native_quant_gemv_proto`. The
+   - `bench/probes/bench_native_quant_gemv.py` records `native_quant_gemv_proto`. The
      first V100 row proves roughly half fp16 weight footprint and good cosine,
      but it is still slower than fp16 cuBLAS, so the W8 path remains telemetry
      until the kernel is optimized.
@@ -370,7 +370,7 @@ serving speed.
      two signed 4-bit values per byte plus row-wise fp32 scales.
    - `rwkv7_hf.native_quant.int4_rowwise_gemv()` provides an optional Triton
      fused nibble-unpack/dequant-GEMV prototype with torch fallback.
-   - `bench/bench_native_quant_w4_gemv.py` records
+   - `bench/probes/bench_native_quant_w4_gemv.py` records
      `native_quant_w4_gemv_proto`. The first V100 row proves roughly quarter
      fp16 sampled weight footprint, but the prototype is still slower than
      fp16 cuBLAS and needs a better packed reduction / deeper projection fusion
@@ -378,17 +378,17 @@ serving speed.
 16. Native W8 fused R/K/V quant projection prototype.
    - `rwkv7_hf.native_quant.int8_fused_rkv_gemv()` computes R/K/V from packed
      row-wise W8 weights in one Triton launch.
-   - `bench/bench_native_quant_rkv.py` records `native_quant_rkv_proto`. The
+   - `bench/probes/bench_native_quant_rkv.py` records `native_quant_rkv_proto`. The
      first V100 row improves over three separate W8 dequant-GEMVs, but is still
      below fp16 cuBLAS, so the next quant step is deeper projection/LoRA fusion.
 17. Native W4 fused R/K/V quant projection prototype.
    - `rwkv7_hf.native_quant.int4_fused_rkv_gemv()` computes R/K/V from packed
      row-wise W4 weights in one Triton launch.
-   - `bench/bench_native_quant_w4_rkv.py` records `native_quant_w4_rkv_proto`.
+   - `bench/probes/bench_native_quant_w4_rkv.py` records `native_quant_w4_rkv_proto`.
      The first V100 row improves over three separate W4 dequant-GEMVs, but is
      still below fp16 cuBLAS, so W4 also needs deeper group fusion.
 18. Single-load native W8/W4 R/K/V block sweep.
-   - `bench/bench_native_quant_rkv_sweep.py` sweeps block sizes after one model
+   - `bench/probes/bench_native_quant_rkv_sweep.py` sweeps block sizes after one model
      load with one shared fp16 baseline, avoiding per-config cuBLAS drift.
    - The V100 sweep confirms best W8 (`block_m=64, block_k=128`) is still only
      `0.7873x` fp16 and best W4 (`block_m=8, block_k=64`) is `0.7675x` fp16.
@@ -408,14 +408,14 @@ serving speed.
      friendly activation quantization or fuses quant projection with more of the
      native_graph token path.
 19. V100 + Ada/Blackwell benchmark matrix.
-   - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
+   - `bench/runners/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.
-   - `bench/run_4090_fused_backend_validation.sh` is the Ada/4090 fused-backend
+   - `bench/runners/run_4090_fused_backend_validation.sh` is the Ada/4090 fused-backend
      gate. It validates the HF-native default path, graph overhead, the default
      fused recurrent+output A/B matrix, and a small set of negative opt-in
      probes so future changes do not accidentally default a microbench-only
      fusion.
-   - `bench/run_4090_quant_validation.sh` is the Ada/4090 native-quant gate. It
+   - `bench/runners/run_4090_quant_validation.sh` is the Ada/4090 native-quant gate. It
      runs the single-load W8/W4 R/K/V sweep with `TORCH_CUDA_ARCH_LIST=8.9` and
      emits an analyzer report so quant work is tracked separately from generic
      bitsandbytes compatibility.
@@ -429,7 +429,7 @@ serving speed.
    - Superseded RWKV FLA performance matrices are not retained. FLA remains a
      compatibility/reference backend and correctness oracle.
 20. Native fused prefill scan and bsz=1 bottleneck breakdown.
-   - `bench/bench_native_prefill_scan.py` now records model-size-labeled
+   - `bench/runners/bench_native_prefill_scan.py` now records model-size-labeled
      end-to-end native prefill rows, and the analyzer compares
      `native_prefill_tokps_total` against Albatross for exact model-size cases
      instead of falling back to older chunked-prefill rows.
@@ -437,7 +437,7 @@ serving speed.
      `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` reaches `22025.2` tok/s at bsz=1 and
      `76787.8` tok/s at bsz=4. That is `0.3668x` and `0.6519x` of Albatross:
      bsz=4 clears prefill P1, while bsz=1 remains the prefill blocker.
-   - `bench/bench_native_prefill_breakdown.py` records the next optimization
+   - `bench/probes/bench_native_prefill_breakdown.py` records the next optimization
      target. On the same 4090 0.4B prompt=512 rows, bsz=1 time is dominated by
      `recurrent_scan` (`9.3071ms`, share `0.3509`) and
      `attn_lora_state_prep` (`8.9671ms`, share `0.3381`). bsz=4 is still led by
@@ -498,7 +498,7 @@ serving speed.
      slower (`0.6626x`), and the end-to-end bsz=1 prefill row regresses to
      `21773.4` tok/s when enabled. Keep it telemetry-only; do not default it
      until a deeper projection+LoRA design improves full prefill.
-   - `bench/bench_native_prefill_breakdown.py --fine-attn` now splits the
+   - `bench/probes/bench_native_prefill_breakdown.py --fine-attn` now splits the
      remaining attention prep bucket into LoRA, dense R/K/V projection, fused
      state-prep, and scan components. With state-prep enabled on 4090 / 0.4B /
      fp16 / prompt=512, the latest bsz=1 row is led by recurrent scan
@@ -554,7 +554,7 @@ serving speed.
      this as negative telemetry only. The next prefill kernel should preserve
      split-row scan occupancy and attack the larger norm/shift/projection/LoRA
      and state-prep buckets, not fuse output prep into a full-head scan.
-   - `bench/bench_native_prefill_breakdown.py --layer-breakdown` now records
+   - `bench/probes/bench_native_prefill_breakdown.py --layer-breakdown` now records
      per-layer component timings without adding extra timed passes. The 4090 /
      0.4B / fp16 / prompt=512 bsz=1 row shows the bsz=1 bottleneck is broad
      rather than isolated to one pathological layer: top layer totals are
@@ -660,7 +660,7 @@ It must not claim the same peak speed on every GPU generation.
 
 ## DPLR/chunked prefill prototype benchmark
 
-`bench/bench_dplr_prefill_scan.py` is the standalone validation harness for the
+`bench/probes/bench_dplr_prefill_scan.py` is the standalone validation harness for the
 DPLR/chunked prefill prototype. It is synthetic-only: it creates post-projection
 `r/w/k/v/kk/a` tensors plus native `[B,H,N,N]` state, does not load HF model
 weights, and intentionally does not import or call `native_jit`. JSONL rows use
@@ -691,15 +691,15 @@ weights, and intentionally does not import or call `native_jit`. JSONL rows use
 Safe server validation command for the dense affine prototype:
 
 ```bash
-PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+PYTHONPATH=. python bench/probes/bench_dplr_prefill_scan.py \
   --device cuda --dtype fp32 \
   --batch-sizes 1 --tokens 32 64 \
   --heads 2 --head-dim 8 --chunk-sizes 8 16 \
   --algorithms sequential affine \
   --warmup 1 --steps 2 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl --dtype fp32
+PYTHONPATH=. python bench/analyzers/analyze_results.py --results bench/_runs/results.jsonl --dtype fp32
 ```
 
 Do not run the dense affine prototype at `H=16,N=64,T=512` except deliberately
@@ -708,7 +708,7 @@ slower than the sequential reference until the WY/low-rank chunk composer lands.
 
 ### WY/lowrank prototype validation commands
 
-`bench/bench_dplr_prefill_scan.py` accepts `--algorithms sequential affine wy
+`bench/probes/bench_dplr_prefill_scan.py` accepts `--algorithms sequential affine wy
 lowrank` and records both `requested_algorithm` and `effective_algorithm`.
 If the checked-out `dplr_chunk_scan()` does not yet support `wy` or `lowrank`,
 the row is emitted as `status="skip_unsupported_algorithm"`; if one alias is
@@ -720,15 +720,15 @@ is still safe enough to compare against sequential and the future WY/lowrank
 path:
 
 ```bash
-PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+PYTHONPATH=. python bench/probes/bench_dplr_prefill_scan.py \
   --device cuda --dtype fp32 \
   --batch-sizes 1 --tokens 32 64 \
   --heads 2 --head-dim 8 --chunk-sizes 8 16 \
   --algorithms sequential affine wy lowrank \
   --warmup 1 --steps 2 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl --dtype fp32
+PYTHONPATH=. python bench/analyzers/analyze_results.py --results bench/_runs/results.jsonl --dtype fp32
 ```
 
 Then measure the target prefill-shaped case without dense affine.  For
@@ -736,15 +736,15 @@ Then measure the target prefill-shaped case without dense affine.  For
 transforms and is not the intended large-matrix path.
 
 ```bash
-PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+PYTHONPATH=. python bench/probes/bench_dplr_prefill_scan.py \
   --device cuda --dtype fp16 \
   --batch-sizes 1 --tokens 512 \
   --heads 16 --head-dim 64 --chunk-sizes 64 128 \
   --algorithms sequential wy \
   --warmup 3 --steps 10 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl
+PYTHONPATH=. python bench/analyzers/analyze_results.py --results bench/_runs/results.jsonl
 ```
 
 If the implementation exposes the low-rank path as `lowrank` rather than `wy`,
@@ -806,15 +806,15 @@ chunk summary + prefix combine + chunk apply.
 Target-shape command:
 
 ```bash
-PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+PYTHONPATH=. python bench/probes/bench_dplr_prefill_scan.py \
   --device cuda --dtype fp16 \
   --batch-sizes 1 --tokens 512 \
   --heads 16 --head-dim 64 --chunk-sizes 64 \
   --algorithms sequential triton_wy \
   --warmup 1 --steps 3 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl
+PYTHONPATH=. python bench/analyzers/analyze_results.py --results bench/_runs/results.jsonl
 ```
 
 For HF end-to-end validation, ensure the model directory loaded by
@@ -823,7 +823,7 @@ For HF end-to-end validation, ensure the model directory loaded by
 only reflect the checkpoint-local remote code rather than this repository's
 new backend.
 
-`bench/bench_native_prefill_scan.py --code-source repo` creates a temporary
+`bench/runners/bench_native_prefill_scan.py --code-source repo` creates a temporary
 checkpoint directory that symlinks the model weights/tokenizer files and copies
 the current repo's `rwkv7_hf/*.py` files into the HF remote-code root.  Rows now
 record `code_source`, `effective_model_path`, and `native_jit_module` so DPLR
@@ -842,14 +842,14 @@ env RWKV7_NATIVE_PREFILL_DPLR_SCAN=1 \
     RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN=0 \
     RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1 \
     PYTHONPATH=. \
-    python bench/bench_native_prefill_scan.py \
+    python bench/runners/bench_native_prefill_scan.py \
       --model /workspace/models/rwkv7/rwkv7-g1d-0.4b-hf \
       --code-source repo \
       --device cuda --dtype fp16 \
       --batch-sizes 1 --prompt-tokens 512 \
       --fused-scan false \
       --warmup 2 --steps 5 \
-      --results bench/results.jsonl
+      --results bench/_runs/results.jsonl
 ```
 
 Result: `status=pass`, `prefill_dplr_scan_effective=true`,
@@ -882,14 +882,14 @@ two stages:
 Run the summary probe with:
 
 ```bash
-PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+PYTHONPATH=. python bench/probes/bench_dplr_prefill_scan.py \
   --device cuda --dtype fp16 \
   --batch-sizes 1 --tokens 512 \
   --heads 16 --head-dim 64 --chunk-sizes 64 \
   --algorithms triton_wy \
   --summary-probe \
   --warmup 1 --steps 3 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 ```
 
 4090 target-shape result for the dense summary probe:

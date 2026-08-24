@@ -37,18 +37,18 @@ The checked Apple M5 chars512/decode64 gate passes for both RWKV-7 0.4B W4 vs Qw
 | Area | Status | Evidence / entry point |
 |---|---|---|
 | Install without CUDA/FLA | supported by packaging | Base dependencies no longer require `flash-linear-attention`; CUDA users can install `.[fla]` / `.[cuda]`. |
-| Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/results_apple_silicon_m5_20260704.jsonl`. |
+| Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl`. |
 | Converted-model Apple smoke | 0.1B, 0.4B, and 1.5B pass on local M-series | `scripts/run_apple_silicon_smoke.sh` loads `rwkv7-g1d-0.1b-hf`, `rwkv7-g1d-0.4b-hf`, and `rwkv7-g1g-1.5b-hf` through `RWKV7_NATIVE_MODEL=1` on MPS; 0.4B has fp32/fp16 short-generate rows and 1.5B has fp16 short-generate + prompt sweep rows. |
 | HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 MPS inference/sweep rows through prompt 512 / decode 8, MLX prompt8192/decode512 baseline rows, a direct grouped W4 prompt8192/decode1024 row, plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10/12-step rows with finite trainable updates; HF Trainer and TRL SFT now also have 20-step rows. |
 | Quantization | native W8/W4 production path passes on M5 | `--quant-backend groupwise` uses MLX native packed affine weights and fused quantized matmul. 0.4B W4 compiled lowers peak from about 1.03GB fp16 to 0.51GB and raises conservative decode from 59.20 to 192.83 tok/s. 1.5B direct W4/W8 compiled reach minimum 55.81/46.12 tok/s at about 1.77/2.24GB peak, both above the earlier about 33.64 tok/s fp16 route at about 3.1GB. The final W4 Qwen gate and bounded quant correctness checks pass; see [APPLE_PRODUCTION_CLOSE.md](APPLE_PRODUCTION_CLOSE.md). Cross-M-series and longer-shape repeats remain portability work. |
 | Production speed | checked M5 gates pass | MLX groupwise W4 + tiled DPLR + compiled/speculative decode passes the B1 0.4B/0.8B and 1.5B/2B Qwen3.5 chars512/decode64 gates. The separate 1.5B B8 target-only cold gate passes with fused NAX W4 FFN-key+ReLU² and no draft/cache assistance. Cross-M-series, other batch sizes, and longer-shape portability remain open. |
-| Qwen3.5 Apple acceptance wrapper | harness | `scripts/run_qwen35_apple_acceptance.sh` wraps Ollama/Qwen3.5 collection, RWKV MLX collection, optional CoreML export/runtime rows, optional `bench/score_qwen35_quality.py` response-quality scoring, comparison gates, and default `qwen35_apple_baseline_gap_diagnostic` next-action rows into one reproducible command. It is an evidence runner, not a performance claim by itself. |
+| Qwen3.5 Apple acceptance wrapper | harness | `scripts/run_qwen35_apple_acceptance.sh` wraps Ollama/Qwen3.5 collection, RWKV MLX collection, optional CoreML export/runtime rows, optional `bench/analyzers/score_qwen35_quality.py` response-quality scoring, comparison gates, and default `qwen35_apple_baseline_gap_diagnostic` next-action rows into one reproducible command. It is an evidence runner, not a performance claim by itself. |
 | MLX prefill eval batching | pass, limited speedup | `RWKV7_MLX_PREFILL_EVAL_INTERVAL` and `--rwkv-prefill-eval-interval` batch lazy prompt graphs; model default is 1 and Apple acceptance default is 2. `scripts/mlx_prefill_eval_interval_bench.py` reports exact logits/full-state/next-token parity on M5. At 512 chars, interval 2 gives median 0.1B/0.4B/1.5B fp16 speedups≈1.05x/1.28x/1.09x and 0.4B/1.5B W4≈1.38x/1.32x. This is a host-sync optimization, not production chunked prefill. |
 | MLX DPLR/WY Stage 1 | synthetic Metal kernels pass | `rwkv7_hf/mlx_dplr_prefill.py` ports compact summary/prefix/apply math and custom Metal summary + apply/output kernels; `scripts/mlx_dplr_prefill_bench.py` records staged parity/speed. M5 production-shaped `B1/T512/H16/N64/C64/fp16` full scaffold median≈60.249ms/8,498.11 effective tok/s,≈1.28x recurrent oracle and≈3.44x high-level three-stage, with output/final-state max-abs≈1.53e-04/1.14e-04. Summary remains≈97.6% of staged latency. |
 | MLX DPLR/WY model prefill | opt-in real-model pass; first Qwen chars512 gate pass | Tiled Metal summary parallelizes head-dim rows and is≈16.12x the scalar summary on M5 T512/H16/N64/C64. Final prompt512 medians improve recurrent→DPLR by≈19.65x/18.07x/26.79x for 0.1B/0.4B/1.5B fp16; 8-token continuations match and peak ratios are≈1.161x/1.090x/1.053x. Auto starts at 8 tokens, materializes every four layers from T64, and windows at 512 tokens. Backend default remains recurrent. |
 | MLX guarded compiled decode | 0.4B W4 production gate pass | The final 0.4B W4 compiled row preserves generated tokens and passes a 32-token promotion gate with logits/state max-abs 0.125/0.0625. Conservative chars512/decode64 throughput is 192.83 tok/s with 0.51GB peak. 1.5B uses block-verifying RWKV draft speculation instead of forcing an unsafe compiled route. |
 | MLX fast-LayerNorm decode candidate | opt-in 0.1B fp16/W4 win; larger models remain policy-gated | Fast standard LayerNorm plus reference GroupNorm/prefill makes active eager/compiled fp16 exact for 0.1B/0.4B/1.5B and adds a bounded reference-norm trajectory gate. M5 fast eager→compiled medians are `203.47→255.01`, `88.09→101.02`, and `30.72→33.64 tok/s`; all reference greedy tokens match. Only 0.1B beats its reference route. 0.4B keeps reference compiled, 1.5B keeps reference eager, and 1.5B W4 remains strict fallback. |
-| CoreML / ANE export + runtime | stateful 0.1B/0.4B correctness + initial W8 pass; production ANE open | `scripts/export_rwkv7_coreml.py --export-kind stateful-multifunction` now exports deduplicated `prefill` + `decode` functions with packed RWKV state. The WKV fp32 cache is represented as fp16 high + fp16 residual because Core ML state is fp16-only. `bench/run_coreml_apple_baseline.py` transfers `MLState`, runs exact shared prompts, greedy decode, chunk-boundary checks, and optional HF parity. M5/16GB live 0.1B and 0.4B fp32-compute rows pass state transfer (`max_abs=0`), chunk split (`logits/state max_abs=0`), and HF greedy tokens. 0.1B/0.4B INT8 packages are≈0.45x/0.36x and preserve the short greedy gates; decode is≈0.95x/0.98x fp32, so speed acceptance is still open. 0.1B INT4/LUT4 reduce package to≈0.38x/0.13x but fail HF greedy parity. `CPU_AND_NE` eligibility passes but does not prove ANE occupancy; longer/quality/placement rows remain open. |
+| CoreML / ANE export + runtime | stateful 0.1B/0.4B correctness + initial W8 pass; production ANE open | `scripts/export_rwkv7_coreml.py --export-kind stateful-multifunction` now exports deduplicated `prefill` + `decode` functions with packed RWKV state. The WKV fp32 cache is represented as fp16 high + fp16 residual because Core ML state is fp16-only. `bench/runners/run_coreml_apple_baseline.py` transfers `MLState`, runs exact shared prompts, greedy decode, chunk-boundary checks, and optional HF parity. M5/16GB live 0.1B and 0.4B fp32-compute rows pass state transfer (`max_abs=0`), chunk split (`logits/state max_abs=0`), and HF greedy tokens. 0.1B/0.4B INT8 packages are≈0.45x/0.36x and preserve the short greedy gates; decode is≈0.95x/0.98x fp32, so speed acceptance is still open. 0.1B INT4/LUT4 reduce package to≈0.38x/0.13x but fail HF greedy parity. `CPU_AND_NE` eligibility passes but does not prove ANE occupancy; longer/quality/placement rows remain open. |
 | MLX recurrent backend / Metal backend | recurrent + Metal WKV/quant + tiled DPLR prefill + guarded decode compile | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `rwkv7_hf.mlx_wkv`, `rwkv7_hf.mlx_dplr_prefill`, and the Apple scripts validate HF safetensor → MLX arrays, recurrent/cache/session behavior, packed W8/W4 projections, custom Metal WKV/quant paths, partial chunks, layer-major tiled-DPLR model prefill, bounded long-context windows, and exact model/batch decode promotion gates. Remaining production work is 0.1B/1.5B compiled parity, true peak memory, quality pressure, and cross-device tuning. |
 
 ## Why the Apple path is native / no-FLA by default
@@ -135,7 +135,7 @@ PYTHONPATH=. python tests/test_apple_silicon_smoke.py \
   --device auto \
   --dtype fp32 \
   --max-new-tokens 2 \
-  --results bench/results_apple_silicon_m5_20260704.jsonl
+  --results bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl
 
 PYTHONPATH=. python tests/test_apple_silicon_smoke.py \
   --device auto \
@@ -144,29 +144,29 @@ PYTHONPATH=. python tests/test_apple_silicon_smoke.py \
   --skip-tiny \
   --model /path/to/rwkv7-g1d-0.1b-hf
 
-REQUIRE_PEFT=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+REQUIRE_PEFT=1 RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_training_smoke.sh
 
-REQUIRE_PEFT=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+REQUIRE_PEFT=1 RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_trainer_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
-REQUIRE_PEFT=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+REQUIRE_PEFT=1 RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
-REQUIRE_PEFT=1 REQUIRE_TRL=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+REQUIRE_PEFT=1 REQUIRE_TRL=1 RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_trl_sft_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
-REQUIRE_PEFT=1 REQUIRE_TRL=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+REQUIRE_PEFT=1 REQUIRE_TRL=1 RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_rl_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 MODEL_SIZE_LABEL=0.4b \
 SKIP_TINY=1 \
 MAX_NEW_TOKENS=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
@@ -174,14 +174,14 @@ MODEL_SIZE_LABEL=0.4b \
 SKIP_TINY=1 \
 DTYPE=fp16 \
 MAX_NEW_TOKENS=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 MODEL_SIZE_LABEL=0.4b \
 PROMPT_LENGTHS=16,64,128 \
 MAX_NEW_TOKENS=4 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_sweep.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
@@ -189,32 +189,32 @@ MODEL_SIZE_LABEL=0.4b \
 DTYPE=fp16 \
 PROMPT_LENGTHS=256,512 \
 MAX_NEW_TOKENS=4 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_sweep.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 MODEL_SIZE_LABEL=0.4b \
 REQUIRE_PEFT=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 MODEL_SIZE_LABEL=0.4b \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_trl_sft_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 MODEL_SIZE_LABEL=0.4b \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_rl_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 MODEL_SIZE_LABEL=0.4b \
 MAX_LENGTH=16 MAX_STEPS=2 DATASET_REPEATS=3 \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_rl_smoke.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -222,7 +222,7 @@ MODEL_SIZE_LABEL=1.5b \
 SKIP_TINY=1 \
 DTYPE=fp16 \
 MAX_NEW_TOKENS=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_smoke.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -230,7 +230,7 @@ MODEL_SIZE_LABEL=1.5b \
 DTYPE=fp16 \
 PROMPT_LENGTHS=16 \
 MAX_NEW_TOKENS=2 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -238,7 +238,7 @@ MODEL_SIZE_LABEL=1.5b \
 DTYPE=fp16 \
 PROMPT_LENGTHS=64,128,256,512 \
 MAX_NEW_TOKENS=4 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -246,7 +246,7 @@ MODEL_SIZE_LABEL=1.5b \
 DTYPE=fp16 \
 PROMPT_LENGTHS=512 \
 MAX_NEW_TOKENS=8 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -258,7 +258,7 @@ MAX_STEPS=1 \
 DATASET_REPEATS=2 \
 BACKEND=manual \
 REQUIRE_PEFT=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -270,7 +270,7 @@ MAX_STEPS=10 \
 DATASET_REPEATS=12 \
 BACKEND=trainer \
 REQUIRE_PEFT=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -282,7 +282,7 @@ MAX_STEPS=10 \
 DATASET_REPEATS=12 \
 BACKEND=trl_sft \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -294,7 +294,7 @@ MAX_STEPS=10 \
 DATASET_REPEATS=12 \
 BACKEND=trl_dpo \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -307,12 +307,12 @@ DATASET_REPEATS=12 \
 GRPO_MAX_COMPLETION_LENGTH=1 \
 BACKEND=trl_grpo \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
 
 # Apple native MM8/MM4 quant, tiny-only.
 DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_quant_smoke.sh
 
 # Apple native MM8/MM4 quant on converted 0.1B.
@@ -320,26 +320,26 @@ RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 MODEL_SIZE_LABEL=0.1b \
 DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=8000000,1000000,500000 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_quant_smoke.sh
 
 # 0.4B quant sweep: MIN_PARAMS=4000000 covers FFN key/value + lm_head modules.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 MODEL_SIZE_LABEL=0.4b \
 DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=4000000 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_quant_smoke.sh
 
 # Apple MLX bridge, tiny-only.
 DTYPE=fp16 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_smoke.sh
 
 # Apple MLX bridge on one real 0.1B projection tensor.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 MODEL_SIZE_LABEL=0.1b \
 DTYPE=fp16 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_smoke.sh
 
 # One-command Qwen3.5 Apple/mobile acceptance wrapper.
@@ -363,7 +363,7 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
 
 # The exported prefill graph is statically unrolled. Keep the chunk small
 # (default 16, maximum 128); longer prompts stream through repeated masked calls.
-PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
+PYTHONPATH=. python bench/runners/run_coreml_apple_baseline.py \
   --manifest exports/rwkv7-g1d-0.1b-coreml/coreml_export_manifest.json \
   --prompt-target-chars 1024 \
   --decode-lengths 128 \
@@ -380,11 +380,11 @@ python scripts/convert_hf_to_mlx.py \
   --dtype fp16 \
   --include model.layers.0.attn.r_proj.weight \
   --copy-metadata \
-  --results bench/results_apple_silicon_m5_20260704.jsonl
+  --results bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl
 
 # Full MLX recurrent reference backend: tiny parity/cache plus optional 0.1B row.
 DTYPE=fp16 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
@@ -394,7 +394,7 @@ PROMPT="The quick brown fox" \
 CHUNK_SIZE=2 \
 MAX_NEW_TOKENS=2 \
 DYNAMIC_BATCH=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
@@ -405,7 +405,7 @@ CHUNK_SIZE=2 \
 MAX_NEW_TOKENS=1 \
 DYNAMIC_BATCH=1 \
 SKIP_TINY=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -416,7 +416,7 @@ CHUNK_SIZE=2 \
 MAX_NEW_TOKENS=1 \
 DYNAMIC_BATCH=1 \
 SKIP_TINY=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 
 # Reusable tokenizer-integrated MLX text generation API / CLI.
@@ -425,7 +425,7 @@ python scripts/mlx_generate.py \
   --prompt "The quick brown fox" \
   --max-new-tokens 8 \
   --dtype fp16 \
-  --results bench/results_apple_silicon_m5_20260704.jsonl
+  --results bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl
 
 # Prompt/decode sweep with chunked-prefill correctness and memory telemetry.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
@@ -434,7 +434,7 @@ PROMPT_LENGTHS=16,64 \
 DECODE_LENGTHS=2,4 \
 CHUNK_SIZE=32 \
 REPEAT=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
@@ -443,7 +443,7 @@ PROMPT_LENGTHS=128,256 \
 DECODE_LENGTHS=4,8 \
 CHUNK_SIZE=64 \
 REPEAT=2 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
@@ -452,7 +452,7 @@ PROMPT_LENGTHS=128,256 \
 DECODE_LENGTHS=4,8 \
 CHUNK_SIZE=64 \
 REPEAT=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
@@ -461,7 +461,7 @@ PROMPT_LENGTHS=128,256 \
 DECODE_LENGTHS=4,8 \
 CHUNK_SIZE=64 \
 REPEAT=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 # Serving-shaped MLX session: prefill once, decode in chunks, compare with one-shot.
@@ -469,7 +469,7 @@ MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
 PROMPT="The quick brown fox" \
 STEP_SIZES=4,4 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_session_smoke.sh
 
 # Optional stronger real-checkpoint parity against HF native PyTorch on CPU.
@@ -482,13 +482,13 @@ MAX_NEW_TOKENS=1 \
 COMPARE_TORCH=1 \
 TORCH_COMPARE_TOLERANCE=0.05 \
 SKIP_TINY=1 \
-RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+RESULTS=bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 ```
 
-The Qwen3.5 Apple acceptance wrapper is `scripts/run_qwen35_apple_acceptance.sh`; it can dry-run the planned Qwen/RWKV/CoreML matrix, optionally pull Ollama Qwen3.5 models, run RWKV MLX rows, emit CoreML export/runtime rows, run `bench/score_qwen35_quality.py` when `QUALITY_RUBRIC` is set, append comparison gates, and emit `qwen35_apple_baseline_gap_diagnostic` rows that say whether the next step is missing data, decode/prefill speed, TTFT, or memory. The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`. The MLX bridge wrapper calls `tests/test_apple_silicon_mlx_smoke.py`; the full recurrent MLX wrapper calls `tests/test_apple_silicon_mlx_model_smoke.py`; the reusable MLX generation CLI is `scripts/mlx_generate.py`; the MLX prompt/decode sweep CLI is `scripts/mlx_generation_sweep.py`; the isolated quant projection microbench is `scripts/mlx_quant_projection_bench.py`; the CoreML stateful exporter is `scripts/export_rwkv7_coreml.py`; the CoreML runtime row generator is `bench/run_coreml_apple_baseline.py`; the serving-style prefill-once/session-decode CLI is `scripts/mlx_session_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_smoke.sh`; the interleaved multi-session CLI is `scripts/mlx_session_batch_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_batch_smoke.sh` and `SESSION_BACKEND=batched|auto` for equal-round MLX batching; and the HF→MLX exporter is `scripts/convert_hf_to_mlx.py`.
+The Qwen3.5 Apple acceptance wrapper is `scripts/run_qwen35_apple_acceptance.sh`; it can dry-run the planned Qwen/RWKV/CoreML matrix, optionally pull Ollama Qwen3.5 models, run RWKV MLX rows, emit CoreML export/runtime rows, run `bench/analyzers/score_qwen35_quality.py` when `QUALITY_RUBRIC` is set, append comparison gates, and emit `qwen35_apple_baseline_gap_diagnostic` rows that say whether the next step is missing data, decode/prefill speed, TTFT, or memory. The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`. The MLX bridge wrapper calls `tests/test_apple_silicon_mlx_smoke.py`; the full recurrent MLX wrapper calls `tests/test_apple_silicon_mlx_model_smoke.py`; the reusable MLX generation CLI is `scripts/mlx_generate.py`; the MLX prompt/decode sweep CLI is `scripts/mlx_generation_sweep.py`; the isolated quant projection microbench is `scripts/mlx_quant_projection_bench.py`; the CoreML stateful exporter is `scripts/export_rwkv7_coreml.py`; the CoreML runtime row generator is `bench/runners/run_coreml_apple_baseline.py`; the serving-style prefill-once/session-decode CLI is `scripts/mlx_session_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_smoke.sh`; the interleaved multi-session CLI is `scripts/mlx_session_batch_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_batch_smoke.sh` and `SESSION_BACKEND=batched|auto` for equal-round MLX batching; and the HF→MLX exporter is `scripts/convert_hf_to_mlx.py`.
 
-Recorded rows: [`../../bench/results_apple_silicon_m5_20260704.jsonl`](../../bench/results_apple_silicon_m5_20260704.jsonl).
+Recorded rows: [`../../bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl`](../../bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl).
 
 ## Minimal Apple environment
 

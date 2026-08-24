@@ -9,10 +9,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bench.audit_qwen35_apple_goal import AUDIT_AXIS, SUMMARY_AXIS, Shape, Tier, run_audit
-from bench.run_qwen35_apple_baseline import AXIS as BASELINE_AXIS
-from bench.compare_qwen35_apple_baseline import COMPARISON_AXIS
-from bench.score_qwen35_quality import COMPARISON_AXIS as QUALITY_COMPARISON_AXIS
+from bench.validators.audit_qwen35_apple_goal import AUDIT_AXIS, SUMMARY_AXIS, Shape, Tier, run_audit
+from bench.runners.run_qwen35_apple_baseline import AXIS as BASELINE_AXIS
+from bench.analyzers.compare_qwen35_apple_baseline import COMPARISON_AXIS
+from bench.analyzers.score_qwen35_quality import COMPARISON_AXIS as QUALITY_COMPARISON_AXIS
 
 
 def passing_rows() -> list[dict[str, object]]:
@@ -177,7 +177,7 @@ def test_goal_audit_cli_appends_and_fail_on_gate(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "bench/audit_qwen35_apple_goal.py",
+            "bench/validators/audit_qwen35_apple_goal.py",
             "--results",
             str(source),
             "--tier",

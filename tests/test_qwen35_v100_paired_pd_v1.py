@@ -8,9 +8,9 @@ from pathlib import Path
 
 import torch
 
-from bench.bench_cross_model_speed import configure_qwen_sdpa_policy
-from bench.validate_qwen35_best_optimized_hf_v1 import validate_matrix
-from bench.validate_qwen35_v100_paired_pd_v1 import (
+from bench.runners.bench_cross_model_speed import configure_qwen_sdpa_policy
+from bench.validators.validate_qwen35_best_optimized_hf_v1 import validate_matrix
+from bench.validators.validate_qwen35_v100_paired_pd_v1 import (
     PAIRS,
     PARAMETERS,
     QWEN_CONTRACT,
@@ -25,7 +25,7 @@ from bench.validate_qwen35_v100_paired_pd_v1 import (
     validate_correctness_manifest,
     validate_provenance,
 )
-from bench.compare_rwkv_prefill_probe import compare as compare_rwkv_probes
+from bench.analyzers.compare_rwkv_prefill_probe import compare as compare_rwkv_probes
 
 HELPERS = runpy.run_path(
     str(Path(__file__).with_name("test_qwen35_best_optimized_hf_v1.py"))

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bench.bench_hf_capacity_probe import checkpoint_payload_bytes, classify_result
+from bench.probes.bench_hf_capacity_probe import checkpoint_payload_bytes, classify_result
 
 
 def test_checkpoint_payload_uses_safetensors_index_metadata(tmp_path: Path) -> None:

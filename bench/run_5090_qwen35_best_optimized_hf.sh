@@ -55,14 +55,14 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-"${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" --model "${EXPECTED_GPU_MODEL}" --name "${gpu_name}"
+"${PYTHON_BIN}" "${ROOT}/bench/validators/check_exact_gpu.py" --model "${EXPECTED_GPU_MODEL}" --name "${gpu_name}"
 
 result="${OUT_DIR}/${RESULT_NAME}"
 log="${OUT_DIR}/logs/${RESULT_NAME%.jsonl}.log"
 rm -f "${result}"
 
 cd "${ROOT}"
-"${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+"${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
   --model "${MODEL}" \
   --model-kind qwen35 \
   --model-role reference \

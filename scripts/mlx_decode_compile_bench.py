@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bench.run_qwen35_apple_baseline import append_jsonl, device_info, make_prompt, parse_csv
+from bench.runners.run_qwen35_apple_baseline import append_jsonl, device_info, make_prompt, parse_csv
 
 AXIS = "mlx_decode_compile"
 

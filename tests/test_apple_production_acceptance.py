@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from bench.check_apple_production_acceptance import GATE_STATUSES, audit, evaluate_proof, summarize
-from bench.render_apple_production_acceptance import render
+from bench.validators.check_apple_production_acceptance import GATE_STATUSES, audit, evaluate_proof, summarize
+from bench.analyzers.render_apple_production_acceptance import render
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -183,7 +183,7 @@ def test_latest_m5_close_passes_only_bounded_atomic_gates() -> None:
 
     proxy = next(gate for gate in manifest["gates"] if gate["id"] == "quant.quality_fp16_proxy_m5")
     assert "不声称 llama.cpp/GGUF Q*_K_M 等价" in proxy["criterion"]
-    evidence = "bench/apple_quant_quality_q4km_m5_20260712.jsonl"
+    evidence = "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl"
     tracked = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "--error-unmatch", "--", evidence],
         text=True,
@@ -230,7 +230,7 @@ def test_strict_cli_exits_nonzero_and_appends_summary(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "bench" / "check_apple_production_acceptance.py"),
+            str(ROOT / "bench" / "validators" / "check_apple_production_acceptance.py"),
             "--manifest",
             str(manifest),
             "--root",

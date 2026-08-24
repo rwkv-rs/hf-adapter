@@ -101,7 +101,7 @@ COMMON_ENV=(
 )
 
 gpu_name="$(env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")')"
-"${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" --model 4080 --name "${gpu_name}"
+"${PYTHON_BIN}" "${ROOT}/bench/validators/check_exact_gpu.py" --model 4080 --name "${gpu_name}"
 
 env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" -m pip freeze --all | LC_ALL=C sort > "${PIP_FREEZE}"
 
@@ -160,7 +160,7 @@ run_native_lane() {
     "RWKV7_NATIVE_GRAPH_RKV_POLICY=${rkv_policy}" \
     "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM=1" "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=0" \
     "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=0" \
-    "${PYTHON_BIN}" "${ROOT}/bench/bench_cross_model_speed_resident.py" \
+    "${PYTHON_BIN}" "${ROOT}/bench/runners/bench_cross_model_speed_resident.py" \
       --model "${model}" --model-kind rwkv --model-role candidate \
       --model-pair "${pair}" --model-size-label "${size}" \
       --benchmark-matrix "${PROTOCOL}" --optimization-lane best_optimized_hf \
@@ -185,7 +185,7 @@ run_fla_reference() {
     "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_REQUIRE_EXTENSION=0" "RWKV7_NATIVE_GRAPH_RKV_POLICY=manual" \
     "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G=0" "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=0" \
     "TORCHDYNAMO_DISABLE=1" "TORCH_COMPILE_DISABLE=1" \
-    "${PYTHON_BIN}" "${ROOT}/bench/bench_cross_model_speed_resident.py" \
+    "${PYTHON_BIN}" "${ROOT}/bench/runners/bench_cross_model_speed_resident.py" \
       --model "${model}" --model-kind rwkv --model-role candidate \
       --model-pair "${pair}" --model-size-label "${size}" \
       --benchmark-matrix "${CORRECTNESS_PROTOCOL}" --optimization-lane fla_reference \
@@ -207,7 +207,7 @@ for spec in \
     run_fla_reference "${tag}" "${pair}" "${size}" "${model}" "${batch}"
     compare_contract=()
     if [[ "${batch}" == 8 ]]; then compare_contract+=(--require-distinct-batch-prompts); fi
-    env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" "${ROOT}/bench/compare_rwkv_prefill_probe.py" \
+    env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" "${ROOT}/bench/analyzers/compare_rwkv_prefill_probe.py" \
       --reference-probe "${OUT_DIR}/decode_correctness_${tag}_b${batch}_fla.pt" \
       --native-probe "${OUT_DIR}/decode_correctness_${tag}_b${batch}_native.pt" \
       --min-cosine 0.9999 --required-batch-size "${batch}" --required-probe-tokens 512 \

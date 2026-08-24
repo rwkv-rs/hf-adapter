@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "export_rwkv7_coreml.py"
-RUNTIME = ROOT / "bench" / "run_coreml_apple_baseline.py"
+RUNTIME = ROOT / "bench" / "runners" / "run_coreml_apple_baseline.py"
 
 
 def load_module():

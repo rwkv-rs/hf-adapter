@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from bench.bench_native_graph_ada_wagv_lora import (
+from bench.probes.bench_native_graph_ada_wagv_lora import (
     greedy_match_summary,
     logits_pair_metrics,
     model_metadata,

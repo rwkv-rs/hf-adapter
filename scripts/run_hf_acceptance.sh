@@ -6,7 +6,7 @@
 #   bash scripts/run_hf_acceptance.sh /path/to/rwkv7-g1d-0.1b-hf
 #
 # Useful overrides:
-#   DEVICE=cuda DTYPE=fp16 RESULTS=bench/results.jsonl RUN_TRAINING=1 bash scripts/run_hf_acceptance.sh "$MODEL"
+#   DEVICE=cuda DTYPE=fp16 RESULTS=bench/_runs/results.jsonl RUN_TRAINING=1 bash scripts/run_hf_acceptance.sh "$MODEL"
 
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_hf_script_common.sh"
@@ -74,7 +74,7 @@ fi
 
 if [[ "${RUN_BENCH}" == "1" ]]; then
   rwkv7_log "single-model speed smoke"
-  rwkv7_run "${PYTHON_BIN}" bench/bench_speed.py \
+  rwkv7_run "${PYTHON_BIN}" bench/probes/bench_speed.py \
     --hf-dir "${MODEL}" \
     --backend hf \
     --dtype "${DTYPE}" \
@@ -93,7 +93,7 @@ fi
 if [[ "${RUN_BATCH_SWEEP}" == "1" ]]; then
   rwkv7_log "batch sweep smoke"
   # shellcheck disable=SC2086 # BATCH_SIZES is intentionally split into argv.
-  rwkv7_run "${PYTHON_BIN}" bench/bench_batch_sweep.py \
+  rwkv7_run "${PYTHON_BIN}" bench/runners/bench_batch_sweep.py \
     --hf-dir "${MODEL}" \
     --dtype "${DTYPE}" \
     --device "${DEVICE}" \

@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from bench.run_clean_install_acceptance import evidence_row, parse_clean_environment, parse_test_counts
+from bench.runners.run_clean_install_acceptance import evidence_row, parse_clean_environment, parse_test_counts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +50,7 @@ def test_clean_install_evidence_dry_run(tmp_path: Path):
     completed = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "bench" / "run_clean_install_acceptance.py"),
+            str(ROOT / "bench" / "runners" / "run_clean_install_acceptance.py"),
             "--profile",
             "smoke",
             "--results",

@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from bench.run_mlx_quant_quality import common_prefix_length, quality_gate, token_agreement
+from bench.runners.run_mlx_quant_quality import common_prefix_length, quality_gate, token_agreement
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +48,7 @@ def test_quant_quality_dry_run(tmp_path: Path):
     out = tmp_path / "quality.jsonl"
     command = [
         sys.executable,
-        str(ROOT / "bench" / "run_mlx_quant_quality.py"),
+        str(ROOT / "bench" / "runners" / "run_mlx_quant_quality.py"),
         "--models",
         "/tmp/rwkv-model",
         "--results",

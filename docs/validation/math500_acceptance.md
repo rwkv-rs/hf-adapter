@@ -87,7 +87,7 @@ Default gates:
 The comparator can also be run directly:
 
 ```bash
-python bench/compare_math500_summaries.py \
+python bench/analyzers/compare_math500_summaries.py \
   --hf-summary bench/math500_final_acceptance_5090_1p5b_20260705/hf_seed43_bsz128_defer_text_summary.json \
   --albatross-summary bench/math500_final_acceptance_5090_1p5b_20260705/albatross_summary.json \
   --albatross-log bench/math500_final_acceptance_5090_1p5b_20260705/albatross_run.log \
@@ -115,7 +115,7 @@ COMPRESSION_REFERENCE_ALBATROSS_MODEL=/dev/shm/rwkv7-g1f-1.5b-20260419-ctx8192.p
 bash scripts/run_math500_final_acceptance.sh
 ```
 
-The wrapper calls `bench/run_math500_final_acceptance.py`, which produces:
+The wrapper calls `bench/runners/run_math500_final_acceptance.py`, which produces:
 
 - `bsz_sweep_summary.json`: short dynamic-batch sweep sorted by generation
   token/s. The fastest row becomes the full-run `bsz`.
@@ -146,13 +146,13 @@ defer_text_decode: on
 
 ### Uncheatable compression / logits alignment
 
-`bench/bench_logit_compression_alignment.py` is the logits-alignment gate to use
+`bench/probes/bench_logit_compression_alignment.py` is the logits-alignment gate to use
 for final reporting. It does not compare only cosine, max diff, or same next
 token. Instead, it encodes fixed external JSONL text and teacher-forces both a
 reference path and candidate path over the same target tokens:
 
 ```bash
-python bench/bench_logit_compression_alignment.py \
+python bench/probes/bench_logit_compression_alignment.py \
   --dataset /workspace/projects/Albatross/faster3a_2605/dataset/MATH500.jsonl \
   --tokenizer-dir /path/to/rwkv7-hf \
   --reference-kind albatross \

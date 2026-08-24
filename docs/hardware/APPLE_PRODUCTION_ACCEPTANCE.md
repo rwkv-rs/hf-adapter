@@ -20,7 +20,7 @@ Manifest 版本：`2026-07-13.2`。当前状态由已提交 JSONL 和明确登�
 3. 性能通过必须在同一配置同时通过正确性/质量门，并记录冷/热、真实峰值内存、重复次数和精确硬件。
 4. W8/W4 必须实际降低峰值内存，并在所有声明支持的 Apple 卡型/模型/bsz 上不慢于 W16；否则只是功能完成。
 5. CoreML 只有实际运行证据；设置 `compute_units` 不能替代 ANE 落核证明。
-6. 运行严格审计：`STRICT=1 scripts/run_apple_production_acceptance.sh` 或 `python bench/check_apple_production_acceptance.py --strict`。任一硬门未通过时命令必须非零退出。
+6. 运行严格审计：`STRICT=1 scripts/run_apple_production_acceptance.sh` 或 `python bench/validators/check_apple_production_acceptance.py --strict`。任一硬门未通过时命令必须非零退出。
 
 ## Apple M5 Production Close 与质量 Proxy（限定范围）
 
@@ -265,10 +265,10 @@ Manifest 版本：`2026-07-13.2`。当前状态由已提交 JSONL 和明确登�
 ## 证据文件
 
 - 机器可读清单：`bench/apple_production_gates.json`
-- 严格审计器：`bench/check_apple_production_acceptance.py`
+- 严格审计器：`bench/validators/check_apple_production_acceptance.py`
 - 一键入口：`scripts/run_apple_production_acceptance.sh`
 - 审计输出：`bench/results_apple_production_acceptance.jsonl`（默认 append-only）
 - 最新限定 M5 说明：`docs/hardware/APPLE_PRODUCTION_CLOSE.md`
-- 最新限定 M5 汇总：`bench/apple_production_close_qwen35_gate_m5_20260711.jsonl`
+- 最新限定 M5 汇总：`bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl`
 
-本文件由 `bench/render_apple_production_acceptance.py` 从 manifest 和已提交证据生成；新增或修改硬门后必须重新生成。
+本文件由 `bench/analyzers/render_apple_production_acceptance.py` 从 manifest 和已提交证据生成；新增或修改硬门后必须重新生成。

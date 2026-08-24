@@ -82,7 +82,7 @@ def test_route_composer_selects_only_gate_passing_measured_profiles(tmp_path: Pa
     proc = subprocess.run(
         [
             sys.executable,
-            "bench/compose_qwen35_quant_routes.py",
+            "bench/analyzers/compose_qwen35_quant_routes.py",
             "--results",
             str(source),
             "--output",
@@ -131,7 +131,7 @@ def test_route_composer_fails_closed_when_no_profile_passes(tmp_path: Path) -> N
     proc = subprocess.run(
         [
             sys.executable,
-            "bench/compose_qwen35_quant_routes.py",
+            "bench/analyzers/compose_qwen35_quant_routes.py",
             "--results",
             str(source),
             "--output",
@@ -167,7 +167,7 @@ def test_route_composer_can_accept_exact_cell_total_latency_noninferiority(
     proc = subprocess.run(
         [
             sys.executable,
-            "bench/compose_qwen35_quant_routes.py",
+            "bench/analyzers/compose_qwen35_quant_routes.py",
             "--results",
             str(source),
             "--output",
@@ -213,7 +213,7 @@ def test_route_composer_evaluates_duplicate_implementation_variants(tmp_path: Pa
     proc = subprocess.run(
         [
             sys.executable,
-            "bench/compose_qwen35_quant_routes.py",
+            "bench/analyzers/compose_qwen35_quant_routes.py",
             "--results",
             str(source),
             "--output",
@@ -253,7 +253,7 @@ def test_route_composer_can_gate_quant_only_against_rwkv_dense(tmp_path: Path) -
     proc = subprocess.run(
         [
             sys.executable,
-            "bench/compose_qwen35_quant_routes.py",
+            "bench/analyzers/compose_qwen35_quant_routes.py",
             "--results",
             str(source),
             "--output",

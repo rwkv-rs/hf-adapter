@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from bench.compare_rwkv_prefill_probe import compare as compare_rwkv_probes
-from bench.validate_qwen35_paired_decode_v1 import (
+from bench.analyzers.compare_rwkv_prefill_probe import compare as compare_rwkv_probes
+from bench.validators.validate_qwen35_paired_decode_v1 import (
     CANDIDATE_LANE,
     CANDIDATE_MATRIX,
     DECODE_CORRECTNESS_PROTOCOL,

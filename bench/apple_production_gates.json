@@ -73,17 +73,17 @@
             "paths": [
               "pyproject.toml",
               "scripts/run_clean_install_tests.sh",
-              "bench/run_clean_install_acceptance.py",
+              "bench/runners/run_clean_install_acceptance.py",
               "tests/test_clean_install_packaging.py",
               "tests/test_clean_install_acceptance.py",
-              "bench/apple_clean_install_apple_m5_20260712.jsonl",
+              "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl",
               "bench/logs/clean_install_apple_m5_20260712.log",
-              "bench/apple_clean_install_apple_m5_rows_20260712.jsonl"
+              "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_rows_20260712.jsonl"
             ]
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl",
             "axis": "apple_clean_install_acceptance",
             "where": [
               {
@@ -186,7 +186,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_clean_install_apple_m5_rows_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_rows_20260712.jsonl",
             "axis": "apple_silicon_model_generate_sweep",
             "where": [
               {
@@ -227,12 +227,12 @@
               "tests/test_native_fla_free_import.py",
               "tests/test_backend_boundaries.py",
               "tests/test_clean_install_packaging.py",
-              "bench/apple_clean_install_apple_m5_20260712.jsonl"
+              "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl"
             ]
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl",
             "axis": "apple_clean_install_acceptance",
             "where": [
               {
@@ -335,7 +335,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_clean_install_apple_m5_rows_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_rows_20260712.jsonl",
             "axis": "apple_silicon_tiny_native",
             "where": [
               {
@@ -371,12 +371,12 @@
               "pyproject.toml",
               "rwkv7_hf/mlx_bridge.py",
               "tests/test_apple_silicon_packaging.py",
-              "bench/apple_clean_install_apple_m5_20260712.jsonl"
+              "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl"
             ]
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl",
             "axis": "apple_clean_install_acceptance",
             "where": [
               {
@@ -479,7 +479,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_clean_install_apple_m5_rows_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_rows_20260712.jsonl",
             "axis": "apple_silicon_mlx_tiny",
             "where": [
               {
@@ -518,8 +518,8 @@
         "paths": [
           "scripts/run_apple_production_acceptance.sh",
           "bench/apple_production_gates.json",
-          "bench/check_apple_production_acceptance.py",
-          "bench/render_apple_production_acceptance.py",
+          "bench/validators/check_apple_production_acceptance.py",
+          "bench/analyzers/render_apple_production_acceptance.py",
           "tests/test_apple_production_acceptance.py",
           "docs/hardware/APPLE_PRODUCTION_ACCEPTANCE.md"
         ]
@@ -537,17 +537,17 @@
           {
             "type": "tracked_files",
             "paths": [
-              "bench/run_clean_install_acceptance.py",
-              "bench/run_mlx_quant_quality.py",
+              "bench/runners/run_clean_install_acceptance.py",
+              "bench/runners/run_mlx_quant_quality.py",
               "scripts/mlx_dynamic_serving_bench.py",
-              "bench/apple_clean_install_apple_m5_20260712.jsonl",
-              "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
-              "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl"
+              "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl",
+              "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl",
+              "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl"
             ]
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_clean_install_apple_m5_20260712.jsonl",
             "axis": "apple_clean_install_acceptance",
             "where": [
               {
@@ -650,7 +650,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving_env",
             "require": [
               {
@@ -696,12 +696,12 @@
               "rwkv7_hf/mlx_policy.py",
               "scripts/mlx_safe_defaults_bench.py",
               "tests/test_mlx_safe_defaults_bench.py",
-              "bench/results_mlx_safe_defaults_m5_20260712_fp16.jsonl"
+              "bench/apple_supporting_rows_20260712/results_mlx_safe_defaults_m5_20260712_fp16.jsonl"
             ]
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_safe_defaults_m5_20260712_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_safe_defaults_m5_20260712_fp16.jsonl",
             "axis": "mlx_safe_defaults",
             "where": [
               {
@@ -793,12 +793,12 @@
               "rwkv7_hf/mlx_session.py",
               "rwkv7_hf/mlx_scheduler.py",
               "scripts/mlx_dynamic_serving_bench.py",
-              "bench/run_qwen35_apple_baseline.py"
+              "bench/runners/run_qwen35_apple_baseline.py"
             ]
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving",
             "where": [
               {
@@ -844,7 +844,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_compiled_w4_04_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_compiled_w4_04_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline",
             "where": [
               {
@@ -932,7 +932,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "apple_silicon_hf_model",
         "where": [
           {
@@ -1059,7 +1059,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "apple_silicon_model_peft_lora_train",
         "where": [
           {
@@ -1110,7 +1110,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "apple_silicon_model_peft_lora_train",
         "where": [
           {
@@ -1157,7 +1157,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "apple_silicon_model_peft_lora_trainer",
         "where": [
           {
@@ -1198,7 +1198,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "apple_silicon_model_peft_lora_trl_sft",
         "where": [
           {
@@ -1239,7 +1239,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "apple_silicon_model_peft_lora_trl_dpo",
         "where": [
           {
@@ -1280,7 +1280,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "apple_silicon_model_peft_lora_trl_grpo",
         "where": [
           {
@@ -1326,13 +1326,13 @@
           "type": "tracked_files",
           "paths": [
             "scripts/mps_peft_methods_bench.py",
-            "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+            "bench/apple_supporting_rows_20260712/apple_mps_peft_methods_m5_20260712.jsonl",
             "bench/logs/apple_mps_peft_methods_m5_20260712.log"
           ]
         },
         {
           "type": "jsonl_query",
-          "path": "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+          "path": "bench/apple_supporting_rows_20260712/apple_mps_peft_methods_m5_20260712.jsonl",
           "axis": "mps_peft_method",
           "where": [
             {
@@ -1413,7 +1413,7 @@
         },
         {
           "type": "jsonl_query",
-          "path": "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+          "path": "bench/apple_supporting_rows_20260712/apple_mps_peft_methods_m5_20260712.jsonl",
           "axis": "mps_peft_method",
           "where": [
             {
@@ -1456,7 +1456,7 @@
         },
         {
           "type": "jsonl_query",
-          "path": "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+          "path": "bench/apple_supporting_rows_20260712/apple_mps_peft_methods_m5_20260712.jsonl",
           "axis": "mps_peft_methods_summary",
           "where": [],
           "require": [
@@ -1505,13 +1505,13 @@
           "type": "tracked_files",
           "paths": [
             "tests/test_hf_training_smoke.py",
-            "bench/apple_mps_training_m5_20260712.jsonl",
+            "bench/apple_supporting_rows_20260712/apple_mps_training_m5_20260712.jsonl",
             "bench/logs/apple_mps_training_m5_20260712.log"
           ]
         },
         {
           "type": "jsonl_query",
-          "path": "bench/apple_mps_training_m5_20260712.jsonl",
+          "path": "bench/apple_supporting_rows_20260712/apple_mps_training_m5_20260712.jsonl",
           "axis": "training_smoke",
           "where": [
             {
@@ -1606,13 +1606,13 @@
           "type": "tracked_files",
           "paths": [
             "tests/test_native_peft_save_load_merge.py",
-            "bench/apple_mps_adapter_roundtrip_m5_20260712.jsonl",
+            "bench/apple_supporting_rows_20260712/apple_mps_adapter_roundtrip_m5_20260712.jsonl",
             "bench/logs/apple_mps_adapter_roundtrip_m5_20260712.log"
           ]
         },
         {
           "type": "jsonl_query",
-          "path": "bench/apple_mps_adapter_roundtrip_m5_20260712.jsonl",
+          "path": "bench/apple_supporting_rows_20260712/apple_mps_adapter_roundtrip_m5_20260712.jsonl",
           "axis": "adapter_roundtrip",
           "where": [
             {
@@ -1732,7 +1732,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "mlx_generate",
         "where": [
           {
@@ -1795,7 +1795,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
         "axis": "mlx_dplr_model_prefill",
         "where": [
           {
@@ -1872,7 +1872,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "mlx_generation_sweep",
         "where": [
           {
@@ -1925,7 +1925,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "mlx_session_generate",
         "where": [
           {
@@ -1972,7 +1972,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_mlx_decode_compile_m5_20260710_fp16.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_mlx_decode_compile_m5_20260710_fp16.jsonl",
         "axis": "mlx_decode_compile_summary",
         "where": [
           {
@@ -2034,7 +2034,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_mlx_decode_compile_m5_20260710_w4.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_mlx_decode_compile_m5_20260710_w4.jsonl",
         "axis": "mlx_decode_compile_summary",
         "where": [
           {
@@ -2404,7 +2404,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_speculative_validation",
             "where": [
               {
@@ -2450,7 +2450,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline",
             "where": [
               {
@@ -2587,7 +2587,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
         "axis": "mlx_session_batch_generate",
         "where": [
           {
@@ -2658,7 +2658,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving",
             "where": [
               {
@@ -2737,7 +2737,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving",
             "where": [
               {
@@ -2816,7 +2816,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving",
             "where": [
               {
@@ -2891,7 +2891,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving",
             "where": [
               {
@@ -2962,7 +2962,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving",
             "where": [
               {
@@ -3030,12 +3030,12 @@
             "rwkv7_hf/mlx_scheduler.py",
             "scripts/mlx_serving_load_bench.py",
             "tests/test_mlx_serving_load_bench.py",
-            "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl"
+            "bench/apple_supporting_rows_20260712/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl"
           ]
         },
         {
           "type": "jsonl_query",
-          "path": "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
+          "path": "bench/apple_supporting_rows_20260712/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
           "axis": "mlx_serving_load",
           "where": [
             {
@@ -3120,7 +3120,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
             "axis": "mlx_dynamic_serving",
             "where": [
               {
@@ -3191,7 +3191,7 @@
     "required": true,
     "proof": {
       "type": "jsonl_query",
-      "path": "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
+      "path": "bench/apple_supporting_rows_20260712/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
       "axis": "mlx_serving_load",
       "where": [
         {
@@ -3277,7 +3277,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
             "axis": "mlx_dplr_model_prefill_summary",
             "where": [
               {
@@ -3313,7 +3313,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
             "axis": "mlx_dplr_model_prefill_summary",
             "where": [
               {
@@ -3349,7 +3349,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
             "axis": "mlx_dplr_model_prefill_summary",
             "where": [
               {
@@ -3394,7 +3394,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl",
         "axis": "qwen35_apple_baseline_comparison",
         "where": [],
         "require": [
@@ -3434,7 +3434,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_env",
             "where": [
               {
@@ -3481,7 +3481,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_comparison",
             "where": [
               {
@@ -3591,7 +3591,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_env",
             "where": [
               {
@@ -3638,7 +3638,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_comparison",
             "where": [
               {
@@ -3762,7 +3762,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_env",
             "where": [
               {
@@ -3809,7 +3809,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_comparison",
             "where": [
               {
@@ -3906,7 +3906,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_speculative_validation",
             "where": [
               {
@@ -4036,7 +4036,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
             "axis": "mlx_generation_sweep_summary",
             "where": [
               {
@@ -4072,7 +4072,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
             "axis": "mlx_generation_sweep_summary",
             "where": [
               {
@@ -4121,7 +4121,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
             "axis": "mlx_decode_compile_env",
             "where": [
               {
@@ -4173,7 +4173,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
             "axis": "mlx_decode_compile_summary",
             "where": [
               {
@@ -4249,7 +4249,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
             "axis": "mlx_decode_compile",
             "where": [
               {
@@ -4307,7 +4307,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
             "axis": "mlx_generation_sweep_summary",
             "where": [
               {
@@ -4343,7 +4343,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
             "axis": "mlx_generation_sweep_summary",
             "where": [
               {
@@ -4404,7 +4404,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_compiled_w4_04_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_compiled_w4_04_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline",
             "where": [
               {
@@ -4517,7 +4517,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
             "axis": "mlx_generation_sweep_summary",
             "where": [
               {
@@ -4553,7 +4553,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
             "axis": "mlx_generation_sweep_summary",
             "where": [
               {
@@ -4607,7 +4607,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
             "axis": "mlx_decode_compile_env",
             "where": [
               {
@@ -4659,7 +4659,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
             "axis": "mlx_decode_compile_summary",
             "where": [
               {
@@ -4735,7 +4735,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
             "axis": "mlx_decode_compile",
             "where": [
               {
@@ -4795,19 +4795,19 @@
           {
             "type": "files",
             "paths": [
-              "bench/run_mlx_quant_quality.py",
+              "bench/runners/run_mlx_quant_quality.py",
               "tests/test_mlx_quant_quality.py"
             ]
           },
           {
             "type": "tracked_files",
             "paths": [
-              "bench/apple_quant_quality_q4km_m5_20260712.jsonl"
+              "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl"
             ]
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl",
             "axis": "mlx_quant_quality_env",
             "where": [
               {
@@ -4874,7 +4874,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl",
             "axis": "mlx_quant_quality",
             "where": [
               {
@@ -4944,7 +4944,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl",
             "axis": "mlx_quant_quality",
             "where": [
               {
@@ -5033,7 +5033,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl",
             "axis": "mlx_quant_quality",
             "where": [
               {
@@ -5127,7 +5127,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_quant_quality_q4km_m5_20260712.jsonl",
             "axis": "mlx_quant_quality_summary",
             "where": [],
             "require": [
@@ -5387,7 +5387,7 @@
     "required": true,
     "proof": {
       "type": "jsonl_query",
-      "path": "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
+      "path": "bench/apple_supporting_rows_20260712/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
       "axis": "mlx_serving_load",
       "where": [
         {
@@ -5568,7 +5568,7 @@
         "proofs": [
           {
             "type": "jsonl_query",
-            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/results_apple_silicon_m5_20260704.jsonl",
             "axis": "apple_silicon_env",
             "where": [
               {
@@ -5598,7 +5598,7 @@
           },
           {
             "type": "jsonl_query",
-            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
             "axis": "qwen35_apple_baseline_env",
             "where": [
               {
@@ -5668,7 +5668,7 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+        "path": "bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl",
         "axis": "qwen35_apple_baseline_env",
         "where": [
           {

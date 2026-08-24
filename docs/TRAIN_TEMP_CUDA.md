@@ -150,7 +150,7 @@ print({"backend": backend, "loss": float(loss), "finite_grad_tensors": grad_coun
 
 这个短例子会完成一次真实的 forward、loss、backward 和 optimizer step。要同时复现
 官方优化器分组、FusedAdam、裁剪顺序和学习率 schedule，可以直接使用
-`bench/bench_train_temp_alignment.py`。机器证据和 runner 顺序见
+`bench/runners/bench_train_temp_alignment.py`。机器证据和 runner 顺序见
 [`5090_train_temp_alignment_20260717`](../bench/5090_train_temp_alignment_20260717/README.md)。
 该目录同时包含注明筛选口径的最佳观测配对主图、完整三-seed 收敛曲线 PNG、
 单步对比 CSV 和 cohort CSV，可以直接在 GitHub 中查看或下载复核。
@@ -239,11 +239,11 @@ COMMON=(
   --eval-interval 50 --optimizer fused_adam
 )
 
-python bench/bench_train_temp_alignment.py converge-hf "${COMMON[@]}" \
+python bench/runners/bench_train_temp_alignment.py converge-hf "${COMMON[@]}" \
   --output-json partial.json --checkpoint-out "$CKPT" \
   --checkpoint-every 500 --stop-after-step 2500
 
-python bench/bench_train_temp_alignment.py converge-hf "${COMMON[@]}" \
+python bench/runners/bench_train_temp_alignment.py converge-hf "${COMMON[@]}" \
   --output-json resumed.json --resume-from "$CKPT" \
   --checkpoint-out "$CKPT" --checkpoint-every 500
 ```

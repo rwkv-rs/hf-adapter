@@ -16,7 +16,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bench.bench_cross_model_speed import (  # noqa: E402
+from bench.runners.bench_cross_model_speed import (  # noqa: E402
     _logits_trace_metrics,
     _token_trace_mismatch_metrics,
     QwenCudaGraphParityError,
@@ -38,22 +38,22 @@ from bench.bench_cross_model_speed import (  # noqa: E402
     validate_qwen_result_contract,
     validate_args,
 )
-from bench.qwen35_fla_triton_conv import (  # noqa: E402
+from bench.probes.qwen35_fla_triton_conv import (  # noqa: E402
     bind_qwen35_fla_triton_conv,
     qwen35_fla_triton_causal_conv1d,
     qwen35_fla_triton_causal_conv1d_update,
 )
-from bench.bench_cross_model_speed_resident import (
+from bench.runners.bench_cross_model_speed_resident import (
     cell_args,
     resolve_probe_cell,
     resolve_sweep_cells,
     resolve_sweep_shapes,
     selected_probe_output,
 )
-from bench.compare_qwen35_speed_matrix import quantization_family
-from bench.compare_qwen35_backend_probe import compare as compare_backend_probe  # noqa: E402
-from bench.compare_rwkv_prefill_probe import compare as compare_rwkv_prefill_probe  # noqa: E402
-from bench.run_qwen35_speed_matrix import (  # noqa: E402
+from bench.analyzers.compare_qwen35_speed_matrix import quantization_family
+from bench.analyzers.compare_qwen35_backend_probe import compare as compare_backend_probe  # noqa: E402
+from bench.analyzers.compare_rwkv_prefill_probe import compare as compare_rwkv_prefill_probe  # noqa: E402
+from bench.runners.run_qwen35_speed_matrix import (  # noqa: E402
     MatrixConfig,
     RunSpec,
     append_orchestrator_failure,
@@ -139,7 +139,7 @@ def test_raw_cudagraph_constructor_failure_cleans_partial_resources(
         "_initialize",
         fail_during_initialize,
     )
-    monkeypatch.setattr("bench.bench_cross_model_speed.cuda_sync", fail_sync)
+    monkeypatch.setattr("bench.runners.bench_cross_model_speed.cuda_sync", fail_sync)
 
     with pytest.raises(RuntimeError, match="capture failed"):
         QwenStaticCacheRawCudaGraphDecode(
@@ -570,7 +570,7 @@ def run_compare(
     return subprocess.run(
         [
             sys.executable,
-            "bench/compare_qwen35_speed_matrix.py",
+            "bench/analyzers/compare_qwen35_speed_matrix.py",
             "--results",
             str(results),
             "--json-output",
@@ -589,7 +589,7 @@ def run_compare(
 
 def test_resident_worker_direct_entrypoint_imports_sibling_worker() -> None:
     proc = subprocess.run(
-        [sys.executable, "bench/bench_cross_model_speed_resident.py", "--help"],
+        [sys.executable, "bench/runners/bench_cross_model_speed_resident.py", "--help"],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,
@@ -1266,7 +1266,7 @@ def test_red_candidate_rerunner_builds_append_only_command(tmp_path: Path) -> No
     proc = subprocess.run(
         [
             sys.executable,
-            "bench/rerun_qwen35_red_candidates.py",
+            "bench/analyzers/rerun_qwen35_red_candidates.py",
             "--results",
             str(results),
             "--expected-cells",
@@ -1314,7 +1314,7 @@ def test_red_candidate_rerunner_resolves_normalized_quant_family(
     proc = subprocess.run(
         [
             sys.executable,
-            "bench/rerun_qwen35_red_candidates.py",
+            "bench/analyzers/rerun_qwen35_red_candidates.py",
             "--results",
             str(results),
             "--expected-cells",
@@ -1743,10 +1743,10 @@ def test_explicit_qwen_conv_backend_rejects_a_different_live_binding() -> None:
 
     layer = model.named_modules()[0][1]
     layer.causal_conv1d_fn = fake_operator(
-        "bench.qwen35_fla_triton_conv.causal_conv1d_fn"
+        "bench.probes.qwen35_fla_triton_conv.causal_conv1d_fn"
     )
     layer.causal_conv1d_update = fake_operator(
-        "bench.qwen35_fla_triton_conv.causal_conv1d_update"
+        "bench.probes.qwen35_fla_triton_conv.causal_conv1d_update"
     )
     with pytest.raises(RuntimeError, match="causal-conv backend mismatch"):
         enforce_qwen_backend(model, official_args)
@@ -2424,10 +2424,10 @@ def test_3090_entrypoint_requires_optimized_qwen_path() -> None:
         "run_3090_qwen35_pair_resident.sh",
         "run_3090_qwen35_pair_acceptance.sh",
     ):
-        script = (ROOT / "bench" / name).read_text(encoding="utf-8")
+        script = (ROOT / "bench" / "runners" / name).read_text(encoding="utf-8")
         assert "--require-qwen-fast-path" in script
 
-    acceptance = (ROOT / "bench" / "run_3090_qwen35_pair_acceptance.sh").read_text(
+    acceptance = (ROOT / "bench" / "runners" / "run_3090_qwen35_pair_acceptance.sh").read_text(
         encoding="utf-8"
     )
     assert 'qwen_backend="fla"' in acceptance
@@ -2436,12 +2436,12 @@ def test_3090_entrypoint_requires_optimized_qwen_path() -> None:
 
 
 def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
-    script = (ROOT / "bench" / "run_4090_qwen35_pair_acceptance.sh").read_text(
+    script = (ROOT / "bench" / "runners" / "run_4090_qwen35_pair_acceptance.sh").read_text(
         encoding="utf-8"
     )
     assert 'PREFILL_CHUNK_SIZE="${PREFILL_CHUNK_SIZE:-512}"' in script
     assert 'REQUIRED_GPU_MODEL="${REQUIRED_GPU_MODEL:-4090}"' in script
-    assert 'bench/check_exact_gpu.py" --model "${REQUIRED_GPU_MODEL}"' in script
+    assert 'bench/validators/check_exact_gpu.py" --model "${REQUIRED_GPU_MODEL}"' in script
     assert 'BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_4090_hf_final}"' in script
     assert 'QWEN_CONV_BACKEND="${QWEN_CONV_BACKEND:-auto}"' in script
     assert 'REQUIRE_QWEN_FULL_FUSED="${REQUIRE_QWEN_FULL_FUSED:-0}"' in script
@@ -2473,11 +2473,11 @@ def test_4080_torchao_version_does_not_leak_into_global_optional_dependency() ->
 
 
 def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
-    script = (ROOT / "bench" / "run_5090_g1h_13b_acceptance.sh").read_text(
+    script = (ROOT / "bench" / "runners" / "run_5090_g1h_13b_acceptance.sh").read_text(
         encoding="utf-8"
     )
     assert 'REQUIRED_GPU_MODEL="5090"' in script
-    assert 'bench/check_exact_gpu.py"' in script
+    assert 'bench/validators/check_exact_gpu.py"' in script
     assert "bench_larger_model_smoke.py" in script
     assert "--fast-token-backend native_jit" in script
     assert "--quantizations none mm8 mm4" in script
@@ -2491,7 +2491,7 @@ def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
 
 
 def test_hardware_entrypoints_are_fail_closed() -> None:
-    pair_script = (ROOT / "bench" / "run_3090_qwen35_pair.sh").read_text(
+    pair_script = (ROOT / "bench" / "runners" / "run_3090_qwen35_pair.sh").read_text(
         encoding="utf-8"
     )
     assert "--expected-cells 72" in pair_script
@@ -2508,7 +2508,7 @@ def test_hardware_entrypoints_are_fail_closed() -> None:
         "run_3090_qwen35_pair.sh",
         "run_3090_qwen35_pair_resident.sh",
     ):
-        script = (ROOT / "bench" / name).read_text(encoding="utf-8")
+        script = (ROOT / "bench" / "runners" / name).read_text(encoding="utf-8")
         assert "--require-native-candidate" in script
         assert "--require-qwen-fast-path" in script
         assert "--require-quant-memory-reduction" in script

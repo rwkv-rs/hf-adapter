@@ -279,7 +279,7 @@ def test_decode_correctness_manifest_covers_every_model_and_batch() -> None:
     assert "expected one B{batch}/P2048/D512 production cell" in text
     assert 'with row_path.open("x", encoding="utf-8")' in text
     assert "extracted native row differs from its production source" in text
-    assert "from bench.compare_rwkv_prefill_probe import compare" in text
+    assert "from bench.analyzers.compare_rwkv_prefill_probe import compare" in text
     assert '"greedy_tokens": "exact_all_512"' in text
     assert '"prompt_logits_min_row_cosine": 0.9999' in text
     assert '"final_logits_min_row_cosine": 0.9999' in text

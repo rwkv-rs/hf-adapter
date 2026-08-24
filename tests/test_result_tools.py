@@ -8,8 +8,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from bench.bench_albatross import parse_result_lines
-from bench.compare_fast_token_layouts import fast_micro_rows, fast_speed_rows, latest_by_layout, load_rows, nested_num, num, ratio
+from bench.probes.bench_albatross import parse_result_lines
+from bench.analyzers.compare_fast_token_layouts import fast_micro_rows, fast_speed_rows, latest_by_layout, load_rows, nested_num, num, ratio
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -61,7 +61,7 @@ def assert_training_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -141,7 +141,7 @@ def assert_albatross_rows_are_parsed_and_compared(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -222,7 +222,7 @@ def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -330,7 +330,7 @@ def assert_fused_backend_targets_are_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -419,7 +419,7 @@ def assert_albatross_prefill_ignores_short_prompt_probe(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -509,7 +509,7 @@ def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -567,7 +567,7 @@ def assert_albatross_decode_is_model_aware_for_overhead_rows(tmpdir: Path) -> No
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -645,7 +645,7 @@ def assert_projection_kernel_plan_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -697,7 +697,7 @@ def assert_fused_projection_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -750,7 +750,7 @@ def assert_fused_wa_lora_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -809,7 +809,7 @@ def assert_fused_wag_lora_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -868,7 +868,7 @@ def assert_fused_wavg_lora_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -927,7 +927,7 @@ def assert_fused_rkv_wag_projection_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -991,7 +991,7 @@ def assert_fused_attn_output_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1057,7 +1057,7 @@ def assert_fused_attn_output_project_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1115,7 +1115,7 @@ def assert_fused_ffn_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1166,7 +1166,7 @@ def assert_fused_shift_mix_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1224,7 +1224,7 @@ def assert_fused_recurrent_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1292,7 +1292,7 @@ def assert_fused_recurrent_output_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1344,7 +1344,7 @@ def assert_native_graph_fused_recurrent_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1432,7 +1432,7 @@ def assert_native_graph_fused_recurrent_output_is_reported(tmpdir: Path) -> None
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1517,7 +1517,7 @@ def assert_native_graph_fused_output_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1608,7 +1608,7 @@ def assert_native_graph_fused_output_project_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1703,7 +1703,7 @@ def assert_native_graph_fused_wag_lora_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1800,7 +1800,7 @@ def assert_native_graph_fused_wavg_lora_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1859,7 +1859,7 @@ def assert_native_graph_fused_projection_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1923,7 +1923,7 @@ def assert_native_quant_gemv_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -1987,7 +1987,7 @@ def assert_native_quant_w4_gemv_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2053,7 +2053,7 @@ def assert_native_quant_rkv_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2119,7 +2119,7 @@ def assert_native_quant_w4_rkv_proto_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2216,7 +2216,7 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2307,7 +2307,7 @@ def assert_native_quant_e2e_decode_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2392,7 +2392,7 @@ def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) ->
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2440,7 +2440,7 @@ def assert_native_mm_quantization_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2497,7 +2497,7 @@ def assert_native_model_smoke_is_reported(tmpdir: Path) -> None:
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2550,7 +2550,7 @@ def assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2612,7 +2612,7 @@ def assert_dynamic_batch_native_graph_telemetry_is_reported(tmpdir: Path) -> Non
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2671,7 +2671,7 @@ def assert_checkpoint_resume_smoke_survives_inference_dtype_filter(tmpdir: Path)
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2732,7 +2732,7 @@ def assert_deepspeed_resume_smoke_survives_inference_dtype_filter(tmpdir: Path) 
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2825,7 +2825,7 @@ def assert_model_aware_focus_checks_do_not_overwrite_deepspeed_rows(tmpdir: Path
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -2921,7 +2921,7 @@ def assert_model_aware_focus_checks_report_missing_backends_per_model(tmpdir: Pa
     analyzed = subprocess.run(
         [
             sys.executable,
-            "bench/analyze_results.py",
+            "bench/analyzers/analyze_results.py",
             "--results",
             str(path),
             "--device",
@@ -3000,7 +3000,7 @@ def main() -> int:
         passed = subprocess.run(
             [
                 sys.executable,
-                "bench/compare_fast_token_layouts.py",
+                "bench/analyzers/compare_fast_token_layouts.py",
                 "--results",
                 str(path),
                 "--device",
@@ -3023,7 +3023,7 @@ def main() -> int:
         failed = subprocess.run(
             [
                 sys.executable,
-                "bench/compare_fast_token_layouts.py",
+                "bench/analyzers/compare_fast_token_layouts.py",
                 "--results",
                 str(missing_path),
                 "--device",

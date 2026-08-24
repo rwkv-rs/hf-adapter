@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bench.check_dynamic_prefill_matrix import analyze, parse_int_set
+from bench.validators.check_dynamic_prefill_matrix import analyze, parse_int_set
 
 
 def _row(batch: int, prompt: int, *, ms: float, tokps: float) -> dict:

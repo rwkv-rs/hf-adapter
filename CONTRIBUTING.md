@@ -147,7 +147,7 @@ For a card-adaptation issue, prefer the one-click wrapper first:
 ```bash
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DEVICE=cuda DTYPE=fp16 \
-RESULTS=bench/results.jsonl \
+RESULTS=bench/_runs/results.jsonl \
 bash scripts/run_hardware_smoke.sh
 ```
 
@@ -178,18 +178,18 @@ python tests/test_quantized_inference.py \
 Then add speed rows:
 
 ```bash
-python bench/bench_speed.py \
+python bench/probes/bench_speed.py \
   --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
   --backend hf \
   --dtype fp16 \
   --device cuda \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
-python bench/bench_batch_sweep.py \
+python bench/runners/bench_batch_sweep.py \
   --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
   --dtype fp16 \
   --device cuda \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 ```
 
 For training-capable cards, add:
@@ -205,14 +205,14 @@ python tests/test_hf_training_smoke.py \
   --device cuda \
   --attn-mode fused_recurrent \
   --backend both \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 
 python tests/test_hf_rl_training_smoke.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
   --device cuda \
   --attn-mode fused_recurrent \
   --backend dpo \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 ```
 
 For multi-GPU cards/nodes, add ZeRO smoke through the wrapper:
@@ -220,7 +220,7 @@ For multi-GPU cards/nodes, add ZeRO smoke through the wrapper:
 ```bash
 NPROC_PER_NODE=2 ZERO_STAGE=both \
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
-RESULTS=bench/results.jsonl \
+RESULTS=bench/_runs/results.jsonl \
 bash scripts/run_zero_training_smoke.sh
 ```
 
@@ -235,7 +235,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
   --batch-size 1 \
   --gradient-accumulation-steps 1 \
   --max-length 32 \
-  --results bench/results.jsonl
+  --results bench/_runs/results.jsonl
 ```
 
 
@@ -303,9 +303,9 @@ linked issue comment:
 - Fallback path used:
 ````
 
-If a benchmark writes rows to `bench/results.jsonl`, commit only rows that are
-relevant to the PR. Do not mix unrelated local experiments into the same results
-change.
+Rows in `bench/_runs/results.jsonl` are scratch output and must not be committed.
+Copy only the accepted run into a complete dated evidence bundle, register it in
+`bench/CURRENT_ARTIFACTS.json`, and do not mix unrelated experiments.
 
 ## Documentation updates
 
@@ -342,7 +342,7 @@ Before opening a PR:
 - [ ] The PR is scoped to one issue or one clear gap.
 - [ ] Tests or benchmark commands are listed in the PR body.
 - [ ] Hardware/software versions are listed for GPU work.
-- [ ] `bench/results.jsonl` rows, if changed, are relevant and reproducible.
+- [ ] Accepted benchmark rows are promoted into one dated evidence bundle; `bench/_runs/` remains untracked.
 - [ ] Docs are updated if support status changed.
 - [ ] The PR does not start vLLM/SGLang work in this HF adapter repository.
 

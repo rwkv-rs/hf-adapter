@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bench.summarize_4090_4080_routes import MODELS, summarize
+from bench.analyzers.summarize_4090_4080_routes import MODELS, summarize
 
 
 DEVICE = "NVIDIA GeForce RTX 4090"

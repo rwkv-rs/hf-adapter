@@ -163,13 +163,13 @@ Primary next-card loop: **RTX 4090, fp16, bsz=1/4, prompt512**.
    - prefill state handoff into decode;
    - no cache semantic regressions for dynamic batch/reorder/drop.
 2. Prefill:
-   - run prompt512 bsz=1 and bsz=4 rows through `bench/bench_native_prefill_scan.py`;
-   - use `bench/bench_native_prefill_breakdown.py --fine-attn --layer-breakdown`
+   - run prompt512 bsz=1 and bsz=4 rows through `bench/runners/bench_native_prefill_scan.py`;
+   - use `bench/probes/bench_native_prefill_breakdown.py --fine-attn --layer-breakdown`
      when a prefill change claims a bottleneck shift;
    - compare against Albatross ratios in the analyzer.
 3. Decode:
    - run 4090 fp16 bsz=1/4 decode rows through the existing native-graph
-     validation path (`bench/run_4090_fused_backend_validation.sh` or the
+     validation path (`bench/runners/run_4090_fused_backend_validation.sh` or the
      equivalent individual benches);
    - include correctness and cache hit/skip telemetry, not only tok/s.
 4. Memory:
@@ -177,7 +177,7 @@ Primary next-card loop: **RTX 4090, fp16, bsz=1/4, prompt512**.
      prefill, decode, and quant rows;
    - quant rows must report footprint ratio plus speed ratio.
 5. Analysis:
-   - run `python bench/analyze_results.py --results <jsonl> --device "NVIDIA GeForce RTX 4090" --dtype fp16`;
+   - run `python bench/analyzers/analyze_results.py --results <jsonl> --device "NVIDIA GeForce RTX 4090" --dtype fp16`;
    - inspect `fused_backend_targets`, Albatross prefill/decode ratios,
      correctness rows, missing axes, memory rows, and `next_focus` before
      choosing the next kernel.

@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from bench.bench_native_prefill_self_chunk_ab import route_environment
+from bench.probes.bench_native_prefill_self_chunk_ab import route_environment
 
 
 def test_route_environment_keeps_control_off() -> None:
@@ -54,7 +54,7 @@ def test_direct_script_help_avoids_gpu_import_path() -> None:
     completed = subprocess.run(
         [
             sys.executable,
-            str(repo_root / "bench" / "bench_native_prefill_self_chunk_ab.py"),
+            str(repo_root / "bench" / "probes" / "bench_native_prefill_self_chunk_ab.py"),
             "--help",
         ],
         cwd=repo_root,

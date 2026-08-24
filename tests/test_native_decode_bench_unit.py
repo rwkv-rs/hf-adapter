@@ -2,12 +2,12 @@ import os
 
 import torch
 
-from bench.bench_native_model_decode import (
+from bench.probes.bench_native_model_decode import (
     greedy_trace_sha256,
     requested_extension_status,
     summarize_iteration_times,
 )
-from bench.bench_native_model_decode_alignment import (
+from bench.probes.bench_native_model_decode_alignment import (
     candidate_environment,
     compare_traces,
     decode_environment,

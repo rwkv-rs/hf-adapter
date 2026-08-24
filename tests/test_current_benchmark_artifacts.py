@@ -62,6 +62,7 @@ def test_current_native_and_qwen_entrypoints_are_retained() -> None:
         "run_3090_qwen35_best_optimized_hf.sh",
         "run_3090_rwkv_paired_pd_v2.sh",
         "run_4080_qwen35_best_optimized_hf_v1.sh",
+        "run_4080_dynamic_prefill_matrix.sh",
         "run_4080_qwen35_paired_pd_v1.sh",
         "run_4080_rwkv_paired_pd_v1.sh",
         "run_4090_rwkv_paired_pd_v2.sh",
@@ -90,8 +91,8 @@ def test_superseded_full_matrix_entrypoints_are_removed() -> None:
 
 def test_fla_compatibility_and_correctness_oracles_are_retained() -> None:
     for relative in (
-        "bench/compare_rwkv_prefill_probe.py",
-        "bench/qwen35_fla_triton_conv.py",
+        "bench/analyzers/compare_rwkv_prefill_probe.py",
+        "bench/probes/qwen35_fla_triton_conv.py",
         "rwkv7_hf/modeling_rwkv7.py",
     ):
         assert (ROOT / relative).is_file(), relative

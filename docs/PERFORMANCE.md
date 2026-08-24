@@ -10,10 +10,10 @@ explicit compatibility/reference route and correctness oracle.
 Use these entry points:
 
 ```bash
-python bench/bench_batch_sweep.py --help
-python bench/bench_native_prefill_scan.py --help
-python bench/bench_native_graph_overhead.py --help
-python bench/bench_cross_model_speed.py --help
+python bench/runners/bench_batch_sweep.py --help
+python bench/runners/bench_native_prefill_scan.py --help
+python bench/runners/bench_native_graph_overhead.py --help
+python bench/runners/bench_cross_model_speed.py --help
 ```
 
 ## Reporting

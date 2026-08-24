@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from bench.bench_batch_sweep import (
+from bench.runners.bench_batch_sweep import (
     current_bench_case,
     effective_fused_norm_mix,
     effective_fused_recurrent_raw,

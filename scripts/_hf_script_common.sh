@@ -22,7 +22,7 @@ else
 fi
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
-RESULTS="${RESULTS:-bench/results.jsonl}"
+RESULTS="${RESULTS:-bench/_runs/results.jsonl}"
 DEVICE="${DEVICE:-cuda}"
 DTYPE="${DTYPE:-fp16}"
 TRAIN_DTYPE="${TRAIN_DTYPE:-bf16}"

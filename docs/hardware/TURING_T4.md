@@ -95,7 +95,7 @@ open.
 ## Reproduction
 
 ```bash
-bash bench/run_t4_hf_validation.sh \
+bash bench/runners/run_t4_hf_validation.sh \
   MATRIX_MODE=full \
   MODEL_ROOT=/opt/models \
   PYTHON_BIN=/path/to/venv/bin/python

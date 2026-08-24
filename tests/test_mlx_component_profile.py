@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bench.profile_mlx_components import ComponentRecorder, component_name, make_prompt
+from bench.probes.profile_mlx_components import ComponentRecorder, component_name, make_prompt
 
 
 def test_component_recorder_summary_orders_by_total() -> None:
@@ -36,7 +36,7 @@ def test_profile_mlx_components_dry_run(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "bench/profile_mlx_components.py",
+            "bench/probes/profile_mlx_components.py",
             "--model-dir",
             "/tmp/model",
             "--prompt-target-chars",

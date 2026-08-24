@@ -49,7 +49,7 @@ export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 export TOKENIZERS_PARALLELISM=false
 
 gpu_name="$(${PYTHON_BIN} -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")')"
-"${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" --model 4080 --name "${gpu_name}"
+"${PYTHON_BIN}" "${ROOT}/bench/validators/check_exact_gpu.py" --model 4080 --name "${gpu_name}"
 
 "${PYTHON_BIN}" - "${SYSTEM}" "${MODE}" "${BATCHES}" "${PROMPTS}" <<'PY'
 import json, platform, sys
@@ -76,14 +76,14 @@ open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
 PY
 
 set -o pipefail
-"${PYTHON_BIN}" "${ROOT}/bench/bench_native_prefill_scan.py" \
+"${PYTHON_BIN}" "${ROOT}/bench/runners/bench_native_prefill_scan.py" \
   --model "${MODEL}" --code-source repo --device cuda --dtype fp16 \
   --reference-backend native-direct --fused-scan auto \
   --batch-sizes "${BATCHES}" --prompt-tokens "${PROMPTS}" \
   --warmup "${WARMUP}" --steps "${STEPS}" --timing cuda-event \
   --min-cosine 0.999 --results "${RESULTS}" 2>&1 | tee "${LOG}"
 
-"${PYTHON_BIN}" "${ROOT}/bench/check_dynamic_prefill_matrix.py" \
+"${PYTHON_BIN}" "${ROOT}/bench/validators/check_dynamic_prefill_matrix.py" \
   --results "${RESULTS}" --batches "${BATCHES}" --prompts "${PROMPTS}" \
   --require-safe-fusions \
   --max-padding-latency-ratio 1.5 --max-boundary-throughput-ratio 1.35 \

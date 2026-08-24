@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bench.run_v100_sm70_mm4_production_matrix import (
+from bench.runners.run_v100_sm70_mm4_production_matrix import (
     CELLS,
     acceptance_failures,
     cell_policy,

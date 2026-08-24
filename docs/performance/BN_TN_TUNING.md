@@ -65,7 +65,7 @@ scalar probe or another GPU family.
 
 ## What the benchmark measures
 
-[`../../bench/bench_quant_bn_tn.py`](../../bench/bench_quant_bn_tn.py) JIT
+[`../../bench/probes/bench_quant_bn_tn.py`](../../bench/probes/bench_quant_bn_tn.py) JIT
 compiles handwritten CUDA kernels and measures each legal pair against two
 same-run baselines:
 
@@ -180,7 +180,7 @@ export CUDA_HOME=/usr/local/cuda-12.8
 export PATH="$VIRTUAL_ENV/bin:$CUDA_HOME/bin:$PATH"
 export PYTHONPATH=$PWD
 
-python bench/bench_quant_bn_tn.py \
+python bench/probes/bench_quant_bn_tn.py \
   --modes mm8 mm4 --batch-sizes 1 8 \
   --shapes 2048x2048 2048x8192 8192x2048 2048x65536 \
   --block-n 64 128 256 --thread-n 1 2 4 8 \
@@ -191,7 +191,7 @@ python bench/bench_quant_bn_tn.py \
 Run the 7.2B shape set separately:
 
 ```bash
-python bench/bench_quant_bn_tn.py \
+python bench/probes/bench_quant_bn_tn.py \
   --modes mm8 mm4 --batch-sizes 1 8 \
   --shapes 4096x4096 4096x16384 16384x4096 4096x65536 \
   --block-n 64 128 256 --thread-n 1 2 4 8 \
@@ -255,7 +255,7 @@ user-supplied BN/TN exceptions. Canonical evidence:
 [`../../bench/5090_bntn_all_models_20260716/`](../../bench/5090_bntn_all_models_20260716/README.md).
 
 Offline schedule search is intentionally separate from production defaults.
-`bench/build_marlin_autotune_profile.py` converts stable, correct screen rows
+`bench/tools/build_marlin_autotune_profile.py` converts stable, correct screen rows
 into an exact GPU/runtime JSON profile, and runtime consumption requires the
 explicit `RWKV7_MARLIN_AUTOTUNE_PROFILE` environment variable. Unknown,
 malformed or identity-mismatched profiles fail closed to Marlin auto schedule.

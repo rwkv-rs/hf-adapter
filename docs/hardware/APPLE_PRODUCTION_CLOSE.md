@@ -42,7 +42,7 @@ Absolute conservative values:
 | RWKV-7 1.5B MLX W4 + draft | 150.90 | 1,266.34 | 0.1054 | 1,697,520,708 |
 
 Canonical evidence is in
-[`bench/apple_production_close_qwen35_gate_m5_20260711.jsonl`](../../bench/apple_production_close_qwen35_gate_m5_20260711.jsonl).
+[`bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl`](../../bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl).
 The comparison summary has `status="pass"`, two passing comparisons, and no gap
 actions.
 
@@ -113,8 +113,8 @@ feature:
 
 Evidence:
 
-- [`bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl`](../../bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl)
-- [`bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl`](../../bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl)
+- [`bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w4_15_m5_20260711.jsonl`](../../bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w4_15_m5_20260711.jsonl)
+- [`bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w8_15_m5_20260711.jsonl`](../../bench/apple_supporting_rows_20260712/apple_production_close_groupwise_w8_15_m5_20260711.jsonl)
 
 ### DPLR prefill tuning
 
@@ -152,7 +152,7 @@ latency, because the first target token is already streamable after target
 prefill; it is still exposed separately in every row.
 
 Evidence:
-[`bench/apple_production_close_speculative_w4_15_m5_20260711_final.jsonl`](../../bench/apple_production_close_speculative_w4_15_m5_20260711_final.jsonl).
+[`bench/apple_supporting_rows_20260712/apple_production_close_speculative_w4_15_m5_20260711_final.jsonl`](../../bench/apple_supporting_rows_20260712/apple_production_close_speculative_w4_15_m5_20260711_final.jsonl).
 
 ## Correctness and serving coverage
 
@@ -176,8 +176,8 @@ Run the Qwen and RWKV collectors with the same prompt seed, then compare the
 combined JSONL:
 
 ```bash
-PYTHONPATH=. python bench/compare_qwen35_apple_baseline.py \
-  --results bench/apple_production_close_qwen35_gate_m5_20260711.jsonl \
+PYTHONPATH=. python bench/analyzers/compare_qwen35_apple_baseline.py \
+  --results bench/apple_supporting_rows_20260712/apple_production_close_qwen35_gate_m5_20260711.jsonl \
   --pair '/path/qwen35-0.8b-mlx-4bit=rwkv7-g1d-0.4b-hf' \
   --pair '/path/qwen35-2b-mlx-4bit=rwkv7-g1g-1.5b-hf' \
   --min-decode-ratio 1.0 \
@@ -192,7 +192,7 @@ The 1.5B RWKV collector uses:
 
 ```bash
 RWKV7_MLX_WKV_SCAN_PREFILL=0 PYTHONPATH=. \
-python bench/run_qwen35_apple_baseline.py \
+python bench/runners/run_qwen35_apple_baseline.py \
   --prompt-target-chars 512 --decode-lengths 64 \
   --repeat 3 --warmup-repeats 1 --qwen-models '' \
   --rwkv-mlx-models /path/rwkv7-g1g-1.5b-hf \

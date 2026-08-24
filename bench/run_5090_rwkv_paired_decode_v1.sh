@@ -185,7 +185,7 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-"${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" --model 5090 --name "${gpu_name}"
+"${PYTHON_BIN}" "${ROOT}/bench/validators/check_exact_gpu.py" --model 5090 --name "${gpu_name}"
 
 # The frozen reference validator compares these six fields exactly. Refuse a
 # candidate runtime that could never join the immutable Qwen artifact.
@@ -354,7 +354,7 @@ run_lane() {
   unset RWKV7_NATIVE_PREFILL_GRAPH
   configure_sm120_small_b8 "${sm120_small_b8}" "${size}-b${batch}"
 
-  "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+  "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
     --model "${model}" \
     --model-kind rwkv \
     --model-role candidate \
@@ -389,7 +389,7 @@ run_sm120_ab_variant() {
   local log="${OUT_DIR}/logs/sm120_${tag}_${variant}.log"
 
   configure_sm120_small_b8 "${enabled}" "ab-${tag}-${variant}"
-  "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+  "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
     --model "${model}" \
     --model-kind rwkv \
     --model-role candidate \
@@ -417,7 +417,7 @@ run_sm120_ab() {
   local model="$1" pair="$2" size="$3" tag="$4"
   run_sm120_ab_variant "${model}" "${pair}" "${size}" "${tag}" baseline 0
   run_sm120_ab_variant "${model}" "${pair}" "${size}" "${tag}" candidate 1
-  "${PYTHON_BIN}" bench/compare_rwkv_prefill_probe.py \
+  "${PYTHON_BIN}" bench/analyzers/compare_rwkv_prefill_probe.py \
     --reference-probe "${OUT_DIR}/sm120_${tag}_baseline.pt" \
     --native-probe "${OUT_DIR}/sm120_${tag}_candidate.pt" \
     --min-cosine 0.9999 \
@@ -572,7 +572,7 @@ run_fla_decode_correctness_probe() {
   export RWKV7_NATIVE_MODEL_BACKEND=eager
   export RWKV7_FAST_PREFILL=0
   export RWKV7_NATIVE_PREFILL_GRAPH=0
-  "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+  "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
     --model "${model}" \
     --model-kind rwkv \
     --model-role candidate \
@@ -633,7 +633,7 @@ from pathlib import Path
 
 import torch
 
-from bench.compare_rwkv_prefill_probe import compare
+from bench.analyzers.compare_rwkv_prefill_probe import compare
 
 output = Path(sys.argv[1])
 model_hashes = Path(sys.argv[2])

@@ -16,7 +16,7 @@ from scripts.run_train_temp_official_recipe import (
     load_recipe,
 )
 
-from bench.bench_train_temp_alignment import (
+from bench.runners.bench_train_temp_alignment import (
     _convergence_exit_code,
     _forward_convergence_logits,
     _load_official_config,

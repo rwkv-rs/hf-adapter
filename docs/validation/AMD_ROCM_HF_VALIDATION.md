@@ -143,7 +143,7 @@ and `/dev/dri/render*`, then run:
 ```bash
 source /workspace/rwkv-rocm/bin/activate
 cd /workspace/rwkv7-hf-adapter
-bash bench/run_amd_rocm_hf_validation.sh \
+bash bench/runners/run_amd_rocm_hf_validation.sh \
   HF_DIR=/workspace/models/rwkv7-g1d-0.1b-hf
 ```
 

@@ -61,9 +61,9 @@ RTX 4080 受 16 GiB 容量限制，覆盖前三个模型参数档。
 | 显卡 | 正式运行与校验 |
 |---|---|
 | V100 32GB | [完整复现命令](../bench/v100_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
-| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_3090_paired_pd_v2.py`](../bench/validate_qwen35_3090_paired_pd_v2.py) |
+| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_3090_paired_pd_v2.py`](../bench/validators/validate_qwen35_3090_paired_pd_v2.py) |
 | RTX 4080 | [完整复现命令](../bench/4080_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
-| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_4090_paired_pd_v2.py`](../bench/validate_qwen35_4090_paired_pd_v2.py) |
+| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_4090_paired_pd_v2.py`](../bench/validators/validate_qwen35_4090_paired_pd_v2.py) |
 | RTX 5090 | [完整复现命令](../bench/5090_qwen35_paired_decode_v1_20260813/README.md#reproduce) |
 
 使用已提交的 artifact 复算本文全部中位数、参数调整比和排序：

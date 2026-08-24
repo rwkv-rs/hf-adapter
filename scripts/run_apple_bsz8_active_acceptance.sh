@@ -37,7 +37,7 @@ echo "[apple-b8] output=$OUT"
 echo "[apple-b8] cool down ${INITIAL_COOLDOWN_SECONDS}s before isolated engine rows"
 sleep "$INITIAL_COOLDOWN_SECONDS"
 
-"$PYTHON_BIN" "$ROOT/bench/validate_apple_bsz8_fidelity.py" \
+"$PYTHON_BIN" "$ROOT/bench/validators/validate_apple_bsz8_fidelity.py" \
   --model "$RWKV_04" \
   --batch-size 8 --prompt-chars 512 --decode-tokens 64 \
   --quant-group-size 128 --fused-lora-down --fused-ffn-key-relu2 \
@@ -45,7 +45,7 @@ sleep "$INITIAL_COOLDOWN_SECONDS"
   --results "$OUT/fidelity_0p4b.jsonl" \
   | tee "$OUT/fidelity_0p4b.stdout"
 
-"$PYTHON_BIN" "$ROOT/bench/run_apple_bsz8_active_compare.py" \
+"$PYTHON_BIN" "$ROOT/bench/runners/run_apple_bsz8_active_compare.py" \
   --rwkv-model "$RWKV_04" --qwen-model "$QWEN_08" --rwkv-draft-model "$RWKV_01" \
   --batch-size 8 --prompt-chars 512 --decode-tokens 64 \
   --warmup 1 --repeat 3 --order qwen-first --cooldown-seconds "$COOLDOWN_SECONDS" \
@@ -58,7 +58,7 @@ sleep "$INITIAL_COOLDOWN_SECONDS"
 
 sleep "$COOLDOWN_SECONDS"
 
-"$PYTHON_BIN" "$ROOT/bench/validate_apple_bsz8_fidelity.py" \
+"$PYTHON_BIN" "$ROOT/bench/validators/validate_apple_bsz8_fidelity.py" \
   --model "$RWKV_15" \
   --draft-model "$RWKV_01" \
   --batch-size 8 --prompt-chars 512 --decode-tokens 64 \
@@ -69,7 +69,7 @@ sleep "$COOLDOWN_SECONDS"
   --results "$OUT/fidelity_1p5b_cache.jsonl" \
   | tee "$OUT/fidelity_1p5b_cache.stdout"
 
-"$PYTHON_BIN" "$ROOT/bench/run_apple_bsz8_active_compare.py" \
+"$PYTHON_BIN" "$ROOT/bench/runners/run_apple_bsz8_active_compare.py" \
   --rwkv-model "$RWKV_15" --qwen-model "$QWEN_2" --rwkv-draft-model "$RWKV_01" \
   --batch-size 8 --prompt-chars 512 --decode-tokens 64 \
   --warmup 1 --repeat 3 --order qwen-first --cooldown-seconds "$COOLDOWN_SECONDS" \
@@ -84,7 +84,7 @@ sleep "$COOLDOWN_SECONDS"
 # qwen-first pass materially heat-biases the fanless M5.  No prefix/state
 # cache coalescing is enabled in this gate.
 sleep "$INITIAL_COOLDOWN_SECONDS"
-"$PYTHON_BIN" "$ROOT/bench/run_apple_bsz8_active_compare.py" \
+"$PYTHON_BIN" "$ROOT/bench/runners/run_apple_bsz8_active_compare.py" \
   --rwkv-model "$RWKV_15" --qwen-model "$QWEN_2" --rwkv-draft-model "$RWKV_01" \
   --batch-size 8 --prompt-chars 512 --decode-tokens 64 \
   --warmup 1 --repeat 3 --order balanced --cooldown-seconds "$COOLDOWN_SECONDS" \

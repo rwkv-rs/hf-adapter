@@ -64,9 +64,9 @@ commands, result aggregation, and backend verification.
 | GPU | Formal runner and validator |
 |---|---|
 | V100 32GB | [Full commands](../bench/v100_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
-| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_3090_paired_pd_v2.py`](../bench/validate_qwen35_3090_paired_pd_v2.py) |
+| RTX 3090 | [`run_3090_rwkv_paired_pd_v2.sh`](../bench/run_3090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_3090_paired_pd_v2.py`](../bench/validators/validate_qwen35_3090_paired_pd_v2.py) |
 | RTX 4080 | [Full commands](../bench/4080_qwen35_paired_pd_v1_20260814/README.md#reproduce) |
-| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_4090_paired_pd_v2.py`](../bench/validate_qwen35_4090_paired_pd_v2.py) |
+| RTX 4090 | [`run_4090_rwkv_paired_pd_v2.sh`](../bench/run_4090_rwkv_paired_pd_v2.sh) + [`validate_qwen35_4090_paired_pd_v2.py`](../bench/validators/validate_qwen35_4090_paired_pd_v2.py) |
 | RTX 5090 | [Full commands](../bench/5090_qwen35_paired_decode_v1_20260813/README.md#reproduce) |
 
 Recompute every displayed median, parameter-adjusted ratio, ordering rule, and

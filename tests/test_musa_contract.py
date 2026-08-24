@@ -363,8 +363,8 @@ def test_musa_remote_code_embeds_the_licensed_kernel_resource() -> None:
 
 
 def test_musa_hardware_acceptance_tools_move_and_measure_on_musa() -> None:
-    speed = (ROOT / "bench" / "bench_speed.py").read_text(encoding="utf-8")
-    batch = (ROOT / "bench" / "bench_batch_sweep.py").read_text(encoding="utf-8")
+    speed = (ROOT / "bench" / "probes" / "bench_speed.py").read_text(encoding="utf-8")
+    batch = (ROOT / "bench" / "runners" / "bench_batch_sweep.py").read_text(encoding="utf-8")
     smoke = (ROOT / "tests" / "smoke_hf_generate.py").read_text(encoding="utf-8")
     api = (ROOT / "tests" / "test_hf_api_contract.py").read_text(encoding="utf-8")
 

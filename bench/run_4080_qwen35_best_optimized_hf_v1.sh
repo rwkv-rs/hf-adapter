@@ -132,7 +132,7 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" --model 4080 --name "${gpu_name}"
+env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" "${ROOT}/bench/validators/check_exact_gpu.py" --model 4080 --name "${gpu_name}"
 
 env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" - <<'PY'
 import platform
@@ -165,7 +165,7 @@ if actual != expected:
 PY
 
 cd "${ROOT}"
-env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
+env -i "${COMMON_ENV[@]}" "${PYTHON_BIN}" bench/runners/bench_cross_model_speed_resident.py \
   --model "${MODEL}" \
   --model-kind qwen35 \
   --model-role reference \

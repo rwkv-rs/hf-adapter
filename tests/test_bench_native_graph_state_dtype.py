@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from bench.bench_native_graph_state_dtype import (
+from bench.probes.bench_native_graph_state_dtype import (
     _set_mode,
     aggregate_mode_results,
     balanced_mode_order,

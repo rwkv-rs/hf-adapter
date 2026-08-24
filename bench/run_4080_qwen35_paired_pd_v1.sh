@@ -73,7 +73,7 @@ reference="${OUT_DIR}/qwen_reference.jsonl"
 [[ ! -e "${reference}" ]] || { echo "refusing to overwrite ${reference}" >&2; exit 2; }
 cat "${OUT_DIR}/qwen_0p8.jsonl" "${OUT_DIR}/qwen_2b.jsonl" "${OUT_DIR}/qwen_4b.jsonl" > "${reference}"
 
-"${PYTHON_BIN}" "${ROOT}/bench/validate_qwen35_paired_pd_bundle_v1.py" \
+"${PYTHON_BIN}" "${ROOT}/bench/validators/validate_qwen35_paired_pd_bundle_v1.py" \
   --candidate "${OUT_DIR}/rwkv_candidate.jsonl" \
   --reference "${reference}" \
   --candidate-route-manifest "${OUT_DIR}/rwkv_candidate_routes.json" \

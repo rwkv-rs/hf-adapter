@@ -18,7 +18,7 @@ SUMMARY_ONLY="${SUMMARY_ONLY:-0}"
 rwkv7_prepare_results
 
 args=(
-  bench/check_apple_production_acceptance.py
+  bench/validators/check_apple_production_acceptance.py
   --manifest "${MANIFEST}"
   --results "${RESULTS}"
 )

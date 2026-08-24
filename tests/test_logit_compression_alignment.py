@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bench.bench_logit_compression_alignment import evaluate_quality_gates
+from bench.probes.bench_logit_compression_alignment import evaluate_quality_gates
 
 
 def test_quality_gate_passes_ratio_and_coverage() -> None:

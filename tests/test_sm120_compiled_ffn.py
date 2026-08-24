@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import torch
 import pytest
 
-from bench import bench_cross_model_speed as cross_bench
-from bench.bench_cross_model_speed import rwkv_native_graph_decode_route
+from bench.runners import bench_cross_model_speed as cross_bench
+from bench.runners.bench_cross_model_speed import rwkv_native_graph_decode_route
 from rwkv7_hf import modeling_rwkv7, native_jit, sm120_compiled_ffn as compiled_ffn
 from rwkv7_hf.native_graph_runtime import NativeGraphRunner
 

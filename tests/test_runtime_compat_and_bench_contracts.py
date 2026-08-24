@@ -19,7 +19,7 @@ def test_configuration_applies_runtime_compat_before_fla_import() -> None:
 
 
 def test_batch_sweep_times_prefill_inside_inference_mode() -> None:
-    tree = ast.parse((ROOT / "bench" / "bench_batch_sweep.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "bench" / "runners" / "bench_batch_sweep.py").read_text(encoding="utf-8"))
     bench_one = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "bench_one")
     guarded = False
     for node in ast.walk(bench_one):

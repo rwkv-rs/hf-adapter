@@ -55,7 +55,7 @@ def run_compare(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess[str]
     return subprocess.run(
         [
             sys.executable,
-            "bench/compare_math500_summaries.py",
+            "bench/analyzers/compare_math500_summaries.py",
             "--hf-summary",
             str(hf_path),
             "--albatross-summary",

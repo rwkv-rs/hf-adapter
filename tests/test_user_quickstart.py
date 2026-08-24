@@ -171,7 +171,7 @@ def test_browser_screenshots_and_workflow_commands_stay_complete() -> None:
     for command in (
         "tests/test_speculative_decode.py",
         "scripts/train_spec_draft.py",
-        "bench/bench_speculative_decode.py",
+        "bench/probes/bench_speculative_decode.py",
         "tests/test_peft_lora.py",
         "tests/test_native_trainer_smoke.py",
         "tests/test_device_map_generate.py",

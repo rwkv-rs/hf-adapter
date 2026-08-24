@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bench.run_qwen35_apple_baseline import (
+from bench.runners.run_qwen35_apple_baseline import (
     AXIS,
     PromptCase,
     build_prompt_cases,
@@ -23,7 +23,7 @@ from bench.run_qwen35_apple_baseline import (
     summarize_rows,
     tok_s,
 )
-from bench.compare_qwen35_apple_baseline import (
+from bench.analyzers.compare_qwen35_apple_baseline import (
     COMPARISON_AXIS,
     DIAGNOSTIC_AXIS,
     SUMMARY_AXIS,
@@ -33,7 +33,7 @@ from bench.compare_qwen35_apple_baseline import (
     gap_diagnostic_rows,
     summarize_comparisons,
 )
-from bench.score_qwen35_quality import (
+from bench.analyzers.score_qwen35_quality import (
     COMPARISON_AXIS as QUALITY_COMPARISON_AXIS,
     QUALITY_AXIS,
     SUMMARY_AXIS as QUALITY_SUMMARY_AXIS,
@@ -143,7 +143,7 @@ def test_ollama_loaded_model_telemetry_keeps_loaded_memory_distinct_from_peak() 
                 }
             ).encode()
 
-    with patch("bench.run_qwen35_apple_baseline.urllib.request.urlopen", return_value=FakeResponse()):
+    with patch("bench.runners.run_qwen35_apple_baseline.urllib.request.urlopen", return_value=FakeResponse()):
         telemetry = ollama_loaded_model_telemetry(
             host="http://127.0.0.1:11434",
             model="qwen3.5:0.8b-mlx",
@@ -264,7 +264,7 @@ def test_quality_cli_keeps_missing_response_unknown(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "bench/score_qwen35_quality.py",
+            "bench/analyzers/score_qwen35_quality.py",
             "--results",
             str(source),
             "--append",
@@ -332,7 +332,7 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "bench/run_qwen35_apple_baseline.py",
+            "bench/runners/run_qwen35_apple_baseline.py",
             "--dry-run",
             "--results",
             str(out),
@@ -695,7 +695,7 @@ def test_compare_cli_can_append_gap_diagnostics(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "bench/compare_qwen35_apple_baseline.py",
+            "bench/analyzers/compare_qwen35_apple_baseline.py",
             "--results",
             str(source),
             "--pair",
@@ -744,7 +744,7 @@ def test_compare_cli_writes_comparison_rows(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "bench/compare_qwen35_apple_baseline.py",
+            "bench/analyzers/compare_qwen35_apple_baseline.py",
             "--results",
             str(source),
             "--pair",

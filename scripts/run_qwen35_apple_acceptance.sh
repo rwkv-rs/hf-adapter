@@ -277,7 +277,7 @@ if (( ${#coreml_runtime_manifests[@]} > 0 )); then
       args+=(--require-coremltools)
     fi
     rwkv7_log "CoreML runtime baseline rows for ${manifest}"
-    rwkv7_run "${PYTHON_BIN}" bench/run_coreml_apple_baseline.py "${args[@]}"
+    rwkv7_run "${PYTHON_BIN}" bench/runners/run_coreml_apple_baseline.py "${args[@]}"
   done
 fi
 
@@ -361,7 +361,7 @@ fi
 
 rwkv7_print_env
 rwkv7_log "Apple/Qwen3.5 same-prompt baseline matrix"
-rwkv7_run "${PYTHON_BIN}" bench/run_qwen35_apple_baseline.py "${baseline_args[@]}"
+rwkv7_run "${PYTHON_BIN}" bench/runners/run_qwen35_apple_baseline.py "${baseline_args[@]}"
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   exit 0
@@ -410,7 +410,7 @@ if [[ -n "${QUALITY_RUBRIC}" ]]; then
     quality_args+=(--fail-on-gate)
   fi
   rwkv7_log "Apple/Qwen3.5 quality matrix"
-  rwkv7_run "${PYTHON_BIN}" bench/score_qwen35_quality.py "${quality_args[@]}"
+  rwkv7_run "${PYTHON_BIN}" bench/analyzers/score_qwen35_quality.py "${quality_args[@]}"
 fi
 
 if [[ "${SKIP_COMPARE}" != "1" && -n "${PAIRS}" ]]; then
@@ -444,7 +444,7 @@ if [[ "${SKIP_COMPARE}" != "1" && -n "${PAIRS}" ]]; then
   fi
 
   rwkv7_log "Apple/Qwen3.5 comparison gates"
-  rwkv7_run "${PYTHON_BIN}" bench/compare_qwen35_apple_baseline.py "${compare_args[@]}"
+  rwkv7_run "${PYTHON_BIN}" bench/analyzers/compare_qwen35_apple_baseline.py "${compare_args[@]}"
 fi
 
 if [[ "${SKIP_GOAL_AUDIT}" != "1" ]]; then
@@ -484,5 +484,5 @@ if [[ "${SKIP_GOAL_AUDIT}" != "1" ]]; then
     audit_args+=(--fail-on-gate)
   fi
   rwkv7_log "Apple/Qwen3.5 goal coverage audit"
-  rwkv7_run "${PYTHON_BIN}" bench/audit_qwen35_apple_goal.py "${audit_args[@]}"
+  rwkv7_run "${PYTHON_BIN}" bench/validators/audit_qwen35_apple_goal.py "${audit_args[@]}"
 fi

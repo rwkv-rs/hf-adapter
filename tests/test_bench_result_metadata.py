@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from bench.bench_chunked_prefill import model_metadata as chunk_metadata
-from bench.bench_native_graph_fused_output import model_metadata as output_metadata
-from bench.bench_native_graph_fused_recurrent_output import (
+from bench.probes.bench_chunked_prefill import model_metadata as chunk_metadata
+from bench.probes.bench_native_graph_fused_output import model_metadata as output_metadata
+from bench.probes.bench_native_graph_fused_recurrent_output import (
     model_metadata as recurrent_output_metadata,
 )
 

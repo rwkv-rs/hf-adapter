@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bench.select_qwen35_graph_route_v1 import INDUCTOR, RAW, select_route
+from bench.analyzers.select_qwen35_graph_route_v1 import INDUCTOR, RAW, select_route
 from tests.test_qwen35_best_optimized_hf_v1 import row, use_raw_graph
 
 

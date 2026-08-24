@@ -101,7 +101,7 @@ route records `344.39 tok/s`, `1.0301x` its FP32-state baseline,
 | 3 | DeepSpeed ZeRO-2/3 (base + resume) | Recorded bounded passes | [`tests/test_deepspeed_training_smoke.py`](tests/test_deepspeed_training_smoke.py), [`tests/test_deepspeed_resume_smoke.py`](tests/test_deepspeed_resume_smoke.py), and [`docs/TRAINING.md`](docs/TRAINING.md) |
 | 4 | HW breadth (consumer + datacenter cards) | Historical evidence | V100, Blackwell 5070, A100, 4090, A800 and RTX 3060 evidence was recorded in this ledger; retained Ascend 910B3 compatibility and real-7.2B correctness evidence is on the public [`wangyue/ascend-910b3-hf`](https://github.com/rwkv-rs/hf-adapter/tree/wangyue/ascend-910b3-hf) branch. Use the current hardware matrix for present support status. |
 | 5 | W8/W4 quant: VRAM ↓, decode speed ↑ | Card- and shape-bounded passes | [`docs/QUANTIZATION.md`](docs/QUANTIZATION.md), [`tests/test_native_quant_mm8.py`](tests/test_native_quant_mm8.py), [`tests/test_native_quant_mm4.py`](tests/test_native_quant_mm4.py), and the promoted artifacts in [`BENCHMARK.md`](BENCHMARK.md) |
-| 6 | Speculative decoding | Functional path recorded | [`rwkv7_hf/model_speculative.py`](rwkv7_hf/model_speculative.py), [`tests/test_speculative_decode.py`](tests/test_speculative_decode.py), and [`bench/bench_speculative_decode.py`](bench/bench_speculative_decode.py) |
+| 6 | Speculative decoding | Functional path recorded | [`rwkv7_hf/model_speculative.py`](rwkv7_hf/model_speculative.py), [`tests/test_speculative_decode.py`](tests/test_speculative_decode.py), and [`bench/probes/bench_speculative_decode.py`](bench/probes/bench_speculative_decode.py) |
 | — | Albatross-level production perf | Exact lanes only | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) and [`BENCHMARK.md`](BENCHMARK.md); no universal parity claim |
 
 ---
@@ -139,7 +139,7 @@ counting commits, PRs, reviews, benchmark evidence, and documentation.
   parallelized DPLR recurrent scan via Triton, `triton_wy_compact` algorithm. Prefill **1.3–1.9× HF**
   (5070 0.1B: 28336 vs 21588; 4090 0.4B: 17697 vs 9278), bit-exact (cos=1.0). 8 algorithm variants
   benchmarked (sequential/affine/wy/lowrank/triton_wy/cuda_wy/triton_dense3/triton_wy_compact).
-  Gate: [`bench/bench_native_prefill_scan.py`](bench/bench_native_prefill_scan.py).
+  Gate: [`bench/runners/bench_native_prefill_scan.py`](bench/runners/bench_native_prefill_scan.py).
 - **Per-GPU kernel policy (`kernel_policy.py`)** — classifies GPUs (Pascal→Blackwell+AMD) into
   families, assigns per-family default-on/off fusion sets + adaptation rules. Gate:
   [`tests/test_kernel_policy.py`](tests/test_kernel_policy.py).
@@ -264,7 +264,7 @@ credited here separately and is not included in Wang Yue's identity mapping.
 - **Correctness**: per-layer cosine + max_abs vs FLA/native reference; end-to-end greedy-token equality
   (16–64 tokens); official `rwkv` package (cpu fp32) as ground truth.
 - **Speed**: exclusive GPU, ≥3 warmup + ≥3 runs (bench scripts use `torch.cuda.synchronize` +
-  percentile); results committed to `bench/results.jsonl` with `device` + `dtype` labels.
+  percentile); results committed to `bench/cross_hardware_reference_rows_20260704/results.jsonl` with `device` + `dtype` labels.
 - **Honest self-checks**: bnb skip-fix zero-delta measured (not assumed); mm8 V100 0.46× documented
   (not hidden); FP8 512² edge-case identified as misleading (4096² is the real test); native_graph
   decode is single-batch/fixed-shape (documented limitation).
@@ -282,9 +282,9 @@ python tests/test_native_quant_mm4.py --model <0.1b-hf>                         
 python tests/test_native_mm8_persist.py --model <0.1b-hf>                        # mm8 persistence round-trip
 
 # Speed
-python bench/bench_native_quant_mm8.py    # fp16 vs mm8 decode speed sweep
-python bench/bench_native_quant_mm4.py    # fp16 vs mm4 decode speed sweep
-python bench/bench_native_prefill_scan.py --model <hf> --code-source model       # prefill scan (set RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy_compact)
+python bench/probes/bench_native_quant_mm8.py    # fp16 vs mm8 decode speed sweep
+python bench/probes/bench_native_quant_mm4.py    # fp16 vs mm4 decode speed sweep
+python bench/runners/bench_native_prefill_scan.py --model <hf> --code-source model       # prefill scan (set RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy_compact)
 
 # ZeRO3 resume (2×V100 + deepspeed)
 torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_resume_smoke.py --model <0.1b-hf> --zero-stage 3
@@ -297,4 +297,4 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_resume_smoke.py --
 The adapter was developed incrementally on `main` with feature branches per PR. Key milestones:
 - **v0.1.0** (pre-session): HF wrapper + native backends + fused kernels + V100 validation.
 - **2026-07-02 session**: mm8/mm4 quant + persistence + ZeRO3 fix + 13.3B validation + FP8 diagnosis + server nvcc.
-- Each PR's evidence = commit + bench/results.jsonl rows + test gates + issue/PR discussion.
+- Each PR's evidence = commit + bench/cross_hardware_reference_rows_20260704/results.jsonl rows + test gates + issue/PR discussion.

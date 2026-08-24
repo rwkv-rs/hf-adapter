@@ -47,7 +47,7 @@ Use the artifact command rather than forcing a profile on another model or
 card:
 
 ```bash
-python bench/bench_native_quant_e2e_decode.py \
+python bench/runners/bench_native_quant_e2e_decode.py \
   --hf-dir /path/to/rwkv7-g1h-2.9b-hf --model-size-label 2.9b \
   --dtype bf16 --device cuda --attn-mode fused_recurrent \
   --fast-cache true --fast-token-backend native_graph \

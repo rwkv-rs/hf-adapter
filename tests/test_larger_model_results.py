@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 
-from bench.analyze_results import analyze
+from bench.analyzers.analyze_results import analyze
 
 
 def row(label: str, hidden_size: int, lineno: int) -> dict:

@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-import bench.bench_native_quant_mm4_tuning as tuning
+import bench.probes.bench_native_quant_mm4_tuning as tuning
 
 
 def test_t4_default_grids_are_bounded_cross_products() -> None:

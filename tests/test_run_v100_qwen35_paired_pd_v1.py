@@ -5,7 +5,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def text(name: str) -> str:
-    return (ROOT / "bench" / name).read_text(encoding="utf-8")
+    path = ROOT / "bench" / name
+    if not path.exists():
+        path = ROOT / "bench" / "validators" / name
+    return path.read_text(encoding="utf-8")
 
 
 def test_v100_qwen_runner_locks_sm70_fla_triton_raw_graph() -> None:
@@ -68,4 +71,4 @@ def test_v100_top_level_is_append_never_and_includes_9b() -> None:
 def test_exact_gpu_helper_supports_literal_product_names() -> None:
     helper = text("check_exact_gpu.py")
     assert 'product.add_argument("--exact-name"' in helper
-    assert "args.name.strip() == args.exact_name.strip()" in helper
+    assert "matches_gpu_product" in helper
