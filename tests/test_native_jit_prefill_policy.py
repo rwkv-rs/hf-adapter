@@ -78,6 +78,31 @@ def test_model_shape_policy_and_environment_contract(monkeypatch) -> None:
         )
 
 
+def test_model_shape_policy_accepts_bounded_dynamic_profiles(monkeypatch) -> None:
+    policy = SimpleNamespace(
+        prefill_scan_model_shapes=((2048, 24, 4, 512),),
+        prefill_scan_model_profiles=((2048, 24, 8, 4096, 16384),),
+    )
+    monkeypatch.setattr(native_jit, "_kernel_policy", lambda: policy)
+    monkeypatch.delenv("RWKV7_TEST_MODEL_SHAPES", raising=False)
+
+    selected = native_jit._native_prefill_model_shape_selected
+    args = ("RWKV7_TEST_MODEL_SHAPES", "prefill_scan_model_shapes")
+    assert selected(*args, 3, 129, 2048, 24)
+    assert selected(*args, 8, 2048, 2048, 24)
+    assert selected(*args, 3, 4096, 2048, 24)
+    assert not selected(*args, 9, 128, 2048, 24)
+    assert not selected(*args, 5, 4096, 2048, 24)
+    assert not selected(*args, 3, 4097, 2048, 24)
+    assert not selected(*args, 3, 129, 2560, 32)
+
+    # An explicit exact-shape environment override remains fail-closed and
+    # does not silently inherit the policy's dynamic profile.
+    monkeypatch.setenv("RWKV7_TEST_MODEL_SHAPES", "2048x24x4x512")
+    assert selected(*args, 4, 512, 2048, 24)
+    assert not selected(*args, 3, 129, 2048, 24)
+
+
 def test_self_chunk_size_and_tiles_keep_native_jit_policy_patch(monkeypatch) -> None:
     policy = SimpleNamespace(
         prefill_self_chunk_size=16,

@@ -499,6 +499,11 @@ def test_policy_defaults_are_conservative() -> None:
         (1, 2048, 32, 32),
     )
     assert rtx4080.prefill_scan_model_shapes == expected_4080_prefill_shapes
+    expected_4080_dynamic_profiles = (
+        (1024, 24, 8, 4096, 32768),
+        (2048, 24, 8, 4096, 32768),
+    )
+    assert rtx4080.prefill_scan_model_profiles == expected_4080_dynamic_profiles
     assert rtx4080.prefill_scan_block_m_model_shapes == (
         (2048, 1, 128, 4),
         (2048, 1, 512, 4),
@@ -508,6 +513,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx4080.prefill_graph
     assert rtx4080.prefill_graph_cache_size == 4
     assert rtx4080.prefill_graph_model_shapes == expected_4080_prefill_shapes
+    assert (2048, 24, 3, 128) not in rtx4080.prefill_graph_model_shapes
     assert rtx4080.prefill_global_fp16_accum_model_shapes == tuple(
         shape
         for shape in expected_4080_prefill_shapes
@@ -525,6 +531,7 @@ def test_policy_defaults_are_conservative() -> None:
     )
     assert rtx4080.fused_prefill_shift_mix
     assert rtx4080.prefill_shift_mix_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.prefill_shift_mix_model_profiles == expected_4080_dynamic_profiles
     assert rtx4080.prefill_attn_shift_mix_launch_profiles == (
         (2048, 24, 1, 512, 512, 1),
         (2048, 24, 1, 2048, 512, 1),
@@ -540,8 +547,10 @@ def test_policy_defaults_are_conservative() -> None:
     )
     assert rtx4080.fused_prefill_state_prep
     assert rtx4080.prefill_state_prep_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.prefill_state_prep_model_profiles == expected_4080_dynamic_profiles
     assert rtx4080.fused_prefill_output
     assert rtx4080.prefill_fused_output_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.prefill_fused_output_model_profiles == expected_4080_dynamic_profiles
     assert not rtx4080.ada_linear
     assert rtx4080.ada_wagv_lora
     assert rtx4080.ada_wagv_lora_max_rows == 8
@@ -571,7 +580,11 @@ def test_policy_defaults_are_conservative() -> None:
         assert not adjacent_ada.fused_prefill_self_chunk
         assert adjacent_ada.prefill_self_chunk_size == 16
         assert adjacent_ada.prefill_scan_model_shapes == ()
+        assert adjacent_ada.prefill_scan_model_profiles == ()
         assert adjacent_ada.prefill_graph_model_shapes == ()
+        assert adjacent_ada.prefill_shift_mix_model_profiles == ()
+        assert adjacent_ada.prefill_state_prep_model_profiles == ()
+        assert adjacent_ada.prefill_fused_output_model_profiles == ()
         assert not adjacent_ada.ada_wagv_bmm
         assert not adjacent_ada.native_graph_triton_fp16_state
         assert adjacent_ada.native_graph_triton_fp16_state_model_shapes == ()

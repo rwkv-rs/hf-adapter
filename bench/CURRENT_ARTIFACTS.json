@@ -6,6 +6,7 @@
     {"id": "3090-paired-pd", "platform": "RTX 3090", "line": "paired_prefill_decode", "path": "3090_qwen35_paired_pd_v2_20260816"},
     {"id": "4080-7p2-fp16-state", "platform": "RTX 4080", "line": "large_model_decode", "path": "4080_7p2b_fp16_state_20260809"},
     {"id": "4080-b8-projection", "platform": "RTX 4080", "line": "projection_kernel", "path": "4080_b8_projection_bmm_20260809"},
+    {"id": "4080-dynamic-prefill", "platform": "RTX 4080", "line": "dynamic_prefill", "path": "4080_dynamic_prefill_g1i_1p5b_full_20260824"},
     {"id": "4080-paired-pd", "platform": "RTX 4080", "line": "paired_prefill_decode", "path": "4080_qwen35_paired_pd_v1_20260814"},
     {"id": "4090-current-routes", "platform": "RTX 4090", "line": "native_route_tuning", "path": "4090_4080_routes_20260812"},
     {"id": "4090-large-b8-quant", "platform": "RTX 4090", "line": "large_model_quantization", "path": "4090_g1h_7p2_bsz8_20260715"},

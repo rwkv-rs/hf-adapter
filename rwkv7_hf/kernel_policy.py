@@ -233,6 +233,11 @@ class KernelPolicy:
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
     prefill_scan_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    # Safe dynamic HxL envelopes for recurrent prefill scan.  Each profile is
+    # (hidden, layers, max_batch, max_prompt_tokens, max_total_tokens).  These
+    # profiles deliberately do not promote CUDA Graph capture, reduced-
+    # precision accumulation, or exact-shape launch schedules.
+    prefill_scan_model_profiles: tuple[tuple[int, int, int, int, int], ...] = ()
     fused_prefill_self_chunk: bool = False
     prefill_self_chunk_min_tokens: int = 1024
     prefill_self_chunk_size: int = 16
@@ -258,6 +263,7 @@ class KernelPolicy:
     prefill_fp16_recurrent: bool = False
     fused_prefill_shift_mix: bool = False
     prefill_shift_mix_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_shift_mix_model_profiles: tuple[tuple[int, int, int, int, int], ...] = ()
     prefill_attn_shift_mix_strict_fp16_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     prefill_ffn_shift_mix_strict_fp16_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     # hidden, layers, batch, tokens, block size, warps
@@ -265,12 +271,14 @@ class KernelPolicy:
     prefill_ffn_shift_mix_launch_profiles: tuple[tuple[int, int, int, int, int, int], ...] = ()
     fused_prefill_state_prep: bool = False
     prefill_state_prep_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_state_prep_model_profiles: tuple[tuple[int, int, int, int, int], ...] = ()
     # hidden, layers, batch, tokens, enabled leading-layer count
     prefill_state_prep_layer_counts: tuple[tuple[int, int, int, int, int], ...] = ()
     fused_prefill_state_scan: bool = False
     fused_prefill_state_scan_max_batch: int | None = None
     fused_prefill_output: bool = False
     prefill_fused_output_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_fused_output_model_profiles: tuple[tuple[int, int, int, int, int], ...] = ()
     fused_prefill_residual_gemm: bool = False
     fused_prefill_clampw_scan: bool = False
     prefill_clampw_scan_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
@@ -1271,6 +1279,21 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             if is_4080
             else ()
         )
+        rtx4080_dynamic_prefill_profiles = (
+            (
+                # Shape-safe FP32-state/fp32-accumulation fallback envelope.
+                # Keep exact Graph, accumulation, self-chunk, and launch-tile
+                # promotions in their existing HxLxBxT allowlists below.
+                # max_total covers the complete B<=8, T<=4096 rectangle.
+                # The full 4080 boundary sweep caught B8/T2049 falling just
+                # eight rows beyond the former 16384 cap and reverting to the
+                # 9.7x slower unfused reference route.
+                (1024, 24, 8, 4096, 32768),
+                (2048, 24, 8, 4096, 32768),
+            )
+            if is_4080
+            else ()
+        )
         rtx4080_global_fp16_accum_shapes = (
             # Exact parity sweep: these three shapes crossed a greedy-token
             # boundary only when the final vocabulary head also used FP16
@@ -1390,6 +1413,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ),
             prefill_self_chunk_model_shapes_only=is_4090 or is_4080,
             prefill_scan_model_shapes=rtx4080_prefill_shapes,
+            prefill_scan_model_profiles=rtx4080_dynamic_prefill_profiles,
             prefill_graph=is_4090 or is_4080,
             prefill_graph_cache_size=4 if is_4080 else 2,
             prefill_graph_model_shapes=rtx4080_prefill_shapes,
@@ -1405,6 +1429,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ),
             fused_prefill_shift_mix=is_4090 or is_4080,
             prefill_shift_mix_model_shapes=rtx4080_prefill_shapes,
+            prefill_shift_mix_model_profiles=rtx4080_dynamic_prefill_profiles,
             prefill_attn_shift_mix_launch_profiles=(
                 (
                     (2048, 24, 1, 512, 512, 1),
@@ -1424,8 +1449,10 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ),
             fused_prefill_state_prep=is_4090 or is_4080,
             prefill_state_prep_model_shapes=rtx4080_prefill_shapes,
+            prefill_state_prep_model_profiles=rtx4080_dynamic_prefill_profiles,
             fused_prefill_output=is_4090 or is_4080,
             prefill_fused_output_model_shapes=rtx4080_prefill_shapes,
+            prefill_fused_output_model_profiles=rtx4080_dynamic_prefill_profiles,
             ada_linear=not is_4080,
             ada_linear_rows="1 2 4" if is_4090 else "2 4",
             ada_wagv_lora=True,
@@ -1452,7 +1479,9 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             rkv_policy="vkwr_auto" if is_4090 else "manual",
             output_project_block_m=16,
             notes=(
-                "RTX 4080: exact 0.4B/1.5B fp16 rows promote B=1/2/4/8 and exact "
+                "RTX 4080: shape-safe 0.4B/1.5B dynamic B<=8, T<=4096, B*T<=32768 "
+                "prefill uses fused scan/shift/state/output with FP32 state and default accumulation; "
+                "exact fp16 rows promote B=1/2/4/8 and exact "
                 "2.9B rows promote B=1/8 at T=128/512/2048; 1.5B/B1/P512 and P2048 use "
                 "exact-card self-chunk routes, with stacked R/K/V at P2048; grouped W/A/G/V remains enabled for "
                 "rows<=4, with a tensor-core grouped BMM on measured B8 model shapes; "

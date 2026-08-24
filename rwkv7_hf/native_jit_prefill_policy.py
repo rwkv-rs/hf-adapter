@@ -109,24 +109,62 @@ def model_shape_selected(
     hidden_size: int | None,
     num_layers: int | None,
 ) -> bool:
+    """Select an exact shape or a bounded dynamic model profile.
+
+    Exact shape environment overrides keep their historical semantics: when
+    ``raw`` is provided, only those HxLxBxT tuples are considered.  Otherwise
+    a policy may complement ``*_model_shapes`` with ``*_model_profiles``.
+    Profiles are HxLxBmaxxTmaxxRowsMax and intentionally cover only shape-safe
+    fusions; exact-card graph and reduced-precision routes keep separate exact
+    allowlists.
+    """
+
     if raw is None:
         shapes = {
             tuple(int(value) for value in shape)
             for shape in getattr(policy, policy_name, ())
             if len(shape) == 4
         }
+        profile_name = (
+            policy_name[: -len("_shapes")] + "_profiles"
+            if policy_name.endswith("_shapes")
+            else policy_name + "_profiles"
+        )
+        profiles = {
+            tuple(int(value) for value in profile)
+            for profile in getattr(policy, profile_name, ())
+            if len(profile) == 5
+        }
     else:
         shapes = _parse_model_shapes(raw, env_name=env_name)
-    if not shapes:
+        profiles = set()
+    if not shapes and not profiles:
         return True
     if None in (batch_size, prompt_tokens, hidden_size, num_layers):
         return False
-    return (
+    target = (
         int(hidden_size),
         int(num_layers),
         int(batch_size),
         int(prompt_tokens),
-    ) in shapes
+    )
+    if target in shapes:
+        return True
+    hidden, layers, batch, tokens = target
+    return any(
+        hidden == profile_hidden
+        and layers == profile_layers
+        and 1 <= batch <= max_batch
+        and 2 <= tokens <= max_tokens
+        and batch * tokens <= max_total_tokens
+        for (
+            profile_hidden,
+            profile_layers,
+            max_batch,
+            max_tokens,
+            max_total_tokens,
+        ) in profiles
+    )
 
 
 def policy_model_shape_selected(
