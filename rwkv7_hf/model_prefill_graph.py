@@ -6,10 +6,11 @@ import weakref
 
 import torch
 
-from .model_cache import NativeRWKV7Cache
+from .model_cache import NativeRWKV7Cache, _copy_native_cache_tuple
 from .native_jit import (
     _native_prefill_fp16_recurrent_requested,
 )
+from .recurrent_state import RecurrentStateLayout, recurrent_state_layout_of
 
 
 def _native_model_entrypoint():
@@ -35,6 +36,8 @@ def _native_prefill_graph_signature():
 class _NativePrefillGraphRunner:
     """Fixed-shape CUDA graph for the canonical Native HF prefill path."""
 
+    state_layout = RecurrentStateLayout.VK_V1
+
     def __init__(
         self,
         owner: "NativeRWKV7ForCausalLM",
@@ -58,6 +61,8 @@ class _NativePrefillGraphRunner:
         self.prompt_tokens = int(prompt_tokens)
         self.logits_to_keep = None if logits_to_keep is None else int(logits_to_keep)
         self.carry_state = bool(carry_state)
+        # Native prefill remains on the established [V, K] state ABI. Decode
+        # runners may convert once at their cache-binding boundary.
         self.runtime_signature = _native_prefill_graph_signature()
         weight = owner.model.embeddings.weight
         self.device = weight.device
@@ -255,6 +260,8 @@ class _NativePrefillGraphRunner:
     def _cache_uses_inputs(self, initial_cache) -> bool:
         if initial_cache is None or not self.carry_state:
             return False
+        if recurrent_state_layout_of(initial_cache) != self.state_layout:
+            return False
         try:
             state, xpa, xpf, _ = initial_cache
         except Exception:
@@ -287,7 +294,10 @@ class _NativePrefillGraphRunner:
         if self._cache_uses_inputs(initial_cache):
             self.inputs_are_zero = False
             return
-        state, xpa, xpf, _ = initial_cache
+        state, xpa, xpf, _ = _copy_native_cache_tuple(
+            initial_cache,
+            target_layout=self.state_layout,
+        )
         if not (
             len(state) == len(self.state_inputs)
             and len(xpa) == len(self.xpa_inputs)
@@ -370,6 +380,7 @@ class _NativePrefillGraphRunner:
                 self.xpf_inputs if self.carry_state else self.xpf_outputs,
                 self.v_first,
                 seen_tokens=int(seen_tokens),
+                state_layout=self.state_layout,
             )
         self.inputs_are_zero = not self.carry_state
         cache._bind_native_graph_runner(self)

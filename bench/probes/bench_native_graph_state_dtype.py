@@ -71,6 +71,16 @@ def _set_mode(
     force_candidate: bool,
     candidate_feature: str,
 ) -> None:
+    if candidate_feature == "kv-v2-layout":
+        # Isolate physical layout: both modes keep the FP32 fused-raw lane.
+        os.environ["RWKV7_NATIVE_GRAPH_STATE_DTYPE"] = "fp32"
+        os.environ["RWKV7_NATIVE_GRAPH_TRITON_FP16_STATE"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FP16_RECURRENT"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = "1"
+        os.environ["RWKV7_NATIVE_GRAPH_STATE_LAYOUT"] = (
+            "kv_v2" if candidate else "vk_v1"
+        )
+        return
     if candidate_feature == "fused-norm-mix":
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "1" if candidate else "0"
         return
@@ -190,6 +200,9 @@ def _run_mode(
     runner = state._native_graph_bound_runner()
     route = {
         "state_dtype": str(getattr(runner, "state_dtype", "unknown")),
+        "state_layout": str(
+            getattr(getattr(runner, "state_layout", "unknown"), "value", "unknown")
+        ),
         "triton_fp16_state": bool(getattr(runner, "triton_fp16_state", False)),
         "native_fp16_recurrent": bool(getattr(runner, "fp16_recurrent", False)),
         "fused_norm_mix": bool(
@@ -256,6 +269,7 @@ def main() -> int:
         "--candidate-feature",
         choices=(
             "fp16-state",
+            "kv-v2-layout",
             "fused-norm-mix",
             "fused-recurrent-raw",
             "precompute-embedding",
@@ -347,6 +361,15 @@ def main() -> int:
             candidate["route"]["state_dtype"] == "torch.float16"
             and candidate["route"]["triton_fp16_state"]
             and not candidate["route"]["native_fp16_recurrent"]
+        )
+    elif args.candidate_feature == "kv-v2-layout":
+        route_pass = bool(
+            baseline["route"]["state_dtype"] == "torch.float32"
+            and candidate["route"]["state_dtype"] == "torch.float32"
+            and baseline["route"]["state_layout"] == "vk_v1"
+            and candidate["route"]["state_layout"] == "kv_v2"
+            and baseline["route"]["fused_recurrent_raw"]
+            and candidate["route"]["fused_recurrent_raw"]
         )
     elif args.candidate_feature.startswith("norm-mix-warps-"):
         target_warps = int(args.candidate_feature.rsplit("-", 1)[1])

@@ -117,6 +117,7 @@ def _block_ip(
     fp16_elapsed=None,
     fp16_advance_elapsed=False,
     route_observer=None,
+    state_layout="vk_v1",
 ):
     """In-place (eager) block step for CUDA-graph capture: state/xpa/xpf/v_first
     are fixed buffers updated in place. Same math as block_step."""
@@ -326,10 +327,16 @@ def _block_ip(
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
     use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
-    use_fused_recurrent_output = (
-        use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
+    use_kv_v2_recurrent = (
+        str(getattr(state_layout, "value", state_layout)).strip().lower()
+        == "kv_v2"
     )
-    use_fused_recurrent_raw = use_fp16_recurrent or (
+    use_fused_recurrent_output = (
+        use_kv_v2_recurrent
+        or use_fp16_recurrent
+        or _native_graph_fused_recurrent_output_enabled()
+    )
+    use_fused_recurrent_raw = use_kv_v2_recurrent or use_fp16_recurrent or (
         use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled(1, D)
     )
     if not use_fused_recurrent_raw:
@@ -377,6 +384,7 @@ def _block_ip(
             eps=eps,
             block_n=N,
             num_warps=_native_graph_fused_recurrent_raw_num_warps(),
+            state_layout=state_layout,
         )
         out = out.view(A)
         new_state = new_state.view(H, N, N)
@@ -489,6 +497,7 @@ def _block_ip_batched(
     fp16_elapsed=None,
     fp16_advance_elapsed=False,
     route_observer=None,
+    state_layout="vk_v1",
 ):
     """In-place batched block step for CUDA-graph capture.
 
@@ -750,10 +759,16 @@ def _block_ip_batched(
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
     use_fp16_recurrent = _native_graph_fp16_recurrent_enabled(state, fp16_elapsed)
-    use_fused_recurrent_output = (
-        use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
+    use_kv_v2_recurrent = (
+        str(getattr(state_layout, "value", state_layout)).strip().lower()
+        == "kv_v2"
     )
-    use_fused_recurrent_raw = use_fp16_recurrent or (
+    use_fused_recurrent_output = (
+        use_kv_v2_recurrent
+        or use_fp16_recurrent
+        or _native_graph_fused_recurrent_output_enabled()
+    )
+    use_fused_recurrent_raw = use_kv_v2_recurrent or use_fp16_recurrent or (
         use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled(B, D)
     )
     if not use_fused_recurrent_raw:
@@ -800,6 +815,7 @@ def _block_ip_batched(
             gn_b,
             eps=eps,
             block_n=N,
+            state_layout=state_layout,
         )
         out = out.reshape(B, A)
     elif use_fused_recurrent_output:

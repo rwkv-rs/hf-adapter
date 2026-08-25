@@ -555,7 +555,9 @@ def test_native_graph_batched_step_forwards_bmm_route_observer(monkeypatch) -> N
         elapsed,
         advance_elapsed,
         route_observer,
+        state_layout,
     ):
+        assert state_layout == "vk_v1"
         route_observer("ada_wagv_bmm_selected", layer_index)
         route_observer("ada_wagv_bmm_effective", layer_index)
         route_observer("sm120_wagv_bmm_g_selected", layer_index)

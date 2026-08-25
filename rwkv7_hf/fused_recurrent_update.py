@@ -229,6 +229,97 @@ if _HAS_TRITON:
         tl.store(out_ptr + vec_base + offs_i, prepared, mask=mask_i)
 
     @triton.jit
+    def _recurrent_output_prepare_raw_kv_v2_kernel(
+        r_ptr,
+        w_raw_ptr,
+        k_raw_ptr,
+        v_ptr,
+        a_ptr,
+        state_ptr,
+        g_ptr,
+        kk_scale_ptr,
+        ka_ptr,
+        rk_ptr,
+        gn_weight_ptr,
+        gn_bias_ptr,
+        out_ptr,
+        new_state_ptr,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        """Raw recurrent/output fusion for the physical ``[K,V]`` state ABI.
+
+        The mathematical state is the transpose of ``vk_v1``.  Keeping K on
+        the first physical axis makes neighboring lanes access adjacent V
+        values, matching the coalesced layout introduced by Albatross' kv_v2
+        CUDA kernels while retaining this adapter's larger fusion boundary.
+        """
+
+        bh_id = tl.program_id(0)
+        head_id = bh_id % H
+        offs_k = tl.arange(0, BLOCK_N)
+        offs_v = tl.arange(0, BLOCK_N)
+        mask_k = offs_k < N
+        mask_v = offs_v < N
+        vec_base = bh_id * N
+        state_base = bh_id * N * N
+
+        # Physical ABI: state[k, v].
+        st = tl.load(
+            state_ptr + state_base + offs_k[:, None] * N + offs_v[None, :],
+            mask=mask_k[:, None] & mask_v[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        r = tl.load(r_ptr + vec_base + offs_k, mask=mask_k, other=0.0).to(tl.float32)
+        w_raw = tl.load(w_raw_ptr + vec_base + offs_k, mask=mask_k, other=0.0).to(tl.float32)
+        k_raw = tl.load(k_raw_ptr + vec_base + offs_k, mask=mask_k, other=0.0).to(tl.float32)
+        a = tl.load(a_ptr + vec_base + offs_k, mask=mask_k, other=0.0).to(tl.float32)
+        kk_scale = tl.load(kk_scale_ptr + head_id * N + offs_k, mask=mask_k, other=0.0).to(tl.float32)
+        ka = tl.load(ka_ptr + head_id * N + offs_k, mask=mask_k, other=0.0).to(tl.float32)
+        kk_unscaled = tl.where(mask_k, k_raw * kk_scale, 0.0)
+        kk_norm = tl.sqrt(tl.sum(kk_unscaled * kk_unscaled, axis=0))
+        kk = kk_unscaled / tl.maximum(kk_norm, 1.0e-12)
+        k = k_raw * (1.0 + (a - 1.0) * ka)
+        w = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+        v_cols = tl.load(v_ptr + vec_base + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+
+        # Transpose of the canonical [V,K] rank-1 recurrence:
+        #   S'[k,v] = w[k]S[k,v] + k[k]v[v]
+        #             - kk[k]a[k] * sum_q(kk[q]S[q,v]).
+        state_dot_kk = tl.sum(st * kk[:, None], axis=0)
+        new_st = (
+            st * w[:, None]
+            + k[:, None] * v_cols[None, :]
+            - kk[:, None] * a[:, None] * state_dot_kk[None, :]
+        )
+        tl.store(
+            new_state_ptr + state_base + offs_k[:, None] * N + offs_v[None, :],
+            new_st,
+            mask=mask_k[:, None] & mask_v[None, :],
+        )
+
+        recurrent = tl.sum(new_st * r[:, None], axis=0)
+        mean = tl.sum(tl.where(mask_v, recurrent, 0.0), axis=0) / N
+        centered = tl.where(mask_v, recurrent - mean, 0.0)
+        var = tl.sum(centered * centered, axis=0) / N
+        normed = centered * tl.rsqrt(var + eps)
+
+        r_rows = tl.load(r_ptr + vec_base + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        k_raw_rows = tl.load(k_raw_ptr + vec_base + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        a_rows = tl.load(a_ptr + vec_base + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        ka_rows = tl.load(ka_ptr + head_id * N + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        k_rows = k_raw_rows * (1.0 + (a_rows - 1.0) * ka_rows)
+        rk = tl.load(rk_ptr + head_id * N + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        corr_scale = tl.sum(r_rows * k_rows * rk, axis=0)
+        gate = tl.load(g_ptr + vec_base + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        weight = tl.load(gn_weight_ptr + head_id * N + offs_v, mask=mask_v, other=1.0).to(tl.float32)
+        bias = tl.load(gn_bias_ptr + head_id * N + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        prepared = (normed * weight + bias + corr_scale * v_cols) * gate
+        tl.store(out_ptr + vec_base + offs_v, prepared, mask=mask_v)
+
+    @triton.jit
     def _recurrent_scan_kernel(
         r_ptr,
         w_ptr,
@@ -707,6 +798,27 @@ def fused_recurrent_output_prepare_available() -> bool:
     return bool(_HAS_TRITON and torch is not None)
 
 
+def fused_recurrent_output_prepare_raw_kv_v2_available(
+    *,
+    state_dtype=None,
+    head_dim: int | None = None,
+) -> bool:
+    """Return whether the experimental physical ``[K,V]`` lane is usable.
+
+    Promotion is deliberately narrow: the first implementation targets the
+    measured production shape (FP32 state, head size 64).  The caller may omit
+    shape/dtype when it only needs to know whether the implementation exists.
+    """
+
+    if not (_HAS_TRITON and torch is not None):
+        return False
+    if state_dtype is not None and state_dtype != torch.float32:
+        return False
+    if head_dim is not None and int(head_dim) != 64:
+        return False
+    return True
+
+
 def fused_recurrent_output_state_dtype_supported(dtype) -> bool:
     """Return whether the Triton output-prep kernel supports this state dtype."""
 
@@ -1103,6 +1215,7 @@ def fused_recurrent_output_prepare_raw(
     eps: float,
     block_n: int = 64,
     num_warps: int = 8,
+    state_layout: str = "vk_v1",
     force_fallback: bool = False,
 ):
     """Decode recurrence/output prep directly from raw W/K and sigmoid A.
@@ -1114,6 +1227,18 @@ def fused_recurrent_output_prepare_raw(
 
     if torch is None or F is None:
         raise RuntimeError("fused_recurrent_output_prepare_raw requires torch")
+    normalized_layout = str(
+        getattr(state_layout, "value", state_layout)
+    ).strip().lower()
+    if normalized_layout in {"vk", "v1"}:
+        normalized_layout = "vk_v1"
+    elif normalized_layout in {"kv", "v2"}:
+        normalized_layout = "kv_v2"
+    if normalized_layout not in {"vk_v1", "kv_v2"}:
+        raise ValueError(
+            "state_layout must be vk_v1 or kv_v2; "
+            f"got {state_layout!r}"
+        )
     if state.dim() != 4:
         raise ValueError("state must be shaped [batch, heads, head_dim, head_dim]")
     B, H, N, N2 = (int(vv) for vv in state.shape)
@@ -1142,6 +1267,7 @@ def fused_recurrent_output_prepare_raw(
         if int(value.numel()) != hidden:
             raise ValueError(f"{name} must contain {hidden} values")
 
+    use_kv_v2 = normalized_layout == "kv_v2"
     use_triton = bool(
         not force_fallback
         and fused_recurrent_output_prepare_available()
@@ -1149,19 +1275,29 @@ def fused_recurrent_output_prepare_raw(
         and state.dtype in (torch.float32, torch.float16)
         and r3.dtype in (torch.float16, torch.bfloat16, torch.float32)
         and all(value.dtype == r3.dtype for value in (w3, k3, v3, a3, g3, k_k, k_a, r_k, group_norm_weight, group_norm_bias))
+        and (
+            not use_kv_v2
+            or fused_recurrent_output_prepare_raw_kv_v2_available(
+                state_dtype=state.dtype,
+                head_dim=N,
+            )
+        )
     )
     if not use_triton:
+        state_for_fallback = (
+            state.transpose(-1, -2).contiguous() if use_kv_v2 else state
+        )
         kk = F.normalize((k3 * k_k.reshape(1, H, N)), dim=-1, p=2.0)
         k = k3 * (1 + (a3 - 1) * k_a.reshape(1, H, N))
         w = torch.exp(-0.606531 * torch.sigmoid(w3.float()))
-        return fused_recurrent_output_prepare(
+        out, new_state = fused_recurrent_output_prepare(
             r3.reshape(B, hidden) if flat else r3,
             w,
             k,
             v3,
             kk,
             a3,
-            state,
+            state_for_fallback,
             g3,
             r_k.reshape(H, N),
             group_norm_weight.reshape(hidden),
@@ -1170,6 +1306,9 @@ def fused_recurrent_output_prepare_raw(
             block_n=block_n,
             force_fallback=True,
         )
+        if use_kv_v2:
+            new_state = new_state.transpose(-1, -2).contiguous()
+        return out, new_state
 
     r_c = r3.contiguous()
     w_c = w3.contiguous()
@@ -1185,7 +1324,12 @@ def fused_recurrent_output_prepare_raw(
     gnb_c = group_norm_bias.reshape(hidden).contiguous()
     out = torch.empty((B, H, N), device=r3.device, dtype=r3.dtype)
     new_state = torch.empty_like(state_c)
-    _recurrent_output_prepare_raw_kernel[(B * H,)](
+    kernel = (
+        _recurrent_output_prepare_raw_kv_v2_kernel
+        if use_kv_v2
+        else _recurrent_output_prepare_raw_kernel
+    )
+    kernel[(B * H,)](
         r_c,
         w_c,
         k_c,

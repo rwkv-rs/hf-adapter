@@ -6,6 +6,13 @@ import weakref
 
 import torch
 
+from .recurrent_state import (
+    RecurrentStateLayout,
+    convert_recurrent_state_list,
+    normalize_recurrent_state_layout,
+    recurrent_state_layout_of,
+)
+
 try:  # pragma: no cover - Transformers version compatibility
     from transformers.cache_utils import Cache as _HFCache
 except Exception:  # pragma: no cover
@@ -14,11 +21,20 @@ except Exception:  # pragma: no cover
 
 
 class _NativeRWKV7LegacyCache(tuple):
-    """Tuple-compatible legacy cache carrying RWKV recurrent sequence length."""
+    """Tuple-compatible legacy cache carrying sequence length and state ABI."""
 
-    def __new__(cls, state, xpa, xpf, v_first, seen_tokens: int = 0):
+    def __new__(
+        cls,
+        state,
+        xpa,
+        xpf,
+        v_first,
+        seen_tokens: int = 0,
+        state_layout: RecurrentStateLayout | str = RecurrentStateLayout.VK_V1,
+    ):
         obj = super().__new__(cls, (state, xpa, xpf, v_first))
         obj._seen_tokens = int(seen_tokens)
+        obj._rwkv7_state_layout = normalize_recurrent_state_layout(state_layout)
         return obj
 
     def get_seq_length(self, layer_idx: int | None = 0, cache_position=None) -> int:
@@ -41,6 +57,10 @@ class _NativeRWKV7LegacyCache(tuple):
     def seen_tokens(self, value: int) -> None:
         self._seen_tokens = int(value)
 
+    @property
+    def state_layout(self) -> str:
+        return self._rwkv7_state_layout.value
+
     def to_legacy_cache(self):
         return self
 
@@ -59,7 +79,15 @@ class NativeRWKV7Cache(_HFCache):
 
     is_compileable = True
 
-    def __init__(self, state=None, xpa=None, xpf=None, v_first=None, seen_tokens: int = 0):
+    def __init__(
+        self,
+        state=None,
+        xpa=None,
+        xpf=None,
+        v_first=None,
+        seen_tokens: int = 0,
+        state_layout: RecurrentStateLayout | str = RecurrentStateLayout.VK_V1,
+    ):
         # Skip _HFCache.__init__: it allocates CacheLayer wrappers that RWKV
         # recurrent decode does not need (mirrors RWKV7StateCache).
         self._state = state
@@ -67,6 +95,7 @@ class NativeRWKV7Cache(_HFCache):
         self._xpf = xpf
         self._v_first = v_first
         self._seen_tokens = int(seen_tokens)
+        self._rwkv7_state_layout = normalize_recurrent_state_layout(state_layout)
         self.layers = []
         self._rwkv7_cache_metrics = {
             "clones": 0,
@@ -156,6 +185,17 @@ class NativeRWKV7Cache(_HFCache):
         self._seen_tokens = int(value)
 
     @property
+    def state_layout(self) -> str:
+        """Physical ordering of the persistent recurrent-state matrices."""
+
+        return self._rwkv7_state_layout.value
+
+    def _set_state_layout(self, value: RecurrentStateLayout | str) -> None:
+        """Set layout metadata at an internal conversion/binding boundary."""
+
+        self._rwkv7_state_layout = normalize_recurrent_state_layout(value)
+
+    @property
     def states(self) -> list[dict[str, torch.Tensor | None]]:
         """RWKV7StateCache-style per-layer view for serving helpers.
 
@@ -210,6 +250,7 @@ class NativeRWKV7Cache(_HFCache):
             self._xpf,
             self._v_first,
             seen_tokens=self._seen_tokens,
+            state_layout=self._rwkv7_state_layout,
         )
 
     def clone(self) -> "NativeRWKV7Cache":
@@ -224,6 +265,7 @@ class NativeRWKV7Cache(_HFCache):
             clone_list(self._xpf),
             self._v_first.clone() if self._v_first is not None else None,
             seen_tokens=self._seen_tokens,
+            state_layout=self._rwkv7_state_layout,
         )
         out._rwkv7_cache_metrics = dict(self._rwkv7_cache_metrics)
         out._rwkv7_cache_metrics["clones"] += 1
@@ -236,6 +278,7 @@ class NativeRWKV7Cache(_HFCache):
         self._xpf = None
         self._v_first = None
         self._seen_tokens = 0
+        self._rwkv7_state_layout = RecurrentStateLayout.VK_V1
         self._rwkv7_cache_metrics["resets"] += 1
 
     def detach(self, *, inplace: bool = True) -> "NativeRWKV7Cache":
@@ -309,6 +352,7 @@ class NativeRWKV7Cache(_HFCache):
             self._xpf,
             self._v_first,
             seen_tokens=self._seen_tokens,
+            state_layout=self._rwkv7_state_layout,
         )
         target._rwkv7_cache_metrics = dict(self._rwkv7_cache_metrics)
         runner = target._native_graph_bound_runner() if inplace else None
@@ -431,6 +475,7 @@ class NativeRWKV7Cache(_HFCache):
                 "seen_tokens": int(self._seen_tokens),
                 "batch_size": self.get_batch_size(),
                 "layers": len(self._state) if self._state is not None else 0,
+                "state_layout": self.state_layout,
             }
         )
         return metrics
@@ -461,8 +506,16 @@ class NativeRWKV7Cache(_HFCache):
                 "NativeRWKV7Cache.from_legacy_cache expects None, an empty cache, "
                 "or a 4-tuple recurrent cache"
             )
+        state_layout = recurrent_state_layout_of(legacy)
         state, xpa, xpf, v_first = legacy
-        return cls(state, xpa, xpf, v_first, seen_tokens=seen)
+        return cls(
+            state,
+            xpa,
+            xpf,
+            v_first,
+            seen_tokens=seen,
+            state_layout=state_layout,
+        )
 
 
 def _cache_seen(past_key_values) -> int:
@@ -487,6 +540,21 @@ def _native_cache_tuple_or_none(past_key_values):
 
     if past_key_values is None:
         return None
+    tagged = None
+    if isinstance(past_key_values, NativeRWKV7Cache):
+        tagged = past_key_values.to_legacy_cache()
+    elif isinstance(past_key_values, _NativeRWKV7LegacyCache):
+        tagged = past_key_values
+    if tagged is not None:
+        values = tuple(tagged)
+        if len(values) == 4 and all(value is not None for value in values):
+            return tagged
+        if _cache_seen(tagged) == 0:
+            return None
+        raise TypeError(
+            "NativeRWKV7 expects a complete recurrent cache; "
+            f"got {type(past_key_values)!r} with missing state values"
+        )
     try:
         values = tuple(past_key_values)
     except Exception as exc:
@@ -524,9 +592,16 @@ def _validate_native_cache_batch_size(native_cache, batch_size: int) -> None:
         )
 
 
-def _copy_native_cache_tuple(native_cache):
+def _copy_native_cache_tuple(
+    native_cache,
+    *,
+    target_layout: RecurrentStateLayout | str = RecurrentStateLayout.VK_V1,
+):
+    source_layout = recurrent_state_layout_of(native_cache)
+    target_layout = normalize_recurrent_state_layout(target_layout)
     state, xpa, xpf, v_first = native_cache
-    return list(state), list(xpa), list(xpf), v_first
+    state = convert_recurrent_state_list(state, source_layout, target_layout)
+    return state, list(xpa), list(xpf), v_first
 
 
 def _maybe_legacy_native_cache(cache, return_legacy_cache: bool | None):

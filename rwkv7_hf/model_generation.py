@@ -10,6 +10,7 @@ from .model_cache import (
     _native_cache_tuple_or_none,
     _native_last_token_slice,
 )
+from .recurrent_state import recurrent_state_layout_of
 
 
 class _NativeGenerationContractMixin:
@@ -30,6 +31,7 @@ class _NativeGenerationContractMixin:
             [x.index_select(0, index.to(x.device)) for x in xpf],
             v_first.index_select(0, index),
             seen_tokens=seen,
+            state_layout=recurrent_state_layout_of(native_cache),
         )
         return reordered.to_legacy_cache() if isinstance(past_key_values, tuple) else reordered
 

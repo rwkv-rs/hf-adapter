@@ -11,6 +11,12 @@ import torch
 import torch.nn.functional as F
 
 from .kernel_policy import current_kernel_policy, env_flag
+from .recurrent_state import (
+    RecurrentDecodeRoute,
+    convert_recurrent_state_tensor,
+    recurrent_state_layout_of,
+    resolve_recurrent_decode_route,
+)
 
 try:
     from .ada_lora import ada_wagv_lora_available, ada_wagv_lora_build_error
@@ -62,6 +68,13 @@ try:
 except Exception:  # pragma: no cover - optional CUDA extension
     native_fp16_recurrent_available = None
     native_fp16_recurrent_build_error = None
+
+try:
+    from .fused_recurrent_update import (
+        fused_recurrent_output_prepare_raw_kv_v2_available,
+    )
+except Exception:  # pragma: no cover - optional CUDA/Triton acceleration
+    fused_recurrent_output_prepare_raw_kv_v2_available = None
 
 
 def native_graph_available() -> bool:
@@ -160,6 +173,32 @@ def native_graph_fp16_recurrent_enabled() -> bool:
     return env_flag(
         "RWKV7_NATIVE_GRAPH_FP16_RECURRENT",
         bool(getattr(policy, "native_graph_fp16_recurrent", False)),
+    )
+
+
+def native_graph_recurrent_decode_route(
+    state_dtype: torch.dtype,
+    *,
+    head_dim: int | None = None,
+) -> RecurrentDecodeRoute:
+    """Resolve the persistent state ABI once for a fixed-batch graph runner."""
+
+    kv_v2_available = bool(
+        head_dim is not None
+        and fused_recurrent_output_prepare_raw_kv_v2_available is not None
+        and fused_recurrent_output_prepare_raw_kv_v2_available(
+            state_dtype=state_dtype,
+            head_dim=head_dim,
+        )
+    )
+
+    return resolve_recurrent_decode_route(
+        state_dtype=state_dtype,
+        requested_layout=os.environ.get("RWKV7_NATIVE_GRAPH_STATE_LAYOUT"),
+        kv_v2_kernel_available=kv_v2_available,
+        # Promotion stays opt-in until the adapter-level kernel has passed the
+        # full model/card matrix.  Explicit requests are useful for that A/B.
+        kv_v2_policy_selected=False,
     )
 
 
@@ -303,6 +342,11 @@ class NativeGraphRunner:
             num_layers=self.num_layers,
             batch_size=self.batch_size,
         )
+        self.recurrent_route = native_graph_recurrent_decode_route(
+            self.state_dtype,
+            head_dim=int(packs[0][2]),
+        )
+        self.state_layout = self.recurrent_route.state_layout
         self.triton_fp16_state = bool(
             triton_fp16_state_requested and self.state_dtype == torch.float16
         )
@@ -543,6 +587,7 @@ class NativeGraphRunner:
                     self.elapsed,
                     layer_index + 1 == self.num_layers,
                     route_observer=self._record_decode_route,
+                    state_layout=getattr(self, "state_layout", "vk_v1"),
                 )
             hidden = F.layer_norm(
                 hidden, [self.hidden], self.norm_weight, self.norm_bias, 1e-5
@@ -565,6 +610,7 @@ class NativeGraphRunner:
                 self.elapsed,
                 layer_index + 1 == self.num_layers,
                 self._record_decode_route,
+                getattr(self, "state_layout", "vk_v1"),
             )
         hidden = F.layer_norm(
             hidden, [self.hidden], self.norm_weight, self.norm_bias, 1e-5
@@ -640,8 +686,14 @@ class NativeGraphRunner:
             raise ValueError("native_graph requires an initialized NativeRWKV7Cache")
         if len(cache._state) != self.num_layers:
             raise ValueError("native_graph cache layer count does not match the model")
+        source_layout = recurrent_state_layout_of(cache)
         for layer_index in range(self.num_layers):
-            self._copy_cache_tensor(self.state[layer_index], cache._state[layer_index])
+            source_state = convert_recurrent_state_tensor(
+                cache._state[layer_index],
+                source_layout,
+                self.state_layout,
+            )
+            self._copy_cache_tensor(self.state[layer_index], source_state)
             self._copy_cache_tensor(self.xpa[layer_index], cache._xpa[layer_index])
             self._copy_cache_tensor(self.xpf[layer_index], cache._xpf[layer_index])
         if self.elapsed is not None:
@@ -656,6 +708,7 @@ class NativeGraphRunner:
         cache._xpa = [self._native_view(value) for value in self.xpa]
         cache._xpf = [self._native_view(value) for value in self.xpf]
         cache._v_first = self._native_view(self.v_first)
+        cache._set_state_layout(self.state_layout)
         self._bound_cache_ref = weakref.ref(cache)
         cache._bind_native_graph_runner(self)
 
@@ -777,7 +830,21 @@ class NativeGraphRunner:
         sm70_extension_available = bool(
             getattr(self, "sm70_wagv_lora_extension_available", False)
         )
+        state_layout = recurrent_state_layout_of(self)
+        recurrent_route = getattr(self, "recurrent_route", None)
+        recurrent_route_signature = (
+            recurrent_route.signature()
+            if recurrent_route is not None
+            else (
+                state_layout.value,
+                str(getattr(self, "state_dtype", "unavailable")),
+                "unavailable",
+                "unresolved",
+            )
+        )
         return {
+            "state_layout": state_layout.value,
+            "recurrent_route": recurrent_route_signature,
             "copy_from_cache_calls": int(self.copy_from_cache_calls),
             "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
             "bind_cache_calls": int(self.bind_cache_calls),

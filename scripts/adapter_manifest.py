@@ -71,6 +71,7 @@ ADAPTER_FILES = [
     "model_runtime_policy.py",
     "model_runtime.py",
     "model_speculative.py",
+    "recurrent_state.py",
     "native.py",
     "native_jit.py",
     "native_jit_bnb8.py",

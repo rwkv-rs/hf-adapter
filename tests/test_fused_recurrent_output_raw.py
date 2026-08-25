@@ -41,6 +41,121 @@ def run_case(device: str, dtype, batch: int, heads: int, head_dim: int) -> None:
     assert torch.allclose(new_state, ref_state, atol=5e-4, rtol=3e-3)
 
 
+def run_kv_v2_fallback_case() -> None:
+    """The layout ABI stays correct even without CUDA/Triton."""
+
+    batch, heads, head_dim = 2, 2, 8
+    hidden = heads * head_dim
+    r, w_raw, k_raw, v, g = [
+        torch.randn(batch, heads, head_dim) * 0.2 for _ in range(5)
+    ]
+    a = torch.sigmoid(torch.randn_like(r))
+    state_vk = torch.randn(batch, heads, head_dim, head_dim) * 0.1
+    state_kv = state_vk.transpose(-1, -2).contiguous()
+    k_k = torch.randn(heads, head_dim)
+    k_a = torch.randn(heads, head_dim) * 0.1
+    r_k = torch.randn(heads, head_dim) * 0.1
+    norm_w = torch.randn(hidden)
+    norm_b = torch.randn(hidden)
+    common = (r, w_raw, k_raw, v, a)
+    trailing = (g, k_k, k_a, r_k, norm_w, norm_b)
+    ref_out, ref_state_vk = fused_recurrent_output_prepare_raw(
+        *common,
+        state_vk,
+        *trailing,
+        eps=head_dim * 1e-5,
+        block_n=head_dim,
+        force_fallback=True,
+    )
+    out, new_state_kv = fused_recurrent_output_prepare_raw(
+        *common,
+        state_kv,
+        *trailing,
+        eps=head_dim * 1e-5,
+        block_n=head_dim,
+        state_layout="kv_v2",
+        force_fallback=True,
+    )
+    torch.testing.assert_close(out, ref_out)
+    torch.testing.assert_close(
+        new_state_kv,
+        ref_state_vk.transpose(-1, -2).contiguous(),
+    )
+
+
+def test_kv_v2_cpu_fallback_matches_vk_v1() -> None:
+    if torch is None:
+        return
+    torch.manual_seed(708)
+    run_kv_v2_fallback_case()
+
+
+def run_kv_v2_cuda_case(batch: int, heads: int = 4, head_dim: int = 64) -> None:
+    """Compare both physical ABIs through their actual Triton kernels."""
+
+    hidden = heads * head_dim
+    r, w_raw, k_raw, v, g = [
+        torch.randn(
+            batch,
+            heads,
+            head_dim,
+            device="cuda",
+            dtype=torch.float16,
+        )
+        * 0.2
+        for _ in range(5)
+    ]
+    a = torch.sigmoid(torch.randn_like(r))
+    state_vk = (
+        torch.randn(
+            batch,
+            heads,
+            head_dim,
+            head_dim,
+            device="cuda",
+            dtype=torch.float32,
+        )
+        * 0.1
+    )
+    state_kv = state_vk.transpose(-1, -2).contiguous()
+    k_k = torch.randn(heads, head_dim, device="cuda", dtype=torch.float16)
+    k_a = torch.randn(heads, head_dim, device="cuda", dtype=torch.float16) * 0.1
+    r_k = torch.randn(heads, head_dim, device="cuda", dtype=torch.float16) * 0.1
+    norm_w = torch.randn(hidden, device="cuda", dtype=torch.float16)
+    norm_b = torch.randn(hidden, device="cuda", dtype=torch.float16)
+    common = (r, w_raw, k_raw, v, a)
+    trailing = (g, k_k, k_a, r_k, norm_w, norm_b)
+    out_vk, next_vk = fused_recurrent_output_prepare_raw(
+        *common,
+        state_vk,
+        *trailing,
+        eps=head_dim * 1e-5,
+        block_n=head_dim,
+        state_layout="vk_v1",
+    )
+    out_kv, next_kv = fused_recurrent_output_prepare_raw(
+        *common,
+        state_kv,
+        *trailing,
+        eps=head_dim * 1e-5,
+        block_n=head_dim,
+        state_layout="kv_v2",
+    )
+    torch.cuda.synchronize()
+    cosine = F.cosine_similarity(
+        out_vk.float().reshape(batch, -1),
+        out_kv.float().reshape(batch, -1),
+        dim=-1,
+    ).min()
+    assert float(cosine) >= 0.99999
+    assert torch.allclose(
+        next_kv,
+        next_vk.transpose(-1, -2),
+        atol=5e-5,
+        rtol=5e-4,
+    )
+
+
 def run_fp16_state_case(device: str, batch: int, heads: int, head_dim: int) -> None:
     """Compare the Triton FP16-state lane with the FP32 reference state."""
 
@@ -147,11 +262,14 @@ def main() -> int:
         return 0
     torch.manual_seed(707)
     run_case("cpu", torch.float32, 2, 2, 8)
+    run_kv_v2_fallback_case()
     if torch.cuda.is_available():
         run_case("cuda", torch.float16, 1, 4, 64)
         run_case("cuda", torch.float16, 2, 4, 64)
         run_fp16_state_case("cuda", 8, 4, 64)
         run_fp16_state_prepared_case("cuda", 8, 4, 64)
+        for batch in (1, 2, 8):
+            run_kv_v2_cuda_case(batch)
     print("PASS")
     return 0
 
