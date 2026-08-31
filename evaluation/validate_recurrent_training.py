@@ -27,6 +27,7 @@ from fla_common import (
     tensor_metric,
     write_json,
 )
+from training_metrics import adaptive_fast_domain_expected
 
 
 DTYPE = torch.bfloat16
@@ -62,8 +63,9 @@ def arguments() -> argparse.Namespace:
         choices=("adaptive", *IMPLEMENTATIONS),
         default="adaptive",
         help=(
-            "adaptive uses the factorized dense route with exact masked "
-            "fallback; matrix and factorized isolate one recurrent program"
+            "adaptive uses the factorized route only in the certified dense "
+            "zero-state B=4,T=128 domain and the exact matrix route elsewhere; "
+            "matrix and factorized isolate one recurrent program"
         ),
     )
     return parser.parse_args()
@@ -115,7 +117,9 @@ def clone_case(
     base: dict[str, torch.Tensor], *, state_requires_grad: bool
 ) -> dict[str, torch.Tensor]:
     return {
-        name: value.detach().clone().requires_grad_(
+        name: value.detach()
+        .clone()
+        .requires_grad_(
             state_requires_grad
             if name == "initial_state"
             else bool(value.is_floating_point())
@@ -159,6 +163,7 @@ def run_candidate(values: dict[str, torch.Tensor]):
         values["attention_mask"],
         backend="optimized",
         training=True,
+        initial_state_zero=True,
     )
     return (*output, get_last_recurrent_route())
 
@@ -264,9 +269,7 @@ def compare_lane(
     }
 
 
-def route_passed(
-    route: dict[str, Any] | None, *, implementation: str
-) -> bool:
+def route_passed(route: dict[str, Any] | None, *, implementation: str) -> bool:
     return bool(
         route
         and route.get("selected") == "optimized"
@@ -274,9 +277,16 @@ def route_passed(
     )
 
 
-def expected_implementation(candidate: str, padding: str, tokens: int) -> str:
+def expected_implementation(
+    candidate: str, padding: str, batch: int, tokens: int
+) -> str:
     if candidate == "adaptive":
-        factorized = padding == "none" and tokens % 16 == 0
+        factorized = adaptive_fast_domain_expected(
+            batch=batch,
+            tokens=tokens,
+            fully_active=padding == "none",
+            initial_state_zero=True,
+        )
         return IMPLEMENTATIONS["factorized" if factorized else "matrix"]
     return IMPLEMENTATIONS[candidate]
 
@@ -360,6 +370,7 @@ def validate_auto_fallback(base: dict[str, torch.Tensor]) -> dict[str, Any]:
             values["attention_mask"],
             backend="auto",
             training=True,
+            initial_state_zero=True,
         )
         reference_output, reference_state = run_reference(values)
         route = get_last_recurrent_route()
@@ -429,6 +440,7 @@ def main() -> int:
                 case_implementation = expected_implementation(
                     args.candidate,
                     padding,
+                    batch,
                     token_count,
                 )
                 precision_lanes = {
@@ -462,9 +474,7 @@ def main() -> int:
                 passed = bool(
                     comparisons["candidate"]["passed"]
                     and comparisons["fla"]["passed"]
-                    and route_passed(
-                        actual_route, implementation=case_implementation
-                    )
+                    and route_passed(actual_route, implementation=case_implementation)
                     and benchmark_routes_passed
                 )
                 cases.append(
@@ -502,8 +512,8 @@ def main() -> int:
         "candidate": args.candidate,
         "expected_implementations": (
             {
-                "fully_active_and_16_token_aligned": IMPLEMENTATIONS["factorized"],
-                "masked_unaligned_or_unsupported": IMPLEMENTATIONS["matrix"],
+                "certified_dense_b4_t128_zero_state": IMPLEMENTATIONS["factorized"],
+                "all_other_or_unsupported_requests": IMPLEMENTATIONS["matrix"],
             }
             if args.candidate == "adaptive"
             else {"all_cases": IMPLEMENTATIONS[args.candidate]}

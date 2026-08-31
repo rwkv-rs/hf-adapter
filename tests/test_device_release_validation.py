@@ -13,6 +13,17 @@ from evaluation.build_backend_v2_device_validation import (
     REPORT_SCHEMAS,
     build,
 )
+from evaluation.validate_finetune_runs import (
+    REFERENCE_MIX6_IMPLEMENTATION,
+    REFERENCE_LINEAR_IMPLEMENTATION,
+    REFERENCE_PROGRAM_IMPLEMENTATION,
+    REFERENCE_RECURRENT_IMPLEMENTATION,
+)
+from scripts.release_route_contract import (
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
+    HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
+    READABLE_TRAINING_MODEL_ROUTE,
+)
 
 
 SOURCE_SHA = "a" * 40
@@ -44,6 +55,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         "gpu": "NVIDIA GeForce RTX 4080",
         "torch": "2.11.0+cu130",
         "cuda": "13.0",
+        "backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
         "cuda_toolkit": {
             "cuda_home": "/toolkit",
             "torch_extensions_dir": "/extensions/backend-v2",
@@ -75,16 +87,28 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         },
         "hf_ecosystem": {
             "stages": [{"passed": True}],
-            "training_expectation": {"mode": "native"},
+            "training_expectation": {"mode": "reference"},
         },
         "training": {
-            "settings": {"candidate_route": "native"},
+            "settings": {"candidate_route": "reference"},
             "cases": [
                 {
-                    "route": {
+                    "model_route": {
                         "phase": "training",
-                        "implementation": "native-nvidia-train-temp-autograd-v2",
-                    }
+                        "implementation": READABLE_TRAINING_MODEL_ROUTE,
+                    },
+                    "program_route": {
+                        "phase": "training",
+                        "implementation": REFERENCE_PROGRAM_IMPLEMENTATION,
+                    },
+                    "leaf_routes": [
+                        {"phase": "training", "implementation": route}
+                        for route in (
+                            REFERENCE_RECURRENT_IMPLEMENTATION,
+                            REFERENCE_LINEAR_IMPLEMENTATION,
+                            REFERENCE_MIX6_IMPLEMENTATION,
+                        )
+                    ],
                 }
             ],
         },
@@ -100,10 +124,18 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                 }
             ]
         },
-        "fla": {"fla": {"commit": EXPECTED_FLA_COMMIT}},
+        "fla": {
+            "fla": {"commit": EXPECTED_FLA_COMMIT},
+            "release_gates": {"role": "blocking", "passed": True},
+            "fla_diagnostics": {
+                "role": "diagnostic-non-blocking",
+                "complete": True,
+                "passed_strict_envelope": False,
+            },
+        },
         "speed": {
             "fla": {"commit": EXPECTED_FLA_COMMIT},
-            "training": {"mode": "native"},
+            "training": {"mode": "reference"},
         },
     }
     paths = {}
@@ -131,11 +163,49 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                 "artifacts": artifacts,
                 "backend_routes": [
                     {
+                        "event": "pre_optimizer_step",
+                        "boundary": "model",
+                        "selected": "reference",
                         "phase": "training",
-                        "implementation": "torch-reference-model-v1",
-                        "reason": "adapter modules require reference autograd",
-                    }
+                        "implementation": READABLE_TRAINING_MODEL_ROUTE,
+                        "reason": "training preserves the readable HF layer loop",
+                    },
+                    {
+                        "event": "pre_optimizer_step",
+                        "boundary": "program",
+                        "selected": "reference",
+                        "implementation": REFERENCE_PROGRAM_IMPLEMENTATION,
+                    },
+                    {
+                        "event": "pre_optimizer_step",
+                        "boundary": "recurrent",
+                        "selected": "reference",
+                        "phase": "training",
+                        "implementation": REFERENCE_RECURRENT_IMPLEMENTATION,
+                    },
+                    {
+                        "event": "pre_optimizer_step",
+                        "boundary": "linear",
+                        "selected": "reference",
+                        "phase": "training",
+                        "implementation": REFERENCE_LINEAR_IMPLEMENTATION,
+                    },
+                    {
+                        "event": "pre_optimizer_step",
+                        "boundary": "mix6",
+                        "selected": "reference",
+                        "phase": "training",
+                        "implementation": REFERENCE_MIX6_IMPLEMENTATION,
+                    },
                 ],
+                "kernel_route_trace": {
+                    "schema": "rwkv7-kernel-route-trace-v2",
+                    "requested_training_policy": "auto",
+                    "actual_model_calls": {},
+                    "actual_recurrent_calls": {},
+                    "actual_linear_calls": {},
+                    "actual_mix6_calls": {},
+                },
             }
             for name in ("sft", "dpo", "grpo")
         },
@@ -192,12 +262,23 @@ def test_device_builder_consolidates_all_gates_and_actual_routes(tmp_path: Path)
     assert report["hf_wheel_sha256"] == hf_sha
     assert report["kernel_wheel_sha256"] == kernel_sha
     assert report["lm_eval_units"] == 144
+    assert report["training_policy"] == "reference"
+    assert report["training_backend_environment"] == FORMAL_REFERENCE_BACKEND_ENVIRONMENT
     assert report["actual_routes"]["prefill"]
     assert report["actual_routes"]["decode"]
     assert report["actual_routes"]["training"]
     assert report["actual_routes"]["quantization"]
     assert all(report[f"{label}_status"] == "passed" for label in PRIMARY_REPORTS)
     assert json.loads(args.output.read_text()) == report
+
+
+def test_device_builder_requires_complete_non_blocking_fla_diagnostics(tmp_path: Path):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["fla"].read_text())
+    payload["fla_diagnostics"]["complete"] = False
+    write_json(paths["fla"], payload)
+    with pytest.raises(ValueError, match="complete non-blocking diagnostics"):
+        build(args)
 
 
 def test_device_builder_rejects_failed_primary_gate(tmp_path: Path):
@@ -223,7 +304,76 @@ def test_device_builder_rejects_missing_actual_route(tmp_path: Path):
     payload = json.loads(paths["correctness"].read_text())
     payload["models"] = []
     write_json(paths["correctness"], payload)
-    with pytest.raises(ValueError, match="prefill report lacks actual route"):
+    with pytest.raises(ValueError, match="actual prefill route evidence is missing"):
+        build(args)
+
+
+def test_device_builder_rejects_non_release_v100_target(tmp_path: Path):
+    args, _, _, _ = setup_reports(tmp_path)
+    args.device = "tesla-v100"
+    with pytest.raises(ValueError, match="unexpected release device"):
+        build(args)
+
+
+def test_device_builder_rejects_non_reference_formal_environment(tmp_path: Path):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["training"].read_text())
+    payload["environment"]["backend_environment"]["RWKV7_TRAINING_KERNEL_IMPL"] = (
+        "adaptive"
+    )
+    write_json(paths["training"], payload)
+    with pytest.raises(ValueError, match="formal reference backend environment differs"):
+        build(args)
+
+
+def test_device_builder_rejects_historical_primary_training_route(tmp_path: Path):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["training"].read_text())
+    payload["cases"][0]["leaf_routes"].append(
+        {"implementation": HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE}
+    )
+    write_json(paths["training"], payload)
+    with pytest.raises(ValueError, match="historical whole-model train-temp"):
+        build(args)
+
+
+def test_device_builder_rejects_finetune_without_reference_route_evidence(
+    tmp_path: Path,
+):
+    args, _, _, _ = setup_reports(tmp_path)
+    payload = json.loads(args.finetune_report.read_text())
+    payload["runs"]["sft"]["backend_routes"] = [
+        {
+            "phase": "training",
+            "implementation": READABLE_TRAINING_MODEL_ROUTE,
+        }
+    ]
+    write_json(args.finetune_report, payload)
+    with pytest.raises(
+        ValueError, match="sft report has invalid reference training routes"
+    ):
+        build(args)
+
+
+def test_device_builder_rejects_unknown_finetune_leaf_execution(tmp_path: Path):
+    args, _, _, _ = setup_reports(tmp_path)
+    payload = json.loads(args.finetune_report.read_text())
+    payload["runs"]["grpo"]["kernel_route_trace"]["actual_linear_calls"] = {
+        "unknown-training-linear": 1
+    }
+    write_json(args.finetune_report, payload)
+    with pytest.raises(ValueError, match="optional diagnostic routes"):
+        build(args)
+
+
+def test_device_builder_rejects_historical_finetune_execution(tmp_path: Path):
+    args, _, _, _ = setup_reports(tmp_path)
+    payload = json.loads(args.finetune_report.read_text())
+    payload["runs"]["dpo"]["kernel_route_trace"]["actual_model_calls"] = {
+        HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE: 1
+    }
+    write_json(args.finetune_report, payload)
+    with pytest.raises(ValueError, match="whole-model diagnostic"):
         build(args)
 
 
@@ -236,18 +386,17 @@ def test_device_builder_rejects_unpinned_fla(tmp_path: Path):
         build(args)
 
 
-def test_device_builder_rejects_native_training_without_compiler_identity(
+def test_device_builder_reference_training_does_not_require_compiler_identity(
     tmp_path: Path,
 ):
     args, paths, _, _ = setup_reports(tmp_path)
     payload = json.loads(paths["training"].read_text())
     payload["environment"]["cuda_toolkit"]["provenance"] = None
     write_json(paths["training"], payload)
-    with pytest.raises(ValueError, match="CUDA toolkit identity"):
-        build(args)
+    assert build(args)["status"] == "passed"
 
 
-def test_device_builder_rejects_native_training_with_mismatched_compiler(
+def test_device_builder_reference_training_ignores_mismatched_compiler(
     tmp_path: Path,
 ):
     args, paths, _, _ = setup_reports(tmp_path)
@@ -256,17 +405,15 @@ def test_device_builder_rejects_native_training_with_mismatched_compiler(
         "Cuda compilation tools, release 12.8, V12.8.93"
     ]
     write_json(paths["training"], payload)
-    with pytest.raises(ValueError, match="does not match PyTorch CUDA"):
-        build(args)
+    assert build(args)["status"] == "passed"
 
 
-def test_device_builder_rejects_unbound_native_build_paths(tmp_path: Path):
+def test_device_builder_reference_training_ignores_native_build_paths(tmp_path: Path):
     args, paths, _, _ = setup_reports(tmp_path)
     payload = json.loads(paths["training"].read_text())
     payload["environment"]["cuda_toolkit"]["torch_extensions_dir"] = None
     write_json(paths["training"], payload)
-    with pytest.raises(ValueError, match="CUDA build paths are not bound"):
-        build(args)
+    assert build(args)["status"] == "passed"
 
 
 def test_device_builder_rejects_lm_eval_without_compact_metric_matrix(

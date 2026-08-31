@@ -1,0 +1,28 @@
+{
+  "schema": "rwkv7-kernel-plugin-api-v1",
+  "api_version": 4,
+  "entrypoint": "rwkv7_kernels.execute_optional_v4",
+  "operations": [
+    "training_program",
+    "model_forward",
+    "linear_training",
+    "mix6_training",
+    "recurrent"
+  ],
+  "envelope_fields": [
+    "api_version",
+    "kind",
+    "supported",
+    "implementation",
+    "reason",
+    "result",
+    "phase"
+  ],
+  "unsupported_result": null,
+  "public_cache_layout": "B,H,K,V",
+  "failure_policy": {
+    "auto_negative_probe": "reference",
+    "optimized_negative_probe": "error",
+    "positive_execution_failure": "fail_closed"
+  }
+}

@@ -12,21 +12,37 @@ from typing import Any
 import torch
 
 
-_PACK_CACHE_ATTR = "_rwkv7_kernel_dense_pack_v2"
-
-
 def _required_tensor(value: Any, name: str) -> torch.Tensor:
     if not isinstance(value, torch.Tensor):
         raise TypeError(f"RWKV7 kernel packing requires tensor {name}")
     return value
 
 
+def _pre_norm_pack(
+    layer: Any, *, reference: torch.Tensor, hidden_size: int
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    """Pack a real normalization module while treating ``Identity`` as absent."""
+
+    pre_norm = getattr(layer, "pre_norm", None)
+    weight = getattr(pre_norm, "weight", None)
+    is_layer_norm = isinstance(pre_norm, torch.nn.LayerNorm)
+    has_layer_norm_contract = isinstance(weight, torch.Tensor) and hasattr(
+        pre_norm, "eps"
+    )
+    if is_layer_norm or has_layer_norm_contract:
+        weight = _required_tensor(weight, "pre_norm.weight")
+        bias = getattr(pre_norm, "bias", None)
+        if bias is None:
+            bias = torch.zeros_like(weight)
+        return weight, _required_tensor(bias, "pre_norm.bias"), 1
+    weight = torch.zeros(
+        hidden_size, device=reference.device, dtype=reference.dtype
+    )
+    return weight, torch.zeros_like(weight), 0
+
+
 def extract_dense_packs(model: Any):
     """Return the tensor-only ABI consumed by :func:`block_step_batched`."""
-
-    cached = getattr(model, _PACK_CACHE_ATTR, None)
-    if cached is not None:
-        return cached
 
     layers = model.layers
     if not layers:
@@ -62,16 +78,11 @@ def extract_dense_packs(model: Any):
             value_lora_2 = value_lora.lora[2].weight
             value_lora_bias = value_lora.lora[2].bias
 
-        if hasattr(layer, "pre_norm"):
-            pre_weight = layer.pre_norm.weight
-            pre_bias = layer.pre_norm.bias
-            has_pre = 1
-        else:
-            pre_weight = torch.zeros(
-                hidden, device=reference.device, dtype=reference.dtype
-            )
-            pre_bias = torch.zeros_like(pre_weight)
-            has_pre = 0
+        pre_weight, pre_bias, has_pre = _pre_norm_pack(
+            layer,
+            reference=reference,
+            hidden_size=hidden,
+        )
 
         named = {
             "pre_norm.bias": pre_bias,
@@ -132,9 +143,14 @@ def extract_dense_packs(model: Any):
             )
         )
 
-    result = (packs, heads, head_dim)
-    setattr(model, _PACK_CACHE_ATTR, result)
-    return result
+    # Do not retain a second structural view of the model on the module. PEFT,
+    # quantization, adapter merge/unload, and ordinary ``setattr`` replacement
+    # may change a projection between calls. Parameters also may move device or
+    # dtype while the synthetic Identity/v_lora placeholders above are plain
+    # tensors that ``Module._apply`` cannot migrate. Repacking is outside the
+    # token loop and is the fail-safe 1.0 behavior until a complete structural
+    # fingerprint owns cache invalidation.
+    return packs, heads, head_dim
 
 
 __all__ = ["extract_dense_packs"]

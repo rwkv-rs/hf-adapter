@@ -57,6 +57,7 @@ def test_rtx4080_policy_maps_dynamic_prefill_graph_and_grouped_decode():
     assert route.ada_wagv_lora and route.ada_wagv_bmm
     assert not route.ada_linear
     assert not route.ada_sparse_ffn
+    assert route.a8w8_gemv_max_rows == 32
     assert route.native_graph_triton_fp16_state
     assert route.native_graph_triton_fp16_state_model_shapes == ((4096, 32, 8),)
 
@@ -73,6 +74,7 @@ def test_rtx4090_policy_maps_quant_graph_sparse_ffn_and_prefill_routes():
     assert route.native_external_quant_graph
     assert route.native_external_quant_prefill_graph
     assert route.native_bnb8_direct and route.native_bnb8_relu_quant
+    assert route.a8w8_gemv_max_rows == 1
     assert route.mm4_fused_max_rows == 16
     assert route.prefill_block_fp16_accum_model_shapes
 

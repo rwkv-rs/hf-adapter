@@ -22,6 +22,10 @@ from scripts.verify_release_assets import (  # noqa: E402
     FLA_COMMIT,
     verify as verify_release_assets,
 )
+from scripts.release_route_contract import (  # noqa: E402
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
+    validate_actual_routes,
+)
 
 
 ZERO_COMPARISON_SUMMARY = {
@@ -31,6 +35,36 @@ ZERO_COMPARISON_SUMMARY = {
     "continuous_mismatches": 0,
     "missing_docs": 0,
 }
+
+MIGRATION_MANIFEST = (
+    ROOT / "kernels" / "rwkv7_kernels" / "nvidia" / "MIGRATION_MANIFEST.json"
+)
+EXPECTED_MIGRATION_TRANSFER_SUMMARY = {
+    "total": 102,
+    "byte_identical": 86,
+    "adapted_clean_boundary": 16,
+}
+
+
+def migration_transfer_summary(path: Path = MIGRATION_MANIFEST) -> dict[str, int]:
+    """Read the one authoritative migration denominator used in Issue prose."""
+
+    payload = safe_json(path)
+    files = payload.get("files") or []
+    if not isinstance(files, list):
+        raise ValueError("NVIDIA migration manifest files must be a list")
+    result = {"total": len(files), "byte_identical": 0, "adapted_clean_boundary": 0}
+    for row in files:
+        transfer = str((row or {}).get("transfer", ""))
+        if transfer not in {"byte_identical", "adapted_clean_boundary"}:
+            raise ValueError(f"unexpected NVIDIA migration transfer class: {transfer}")
+        result[transfer] += 1
+    if result != EXPECTED_MIGRATION_TRANSFER_SUMMARY:
+        raise ValueError(
+            "NVIDIA migration manifest canonical transfer counts differ: "
+            f"expected={EXPECTED_MIGRATION_TRANSFER_SUMMARY} actual={result}"
+        )
+    return result
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -107,6 +141,20 @@ def validate_inputs(
         ]["sha256"],
     }
     for device in DEVICE_ORDER:
+        device_validation = validation["devices"][device]
+        if device_validation.get("training_policy") != "reference" or (
+            device_validation.get("training_backend_environment")
+            != FORMAL_REFERENCE_BACKEND_ENVIRONMENT
+        ):
+            raise ValueError(
+                f"formal reference training provenance is incomplete: {device}"
+            )
+        try:
+            validate_actual_routes(device_validation.get("actual_routes"))
+        except ValueError as exc:
+            raise ValueError(
+                f"release route evidence is not publishable: {device}: {exc}"
+            ) from exc
         speed = speeds[device]
         if (
             speed.get("schema") != "rwkv7-backend-v2-three-way-speed-v1"
@@ -157,6 +205,7 @@ def render_issue(
     speeds: dict[str, dict[str, Any]],
     lm_evals: dict[str, dict[str, Any]],
 ) -> str:
+    migration = migration_transfer_summary()
     devices = (provenance.get("validation") or {}).get("devices") or {}
     hf_name = f"rwkv7_hf-{version}-py3-none-any.whl"
     kernel_name = f"rwkv7_kernels-{version}-py3-none-any.whl"
@@ -222,29 +271,41 @@ def render_issue(
             "",
             "HF coverage includes AutoModel/save-reload, state/cache, left/right padding, "
             "greedy and beam generation, Trainer, Accelerate, PEFT and TRL. Training "
-            "evidence includes loss/all gradients plus SFT, DPO and GRPO. Quantization "
+            "keeps one complete readable reference program; optional recurrent, "
+            "flattened-linear and Mix6 leaves remain diagnostics. Evidence "
+            "includes loss/all gradients plus SFT, DPO and GRPO. Quantization "
             "covers W8, W4, A8W8, Bn/Tn, BitsAndBytes, Marlin and TorchAO.",
+            "Formal training uses `RWKV7_BACKEND=auto`, `RWKV7_KERNEL_IMPL=auto`, "
+            "`RWKV7_MODEL_KERNEL_IMPL=auto` and "
+            "`RWKV7_TRAINING_KERNEL_IMPL=auto`; compact provenance validates that "
+            "environment and the full reference model/program/recurrent/linear/Mix6 route.",
             "",
             "## Complete optional-kernel capability migration",
             "",
             "The optional wheel contains the complete audited NVIDIA families: recurrent; "
             "dense decode; fused DPLR/self-chunk prefill; CUDA Graph and state pools; "
             "exact-card SM70, Ada and Blackwell policy; native W8, W4 and A8W8; "
-            "Bn/Tn, BitsAndBytes, Marlin and TorchAO adapters; and training autograd. "
+            "Bn/Tn, BitsAndBytes, Marlin and TorchAO adapters; and independent training "
+            "autograd leaves. "
             "Every migrated payload is mapped to an adapted runtime route by the embedded "
             "capability inventory; model/config/cache ownership remains in rwkv7_hf.",
-            "The embedded source scope also classifies all 153 files from the frozen "
+            "The embedded migration manifest and source scope also classify all 153 "
+            "files from the frozen "
             "historical performance tree and reconstructs its Git tree identity, so the "
-            "102-file NVIDIA migration denominator has no silent omissions: 100 are "
-            "byte-identical and two are declared clean-boundary adaptations for the "
-            "canonical cache and non-monkeypatch training protocol.",
+            f"{migration['total']}-file NVIDIA migration denominator has no silent "
+            f"omissions: {migration['byte_identical']} are byte-identical and "
+            f"{migration['adapted_clean_boundary']} are declared clean-boundary "
+            "adaptations for the "
+            "canonical cache and non-monkeypatch training protocol. The preserved "
+            "whole-model train-temp runtime is historical diagnostic material and is "
+            "not an admissible formal HF training route.",
             "The later v0.10 recurrent wheel is independently covered: its complete "
             "three-file package subtree is reconstructed and its Graph/Triton "
-            "implementations remain byte-identical behind API v2.",
+            "implementations remain byte-identical behind API v3.",
             "",
             "## Actual routes",
             "",
-            "| device | phase | implementation route |",
+            "| device | boundary/phase | implementation route |",
             "|---|---|---|",
         ]
     )

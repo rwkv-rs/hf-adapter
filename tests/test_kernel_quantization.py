@@ -28,6 +28,39 @@ class TinyQuantModel(torch.nn.Module):
         return self.proj(value)
 
 
+class TinyA8W8Model(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj = torch.nn.Linear(8, 8, bias=False)
+        self.lm_head = torch.nn.Linear(8, 16, bias=False)
+
+
+def test_a8w8_int_mm_padding_matches_backend_tile_contract():
+    a8w8 = importlib.import_module("rwkv7_kernels.nvidia.native_quant_a8w8")
+
+    assert a8w8._int_mm_padded_rows(1, hip=False) == 32
+    assert a8w8._int_mm_padded_rows(17, hip=False) == 32
+    assert a8w8._int_mm_padded_rows(32, hip=False) == 32
+    assert a8w8._int_mm_padded_rows(33, hip=False) == 64
+    assert a8w8._int_mm_padded_rows(1, hip=True) == 17
+    assert a8w8._int_mm_padded_rows(33, hip=True) == 33
+
+
+def test_a8w8_tiled_w8a16_is_scoped_to_the_output_head():
+    a8w8 = importlib.import_module("rwkv7_kernels.nvidia.native_quant_a8w8")
+    model = TinyA8W8Model().eval()
+
+    replaced = a8w8.quantize_model_a8w8(model, min_params=0, policy="memory")
+
+    assert replaced == 2
+    assert isinstance(model.proj, a8w8.A8W8Linear)
+    assert isinstance(model.lm_head, a8w8.A8W8Linear)
+    assert model.proj.tiled_w8a16 is False
+    assert model.lm_head.tiled_w8a16 is True
+    assert "small_rows=batched_w8a16" in repr(model.proj)
+    assert "small_rows=tiled_w8a16" in repr(model.lm_head)
+
+
 @pytest.mark.parametrize(
     ("method", "module_name"),
     [("native_w8", "MM8Linear"), ("native_w4", "MM4Linear")],

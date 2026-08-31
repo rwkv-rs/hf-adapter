@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.verify_release_assets import DEVICES  # noqa: E402
 from scripts.verify_release_assets import verify as verify_release_assets  # noqa: E402
 
 
@@ -251,6 +252,20 @@ def validate_external_evidence(
         if not row.get("match") or row.get("github") != identity:
             raise ValueError(
                 f"GitHub release bytes differ from validated asset: {name}"
+            )
+    release_evidence = release.get("evidence") or {}
+    if set(release_evidence) != DEVICES:
+        raise ValueError("validated release does not cover both compact evidence assets")
+    for device, evidence in release_evidence.items():
+        name = str(evidence.get("archive", ""))
+        identity = {
+            "size": evidence.get("size"),
+            "sha256": evidence.get("sha256"),
+        }
+        row = github_assets.get(name) or {}
+        if not name or not row.get("match") or row.get("github") != identity:
+            raise ValueError(
+                f"GitHub release bytes differ from validated evidence: {device}"
             )
 
     for repo, smoke in smokes.items():

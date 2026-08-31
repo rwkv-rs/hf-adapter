@@ -637,7 +637,7 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "hopper": GPUAdaptationRule(
         family="hopper",
         cards=("H100", "H200"),
-        status="TODO validation target",
+        status="not release-validated",
         default_stance="expected fast server path, but not tuned until H100 rows exist",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
@@ -1352,6 +1352,10 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             native_bnb8_ffn_mix_quant=is_4090,
             native_bnb8_attn_mix_block=4096 if is_4090 else 1024,
             native_bnb8_ffn_mix_block=2048 if is_4090 else 1024,
+            # Exact RTX 4080 A8W8 validation: sub-tile output-head matrices use
+            # the activation-stable W8A16 path. The tiled FP16 kernel is also
+            # faster than padding these rows into cuBLASLt dynamic-A8 GEMM.
+            a8w8_gemv_max_rows=32 if is_4080 else 1,
             # Exact bsz8 4090 output-head route. One tensor-core batch launch
             # avoids eight independently captured W4 GEMV kernels and their
             # graph-pool pressure.

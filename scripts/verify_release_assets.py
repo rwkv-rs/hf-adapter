@@ -30,20 +30,27 @@ from scripts.audit_release_wheels import (  # noqa: E402
     audit_kernel_wheel,
     open_wheel,
 )
+from scripts.release_route_contract import (  # noqa: E402
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
+    validate_actual_routes,
+)
 
 
 FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 DEVICE_ORDER = ("rtx-4080", "rtx-4090")
 DEVICES = frozenset(DEVICE_ORDER)
-REQUIRED_ROUTE_PHASES = {"prefill", "decode", "training", "quantization"}
-SELECTOR_ONLY_ROUTES = {
-    "auto",
-    "graph",
-    "native",
-    "optimized",
-    "reference",
-    "triton",
-}
+
+
+def device_evidence_archive_name(device: str, version: str) -> str:
+    if device not in DEVICES:
+        raise ValueError(f"unexpected release device: {device}")
+    return f"rwkv7-evidence-{device}-{version}.tar.gz"
+
+
+def expected_device_evidence_archives(version: str) -> tuple[str, ...]:
+    return tuple(
+        device_evidence_archive_name(device, version) for device in DEVICE_ORDER
+    )
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -87,15 +94,39 @@ def audit_wheel_against_checkout(
     *,
     mappings: tuple[tuple[str, Path], ...],
 ) -> dict[str, Any]:
-    """Require every package payload in a wheel to equal the tagged checkout."""
+    """Require the complete wheel payload to be owned by the tagged checkout.
+
+    Package files must be a byte-for-byte, complete copy of the supplied source
+    roots.  The only other accepted members are files in the wheel's single
+    ``.dist-info`` directory.  In particular, top-level modules and ``.data``
+    payloads are not silently ignored: those locations can install executable
+    Python outside the audited package roots.
+    """
 
     archive, members = open_wheel(wheel)
     matched: list[str] = []
     try:
+        expected: dict[str, Path] = {}
+        for prefix, source_root in mappings:
+            resolved_root = source_root.resolve()
+            if not resolved_root.is_dir() or resolved_root.is_symlink():
+                raise ValueError(f"wheel checkout root is missing or unsafe: {source_root}")
+            for source in sorted(resolved_root.rglob("*")):
+                if not source.is_file() or source.is_symlink():
+                    continue
+                relative = source.relative_to(resolved_root)
+                if "__pycache__" in relative.parts or source.suffix in {
+                    ".pyc",
+                    ".pyo",
+                }:
+                    continue
+                member = f"{prefix}{relative.as_posix()}"
+                if member in expected:
+                    raise ValueError(f"duplicate wheel checkout owner: {member}")
+                expected[member] = source
+
         for member in sorted(members):
-            mapping = next(
-                (row for row in mappings if member.startswith(row[0])), None
-            )
+            mapping = next((row for row in mappings if member.startswith(row[0])), None)
             if mapping is None:
                 continue
             prefix, source_root = mapping
@@ -109,6 +140,27 @@ def audit_wheel_against_checkout(
             if archive.read(member) != source.read_bytes():
                 raise ValueError(f"wheel payload differs from checkout: {member}")
             matched.append(member)
+
+        missing = sorted(set(expected) - set(matched))
+        if missing:
+            raise ValueError(f"wheel omitted checkout-owned payload: {missing}")
+
+        dist_info_roots = {
+            PurePosixPath(member).parts[0]
+            for member in members
+            if PurePosixPath(member).parts
+            and PurePosixPath(member).parts[0].endswith(".dist-info")
+        }
+        if len(dist_info_roots) != 1:
+            raise ValueError("wheel must contain exactly one .dist-info payload root")
+        dist_info = next(iter(dist_info_roots))
+        unowned = sorted(
+            member
+            for member in members
+            if member not in matched and not member.startswith(f"{dist_info}/")
+        )
+        if unowned:
+            raise ValueError(f"wheel contains unowned payload: {unowned}")
     finally:
         archive.close()
     if not matched:
@@ -172,7 +224,7 @@ def audit_sdist(
     package_prefixes: tuple[str, ...],
     forbidden_prefix: str,
 ) -> dict[str, Any]:
-    """Bind an sdist to the exact package payload already audited in its wheel."""
+    """Bind every install-relevant sdist file to the tagged checkout or wheel."""
 
     root = f"{distribution.replace('-', '_')}-{version}"
     files = read_sdist(path, root)
@@ -197,6 +249,17 @@ def audit_sdist(
         )
     wheel_archive, wheel_members = open_wheel(wheel)
     try:
+        metadata_members = sorted(
+            name for name in wheel_members if name.endswith(".dist-info/METADATA")
+        )
+        if len(metadata_members) != 1:
+            raise ValueError(f"wheel metadata is ambiguous: {distribution}")
+        if relative_files[pkg_info_name.removeprefix(f"{root}/")] != wheel_archive.read(
+            metadata_members[0]
+        ):
+            raise ValueError(
+                f"source-distribution PKG-INFO differs from wheel: {distribution}"
+            )
         package_members = sorted(
             name
             for name in wheel_members
@@ -213,6 +276,83 @@ def audit_sdist(
                 )
     finally:
         wheel_archive.close()
+
+    checkout_root = ROOT if distribution == "rwkv7-hf" else ROOT / "kernels"
+    exact_files = {
+        "pyproject.toml": checkout_root / "pyproject.toml",
+        "README.md": checkout_root / "README.md",
+        "LICENSE": checkout_root / "LICENSE",
+    }
+    if distribution == "rwkv7-hf":
+        checkout_mappings = (
+            ("rwkv7_hf/", ROOT / "rwkv7_hf"),
+            ("rwkv7_hf_tools/", ROOT / "rwkv7_hf_tools"),
+            ("tests/", ROOT / "tests"),
+        )
+        egg_info = "rwkv7_hf.egg-info/"
+    else:
+        checkout_mappings = (
+            ("rwkv7_kernels/", ROOT / "kernels" / "rwkv7_kernels"),
+        )
+        egg_info = "rwkv7_kernels.egg-info/"
+
+    missing_checkout_files = sorted(set(exact_files) - set(relative_files))
+    if missing_checkout_files:
+        raise ValueError(
+            "source distribution omitted checkout-owned payload: "
+            f"{distribution}: {missing_checkout_files}"
+        )
+
+    generated_egg_info = {
+        f"{egg_info}{name}"
+        for name in (
+            "PKG-INFO",
+            "SOURCES.txt",
+            "dependency_links.txt",
+            "entry_points.txt",
+            "requires.txt",
+            "top_level.txt",
+        )
+    }
+    generated = {"PKG-INFO", "setup.cfg", *generated_egg_info}
+    expected_setup_cfg = b"[egg_info]\ntag_build = \ntag_date = 0\n\n"
+    unowned: list[str] = []
+    for name, payload in sorted(relative_files.items()):
+        if name in exact_files:
+            source = exact_files[name]
+            if not source.is_file() or source.is_symlink() or payload != source.read_bytes():
+                raise ValueError(
+                    f"source distribution differs from checkout: {distribution}/{name}"
+                )
+            continue
+        mapping = next(
+            (row for row in checkout_mappings if name.startswith(row[0])), None
+        )
+        if mapping is not None:
+            prefix, source_root = mapping
+            relative = PurePosixPath(name).relative_to(PurePosixPath(prefix))
+            source = source_root.joinpath(*relative.parts).resolve()
+            resolved_root = source_root.resolve()
+            if resolved_root != source and resolved_root not in source.parents:
+                raise ValueError(f"source-distribution payload escaped checkout: {name}")
+            if not source.is_file() or source.is_symlink() or payload != source.read_bytes():
+                raise ValueError(
+                    f"source distribution differs from checkout: {distribution}/{name}"
+                )
+            continue
+        if name in generated:
+            if name == "setup.cfg" and payload != expected_setup_cfg:
+                raise ValueError(
+                    f"source-distribution generated setup.cfg differs: {distribution}"
+                )
+            if name == f"{egg_info}PKG-INFO" and payload != relative_files["PKG-INFO"]:
+                raise ValueError(
+                    f"source-distribution egg-info metadata differs: {distribution}"
+                )
+            continue
+        unowned.append(name)
+    if unowned:
+        raise ValueError(f"source distribution contains unowned payload: {unowned}")
     return {
         "status": "passed",
         "distribution": distribution,
@@ -227,7 +367,26 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     if not root.is_dir():
         raise ValueError(f"release directory does not exist: {root}")
     names = expected_artifacts(args.version)
+    summed_names = {
+        *names,
+        *expected_device_evidence_archives(args.version),
+        "release-provenance.json",
+    }
+    expected_directory_names = {*summed_names, "SHA256SUMS"}
+    actual_directory_names = {path.name for path in root.iterdir()}
+    if actual_directory_names != expected_directory_names:
+        missing = sorted(expected_directory_names - actual_directory_names)
+        extra = sorted(actual_directory_names - expected_directory_names)
+        raise ValueError(
+            f"release asset set differs: missing={missing}, extra={extra}"
+        )
     sums = read_sums(root / "SHA256SUMS")
+    if set(sums) != summed_names:
+        missing = sorted(summed_names - set(sums))
+        extra = sorted(set(sums) - summed_names)
+        raise ValueError(
+            f"SHA256SUMS entry set differs: missing={missing}, extra={extra}"
+        )
     artifacts = {}
     for name in names:
         path = root / name
@@ -273,11 +432,26 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         ),
     }
 
+    evidence_archives = {}
+    for device in DEVICE_ORDER:
+        name = device_evidence_archive_name(device, args.version)
+        path = root / name
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"missing or unsafe compact evidence archive: {device}")
+        digest = sha256_file(path)
+        if sums.get(name) != digest:
+            raise ValueError(f"SHA256SUMS mismatch: {name}")
+        evidence_archives[device] = {
+            "archive": name,
+            "sha256": digest,
+            "size": path.stat().st_size,
+        }
+
     provenance_path = root / "release-provenance.json"
     if sums.get(provenance_path.name) != sha256_file(provenance_path):
         raise ValueError("release provenance is not covered by SHA256SUMS")
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    if provenance.get("schema") != "rwkv7-release-provenance-v1":
+    if provenance.get("schema") != "rwkv7-release-provenance-v2":
         raise ValueError("unexpected release provenance schema")
     if provenance.get("version") != args.version:
         raise ValueError("release provenance version mismatch")
@@ -297,6 +471,9 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     devices = validation.get("devices") or {}
     if set(devices) != DEVICES:
         raise ValueError("release provenance does not cover the required devices")
+    declared_evidence = provenance.get("evidence") or {}
+    if set(declared_evidence) != DEVICES:
+        raise ValueError("release provenance does not cover device evidence archives")
     hf_wheel = artifacts[f"rwkv7_hf-{args.version}-py3-none-any.whl"]["sha256"]
     kernel_wheel = artifacts[f"rwkv7_kernels-{args.version}-py3-none-any.whl"]["sha256"]
     for device, row in devices.items():
@@ -323,9 +500,22 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         ):
             if row.get(f"{gate}_status") != "passed":
                 raise ValueError(f"{gate} gate did not pass: {device}")
+        if row.get("training_policy") != "reference":
+            raise ValueError(f"formal reference training policy is missing: {device}")
+        if (
+            row.get("training_backend_environment")
+            != FORMAL_REFERENCE_BACKEND_ENVIRONMENT
+        ):
+            raise ValueError(f"formal reference training environment differs: {device}")
         bundle_sha = str(row.get("compact_bundle_manifest_sha256", ""))
         if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha):
             raise ValueError(f"compact evidence identity is missing: {device}")
+        expected_evidence = {
+            **evidence_archives[device],
+            "compact_bundle_manifest_sha256": bundle_sha,
+        }
+        if declared_evidence.get(device) != expected_evidence:
+            raise ValueError(f"compact evidence archive identity mismatch: {device}")
         started_at = aware_datetime(
             row.get("acceptance_started_at"), label=f"{device} start"
         )
@@ -334,20 +524,12 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         )
         if completed_at <= started_at:
             raise ValueError(f"device acceptance completion precedes start: {device}")
-        routes = row.get("actual_routes")
-        if not isinstance(routes, dict) or not REQUIRED_ROUTE_PHASES <= set(routes):
-            raise ValueError(f"actual route evidence is missing: {device}")
-        for phase in REQUIRED_ROUTE_PHASES:
-            values = routes[phase]
-            if isinstance(values, str):
-                values = [values]
-            if (
-                not isinstance(values, list)
-                or not values
-                or not all(isinstance(value, str) and value.strip() for value in values)
-                or any(value.lower() in SELECTOR_ONLY_ROUTES for value in values)
-            ):
-                raise ValueError(f"actual {phase} route evidence is invalid: {device}")
+        try:
+            validate_actual_routes(row.get("actual_routes"))
+        except ValueError as exc:
+            raise ValueError(
+                f"actual route evidence is invalid: {device}: {exc}"
+            ) from exc
     for previous, following in zip(DEVICE_ORDER, DEVICE_ORDER[1:]):
         previous_completed = aware_datetime(
             devices[previous]["acceptance_completed_at"],
@@ -371,6 +553,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "sdists": sdists,
         "checkout_payloads": checkout_payloads,
         "devices": sorted(devices),
+        "evidence": declared_evidence,
     }
 
 

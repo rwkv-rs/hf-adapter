@@ -5,9 +5,10 @@ should improve readability, mathematical correctness, framework compatibility,
 conversion, evaluation or reproducibility.
 
 Performance kernels, hardware routes, JIT, CUDA Graph and quantization belong
-on `perf/native-kernels-v0.8`. A future optimized backend must replace only
-the explicit operator boundary in `rwkv7_hf/ops_rwkv7.py`; it must not
-obscure the reference modeling code.
+in the separately built `rwkv7-kernels` distribution under `kernels/`. They
+may replace only the frozen API-v4 operations documented in
+[`docs/KERNEL_PLUGIN_API.md`](docs/KERNEL_PLUGIN_API.md); they must not add a
+second model, configuration, tokenizer, or public cache implementation.
 
 ## Setup
 
@@ -21,6 +22,8 @@ python -m pytest -q
 ## Pull-request checks
 
 - keep `modeling_rwkv7.py` understandable without private runtime code;
+- preserve the API-v4 operation names, envelope fields, `[B,H,K,V]` public
+  cache layout, and fail-closed semantics for the complete 1.0 release line;
 - add CPU tests for model, cache, padding, loss and save/reload changes;
 - compare mathematical changes with the official RWKV oracle;
 - treat FLA comparisons as non-blocking optimized-backend diagnostics;

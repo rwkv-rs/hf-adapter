@@ -45,6 +45,13 @@ oracle and not a runtime dependency. Its comparison lives under
 even when diagnostic thresholds are missed. Use `--require-thresholds` only in
 an explicitly performance-backend-focused job.
 
+The backend-v2 three-way report applies this consistently to operator,
+inference, and training validation. Candidate-vs-readable-reference numerical
+checks and observed candidate routes are blocking release gates. Results from
+the pinned FLA revision are retained in full as `diagnostic-non-blocking` and
+never turn a conforming candidate into a release failure. A failed FLA strict
+envelope remains a visible failed diagnostic; it is not rewritten as a pass.
+
 The first RTX 4080 diagnostic bundle is archived at
 [`benchmarks/fla/results/4080-reference-20260825`](../benchmarks/fla/results/4080-reference-20260825/README.md).
 
@@ -162,7 +169,7 @@ weights, wheels, W&B runtime files, or model directories:
 python evaluation/build_backend_v2_compact_bundle.py \
   --input-dir /results/backend-v2/4080-final \
   --output-dir results/backend-v2/4080-final-compact \
-  --device RTX-4080 \
+  --device rtx-4080 \
   --harness-sha "$(git rev-parse HEAD)"
 ```
 
@@ -175,14 +182,21 @@ before the directory is published.
 
 ## Optional training comparison
 
-Training comparison never substitutes a second model class. The reference and
-candidate lanes load the same `RWKV7ForCausalLM`; the candidate keeps the
-readable layer loop and replaces only canonical mathematical leaves.  The
-`adaptive` candidate uses the factorized recurrent and flattened linear leaves
-for fully active batches whose token length is divisible by 16. It selects the
-exact matrix recurrence and reference linears for masked or unaligned batches.
-`matrix` and `factorized` remain explicit isolation modes. FLA is loaded from
-the pinned checkout as an independent comparison lane.
+Training comparison never substitutes a second model class. The reference,
+adaptive, and FLA lanes load their documented model paths while retaining the
+same readable HF layer loop. `adaptive` asks API v4 for one atomic certificate;
+the current full-model fast domain is dense B4/T128 with zero initial state,
+fully active aligned tokens, gradient-bearing inputs, and head size 64. The
+certificate covers the factorized recurrent, bounded FFN-linear, and Mix6
+leaves. `matrix` and `factorized` remain isolated recurrent diagnostics.
+
+Formal training evidence must record the model route, all three actual leaf
+implementations, the program identity, complete optimizer-gradient vector,
+checkpoint replay, and process-wide route counts. Outside the atomic fast
+domain, explicitly adaptive leaves must name their exact matrix/reference
+fallback; an unprovable autograd boundary must name the complete reference
+program. A certified leaf decline or strict optimized request outside the
+domain fails closed.
 
 The factorized rows require a CUDA development toolkit matching
 `torch.version.cuda`. The kernel wheel installs Ninja, but it deliberately does
@@ -221,7 +235,7 @@ forward/backward throughput comparison:
 
 ```bash
 python evaluation/validate_model_training.py \
-  --candidate adaptive \
+  --candidate reference \
   --model /models/rwkv7-0.1b-hf \
   --fla-source /sources/fla-80e494f6 \
   --output results/training/model.json \
@@ -233,16 +247,12 @@ python evaluation/validate_model_training.py \
   --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
 ```
 
-For the exact rows of `--candidate adaptive` (or `--candidate matrix`), the
-full-model gate requires actual recurrent route
-`torch-cuda-rwkv7-batched-matrix-recurrent-training-v1`, reference linear route
-`torch-reference-linear-v1`, and readable model route
-`torch-reference-model-v1`. For fully active, 16-token-aligned adaptive rows
-(or explicit `--candidate factorized` rows), the expected recurrent route is
-`native-nvidia-rwkv7-factorized-recurrent-training-v1`; the flattened linear
-route is required only when `batch * tokens >= 128`. The gate rejects
+For formal full-model HF rows the gate requires the readable
+`torch-reference-model-v1` route and no optional training leaf execution.
+Explicit `adaptive`, `matrix`, and `factorized` rows remain isolated operator
+experiments, not model-route claims. The gate rejects
 non-finite tensors, missing gradients, loss/logit/optimizer-vector threshold
-failures, or a candidate result numerically worse than the pinned FLA lane. Named
+failures. The pinned FLA lane remains a complete non-blocking diagnostic. Named
 per-parameter diagnostics remain in JSON even when the aggregate
 optimizer-vector gate passes. Speed is reported only after correctness is
 evaluated and never changes the correctness result.

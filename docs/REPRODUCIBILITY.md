@@ -88,13 +88,33 @@ python scripts/run_hub_release_smokes.py \
   --device cuda
 ```
 
+Build the four distribution archives from a clean detached checkout with the
+same pinned backend versions declared by both `pyproject.toml` files:
+
+```bash
+python3.12 -m venv /tmp/rwkv7-release-build
+PY=/tmp/rwkv7-release-build/bin/python
+$PY -m pip install --only-binary=:all: \
+  "pip==26.1.2" "build==1.5.0" "setuptools==82.0.1" \
+  "wheel==0.47.0" "twine==7.0.0" "packaging==26.3"
+export TZ=UTC LC_ALL=C.UTF-8 PYTHONHASHSEED=0
+export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$FINAL_SOURCE_SHA")"
+$PY -m build --no-isolation --wheel --sdist \
+  --outdir /artifacts/rwkv7-v1.0.0 .
+$PY -m build --no-isolation --wheel --sdist \
+  --outdir /artifacts/rwkv7-v1.0.0 kernels
+$PY -m twine check --strict /artifacts/rwkv7-v1.0.0/*.{whl,tar.gz}
+```
+
 The GitHub release is prepared as a draft after the final wheel pair completes
-the RTX 4080 and RTX 4090 gates. The exact wheel/source archives, `SHA256SUMS`, and
-`release-provenance.json` are attached before that draft is published. The
-release-triggered PyPI workflow downloads those assets, verifies their hashes,
-source SHA, fixed FLA commit, shared harness/wheel identities and every required
-device gate, and publishes the downloaded bytes. It deliberately does not
-rebuild either distribution in GitHub Actions.
+the RTX 4080 and RTX 4090 gates. The exact wheel/source archives, two compact
+device-evidence archives, `SHA256SUMS`, and `release-provenance.json` are
+attached before that draft is published. The release-triggered PyPI workflow
+downloads those assets, safely unpacks and revalidates both compact bundles,
+rebuilds the provenance/checksum bytes, and verifies their source SHA, fixed
+FLA commit, shared harness/wheel identities, and every required device gate.
+Only then does it publish the downloaded distribution bytes; it deliberately
+does not rebuild either distribution in GitHub Actions.
 
 Before any GPU run, audit that the candidate wheel bytes contain the clean HF
 model and every migrated NVIDIA payload:
@@ -106,8 +126,8 @@ python scripts/audit_release_wheels.py \
 ```
 
 The final release verifier repeats this audit, including all 102 embedded
-migration-manifest destination hashes, Git-blob identity for the 98 exact
-transfers, the four declared clean-boundary adaptations, the reconstructed
+migration-manifest destination hashes, Git-blob identity for the 86 exact
+transfers, the sixteen declared clean-boundary adaptations, the reconstructed
 153-file historical tree, and the separate byte-identical v0.10 Graph/Triton
 recurrent subtree. A locally complete source tree therefore cannot hide an
 incomplete wheel.
@@ -117,9 +137,18 @@ extracting them, rejects traversal, links, devices and duplicate members,
 checks `PKG-INFO` plus `pyproject.toml`, and requires every packaged HF/kernel
 file to be byte-identical to the corresponding already-audited wheel member.
 It also compares every package-owned member of both wheels byte-for-byte with
-the checked-out release tag. Thus PyPI cannot receive a correct wheel paired
-with a stale or unsafe sdist, nor mutually consistent archives built from a
-different source tree.
+the checked-out release tag, rejects wheel payload outside the single owned
+package roots and `.dist-info` directory, and binds each install-relevant sdist
+file to the checkout. Unowned top-level wheel modules, `.data` installs,
+`setup.py` hooks, and modified `pyproject.toml`/`setup.cfg` files therefore fail
+closed. Wheel `WHEEL`, `top_level.txt`, console entry points, the complete
+`Requires-Dist`/extras contract, and every `RECORD` hash/size are also bound to
+the checked-out projects. The kernel wheel must carry PEP 639
+`License-Expression: MIT` and
+`License-File: LICENSE` metadata plus the byte-exact `kernels/LICENSE` payload;
+the kernel sdist must contain the same checkout-owned license. Thus PyPI cannot
+receive a correct wheel paired with a stale or unsafe sdist, nor mutually
+consistent archives built from a different source tree.
 
 Generate the final provenance from the required compact bundles rather than
 writing it by hand:
@@ -185,7 +214,10 @@ RTX 4080 -> RTX 4090 lifetimes, a missing gate, selector-only route
 name, invalid compact manifest, different wheel byte hash, different
 harness/source revision, or an FLA revision other than the pinned commit. It
 then deterministically writes `release-provenance.json` and `SHA256SUMS` for
-the four already-built archives; it never builds or alters those archives.
+the four already-built distribution archives plus two deterministic compact
+evidence archives; it never alters the distribution bytes. The PyPI workflow
+uses `build_release_provenance.py --verify-existing` to re-run the compact
+bundle validators and require a byte-for-byte metadata rebuild before upload.
 `build_backend_v2_device_validation.py` creates that device summary directly
 from the individual validator outputs. It checks the report schemas, exact
 wheel bytes, shared harness, pinned FLA revision, 144-unit result, actual

@@ -1,0 +1,629 @@
+{
+  "schema": "rwkv7-release-source-freeze-v1",
+  "version": "1.0.0",
+  "kernel_api_version": 4,
+  "plugin_entrypoint": "rwkv7_kernels.execute_optional_v4",
+  "policy": "These executable and distribution-input bytes are immutable for the validated 1.0.0 artifact pair. Any change requires an explicit source thaw, a new version and manifest, and complete hardware validation.",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "61cc86a958c27be75034ca6f2abff06cdd81a0b0504b1376f91fe08c36fdc0dd"
+    },
+    {
+      "path": "README.md",
+      "sha256": "dc120502fb32a98b4b9b8fd5ad012cd5d580fab3acc1e8f54513e84eb7d717ae"
+    },
+    {
+      "path": "kernels/LICENSE",
+      "sha256": "61cc86a958c27be75034ca6f2abff06cdd81a0b0504b1376f91fe08c36fdc0dd"
+    },
+    {
+      "path": "kernels/README.md",
+      "sha256": "77b953d215b3c6df6bc38569caf5bc1cf7a1a467b21f9ef74b1b5d5319512c4e"
+    },
+    {
+      "path": "kernels/pyproject.toml",
+      "sha256": "41c3cd1938fc58f949dd350557097e644e2c9672efe8dbe846568c5cc0d69494"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/KERNEL_PLUGIN_API.json",
+      "sha256": "6dcaf39202dac49687ee6b04ff2b3e9e7df4682e8d5384d6a38d44858eaa37b4"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/__init__.py",
+      "sha256": "7baf7ba0f3dde9c795f6199af9cce4a6ddbdc644b6bf3523a1de6f1387c06f22"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/_runtime_preflight.py",
+      "sha256": "1346d8729666d81409a7f2d7cab6e079da295bd96dbcb0e0e124980e21408ca7"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/backend.py",
+      "sha256": "02defe889197dff9a0d2e4b9fe13644c3fd7daf940842574ffac98bf40c65196"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/dispatcher.py",
+      "sha256": "d8feb6807ce7259cde13c6fc0c80812e9e829fc78df2ffb81bd979fa5363610e"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/linear/__init__.py",
+      "sha256": "90a5ace190abd64fa96ce31fb45b5d100302b24b438dbc6f684a3376479c5fad"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/linear/training_flattened.py",
+      "sha256": "02553cd324d3d6e018e88985869ebd60e143a3599dbcefe93c05be1834559423"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/model/__init__.py",
+      "sha256": "85156174c90e1c698ebbc917fbdceafc99f65dd985c060f1d01d828ef8628547"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/model/dense.py",
+      "sha256": "732e25b1250ccbe3cb74b4a5c01e3b2b36d86e8707d18e341d678f3f964fcf4e"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/model/dense_step.py",
+      "sha256": "2b8d891b851b0a5fe3f365c1167c4e407996efd5af31e7674912d94178904f66"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/model/packing.py",
+      "sha256": "f0dd20b836dd9f305f4b7f23ffc22d9b9f97d35d67d9ce47ca9f6abeaadb4cf9"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/model_dispatcher.py",
+      "sha256": "c440d36efa4ffb0aaf48fa2d302823fb3207f470255d3da64d514405df36ce69"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json",
+      "sha256": "4b1adb0667ec28c372d27f7d57f711a9dc8627856f0a349bcb32b8318a50037f"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json",
+      "sha256": "c0c0b7265ab71a9099cc5ede0249b8bd7b33c8b910a930f256aab70eadc6e8fc"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/RECURRENT_SOURCE_SCOPE.json",
+      "sha256": "43c08b43335faf89bf4fe2088ed1a83efe860d4c343a91fcf3f3971e59b935ea"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/SELF_CHUNK_LICENSE",
+      "sha256": "41a83c8187efc1e3ccc21909e806a9e52338e69448554d9754706c3d1cd610e7"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/SOURCE_SCOPE.json",
+      "sha256": "281bbd109336978dec1d49e4b7f117e6994532e011c8b8bb98ca623aaa9d31ae"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/__init__.py",
+      "sha256": "00fbebe57995b89bff00e70b4723582be97ddf286ca14e66f7540e6f556b98c4"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/ada_lora.py",
+      "sha256": "0f1f93ee29a12632abeb6696164c73be1104aa55ca71d6e7b403907f8d6baa3b"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/ada_sparse_ffn.py",
+      "sha256": "aa5eb3572180ef38bc05dc82a56a48157fe4faa808f07c9ba54c0c8f5b8c6756"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/blackwell_norm_mix.py",
+      "sha256": "02c809471cf1065bf1de6963448c752aba916e10e91c98c7571eaf4e797aa655"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/bn_tn_tuning.py",
+      "sha256": "07c88c8a6878ef42cd974f995e3fb33dc9bdec82f98b16617d77fa198fe5b585"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/LICENSE",
+      "sha256": "d63713e1d83b56d570b9f98fcb10eef316bf85907a1c49bcd5943ee8a02b61f3"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/README.md",
+      "sha256": "7322f9b5eeb287b0eef473239b0ea4953d25ae0ff742587b152371dc3a206b16"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/awq_marlin_repack.cu",
+      "sha256": "afeca7d2090d118682c5a11f6d6dce5fa2563b4b1a2cfc91fb030a518cbee9aa"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/awq_marlin_repack.cuh",
+      "sha256": "f93773c2abdbe11f3f99eb2752a513b7be36985a2aadc651fe5b94e3bc16838b"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/core/registration.h",
+      "sha256": "ccf8793487789f6842ce08d13e125b2c7e37dc57914357326d6858910c515424"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/core/scalar_type.hpp",
+      "sha256": "37d2718309bc916821c91a6e34a93382bdd2afd02fd2c2da43e5db593aafc3d7"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/dequant.h",
+      "sha256": "5b2ccb48ef6fdbac19176dc3a8a46df412a52e6ce10e657bd7ba98c6dbac1a2f"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin.cu",
+      "sha256": "fef28e4cd513eab43bb6f12d3893254c367bebcef018595c69b24de96240c4c7"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin.cuh",
+      "sha256": "2529a5e72bbf7e506823940f0edb94cfacd926d7734bf7f327bf213351300134"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_bf16.cu",
+      "sha256": "3ebd5918f9a571a413f8dec09a7fdd530001b6f32f7b6fd8135d7acf8d6f8f88"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_repack.cu",
+      "sha256": "09f7f9df03eb59eda51f6e1f7f4e566403c94ac266e153de511d2578ecdf7ff6"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/gptq_marlin_repack.cuh",
+      "sha256": "100a900d6ab5059421d2a672bd343350a3cc77228a2ab78ff2891258e82017eb"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel.h",
+      "sha256": "4ac77793e0cce10c64bdcb80e0e162130308c5b7b9043ebc54a827d123637aa2"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_kfe2m1f.cu",
+      "sha256": "6f3e183af133a4ae574d271637aa06aa338e853000a8e13894b1a0be53bd7404"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_kfe4m3fn.cu",
+      "sha256": "7bffde6fc3731c6dee99a7b8db2fe7f0ceb3dba6aeb91d9dac8a70bab45661fe"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku4.cu",
+      "sha256": "52b2f923faca1b5cf2fb1edc39be5f0b708dc03e4a9edbbbca130e52199fdc87"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku4b8.cu",
+      "sha256": "6d0b686b7b615629c4e3fe2a5636aacb1d14ee87007428f59b451775f4c56c84"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/kernel_bf16_ku8b128.cu",
+      "sha256": "d5901ab94d06febb6436efb2a67240580153f13fab6e66da825bcf8de3a3c124"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin.cuh",
+      "sha256": "dea86b85086fb5717c723bad6eec5eee1fc20bf55b5ed9b6399f8d61ffce1b68"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_dtypes.cuh",
+      "sha256": "92112280e34f65491a177b7f529e4b5f5a2e382d498e003d3d114e4025fb693c"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_mma.h",
+      "sha256": "593f950ba5a03d7381f74eee4725d44ce133d96dc9ecdbe630cdf9deba70b368"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_template.h",
+      "sha256": "e851e5c5a300d8f2d55e0a413d80d5187fde041f0e11b469d29be36bbc3db41c"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/marlin/marlin_torch_bf16.cpp",
+      "sha256": "d8ed4ee6f33cb81ae24082356334a3a2531456467d7efaa04e208e03d4aff853"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv7_tmix_mix6_shifted_bf16_v1.cpp",
+      "sha256": "2d3289d8697e60906e23125843f47d0a859ac4488a8cda01359ec2e7bbc01a54"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv7_tmix_mix6_shifted_bf16_v1.cu",
+      "sha256": "9b29295d3825b0f3fca5a64cd2a169ba58c6d7e15030f6094e02855b79cf1abd"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/README.md",
+      "sha256": "669c65efddee205ed67cadeae7a4fd7de7d461167a9b1252b313f895b159cf02"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_clampw_v3.cpp",
+      "sha256": "2c77146767058bf813c89a20ec5a01b43b6ec5c0a514ff6dc2f3ae66dbea0a29"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_clampw_v3_for_h100.cu",
+      "sha256": "30c7c728cf799e2133421163c405a72cad74cac676c61e04182ca5d1cad2cc65"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_cmix_bf16_v5.cpp",
+      "sha256": "f5edb50e8df6306e40ff6a009d015e1a15e1356d5f50fb5de8fd9bf73d71823c"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_cmix_bf16_v5.cu",
+      "sha256": "ffa86c58ca12d4a593e9eccd0d45a1142a8defb14538f48bf862270bf8251437"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_l2wrap_ce_bf16_v2.cpp",
+      "sha256": "6d8deb536b79d4030453bb9cde3d4aa70bf6665f73f480053fbe3383eb48108b"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_l2wrap_ce_bf16_v2.cu",
+      "sha256": "f5ed2d8df2d89c93a3eb1214ad014b4eca5a6863d11e1dab2bee695d7c14890f"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_a_gate_bf16.cpp",
+      "sha256": "a2b696c0932e527f15636ec5f005348b3a71feb44203fe448cddf6290eef0a62"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_a_gate_bf16.cu",
+      "sha256": "7a49799269ef99da99e68594bccb73d83f0da1088b98e9243243d0879a8aa45d"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_kk_pre_bf16_v5.cpp",
+      "sha256": "2101b2e436c889d7c8fdf2949143bb1e7f63ca2280ffc4aeb19b7092456d6953"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_kk_pre_bf16_v5.cu",
+      "sha256": "2a8b642b76b80ffd15edebcf4bf2394956433886a8f4bfd3e6a06e542dbe3dc5"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp",
+      "sha256": "cc1958b2908369a022f1e7a16dc70f024431cc2a4f701c95764dcbb1f13e2565"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu",
+      "sha256": "bfe6dcf30b296f4bd614650f0adff0e8582c73fcbe74720c1ad264af6b5f4c47"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_mix6_bf16_v5.cpp",
+      "sha256": "1f6e5b34c7b65523e9428422d48add4542ad0abc9a38b4db854a5a6567377493"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_mix6_bf16_v5.cu",
+      "sha256": "d451b86313953fd361ae35ad1b6391efeecf052229e97c04cbe511f703959fc9"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_vres_gate_bf16_v3.cpp",
+      "sha256": "5923e9845ac6f09d46a93547acded22814e75a28290b4934faef676d10b40579"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/csrc/training/rwkv_lm/rwkv7_tmix_vres_gate_bf16_v3.cu",
+      "sha256": "0394eff6b237f482f206396d81714e6205df8c842c252a47fdd5d024aecc7881"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/dplr_prefill.py",
+      "sha256": "6e2c1d3c3f47b89f38bfbb25bf611024a9c89b4879e31a1a9eb568bc37840bf9"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/dplr_prefill_triton.py",
+      "sha256": "1b5559c0e0f2a28c65bcc41aeac163378d1ff883afc794aaab3e6da62acbb9ce"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/extension_build.py",
+      "sha256": "ebe65d8076a490607b6d60c9715c3cfdb27ec32f9b6e1af3ea139a3e6d1c8eff"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_attention_projection.py",
+      "sha256": "388634428c3932faae558050ff1a9a7c2c57d8053ecd1651351e4af2c948f157"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_decode_norm_mix.py",
+      "sha256": "3e132d18f3dd1fc2b96aa651ec0910ca8fe34f7517882094552a3fe59b006995"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_elementwise.py",
+      "sha256": "c68c10f17dea3c71bfe700366924270a4b3bf601f14af0bd180072599f2cda75"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_ffn.py",
+      "sha256": "0396114eeeaf0af2954ca0b8ce51b60087199ebea5b0bda7babf684be980acb3"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_lora.py",
+      "sha256": "5424b948957153ac7d955becced96c1d15e8d1764d8633b8864cf97dd9e8149d"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_norm_mix.py",
+      "sha256": "f0ea209c963c6109acde49242ca76e59ceebd9024d588a87a799d595ff95e4dc"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_output.py",
+      "sha256": "6f4390312ff4adeabc20309e1b08e91b9e381aafd8076bb325c923941ba9007a"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_prefill.py",
+      "sha256": "9ce356e278dea27ab9c56ccf5ff3257127da464be8bc2017b4d4f6f74b3aa75a"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_projection.py",
+      "sha256": "0d1e3ce8811841dbad3788189f468ba7a59c6533a0855b54da6c1a4879aeb060"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_recurrent_update.py",
+      "sha256": "2f586ce87fea6a3c92d87d7bea8c82b813a306678498af1e661d6c1873d22dbd"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/fused_time_mix.py",
+      "sha256": "cef04ca47f16b6b268a90068679df12128718edf4e92fecc80255b500453f60e"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/graph_pool.py",
+      "sha256": "1eea4f6b060b7703f941b66db40c745e312f9a689c3d68734d645b10d4ddc475"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/kernel_package.py",
+      "sha256": "77b3c1971c017c189de7de6e98602ed946f943f3172968e1cb2d2c13cc06a7d6"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/kernel_policy.py",
+      "sha256": "30dc42be38fa06ce6739d7f1c953648ca484e49f3bb4de3593a2ffbd26547000"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/marlin_autotune.py",
+      "sha256": "2c58404ec039e288de5bcc27730ea8d25fc154664a6d89f2d4d5bbf4949397b4"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_graph_runtime.py",
+      "sha256": "778a205c3be3a101f057a0c9887ef37851c83c0d5814f96dc3c19577f991a6a1"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit.py",
+      "sha256": "b4159e863248718a06fcb175cf972b94c6dd93c6566b7f764d0735695f408fab"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_bnb8.py",
+      "sha256": "f2ae8754e5c7b0b23faadfac6f24a6ef1627d1e7fbf8210a1b1bd1b14b6f0e2a"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_decode.py",
+      "sha256": "1a8969c19eea1ea790a2866fb44ead4da1736f85dc93e1c7aca663f342886e13"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_dense_step.py",
+      "sha256": "73844847993bd8ef1f3d931079c3c99fc7dc86fce0d5c17bfc0c1866648eef6b"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_graph_dispatch.py",
+      "sha256": "da36725b4000a1e8b8251317b619ba1904cd4672c8b27dda1add66c6f5c0a11d"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_linear.py",
+      "sha256": "03f986b1bdc6aa47c45d12e0d3e69d0e4a8ab16f8828085b742c594bbf754513"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_packing.py",
+      "sha256": "ca0e506d718e32edb5e85be9043c47ce6eda7aa2c5d4707108540479b09d6327"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_prefill.py",
+      "sha256": "7be6540147f30d68112de42b0856757e1d1c519c143f82083d2b81892f94353f"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_prefill_policy.py",
+      "sha256": "48b93732300c52020e62d3a8b3d3aca8545ef545aa5f300cbfd44bd6d5ef37e8"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_prefill_runtime_policy.py",
+      "sha256": "839e5432f9c0cbf0ef0f7a28b3ad2ce50ec0007ff05fac5be1ce7dfb63c0d257"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_jit_recurrent.py",
+      "sha256": "4e685c7716e3bbfbd07c293af3845205848f084aae1f3e481c6a19356005bc43"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant.py",
+      "sha256": "9961473f2747da14572a1287c118c98eb00f3bc6b92ee4f352c72f365684f4af"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_a8w8.py",
+      "sha256": "7a59a933ecc62386e9ce628c91eaf78b522597fb9936016b215d4cb3a037af09"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_bn_tn.py",
+      "sha256": "85e273bdc9842821f3a8602f4fc032b501fa5fb496dc39bb879cff913847efe3"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_bnb8.py",
+      "sha256": "6151e0e6cbd54efe4ab1f10c1591021570870aef2b77d0310f6fda9eba5c533e"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_marlin.py",
+      "sha256": "81ce61be99f88c7ef9eca238e4c659d954e53432548d798a7375856b5aed241d"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_marlin_sources.py",
+      "sha256": "bbb5a080b2f9dfeb7956e07bd043a6a770ad74017123df7a1c31330d48696d8a"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_mm4.py",
+      "sha256": "64b1803d3404125b91806c534865eaf890744b203ae33cfe8bb0ec4b1ec09470"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_mm8.py",
+      "sha256": "d4577c82a9e7bf536db19eea64b722406ab36952b731b38176ea534ca2de6a50"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_policy.py",
+      "sha256": "09ee9a58bf0ca8a7eae4171b2e8e632a9216d61a8c5891a80bda62e76a21a4bd"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_quant_torchao.py",
+      "sha256": "f7b8e7477d5c91ee00687c70d8bafcf192e9554eb0ae8acf37dc62c896e58e20"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/native_wkv_fp16.py",
+      "sha256": "4880fa46fa9991360894f5eba02dfde4ddf40c8966bc2c49b2012de6bb11a93a"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/official_training_alignment.py",
+      "sha256": "2e156116e8646675ab3e15402a3f23785ca9751c94127aa477502d0dafaa7a71"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/official_training_checkpoint.py",
+      "sha256": "19f2b6a3e5889845b0e0edc49f666f43dd602b9c202d45dd5f9d00a2dd824610"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/official_training_cuda.py",
+      "sha256": "ee44b8936765956fcc9b2ecbb4b6ef90a6d6b3ae32e34620341cc301410ac4b6"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/prefill_graph_pool.py",
+      "sha256": "5c3b06a33cea705a341de1e63b7c269de686ba04be9ef516e542b7d5d2d037bf"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/prefill_graph_runtime.py",
+      "sha256": "f6290524a3075a7614227f30900238133a790a43aaf84b52dc8d412136441835"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/recurrent_state.py",
+      "sha256": "e9e858c2766c3c26ca6f0904803f979a29bcbc37dbf1bea5fa841c0089ee55aa"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/self_chunk_A_fwd.py",
+      "sha256": "743b72dc8e667c824723f0d60f8aca31559f52a7e66da5d8a4e25c26974828bf"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/self_chunk_cumsum.py",
+      "sha256": "0991022a76da108160a0391c3b984315171cfda060c60bcf53010d1b3d158a1e"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/self_chunk_h_fwd.py",
+      "sha256": "407a0a798a63fcc0b764655c0b9c073eb5e01117328fe3a90ce6b440e7ea5865"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/self_chunk_o_fwd.py",
+      "sha256": "635ec70b4e0a30004c868a9c224fddbd996f6cde225f46fcca7c3bd36ac2ccc1"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/self_chunk_rwkv7.py",
+      "sha256": "5c72e4be7d23421bf28492ebc24c84f47967bfed340e9529c4a0658d5069f49d"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/self_chunk_utils.py",
+      "sha256": "d4ed6d353d9caeeb6236b015a5d88fc8d58cf0ec245ac463020e35e6643bbee5"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/self_chunk_wy_fwd.py",
+      "sha256": "565a928a3db0236f2ec857818d7d2ed42de4df5a89a6e0d5fb538cb63c203ad0"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/sm120_compiled_ffn.py",
+      "sha256": "0806f2ccda43008b8691394f5874f20e715974a8a9ffa39891915c637a3e02dc"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/sm70_linear.py",
+      "sha256": "6e32a1d762b4bbbf420330154cfcb7c7480e5cf8e7e40ee216f1997e324fefb4"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/sm70_quant.py",
+      "sha256": "976af48c248cb333289eb9f4eedd0b16c72acd3f4eb716b1aa389a04098530a1"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/sm70_wagv.py",
+      "sha256": "1c75f0bccf79220ae6b5b6818714a425b7cabaad3ef654d28b58cb491c89d625"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/training_math.py",
+      "sha256": "52bb63bfeb935067f9ac17e8a41a65ed1deed6bbd1ebfd5fc76ae7173f034bfb"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/training_runtime.py",
+      "sha256": "524c7c6fcc34508e7ada962ca6a266b020ff6cd1c766d5340a83ee3fce18c403"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/nvidia/triton_compat.py",
+      "sha256": "265deccceb3bcbd017b5585503eb601ad8f7829af41aab24218a262d3ac7c37e"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/protocol.py",
+      "sha256": "1656fd8307ef996201df9986ac49073e15496f81f744b50482da6ccee97359f0"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/quantization.py",
+      "sha256": "15cbf8f060af9018dd526527215155315195ccb8f0cf2c8cf5aa0fbedb91f811"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/recurrent/__init__.py",
+      "sha256": "eb546f7769c09d1172a928c6c3aaa066998bc5ff254754f282720093ecb135e1"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/recurrent/graph.py",
+      "sha256": "75e15e44a466d00bbbee7db2fe3cb77ec133dea616614afec32efad7ad755704"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/recurrent/training_factorized.py",
+      "sha256": "ed04dc845d2e4a4604a87c08d7402f74589c9c1219c56ba30aa567728c88008b"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/recurrent/training_matrix.py",
+      "sha256": "dc9a4563c2291cd882e7f645d53cae0f16a7b87e0b5a97e869080990f607e1f3"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/recurrent/triton.py",
+      "sha256": "8d985f7e52af47b673ac3ab377a5acb8a28d76bb869926677dc915766d0a1bed"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/time_mix/__init__.py",
+      "sha256": "3331e11e45ff08e40a6032f46ef44196b47c9cd03bf17acdcdd1ee3791bfdbe3"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/time_mix/training_mix6.py",
+      "sha256": "81c19e0cf588de0b90f5e29d2ebc97bac26e5800da704867f6d6817229057620"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/trace.py",
+      "sha256": "95f6082cb88562c422b2a96169c6546acbd7b0dee6e2058986677ccd1b21dd86"
+    },
+    {
+      "path": "kernels/rwkv7_kernels/training_dispatcher.py",
+      "sha256": "028afebcdeb662148363866ab977cfe9d60840aedf7d6db4ca8007bc86973d9c"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "e9069247b263c94349e908314baf1627555e6571c3e6f5185234d8e56c180412"
+    },
+    {
+      "path": "rwkv7_hf/__init__.py",
+      "sha256": "b1cee01c6f28b634b363547de108d84e81da2fecc2f5dcaee2d0a40eec458de3"
+    },
+    {
+      "path": "rwkv7_hf/cache_rwkv7.py",
+      "sha256": "dee4bd3b00b9ca95c36ca4976c8c745dbe1b576eb8cfaec4be84d2afe4998c76"
+    },
+    {
+      "path": "rwkv7_hf/chat_template.jinja",
+      "sha256": "0f56a3bd9661176161d9f4512dbea1beb6c54336feba0da6e6f60869b5973885"
+    },
+    {
+      "path": "rwkv7_hf/configuration_rwkv7.py",
+      "sha256": "92e04e289827837755145eafaae16ff8ed6ed326ff81f62a2514cdb14c2f8503"
+    },
+    {
+      "path": "rwkv7_hf/modeling_rwkv7.py",
+      "sha256": "242861db48f404802149de3df25d20154d2d3611437d0abbaca38ae82666a3e3"
+    },
+    {
+      "path": "rwkv7_hf/ops_rwkv7.py",
+      "sha256": "0ba3e70d9419676abf62c3de1a0e63be37a0d54ab36573bc12b88c8292c5b63c"
+    },
+    {
+      "path": "rwkv7_hf/tokenization_rwkv7.py",
+      "sha256": "d03fba51c978a49c6d3af2a861877dc13f4b0be2a00124bd5a1328cb7f389520"
+    },
+    {
+      "path": "rwkv7_hf_tools/__init__.py",
+      "sha256": "7d8a7254a6e6e0b12663b4ea1e01a5ba0f76c603e75a12f11a234bc26e023e9c"
+    },
+    {
+      "path": "rwkv7_hf_tools/cli.py",
+      "sha256": "26ca6a5b2e7e410ec7ac879a719252d7edea65b8d0cae294ecb5e3b966ba37d2"
+    },
+    {
+      "path": "rwkv7_hf_tools/converter.py",
+      "sha256": "710f679cc7193d5d9a7c2db689d173a938451bd022207d37cc7fd2a170f0bf45"
+    },
+    {
+      "path": "rwkv7_hf_tools/manifest.py",
+      "sha256": "afb13235d4709507770dfb5a68912497b89bb431627ce8f42863f41a050199f7"
+    },
+    {
+      "path": "rwkv7_hf_tools/smoke.py",
+      "sha256": "9c57687cf26438334377b747b649aa752cfa51362c7dd6ffebad7c2fa9c6bf4a"
+    }
+  ]
+}

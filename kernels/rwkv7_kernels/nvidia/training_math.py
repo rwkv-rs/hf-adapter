@@ -18,6 +18,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from ..linear.training_flattened import flattened_linear
+
 
 REFERENCE_LINEAR_ROWS = 128
 
@@ -66,6 +68,26 @@ def fixed_row_linear(
     return torch.cat(batch_groups, dim=0)
 
 
+def training_linear(
+    value: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Select the canonical one-tile path or shape-stable training GEMMs.
+
+    A single canonical tile is kept byte-for-byte identical to the readable HF
+    model. Larger ``B * T`` requests use the optional linear leaf, which keeps
+    ordinary projections flattened and bounds the row group for 4x FFN
+    projections. This boundary is private to the explicitly selected training
+    runtime; the clean reference model continues to use
+    :func:`fixed_row_linear` semantics.
+    """
+
+    if value.ndim != 3 or int(value.shape[0]) * int(value.shape[1]) <= REFERENCE_LINEAR_ROWS:
+        return fixed_row_linear(value, weight, bias)
+    return flattened_linear(value, weight, bias)
+
+
 def module_linear(
     module: Any,
     value: torch.Tensor,
@@ -75,7 +97,7 @@ def module_linear(
     """Project with a structurally compatible linear module without dispatch."""
 
     bias = getattr(module, "bias", None) if include_bias else None
-    return fixed_row_linear(value, module.weight, bias)
+    return training_linear(value, module.weight, bias)
 
 
 def low_rank_projection(
@@ -108,7 +130,9 @@ def channel_mix(module: Any, hidden_states: torch.Tensor) -> torch.Tensor:
 __all__ = [
     "REFERENCE_LINEAR_ROWS",
     "channel_mix",
+    "flattened_linear",
     "fixed_row_linear",
     "low_rank_projection",
     "module_linear",
+    "training_linear",
 ]

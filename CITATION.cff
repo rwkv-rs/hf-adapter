@@ -1,21 +1,21 @@
 cff-version: 1.2.0
 message: >-
-  If you use the readable RWKV-7 Transformers reference implementation,
-  converter, or reproducibility tooling, please cite this software.
+  If you use the RWKV-7 Transformers implementation, converter, or
+  reproducibility tooling, please cite this software.
 title: RWKV-7 Hugging Face Adapter
 type: software
 authors:
   - family-names: Wang
     given-names: Yue
     alias: 123123213weqw
-repository-code: https://github.com/123123213weqw/hf-adapter
-url: https://github.com/123123213weqw/hf-adapter
+repository-code: https://github.com/rwkv-rs/hf-adapter
+url: https://github.com/rwkv-rs/hf-adapter
 license: MIT
 version: 1.0.0
-date-released: 2026-08-27
 keywords:
   - RWKV-7
   - Transformers
   - recurrent state
   - reference implementation
+  - optional kernels
   - reproducibility

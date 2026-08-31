@@ -9,12 +9,13 @@ The internal trie uses a dense 256-way child table per node, following the fast
 Python trie-tokenizer layout used by ChatRWKV while keeping the public
 ``PreTrainedTokenizer`` contract unchanged.
 """
+
 from __future__ import annotations
 
-import os
 import shutil
 from ast import literal_eval
-from typing import Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from pathlib import Path
 
 from transformers import PreTrainedTokenizer
 
@@ -27,7 +28,7 @@ class _TrieNode:
     def __init__(self):
         # Dense byte-indexed children are faster than a dict for RWKV's byte-level
         # tokenizer and keep encode() on the pure-Python HF slow-tokenizer path cheap.
-        self.children: List[Optional["_TrieNode"]] = [None] * 256
+        self.children: list[_TrieNode | None] = [None] * 256
         # Store id + 1 so token id 0 remains representable while 0 means no token.
         self.token_plus_one = 0
 
@@ -45,7 +46,7 @@ class _TrieNode:
 class _RWKVTrie:
     def __init__(self, vocab_file: str):
         self.vocab_file = vocab_file
-        parsed: Dict[int, bytes] = {}
+        parsed: dict[int, bytes] = {}
         with open(vocab_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.rstrip("\n")
@@ -57,7 +58,7 @@ class _RWKVTrie:
         self.max_id = max(parsed) if parsed else 0
         # RWKV-7 checkpoints can have unused embedding rows. Missing ids decode to
         # empty bytes to preserve the previous "ignore unknown embedding rows" behavior.
-        self.idx2token: List[bytes] = [b""] * (self.max_id + 1)
+        self.idx2token: list[bytes] = [b""] * (self.max_id + 1)
         for idx, token in parsed.items():
             self.idx2token[idx] = token
         self.token2idx = {token: idx for idx, token in parsed.items()}
@@ -66,7 +67,7 @@ class _RWKVTrie:
             self.root.add(token, idx)
 
     @staticmethod
-    def _parse_vocab_line(line: str) -> Tuple[int, bytes]:
+    def _parse_vocab_line(line: str) -> tuple[int, bytes]:
         first = line.index(" ")
         last = line.rindex(" ")
         idx = int(line[:first])
@@ -76,19 +77,24 @@ class _RWKVTrie:
             raise TypeError(f"Invalid token type at id={idx}: {type(token)}")
         expected_len = int(line[last + 1 :])
         if len(token) != expected_len:
-            raise ValueError(f"Length mismatch at id={idx}: got {len(token)} expected {expected_len}")
+            raise ValueError(
+                f"Length mismatch at id={idx}: got {len(token)} expected {expected_len}"
+            )
         return idx, token
 
-    def encode_bytes(self, src: bytes) -> List[int]:
+    def encode_bytes(self, src: bytes) -> list[int]:
         idx = 0
         src_len = len(src)
-        out: List[int] = []
+        out: list[int] = []
         append = out.append
         root_children = self.root.children
         while idx < src_len:
             node = root_children[src[idx]]
             if node is None:
-                raise ValueError(f"RWKV tokenizer cannot encode byte at offset {idx}: {src[idx:idx+8]!r}")
+                raise ValueError(
+                    "RWKV tokenizer cannot encode byte at offset "
+                    f"{idx}: {src[idx : idx + 8]!r}"
+                )
 
             pos = idx + 1
             token_plus_one = node.token_plus_one
@@ -105,12 +111,15 @@ class _RWKVTrie:
                 children = node.children
 
             if token_plus_one == 0:
-                raise ValueError(f"RWKV tokenizer cannot encode byte at offset {idx}: {src[idx:idx+8]!r}")
+                raise ValueError(
+                    "RWKV tokenizer cannot encode byte at offset "
+                    f"{idx}: {src[idx : idx + 8]!r}"
+                )
             append(token_plus_one - 1)
             idx = end
         return out
 
-    def encode(self, text: str) -> List[int]:
+    def encode(self, text: str) -> list[int]:
         return self.encode_bytes(text.encode("utf-8"))
 
     def decode_bytes(self, ids: Iterable[int]) -> bytes:
@@ -126,7 +135,7 @@ class _RWKVTrie:
                 # Fall back for tensor / numpy scalar ids that need int() conversion.
                 pass
 
-        chunks: List[bytes] = []
+        chunks: list[bytes] = []
         append = chunks.append
         for token_id in ids:
             idx = int(token_id)
@@ -149,10 +158,10 @@ class RWKV7Tokenizer(PreTrainedTokenizer):
         vocab_file: str,
         errors: str = "replace",
         model_vocab_size: int = 65536,
-        pad_token: Optional[str] = "<|padding|>",
-        eos_token: Optional[str] = "<|endoftext|>",
-        bos_token: Optional[str] = None,
-        unk_token: Optional[str] = None,
+        pad_token: str | None = "<|padding|>",
+        eos_token: str | None = "<|endoftext|>",
+        bos_token: str | None = None,
+        unk_token: str | None = None,
         **kwargs,
     ):
         self.vocab_file = vocab_file
@@ -179,12 +188,12 @@ class RWKV7Tokenizer(PreTrainedTokenizer):
     def vocab_size(self) -> int:
         return self.model_vocab_size
 
-    def get_vocab(self) -> Dict[str, int]:
+    def get_vocab(self) -> dict[str, int]:
         vocab = {str(i): i for i in range(self.model_vocab_size)}
         vocab.update(self.added_tokens_encoder)
         return vocab
 
-    def _tokenize(self, text: str, **kwargs) -> List[str]:
+    def _tokenize(self, text: str, **kwargs) -> list[str]:
         return [str(i) for i in self.trie.encode(text)]
 
     def _convert_token_to_id(self, token: str) -> int:
@@ -228,7 +237,7 @@ class RWKV7Tokenizer(PreTrainedTokenizer):
             out.append(self._convert_id_to_token(i))
         return out
 
-    def convert_tokens_to_string(self, tokens: List[str]) -> str:
+    def convert_tokens_to_string(self, tokens: list[str]) -> str:
         ids = []
         for tok in tokens:
             if tok in self._special_ids:
@@ -244,10 +253,15 @@ class RWKV7Tokenizer(PreTrainedTokenizer):
             return list(token_ids_0)
         return list(token_ids_0) + list(token_ids_1)
 
-    def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> Tuple[str]:
-        os.makedirs(save_directory, exist_ok=True)
-        out_name = (filename_prefix + "-" if filename_prefix else "") + VOCAB_FILES_NAMES["vocab_file"]
-        out_path = os.path.join(save_directory, out_name)
-        if os.path.abspath(self.vocab_file) != os.path.abspath(out_path):
-            shutil.copyfile(self.vocab_file, out_path)
-        return (out_path,)
+    def save_vocabulary(
+        self, save_directory: str, filename_prefix: str | None = None
+    ) -> tuple[str]:
+        output_dir = Path(save_directory)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_name = (
+            f"{filename_prefix}-" if filename_prefix else ""
+        ) + VOCAB_FILES_NAMES["vocab_file"]
+        output_path = output_dir / output_name
+        if Path(self.vocab_file).resolve() != output_path.resolve():
+            shutil.copyfile(self.vocab_file, output_path)
+        return (str(output_path),)

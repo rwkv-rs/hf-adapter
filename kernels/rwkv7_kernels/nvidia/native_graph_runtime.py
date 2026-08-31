@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 
 from .kernel_policy import current_kernel_policy, env_flag
+from .native_jit_linear import dense_linear_module
 from .recurrent_state import (
     RecurrentDecodeRoute,
     convert_recurrent_state_tensor,
@@ -235,11 +236,7 @@ def _head_linear_into(module, value: torch.Tensor, output: torch.Tensor) -> None
     if callable(forward_into):
         forward_into(value, output)
         return
-    if (
-        isinstance(module, torch.nn.Linear)
-        and type(module.weight) is torch.nn.Parameter
-        and module.bias is None
-    ):
+    if dense_linear_module(module) and module.bias is None:
         if _native_graph_linear_dispatch is None:
             result = F.linear(value, module.weight)
         else:
@@ -260,7 +257,7 @@ class NativeGraphRunner:
     def __init__(self, owner: Any, packs, batch_size: int) -> None:
         if not native_graph_available():
             raise RuntimeError(
-                "native_graph requires CUDA and rwkv7_hf.native_jit graph blocks"
+                "native_graph requires CUDA and rwkv7_kernels.nvidia.native_jit graph blocks"
             )
         self.owner_ref = weakref.ref(owner)
         self.packs = list(packs)

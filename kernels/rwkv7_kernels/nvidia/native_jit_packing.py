@@ -32,6 +32,30 @@ def _decay_bias(bias, reference: torch.Tensor):
     return bias.to(device=reference.device, dtype=torch.float32)
 
 
+def _pre_norm_pack(layer, *, reference: torch.Tensor, hidden_size: int):
+    """Return packed LayerNorm tensors; an explicit ``Identity`` is no norm."""
+
+    pre_norm = getattr(layer, "pre_norm", None)
+    weight = getattr(pre_norm, "weight", None)
+    is_layer_norm = isinstance(pre_norm, torch.nn.LayerNorm)
+    has_layer_norm_contract = isinstance(weight, torch.Tensor) and hasattr(
+        pre_norm, "eps"
+    )
+    if is_layer_norm or has_layer_norm_contract:
+        if not isinstance(weight, torch.Tensor):
+            raise TypeError("RWKV7 native packing requires tensor pre_norm.weight")
+        bias = getattr(pre_norm, "bias", None)
+        if bias is None:
+            bias = torch.zeros_like(weight)
+        if not isinstance(bias, torch.Tensor):
+            raise TypeError("RWKV7 native packing requires tensor pre_norm.bias")
+        return weight, bias, 1
+    weight = torch.zeros(
+        hidden_size, device=reference.device, dtype=reference.dtype
+    )
+    return weight, torch.zeros_like(weight), 0
+
+
 def extract_dense_packs(model, *, rkv_policy: str):
     layers = model.model.layers
     H = layers[0].attn.num_heads
@@ -49,12 +73,11 @@ def extract_dense_packs(model, *, rkv_policy: str):
         v1 = vl.lora[0].weight if vl is not None else torch.zeros(1, ref.shape[1], device=ref.device, dtype=ref.dtype)
         v2 = vl.lora[2].weight if vl is not None else torch.zeros(attention_hidden, 1, device=ref.device, dtype=ref.dtype)
         v0 = _kernel_bias(vl.lora[2].bias, ref) if vl is not None else torch.zeros(attention_hidden, device=ref.device, dtype=ref.dtype)
-        if hasattr(layer, "pre_norm"):
-            pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
-        else:
-            pre_w = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
-            pre_b = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
-            has_pre = 0
+        pre_w, pre_b, has_pre = _pre_norm_pack(
+            layer,
+            reference=ref,
+            hidden_size=hidden,
+        )
         packs.append((
             i, H, N, eps, has_pre,
             pre_w, pre_b, layer.attn_norm.weight, layer.attn_norm.bias,
@@ -126,12 +149,11 @@ def extract_graph_packs(
             v1 = torch.zeros(1, hidden, device=embed_ref.device, dtype=embed_ref.dtype)
             v2 = torch.zeros(attention_hidden, 1, device=embed_ref.device, dtype=embed_ref.dtype)
             v0 = torch.zeros(attention_hidden, device=embed_ref.device, dtype=embed_ref.dtype)
-        if hasattr(layer, "pre_norm"):
-            pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
-        else:
-            pre_w = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
-            pre_b = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
-            has_pre = 0
+        pre_w, pre_b, has_pre = _pre_norm_pack(
+            layer,
+            reference=embed_ref,
+            hidden_size=hidden,
+        )
 
         r_op = graph_linear_operand(a.r_proj)
         k_op = graph_linear_operand(a.k_proj)

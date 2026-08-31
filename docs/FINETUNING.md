@@ -81,7 +81,9 @@ are recorded with the dataset/model revisions:
 
 ```bash
 export RWKV7_BACKEND=auto
-export RWKV7_TRAINING_KERNEL_IMPL=adaptive
+export RWKV7_KERNEL_IMPL=auto
+export RWKV7_MODEL_KERNEL_IMPL=auto
+export RWKV7_TRAINING_KERNEL_IMPL=auto
 
 python examples/finetune/sft_lora.py \
   --model /models/rwkv7-0.1b-hf \
@@ -103,16 +105,27 @@ python evaluation/validate_finetune_runs.py \
   --require-training-candidate adaptive
 ```
 
-The callback records last routes at optimizer-bearing forwards, while a
-versioned process-wide counter preserves every optional leaf that actually
-executed. The latter matters for DPO, whose differentiable policy pass is
-followed by a no-grad reference pass. Dense BF16 training has a separate
-leaf-autograd gate. The canonical LoRA target set
-wraps the ChannelMix `key`/`value` modules, so the whole-model training probe
-must report the adapter-aware reference autograd fallback; this is intentional
-and prevents a fused implementation from silently ignoring trainable adapter
-weights. The readable HF model loop therefore remains active while aligned,
-fully active BF16 batches may use the factorized recurrent and flattened
-linear leaves; masked or unaligned batches use the exact matrix recurrent and
-reference linears. Finite loss/gradients, changed parameters and adapter
-save/reload are still mandatory.
+One immutable `RWKV7ExecutionContext` selects the program at the differentiable
+model boundary and is passed explicitly through non-linear layer boundaries
+and checkpoint replay. Two narrow routing bridges carry the resolved value:
+one transfers decoder context to the LM head across the standard output
+boundary, while lexical `linear_execution_context` preserves the standard
+`nn.Linear`/PEFT `forward(x)` contract and republishes the same value during
+replay. Two evidence-only context-local snapshots and a versioned process-wide counter
+preserve every optional leaf that actually executed. The counter matters for
+DPO, whose differentiable policy pass is followed by a no-grad reference pass.
+Standard HF training always retains the readable
+`torch-reference-model-v1` layer loop; there is no whole-model training
+dispatch. This keeps PEFT/TRL wrappers, hooks, gradient checkpointing, masking,
+and the ordinary autograd graph visible to the framework.
+
+The optional package can certify recurrent, flattened-linear, and Mix6 as one
+adaptive program for the dense B4/T128 domain. This changes only tensor leaves:
+PEFT/TRL still see the readable model loop, hooks, adapters, checkpoint replay,
+and ordinary PyTorch autograd. Shapes outside the certificate use the
+individually gated exact-matrix/reference leaves; frozen embeddings that make
+autograd eligibility unprovable at model entry select one complete reference
+program. Formal SFT/DPO/GRPO must record process-wide leaf counts as well as the
+final route because DPO and GRPO may legitimately combine optimized
+differentiable passes with reference no-grad or sampled-shape passes. Finite
+loss/gradients, changed parameters, and adapter save/reload remain mandatory.

@@ -1,36 +1,73 @@
-# RWKV-7 HF v0.9 status
+# RWKV-7 HF 1.0 status and release gates
 
-The main line is the readable pure-PyTorch reference implementation. Optional
-CUDA Graph/Triton development is isolated on
-`perf/optional-native-backend-v0.10`; older native-kernel experiments remain
-preserved on `perf/native-kernels-v0.8`.
+The 1.0 source line is a release candidate until the immutable GitHub, Hugging
+Face Hub, and PyPI artifacts have passed the machine-verified gates below.
+Publication status is determined by those tagged artifacts and their attached
+`release-provenance.json`, not by manually changing this document.
 
-Release gates:
+## Current ownership and layout
 
-- [x] clean config, cache, operator and modeling structure
-- [x] package-free save/load and reference conversion layout
-- [x] tiny cache, padding, generation, loss and gradient tests
-- [x] non-blocking RTX 4080 FLA backend diagnostics archived
-- [x] official checkpoint oracle matrix (V100 6/6; RTX 4080 9/9)
-- [x] formal 48-unit lm_eval run (42 retained units plus six affected 1.5B
-      batch-pair reruns; merged validator passed)
-- [x] canonical SFT, DPO and GRPO runs, exact resume, and W&B offline smoke
-- [x] clean wheel build, metadata check, isolated install and CLI/model smoke
-- [x] six model repositories updated and tagged v0.9.0; exact-revision Hub
-      metadata passed for all six, direct Hub loading passed for
-      0.1B/0.4B/1.5B, and V100 local-source smoke passed for
-      2.9B/7.2B/13.3B with hashes matched to each conversion manifest
-- [x] PyPI 0.9.0 published through the upstream trusted-publishing workflow;
-      the wheel was downloaded back from PyPI and passed CLI plus V100 Hub
-      smoke in the clean Python 3.12/CUDA 12.6 environment
+The organization follows the same separation-of-responsibilities idea used by
+clean state-space-model integrations such as Mamba. “Mamba-style” describes
+only the package boundaries; RWKV-7 math, state semantics, names, and code are
+implemented independently here.
 
-A release is not complete until every unchecked item passes.
+`rwkv7_hf/` owns the readable Hugging Face model and contains six core Python
+modules:
 
-The optional optimized-backend comparison is preserved in
-[`benchmarks/fla/results/4080-reference-20260825`](benchmarks/fla/results/4080-reference-20260825/README.md).
-It records numerical differences but is not a correctness oracle and does not
-block release. Official RWKV checkpoints, HF invariants, formal evaluation,
-and training reproducibility are the release gates.
+1. `__init__.py`
+2. `configuration_rwkv7.py`
+3. `cache_rwkv7.py`
+4. `ops_rwkv7.py`
+5. `modeling_rwkv7.py`
+6. `tokenization_rwkv7.py`
 
-The compact six-model release evidence is archived in
+`chat_template.jinja` is the accompanying tokenizer asset. Conversion and
+maintenance commands live in the sibling `rwkv7_hf_tools/` package rather than
+inside the model package. Optional accelerated inference, training, graph, and
+quantization implementations live in the separately installable
+`rwkv7-kernels` package under `kernels/`. Installing that package must not make
+configuration, cache, or model ownership ambiguous; the readable PyTorch path
+remains available without it.
+
+The only plug-in entrypoint is the frozen API-v4
+`rwkv7_kernels.execute_optional_v4` contract. Its operation names, exact result
+envelope, canonical cache layout, and fallback/fail-closed behavior are defined
+in [`docs/KERNEL_PLUGIN_API.md`](docs/KERNEL_PLUGIN_API.md) and shipped in the
+kernel wheel as `KERNEL_PLUGIN_API.json`.
+
+## Implemented in the candidate
+
+- [x] readable Transformers config, cache, model, causal-LM, tokenizer, and
+      PyTorch operator boundary
+- [x] standard cache, padding, generation, loss, save/reload, and training
+      interfaces
+- [x] sibling converter/CLI/manifest/smoke tooling
+- [x] optional `rwkv7-kernels` package with explicit dispatch and reference
+      fallback boundaries
+- [x] evaluation and reproducibility harnesses for inference, training,
+      finetuning, FLA diagnostics, and `lm_eval`
+
+## Required release evidence
+
+The release workflow requires all of the following and fails closed when any
+record is missing or inconsistent:
+
+- one source revision and immutable `rwkv7-hf` / `rwkv7-kernels` artifacts,
+  with matching recorded SHA256 values;
+- final RTX 4080 and RTX 4090 acceptance bundles from the same artifacts;
+- the validated 144-unit reference/optimized/FLA `lm_eval` matrix;
+- final-wheel SFT, DPO, and GRPO reproducibility gates;
+- six tagged Hugging Face model repositories and Hub re-download smoke tests;
+- verified GitHub 1.0 release assets and both PyPI projects.
+
+Existing development and diagnostic runs are useful evidence, but they do not
+replace the immutable-artifact records above.
+
+## Published history
+
+Version 0.9.0 is the previously published reference release. Its six-model Hub
+and PyPI evidence remains archived under
 [`results/release/hf-v0.9.0-v100`](results/release/hf-v0.9.0-v100/README.md).
+That evidence documents v0.9.0 only and must not be presented as completion of
+the 1.0 candidate.

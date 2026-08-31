@@ -4,12 +4,16 @@
 The file intentionally shows the full model structure: token mixing, channel
 mixing, residuals, normalization, layer iteration, cache handling, language
 model loss, and generation integration. Optional acceleration enters through
-three versioned boundaries in ops_rwkv7.py: stateless training linears, the
-recurrence, and one early whole-layer-loop hook. None of these boundaries owns
-model, configuration, cache, parameter, adapter, or optimizer definitions.
+four versioned boundaries in ops_rwkv7.py: stateless Mix6 and training-linear
+leaves, the recurrence, and one inference-only whole-layer-loop hook. None of
+these boundaries own model, configuration, cache, parameter, adapter, or
+optimizer definitions.
 """
+
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 import hashlib
 import importlib.util
 import math
@@ -20,7 +24,10 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
 from transformers.modeling_utils import PreTrainedModel
 
 try:
@@ -32,10 +39,13 @@ try:
     from .cache_rwkv7 import RWKV7Cache
     from .configuration_rwkv7 import RWKV7Config
     from .ops_rwkv7 import (
+        RWKV7ExecutionContext,
+        linear_execution_context,
         maybe_linear_training,
+        maybe_mix6_training,
         maybe_model_forward,
+        resolve_execution_context,
         rwkv7_recurrent,
-        set_training_batch_context,
     )
 except ModuleNotFoundError:
     # Transformers < 5 does not sanitize dots in Hub repository names when it
@@ -61,10 +71,13 @@ except ModuleNotFoundError:
     RWKV7Cache = _load_remote_sibling("cache_rwkv7").RWKV7Cache
     RWKV7Config = _load_remote_sibling("configuration_rwkv7").RWKV7Config
     _remote_ops = _load_remote_sibling("ops_rwkv7")
+    RWKV7ExecutionContext = _remote_ops.RWKV7ExecutionContext
+    linear_execution_context = _remote_ops.linear_execution_context
     maybe_linear_training = _remote_ops.maybe_linear_training
+    maybe_mix6_training = _remote_ops.maybe_mix6_training
     maybe_model_forward = _remote_ops.maybe_model_forward
+    resolve_execution_context = _remote_ops.resolve_execution_context
     rwkv7_recurrent = _remote_ops.rwkv7_recurrent
-    set_training_batch_context = _remote_ops.set_training_batch_context
 
 
 # Mathematically equivalent form used by the official NumPy reference.
@@ -80,6 +93,89 @@ RWKV7_DECAY_BASE = math.exp(-0.5)
 # execution rule, not hardware dispatch: there are no device checks, tuning
 # tables, environment variables, or alternate kernels here.
 RWKV7_REFERENCE_LINEAR_ROWS = 128
+
+
+# ---------------------------------------------------------------------------
+# Narrow execution-context bridges for standard HF module boundaries
+# ---------------------------------------------------------------------------
+
+
+_execution_context_capture: ContextVar[list[RWKV7ExecutionContext | None] | None] = (
+    ContextVar("rwkv7_model_execution_context_capture", default=None)
+)
+
+
+@contextmanager
+def _capture_model_execution_context():
+    """Capture one trusted decoder context without private ``forward`` kwargs.
+
+    The causal-LM wrapper still calls the decoder through ``nn.Module.__call__``
+    so Accelerate/FSDP/offload and user hooks see the ordinary HF boundary.
+    A fresh holder plus the ContextVar reset token makes nesting, exceptions,
+    and concurrent tasks independent.
+    """
+
+    holder: list[RWKV7ExecutionContext | None] = [None]
+    token = _execution_context_capture.set(holder)
+    try:
+        yield holder
+    finally:
+        _execution_context_capture.reset(token)
+
+
+def _publish_model_execution_context(context: RWKV7ExecutionContext) -> None:
+    holder = _execution_context_capture.get()
+    if holder is not None:
+        holder[0] = context
+
+
+def _reference_head_execution_context(*, training: bool) -> RWKV7ExecutionContext:
+    """Return a safe LM-head context when a custom decoder publishes none."""
+
+    return RWKV7ExecutionContext(
+        training=training,
+        fully_active=False,
+        initial_state_zero=None,
+        autograd_leaf_eligible=None,
+        force_reference_program=training,
+        optimized_program=False if training else None,
+        program_id=None,
+        token_aligned=None,
+        program_implementation="torch-reference-training-program-v1",
+        program_reason="the custom decoder did not publish an RWKV7 context",
+    )
+
+
+def _module_has_runtime_instrumentation(module: nn.Module) -> bool:
+    """Detect wrappers that a whole-model shortcut would otherwise bypass."""
+
+    for child in module.modules():
+        if any(
+            bool(getattr(child, name, None))
+            for name in (
+                "_forward_pre_hooks",
+                "_forward_hooks",
+                "_backward_pre_hooks",
+                "_backward_hooks",
+            )
+        ):
+            return True
+        # Accelerate hooks replace ``forward`` on the instance and retain the
+        # original callable in ``_old_forward``. torch.compile similarly
+        # installs a compiled call implementation. All must retain __call__.
+        if (
+            "forward" in child.__dict__
+            or hasattr(child, "_hf_hook")
+            or hasattr(child, "_old_forward")
+            or getattr(child, "_compiled_call_impl", None) is not None
+        ):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Readable tensor primitives
+# ---------------------------------------------------------------------------
 
 
 def _linear_reference(
@@ -102,9 +198,7 @@ def _linear_reference(
     batch_size, sequence_length, input_size = value.shape
     batch_groups: list[torch.Tensor] = []
     for batch_start in range(0, batch_size, RWKV7_REFERENCE_LINEAR_ROWS):
-        group = value[
-            batch_start : batch_start + RWKV7_REFERENCE_LINEAR_ROWS
-        ]
+        group = value[batch_start : batch_start + RWKV7_REFERENCE_LINEAR_ROWS]
         valid_batch = int(group.shape[0])
         padded_batch = 1 << (valid_batch - 1).bit_length()
         tokens_per_block = RWKV7_REFERENCE_LINEAR_ROWS // padded_batch
@@ -138,7 +232,13 @@ def _linear_reference(
 
 
 class RWKV7Linear(nn.Linear):
-    """Checkpoint-compatible linear with a stateless optional training leaf."""
+    """Standard ``nn.Linear`` contract with an optional training leaf.
+
+    The resolved model-call context is supplied by a lexical scope around the
+    readable layer loop.  Keeping ``forward(value)`` unchanged is important:
+    PEFT, TorchAO, bitsandbytes, and user replacements all assume the ordinary
+    PyTorch linear-module call contract.
+    """
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         optimized = maybe_linear_training(
@@ -150,6 +250,13 @@ class RWKV7Linear(nn.Linear):
         if optimized is not None:
             return optimized
         return _linear_reference(value, self.weight, self.bias)
+
+    # The optional wheel uses this model-owned semantic marker instead of an
+    # adapter import. Attaching it to this exact function makes a later
+    # class-level ``forward`` replacement invalidate the raw-weight contract;
+    # subclasses must remain callable unless they explicitly define the same
+    # contract themselves.
+    forward._rwkv7_dense_linear_contract = True
 
 
 def _layer_norm(hidden_size: int, eps: float, bias: bool) -> nn.LayerNorm:
@@ -169,9 +276,7 @@ def _normalize_attention_mask(
     device: torch.device,
 ) -> torch.Tensor:
     if attention_mask is None:
-        return torch.ones(
-            batch_size, sequence_length, dtype=torch.bool, device=device
-        )
+        return torch.ones(batch_size, sequence_length, dtype=torch.bool, device=device)
     if not isinstance(attention_mask, torch.Tensor):
         raise TypeError("attention_mask must be a torch.Tensor")
     if attention_mask.ndim == 1:
@@ -185,10 +290,57 @@ def _normalize_attention_mask(
     return attention_mask[:, -sequence_length:].to(device=device, dtype=torch.bool)
 
 
+def _causal_language_model_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    """Compute shifted causal CE without materializing shifted logits.
+
+    Logits remain in their contiguous ``[B, T, V]`` layout. Only the compact
+    integer targets are shifted, and the final time step is ignored. Summed CE
+    divided by a clamped valid-token count preserves the ordinary mean while
+    returning a finite zero for an empty or fully ignored target set.
+    """
+
+    shifted_targets = torch.cat(
+        (labels[:, 1:], labels.new_full((int(labels.shape[0]), 1), -100)),
+        dim=1,
+    )
+    if attention_mask is not None:
+        label_mask = attention_mask[:, -labels.shape[1] :].to(
+            device=shifted_targets.device,
+            dtype=torch.bool,
+        )
+        target_mask = torch.cat(
+            (
+                label_mask[:, 1:],
+                torch.zeros(
+                    int(label_mask.shape[0]),
+                    1,
+                    device=label_mask.device,
+                    dtype=torch.bool,
+                ),
+            ),
+            dim=1,
+        )
+        shifted_targets = shifted_targets.masked_fill(~target_mask, -100)
+    loss_sum = F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]).float(),
+        shifted_targets.reshape(-1),
+        ignore_index=-100,
+        reduction="sum",
+    )
+    valid_tokens = (shifted_targets != -100).sum().clamp_min(1)
+    return loss_sum / valid_tokens.to(dtype=loss_sum.dtype)
+
+
 def _masked_token_shift(
     hidden_states: torch.Tensor,
     previous: torch.Tensor,
     attention_mask: torch.Tensor,
+    *,
+    fully_active: bool,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return the preceding valid token and the final shift state."""
 
@@ -196,7 +348,7 @@ def _masked_token_shift(
     if tuple(previous.shape) != (batch_size, int(hidden_states.shape[-1])):
         raise ValueError("shift state must be shaped [batch, hidden]")
 
-    if bool(attention_mask.all().detach().cpu()):
+    if fully_active:
         shifted = torch.cat((previous.unsqueeze(1), hidden_states[:, :-1]), dim=1)
         return shifted, hidden_states[:, -1]
 
@@ -233,6 +385,11 @@ def _group_norm_reference(
     )
 
 
+# ---------------------------------------------------------------------------
+# RWKV-7 low-rank, token-mix, channel-mix, and block structure
+# ---------------------------------------------------------------------------
+
+
 class RWKV7LowRank(nn.Module):
     """Two linear layers with checkpoint-compatible lora.0/lora.2 names."""
 
@@ -260,14 +417,24 @@ class RWKV7LowRank(nn.Module):
                 torch.zeros(output_size, dtype=torch.float32)
             )
 
-    def project(self, value: torch.Tensor, activation=None) -> torch.Tensor:
+    def project(
+        self,
+        value: torch.Tensor,
+        activation=None,
+        *,
+        execution_context: RWKV7ExecutionContext | None = None,
+    ) -> torch.Tensor:
         value = self.lora[0](value)
         if activation is not None:
             value = activation(value)
         return self.lora[2](value)
 
     def project_without_bias(
-        self, value: torch.Tensor, activation=None
+        self,
+        value: torch.Tensor,
+        activation=None,
+        *,
+        execution_context: RWKV7ExecutionContext | None = None,
     ) -> torch.Tensor:
         """Apply both low-rank matrices while leaving the final bias external.
 
@@ -284,6 +451,7 @@ class RWKV7LowRank(nn.Module):
             self.lora[2].weight,
             None,
             training=self.training,
+            execution_context=execution_context,
         )
         if optimized is not None:
             return optimized
@@ -365,30 +533,60 @@ class RWKV7TimeMix(nn.Module):
         shift_state: torch.Tensor,
         v_first: torch.Tensor,
         attention_mask: torch.Tensor,
+        mask_fully_active: bool,
+        initial_state_zero: bool | None = None,
+        *,
+        execution_context: RWKV7ExecutionContext | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, sequence_length, _ = hidden_states.shape
         shifted, final_shift = _masked_token_shift(
-            hidden_states, shift_state, attention_mask
+            hidden_states,
+            shift_state,
+            attention_mask,
+            fully_active=mask_fully_active,
         )
-        delta = shifted - hidden_states
-
-        xr = hidden_states + delta * self.x_r
-        xw = hidden_states + delta * self.x_w
-        xk = hidden_states + delta * self.x_k
-        xv = hidden_states + delta * self.x_v
-        xa = hidden_states + delta * self.x_a
-        xg = hidden_states + delta * self.x_g
+        mixed_inputs = maybe_mix6_training(
+            hidden_states,
+            shifted,
+            (self.x_r, self.x_w, self.x_k, self.x_v, self.x_a, self.x_g),
+            training=self.training,
+            execution_context=execution_context,
+        )
+        if mixed_inputs is None:
+            # The optional Mix6 leaf consumes ``hidden_states`` and ``shifted``
+            # directly.  Form their difference only for the readable fallback
+            # so a successful optimized dispatch does not allocate and launch
+            # the same B*T*C subtraction twice.
+            delta = shifted - hidden_states
+            xr = hidden_states + delta * self.x_r
+            xw = hidden_states + delta * self.x_w
+            xk = hidden_states + delta * self.x_k
+            xv = hidden_states + delta * self.x_v
+            xa = hidden_states + delta * self.x_a
+            xg = hidden_states + delta * self.x_g
+        else:
+            xr, xw, xk, xv, xa, xg = mixed_inputs
 
         receptance = self.r_proj(xr)
         # ``w0`` is evaluated in FP32 by the official implementation.  Keep
         # the low-rank update in the model dtype, then add the stored bias only
         # after promoting both terms.  This is especially important when a
         # FP16 checkpoint is executed as BF16.
-        raw_decay = self.w_lora.project_without_bias(xw, torch.tanh)
+        raw_decay = self.w_lora.project_without_bias(
+            xw,
+            torch.tanh,
+            execution_context=execution_context,
+        )
         key = self.k_proj(xk)
         value = self.v_proj(xv)
-        in_context_learning = torch.sigmoid(self.a_lora.project(xa))
-        gate = self.g_lora.project(xg, torch.sigmoid)
+        in_context_learning = torch.sigmoid(
+            self.a_lora.project(xa, execution_context=execution_context)
+        )
+        gate = self.g_lora.project(
+            xg,
+            torch.sigmoid,
+            execution_context=execution_context,
+        )
 
         weighted_key = key * self.k_k.view(1, 1, -1)
         normalized_key = F.normalize(
@@ -400,9 +598,7 @@ class RWKV7TimeMix(nn.Module):
             ),
             p=2,
             dim=-1,
-        ).view(
-            batch_size, sequence_length, self.attention_hidden_size
-        )
+        ).view(batch_size, sequence_length, self.attention_hidden_size)
         key = key * (
             1
             + (in_context_learning - 1)
@@ -410,19 +606,23 @@ class RWKV7TimeMix(nn.Module):
         )
 
         if self.layer_idx == 0:
-            v_first = torch.where(
-                attention_mask.unsqueeze(-1), value, torch.zeros_like(value)
-            )
+            if mask_fully_active:
+                v_first = value
+            else:
+                v_first = torch.where(
+                    attention_mask.unsqueeze(-1), value, torch.zeros_like(value)
+                )
         else:
-            value_mix = torch.sigmoid(self.v_lora.project(xv))
+            value_mix = torch.sigmoid(
+                self.v_lora.project(xv, execution_context=execution_context)
+            )
             value = value + (v_first - value) * value_mix
 
         decay_bias = self.w_lora.lora[2].bias
         if decay_bias is None:  # pragma: no cover - checkpoint contract guard
             raise RuntimeError("RWKV7 decay projection requires the w0 bias")
         decay = torch.exp(
-            -RWKV7_DECAY_BASE
-            * torch.sigmoid(raw_decay.float() + decay_bias.float())
+            -RWKV7_DECAY_BASE * torch.sigmoid(raw_decay.float() + decay_bias.float())
         )
 
         shape = (
@@ -441,6 +641,8 @@ class RWKV7TimeMix(nn.Module):
             recurrent_state,
             attention_mask,
             training=self.training,
+            initial_state_zero=initial_state_zero,
+            execution_context=execution_context,
         )
 
         recurrent_output = recurrent_output.reshape(
@@ -464,7 +666,8 @@ class RWKV7TimeMix(nn.Module):
             batch_size, sequence_length, self.attention_hidden_size
         )
         output = self.o_proj(mixed * gate)
-        output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
+        if not mask_fully_active:
+            output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
         return output, recurrent_state, final_shift, v_first
 
 
@@ -474,9 +677,7 @@ class RWKV7ChannelMix(nn.Module):
     def __init__(self, config: RWKV7Config):
         super().__init__()
         self.x_k = nn.Parameter(torch.zeros(config.hidden_size))
-        self.key = RWKV7Linear(
-            config.hidden_size, config.intermediate_size, bias=False
-        )
+        self.key = RWKV7Linear(config.hidden_size, config.intermediate_size, bias=False)
         self.value = RWKV7Linear(
             config.intermediate_size, config.hidden_size, bias=False
         )
@@ -486,14 +687,21 @@ class RWKV7ChannelMix(nn.Module):
         hidden_states: torch.Tensor,
         shift_state: torch.Tensor,
         attention_mask: torch.Tensor,
+        mask_fully_active: bool,
+        *,
+        execution_context: RWKV7ExecutionContext | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         shifted, final_shift = _masked_token_shift(
-            hidden_states, shift_state, attention_mask
+            hidden_states,
+            shift_state,
+            attention_mask,
+            fully_active=mask_fully_active,
         )
         mixed = hidden_states + (shifted - hidden_states) * self.x_k.view(1, 1, -1)
         activated = torch.relu(self.key(mixed)).square()
         output = self.value(activated)
-        output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
+        if not mask_fully_active:
+            output = output * attention_mask.unsqueeze(-1).to(dtype=output.dtype)
         return output, final_shift
 
 
@@ -511,10 +719,11 @@ class RWKV7Block(nn.Module):
         self.ffn_norm = _layer_norm(
             config.hidden_size, config.norm_eps, config.norm_bias
         )
-        if self.layer_idx == 0:
-            self.pre_norm = _layer_norm(
-                config.hidden_size, config.norm_eps, config.norm_bias
-            )
+        self.pre_norm = (
+            _layer_norm(config.hidden_size, config.norm_eps, config.norm_bias)
+            if self.layer_idx == 0
+            else nn.Identity()
+        )
 
     def forward(
         self,
@@ -524,6 +733,10 @@ class RWKV7Block(nn.Module):
         ffn_shift: torch.Tensor,
         v_first: torch.Tensor,
         attention_mask: torch.Tensor,
+        mask_fully_active: bool,
+        initial_state_zero: bool,
+        *,
+        execution_context: RWKV7ExecutionContext | None = None,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor,
@@ -531,11 +744,7 @@ class RWKV7Block(nn.Module):
         torch.Tensor,
         torch.Tensor,
     ]:
-        residual = (
-            self.pre_norm(hidden_states)
-            if hasattr(self, "pre_norm")
-            else hidden_states
-        )
+        residual = self.pre_norm(hidden_states)
         attention_input = self.attn_norm(residual)
         attention_output, recurrent_state, attention_shift, v_first = self.attn(
             attention_input,
@@ -543,18 +752,26 @@ class RWKV7Block(nn.Module):
             attention_shift,
             v_first,
             attention_mask,
+            mask_fully_active,
+            initial_state_zero,
+            execution_context=execution_context,
         )
         hidden_states = residual + attention_output
 
         residual = hidden_states
         ffn_input = self.ffn_norm(hidden_states)
         ffn_output, ffn_shift = self.ffn(
-            ffn_input, ffn_shift, attention_mask
+            ffn_input,
+            ffn_shift,
+            attention_mask,
+            mask_fully_active,
+            execution_context=execution_context,
         )
         hidden_states = residual + ffn_output
-        hidden_states = hidden_states * attention_mask.unsqueeze(-1).to(
-            dtype=hidden_states.dtype
-        )
+        if not mask_fully_active:
+            hidden_states = hidden_states * attention_mask.unsqueeze(-1).to(
+                dtype=hidden_states.dtype
+            )
         return (
             hidden_states,
             recurrent_state,
@@ -562,6 +779,11 @@ class RWKV7Block(nn.Module):
             ffn_shift,
             v_first,
         )
+
+
+# ---------------------------------------------------------------------------
+# Hugging Face model and causal-LM contracts
+# ---------------------------------------------------------------------------
 
 
 class RWKV7PreTrainedModel(PreTrainedModel):
@@ -573,6 +795,7 @@ class RWKV7PreTrainedModel(PreTrainedModel):
     _skip_keys_device_placement = ["past_key_values"]
     _supports_cache_class = True
     _tied_weights_keys = {}
+
     @classmethod
     def _supports_default_dynamic_cache(cls) -> bool:
         # RWKV recurrent state is not a Transformer key/value cache.
@@ -608,9 +831,7 @@ class RWKV7Model(RWKV7PreTrainedModel):
         self.layers = nn.ModuleList(
             [RWKV7Block(config, index) for index in range(config.num_hidden_layers)]
         )
-        self.norm = _layer_norm(
-            config.hidden_size, config.norm_eps, config.norm_bias
-        )
+        self.norm = _layer_norm(config.hidden_size, config.norm_eps, config.norm_bias)
         self.gradient_checkpointing = False
         self.post_init()
 
@@ -669,9 +890,7 @@ class RWKV7Model(RWKV7PreTrainedModel):
             )
         return (
             recurrent.to(device=hidden_states.device),
-            attention_shift.to(
-                device=hidden_states.device, dtype=hidden_states.dtype
-            ),
+            attention_shift.to(device=hidden_states.device, dtype=hidden_states.dtype),
             ffn_shift.to(device=hidden_states.device, dtype=hidden_states.dtype),
         )
 
@@ -684,24 +903,26 @@ class RWKV7Model(RWKV7PreTrainedModel):
         ffn_shift: torch.Tensor,
         v_first: torch.Tensor,
         attention_mask: torch.Tensor,
+        execution_context: RWKV7ExecutionContext,
+        initial_state_zero: bool,
     ):
         def custom_forward(hidden, state, attn_shift, channel_shift, first_value):
-            # Autograd may recompute a checkpoint on a worker context that
-            # does not inherit Python ContextVars from the outer model call.
-            # Re-publish only the mask semantic here so optional stateless
-            # linears select the same mathematical program in both passes.
-            set_training_batch_context(
-                attention_mask,
-                training=self.training,
-            )
-            return layer(
-                hidden,
-                state,
-                attn_shift,
-                channel_shift,
-                first_value,
-                attention_mask,
-            )
+            # Capture the immutable preflight result explicitly so forward and
+            # checkpoint replay cannot select different optional programs.
+            # The scope is re-published inside the closure because checkpoint
+            # replay may execute after the caller's lexical scope has ended.
+            with linear_execution_context(execution_context):
+                return layer(
+                    hidden,
+                    state,
+                    attn_shift,
+                    channel_shift,
+                    first_value,
+                    attention_mask,
+                    execution_context.fully_active,
+                    initial_state_zero,
+                    execution_context=execution_context,
+                )
 
         checkpoint_fn = getattr(self, "_gradient_checkpointing_func", None)
         if checkpoint_fn is not None:
@@ -725,27 +946,33 @@ class RWKV7Model(RWKV7PreTrainedModel):
             use_reentrant=False,
         )
 
-    def forward(
+    def _uses_reentrant_gradient_checkpointing(self) -> bool:
+        """Return whether the configured checkpoint function runs forward in no-grad."""
+
+        if not (self.gradient_checkpointing and self.training):
+            return False
+        checkpoint_fn = getattr(self, "_gradient_checkpointing_func", None)
+        if checkpoint_fn is None:
+            # The local fallback in ``_checkpointed_layer`` is explicitly
+            # non-reentrant.  Transformers installs a functools.partial when
+            # callers select another checkpoint policy.
+            return False
+        keywords = getattr(checkpoint_fn, "keywords", None)
+        if isinstance(keywords, dict) and keywords.get("use_reentrant") is False:
+            return False
+        # PyTorch's historical/default checkpoint behavior is reentrant.  A
+        # custom callable with no inspectable keyword is therefore treated
+        # conservatively rather than granting an invalid fast-program token.
+        return True
+
+    def _prepare_model_inputs(
         self,
-        input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-        past_key_values: RWKV7Cache | None = None,
-        use_cache: bool | None = None,
-        output_hidden_states: bool | None = None,
-        output_attentions: bool | None = None,
-        return_dict: bool | None = None,
-        cache_position: torch.LongTensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        **kwargs,
-    ) -> tuple | BaseModelOutputWithPast:
-        del cache_position, position_ids, kwargs
-        if output_attentions is None:
-            output_attentions = bool(self.config.output_attentions)
-        if output_attentions:
-            raise NotImplementedError(
-                "RWKV7 does not expose Transformer-style attention matrices"
-            )
+        input_ids: torch.LongTensor | None,
+        inputs_embeds: torch.Tensor | None,
+        attention_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, bool]:
+        """Validate inputs and return embeddings plus the canonical mask."""
+
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("specify input_ids or inputs_embeds, not both")
         if input_ids is None and inputs_embeds is None:
@@ -772,10 +999,82 @@ class RWKV7Model(RWKV7PreTrainedModel):
             int(sequence_length),
             inputs_embeds.device,
         )
-        set_training_batch_context(mask, training=self.training)
-        hidden_states = inputs_embeds * mask.unsqueeze(-1).to(
-            dtype=inputs_embeds.dtype
+        return inputs_embeds, mask, attention_mask is None
+
+    def _resolve_model_execution_context(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        mask_was_omitted: bool,
+        initial_state_zero: bool,
+    ) -> RWKV7ExecutionContext:
+        """Resolve the one immutable execution decision for this model call."""
+
+        reentrant_checkpoint = self._uses_reentrant_gradient_checkpointing()
+        return resolve_execution_context(
+            attention_mask,
+            training=self.training,
+            fully_active=(True if mask_was_omitted else None),
+            initial_state_zero=initial_state_zero,
+            autograd_leaf_eligible=bool(
+                torch.is_grad_enabled()
+                and hidden_states.requires_grad
+                and not reentrant_checkpoint
+            ),
+            force_reference_program=reentrant_checkpoint,
+            hidden_states=hidden_states,
+            head_dim=int(self.config.head_dim),
         )
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: RWKV7Cache | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        output_attentions: bool | None = None,
+        return_dict: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        **kwargs,
+    ) -> tuple | BaseModelOutputWithPast:
+        if "_execution_context" in kwargs or "_execution_context_token" in kwargs:
+            raise TypeError("execution-context kwargs are internal to RWKV7")
+        del cache_position, position_ids, kwargs
+        if output_attentions is None:
+            output_attentions = bool(self.config.output_attentions)
+        if output_attentions:
+            raise NotImplementedError(
+                "RWKV7 does not expose Transformer-style attention matrices"
+            )
+        inputs_embeds, mask, mask_was_omitted = self._prepare_model_inputs(
+            input_ids,
+            inputs_embeds,
+            attention_mask,
+        )
+        batch_size, sequence_length, _ = inputs_embeds.shape
+        batch_initial_state_zero = past_key_values is None
+        # Determine mask semantics once per model call.  The old implementation
+        # copied ``attention_mask.all()`` to the host in every TMix and CMix
+        # layer, serializing the CUDA queue dozens of times at large batch.
+        # A missing mask is known to be fully active without touching the GPU;
+        # an explicit mask pays at most one synchronization here.
+        execution_context = self._resolve_model_execution_context(
+            inputs_embeds,
+            mask,
+            mask_was_omitted=mask_was_omitted,
+            initial_state_zero=batch_initial_state_zero,
+        )
+        _publish_model_execution_context(execution_context)
+        mask_fully_active = execution_context.fully_active
+        hidden_states = inputs_embeds
+        if not mask_fully_active:
+            hidden_states = hidden_states * mask.unsqueeze(-1).to(
+                dtype=hidden_states.dtype
+            )
 
         use_cache = self.config.use_cache if use_cache is None else bool(use_cache)
         if self.training or (self.gradient_checkpointing and torch.is_grad_enabled()):
@@ -793,10 +1092,6 @@ class RWKV7Model(RWKV7PreTrainedModel):
             working_cache = RWKV7Cache(num_layers=len(self.layers))
         elif isinstance(past_key_values, RWKV7Cache):
             working_cache = past_key_values
-            while len(working_cache) < len(self.layers):
-                working_cache.recurrent_state.append(None)
-                working_cache.attention_shift.append(None)
-                working_cache.ffn_shift.append(None)
         else:
             working_cache = RWKV7Cache.from_legacy_cache(past_key_values)
 
@@ -806,20 +1101,41 @@ class RWKV7Model(RWKV7PreTrainedModel):
                 "past_key_values batch size does not match the current input"
             )
 
-        optimized = maybe_model_forward(
-            self,
-            {
-                "model_kind": "base",
-                "hidden_states": hidden_states,
-                "attention_mask": mask,
-                "past_key_values": working_cache,
-                "training": bool(self.training),
-                "gradient_checkpointing": bool(self.gradient_checkpointing),
-                "grad_enabled": bool(torch.is_grad_enabled()),
-                "use_cache": use_cache,
-                "output_hidden_states": output_hidden_states,
-            },
+        optimized = None
+        model_request = {
+            "model_kind": "base",
+            "hidden_states": hidden_states,
+            "attention_mask": mask,
+            "past_key_values": working_cache,
+            "training": bool(self.training),
+            "gradient_checkpointing": bool(self.gradient_checkpointing),
+            "grad_enabled": bool(torch.is_grad_enabled()),
+            "use_cache": use_cache,
+            "output_hidden_states": output_hidden_states,
+        }
+        # Training and grad-enabled evaluation cannot use the inference-only
+        # whole-model shortcut.  A real ``train()`` call still crosses the
+        # public model boundary once so provenance records the complete
+        # readable program; ``maybe_model_forward`` returns before importing
+        # or executing the optional wheel in this case.  Grad-enabled eval and
+        # instrumented inference remain entirely outside that boundary.  Check
+        # the cheap inference fact before walking the module tree for
+        # hooks/wrappers on every decode token.
+        model_shortcut_candidate = bool(
+            not self.training and not torch.is_grad_enabled()
         )
+        if self.training:
+            maybe_model_forward(
+                self,
+                model_request,
+                execution_context=execution_context,
+            )
+        elif model_shortcut_candidate and not _module_has_runtime_instrumentation(self):
+            optimized = maybe_model_forward(
+                self,
+                model_request,
+                execution_context=execution_context,
+            )
         if optimized is not None:
             optimized_hidden = optimized["last_hidden_state"]
             optimized_cache = optimized.get("past_key_values")
@@ -837,8 +1153,21 @@ class RWKV7Model(RWKV7PreTrainedModel):
                 hidden_states=optimized_history,
             )
 
+        # Normalize an underspecified cache only after the optional model
+        # transaction has declined.  A no-cache call uses a private clone so
+        # the caller's cache remains observationally unchanged.
+        if len(working_cache) < len(self.layers):
+            if past_key_values is working_cache and not use_cache:
+                working_cache = working_cache.clone()
+            while len(working_cache) < len(self.layers):
+                working_cache.recurrent_state.append(None)
+                working_cache.attention_shift.append(None)
+                working_cache.ffn_shift.append(None)
+
         all_hidden_states = (hidden_states,) if output_hidden_states else None
-        v_first = torch.zeros(
+        # Layer zero defines every v_first element before a later layer reads
+        # it, so this placeholder need not pay for a full-tensor zero fill.
+        v_first = torch.empty(
             batch_size,
             sequence_length,
             self.config.attention_hidden_size,
@@ -846,51 +1175,80 @@ class RWKV7Model(RWKV7PreTrainedModel):
             dtype=hidden_states.dtype,
         )
 
-        for layer_idx, layer in enumerate(self.layers):
-            recurrent, attention_shift, ffn_shift = self._layer_state(
-                working_cache, layer_idx, hidden_states
-            )
-            v_first = v_first.to(
-                device=hidden_states.device, dtype=hidden_states.dtype
-            )
-            layer_mask = mask.to(device=hidden_states.device)
-            if self.gradient_checkpointing and self.training:
-                outputs = self._checkpointed_layer(
-                    layer,
+        checkpointing_active = bool(self.gradient_checkpointing and self.training)
+        # Inference linears return before consulting the training context.  A
+        # non-checkpointed training call publishes the immutable decision once
+        # for the entire layer loop instead of setting/resetting a ContextVar
+        # for every layer. Checkpoint replay republishes inside its closure.
+        linear_scope = (
+            linear_execution_context(execution_context)
+            if self.training and not checkpointing_active
+            else nullcontext()
+        )
+        with linear_scope:
+            for layer_idx, layer in enumerate(self.layers):
+                # Cache provenance is a Python-side fact.  Only a missing layer,
+                # for which `_layer_state` allocates fresh zeros, may claim the
+                # factorized leaf's zero-state contract. Existing tensors are not
+                # reduced or guessed to be zero.
+                initial_state_zero = any(
+                    collection[layer_idx] is None
+                    for collection in (
+                        working_cache.recurrent_state,
+                        working_cache.attention_shift,
+                        working_cache.ffn_shift,
+                    )
+                )
+                recurrent, attention_shift, ffn_shift = self._layer_state(
+                    working_cache, layer_idx, hidden_states
+                )
+                v_first = v_first.to(
+                    device=hidden_states.device, dtype=hidden_states.dtype
+                )
+                layer_mask = mask.to(device=hidden_states.device)
+                if checkpointing_active:
+                    outputs = self._checkpointed_layer(
+                        layer,
+                        hidden_states,
+                        recurrent,
+                        attention_shift,
+                        ffn_shift,
+                        v_first,
+                        layer_mask,
+                        execution_context,
+                        initial_state_zero,
+                    )
+                else:
+                    outputs = layer(
+                        hidden_states,
+                        recurrent,
+                        attention_shift,
+                        ffn_shift,
+                        v_first,
+                        layer_mask,
+                        mask_fully_active,
+                        initial_state_zero,
+                        execution_context=execution_context,
+                    )
+                (
                     hidden_states,
                     recurrent,
                     attention_shift,
                     ffn_shift,
                     v_first,
-                    layer_mask,
-                )
-            else:
-                outputs = layer(
-                    hidden_states,
-                    recurrent,
-                    attention_shift,
-                    ffn_shift,
-                    v_first,
-                    layer_mask,
-                )
-            (
-                hidden_states,
-                recurrent,
-                attention_shift,
-                ffn_shift,
-                v_first,
-            ) = outputs
-            if use_cache:
-                working_cache.set_layer(
-                    layer_idx, recurrent, attention_shift, ffn_shift
-                )
-            if output_hidden_states and layer_idx + 1 < len(self.layers):
-                all_hidden_states += (hidden_states,)
+                ) = outputs
+                if use_cache:
+                    working_cache.set_layer(
+                        layer_idx, recurrent, attention_shift, ffn_shift
+                    )
+                if output_hidden_states and layer_idx + 1 < len(self.layers):
+                    all_hidden_states += (hidden_states,)
 
         hidden_states = self.norm(hidden_states)
-        hidden_states = hidden_states * mask.to(
-            hidden_states.device
-        ).unsqueeze(-1).to(dtype=hidden_states.dtype)
+        if not mask_fully_active:
+            hidden_states = hidden_states * mask.to(hidden_states.device).unsqueeze(
+                -1
+            ).to(dtype=hidden_states.dtype)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -934,9 +1292,7 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
     def __init__(self, config: RWKV7Config):
         super().__init__(config)
         self.model = RWKV7Model(config)
-        self.lm_head = RWKV7Linear(
-            config.hidden_size, config.vocab_size, bias=False
-        )
+        self.lm_head = RWKV7Linear(config.hidden_size, config.vocab_size, bias=False)
         self.post_init()
 
     def get_input_embeddings(self):
@@ -997,9 +1353,7 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                 model_inputs[key] = kwargs[key]
         return model_inputs
 
-    def _reorder_cache(
-        self, past_key_values: RWKV7Cache, beam_idx: torch.LongTensor
-    ):
+    def _reorder_cache(self, past_key_values: RWKV7Cache, beam_idx: torch.LongTensor):
         return past_key_values.reorder_cache(beam_idx)
 
     def forward(
@@ -1018,24 +1372,28 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
         num_logits_to_keep: int | torch.Tensor | None = None,
         **kwargs,
     ) -> tuple | CausalLMOutputWithPast:
+        if "_execution_context" in kwargs or "_execution_context_token" in kwargs:
+            raise TypeError("execution-context kwargs are internal to RWKV7")
         if num_logits_to_keep is not None:
             if logits_to_keep not in (None, 0):
-                if not (
-                    isinstance(logits_to_keep, torch.Tensor)
-                    and isinstance(num_logits_to_keep, torch.Tensor)
-                    and torch.equal(logits_to_keep, num_logits_to_keep)
-                ) and logits_to_keep != num_logits_to_keep:
-                    raise ValueError(
-                        "logits_to_keep and num_logits_to_keep disagree"
+                if (
+                    not (
+                        isinstance(logits_to_keep, torch.Tensor)
+                        and isinstance(num_logits_to_keep, torch.Tensor)
+                        and torch.equal(logits_to_keep, num_logits_to_keep)
                     )
+                    and logits_to_keep != num_logits_to_keep
+                ):
+                    raise ValueError("logits_to_keep and num_logits_to_keep disagree")
             logits_to_keep = num_logits_to_keep
 
         effective_use_cache = (
             self.config.use_cache if use_cache is None else bool(use_cache)
         )
-        if self.training or (
-            self.model.gradient_checkpointing and torch.is_grad_enabled()
-        ):
+        decoder_checkpointing = bool(
+            getattr(self.model, "gradient_checkpointing", False)
+        )
+        if self.training or (decoder_checkpointing and torch.is_grad_enabled()):
             effective_use_cache = False
         effective_hidden_states = (
             self.config.output_hidden_states
@@ -1045,29 +1403,43 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
         optimized_cache = (
             past_key_values
             if past_key_values is not None
-            else RWKV7Cache(num_layers=len(self.model.layers))
+            else RWKV7Cache(num_layers=int(self.config.num_hidden_layers))
         )
-        optimized = maybe_model_forward(
-            self,
-            {
-                "model_kind": "causal_lm",
-                "input_ids": input_ids,
-                "inputs_embeds": inputs_embeds,
-                "attention_mask": attention_mask,
-                "past_key_values": optimized_cache,
-                "labels": labels,
-                "training": bool(self.training),
-                "gradient_checkpointing": bool(
-                    self.model.gradient_checkpointing
-                ),
-                "grad_enabled": bool(torch.is_grad_enabled()),
-                "use_cache": effective_use_cache,
-                "output_hidden_states": effective_hidden_states,
-                "output_attentions": output_attentions,
-                "cache_position": cache_position,
-                "logits_to_keep": logits_to_keep,
-            },
+        decoder_forward = getattr(self.model, "forward", None)
+        standard_decoder = (
+            type(self.model) is RWKV7Model
+            and getattr(decoder_forward, "__func__", None) is RWKV7Model.forward
         )
+        whole_model_candidate = bool(
+            standard_decoder and not self.training and not torch.is_grad_enabled()
+        )
+        whole_model_eligible = bool(
+            whole_model_candidate
+            and not _module_has_runtime_instrumentation(self.model)
+            and not _module_has_runtime_instrumentation(self.lm_head)
+        )
+        optimized = None
+        if whole_model_eligible:
+            optimized = maybe_model_forward(
+                self,
+                {
+                    "model_kind": "causal_lm",
+                    "input_ids": input_ids,
+                    "inputs_embeds": inputs_embeds,
+                    "attention_mask": attention_mask,
+                    "past_key_values": optimized_cache,
+                    "labels": labels,
+                    "training": bool(self.training),
+                    "gradient_checkpointing": decoder_checkpointing,
+                    "grad_enabled": bool(torch.is_grad_enabled()),
+                    "use_cache": effective_use_cache,
+                    "output_hidden_states": effective_hidden_states,
+                    "output_attentions": output_attentions,
+                    "cache_position": cache_position,
+                    "logits_to_keep": logits_to_keep,
+                },
+                execution_context=None,
+            )
         if optimized is not None:
             optimized_loss = optimized.get("loss")
             optimized_logits = optimized["logits"]
@@ -1093,19 +1465,31 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                 hidden_states=optimized_history,
             )
 
-        outputs = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            inputs_embeds=inputs_embeds,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_hidden_states=output_hidden_states,
-            output_attentions=output_attentions,
-            return_dict=True,
-            cache_position=cache_position,
-            **kwargs,
+        with _capture_model_execution_context() as captured_context:
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                inputs_embeds=inputs_embeds,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_hidden_states=output_hidden_states,
+                output_attentions=output_attentions,
+                return_dict=True,
+                cache_position=cache_position,
+                **kwargs,
+            )
+        execution_context = captured_context[0]
+        if execution_context is None:
+            execution_context = _reference_head_execution_context(
+                training=bool(self.training)
+            )
+        head_scope = (
+            linear_execution_context(execution_context)
+            if self.training
+            else nullcontext()
         )
-        full_logits = self.lm_head(outputs.last_hidden_state)
+        with head_scope:
+            full_logits = self.lm_head(outputs.last_hidden_state)
 
         loss = None
         if labels is not None:
@@ -1113,25 +1497,11 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                 labels = labels.unsqueeze(0)
             if tuple(labels.shape[:2]) != tuple(full_logits.shape[:2]):
                 raise ValueError("labels must have the same [batch, sequence] shape")
-            shifted_labels = labels[:, 1:].contiguous()
-            if attention_mask is not None:
-                label_mask = attention_mask[:, -labels.shape[1] :].to(
-                    device=shifted_labels.device, dtype=torch.bool
-                )
-                shifted_labels = shifted_labels.masked_fill(
-                    ~label_mask[:, 1:], -100
-                )
-            shifted_logits = full_logits[:, :-1].contiguous()
-            if shifted_logits.numel() == 0 or not bool(
-                (shifted_labels != -100).any().detach().cpu()
-            ):
-                loss = full_logits.float().sum() * 0.0
-            else:
-                loss = F.cross_entropy(
-                    shifted_logits.view(-1, shifted_logits.shape[-1]).float(),
-                    shifted_labels.reshape(-1),
-                    ignore_index=-100,
-                )
+            loss = _causal_language_model_loss(
+                full_logits,
+                labels,
+                attention_mask,
+            )
 
         logits = _select_logits(full_logits, logits_to_keep)
         return_dict = (

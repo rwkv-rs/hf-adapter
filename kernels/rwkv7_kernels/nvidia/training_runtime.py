@@ -1,9 +1,12 @@
-"""Direct whole-model training runtime for vendored train_temp autograd ops.
+"""Private whole-model training diagnostic for vendored official RWKV-LM training ops.
 
-Unlike the historical adapter, this runtime never replaces ``forward`` methods
-or adds backend flags to model/config/cache objects. The clean HF model invokes
-it once through the versioned model-forward protocol.
+This module is retained as migration evidence and a focused kernel-development
+diagnostic.  It is deliberately not imported by the public model-forward
+protocol and is not an HF training route.  Standard training always executes
+the readable ``modeling_rwkv7.py`` layer loop, where recurrent, linear, and
+Mix6 tensor leaves may be replaced independently.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,17 +14,47 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from . import train_temp_cuda as train_temp
+from . import official_training_cuda as official_training
 from .training_math import channel_mix, module_linear
 
 
-IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
+IMPLEMENTATION = "native-nvidia-official-training-autograd-v2"
 
 
-def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
-    """Execute dense BF16 forward/backward-capable RWKV-7 training math."""
+def causal_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+) -> torch.Tensor:
+    """Compute the public shifted causal loss without copying shifted logits.
 
-    train_temp.load_train_temp_cuda_extension()
+    The former implementation materialized ``logits[:, :-1].contiguous()`` and
+    then promoted that large tensor to FP32.  Keep logits in their native
+    contiguous ``[B, T, V]`` layout instead and shift the tiny integer target
+    tensor.  A sum divided by the valid-token count also handles an all-ignored
+    batch without a device-to-host synchronization or a NaN mean.
+    """
+
+    shifted_targets = torch.cat(
+        (labels[:, 1:], labels.new_full((int(labels.shape[0]), 1), -100)),
+        dim=1,
+    )
+    loss_sum = F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]).float(),
+        shifted_targets.reshape(-1),
+        ignore_index=-100,
+        reduction="sum",
+    )
+    valid_tokens = (shifted_targets != -100).sum().clamp_min(1)
+    return loss_sum / valid_tokens.to(dtype=loss_sum.dtype)
+
+
+def _run_training_diagnostic(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
+    """Exercise the historical dense BF16 runtime outside the public HF route."""
+
+    # Only Mix6 and ClampW are used by this accepted route. Experimental fused
+    # gates and the optional L2Wrap loss remain separately loadable diagnostics
+    # and must not inflate ordinary HF training cold start.
+    official_training.load_training_runtime_cuda_extensions()
     input_ids = request.get("input_ids")
     inputs_embeds = request.get("inputs_embeds")
     if input_ids is not None:
@@ -34,11 +67,9 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     v_first = hidden_states.new_zeros(1)
 
     def run_layer(layer, hidden, first_value):
-        residual = (
-            layer.pre_norm(hidden) if hasattr(layer, "pre_norm") else hidden
-        )
+        residual = layer.pre_norm(hidden) if hasattr(layer, "pre_norm") else hidden
         attention_input = layer.attn_norm(residual)
-        attention_output, first_value = train_temp._train_temp_attention_forward(
+        attention_output, first_value = official_training._train_temp_attention_forward(
             layer.attn,
             attention_input,
             first_value,
@@ -54,10 +85,8 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     checkpointing = bool(request.get("gradient_checkpointing"))
     for layer in owner.model.layers:
         if checkpointing:
-            hidden_states, v_first = train_temp._train_temp_checkpoint(
-                lambda hidden, first, current=layer: run_layer(
-                    current, hidden, first
-                ),
+            hidden_states, v_first = official_training._train_temp_checkpoint(
+                lambda hidden, first, current=layer: run_layer(current, hidden, first),
                 hidden_states,
                 v_first,
             )
@@ -69,21 +98,10 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     labels = request.get("labels")
     loss = None
     if labels is not None:
-        shifted_logits = full_logits[:, :-1].contiguous()
-        shifted_labels = labels[:, 1:].contiguous()
-        if shifted_logits.numel() == 0 or not bool(
-            (shifted_labels != -100).any().detach().cpu()
-        ):
-            loss = full_logits.float().sum() * 0.0
-        else:
-            # Preserve the public HF loss exactly. The historical train_temp
-            # fused loss adds L2Wrap to the gradient and is therefore exposed
-            # only as a leaf operator, never substituted for standard CE.
-            loss = F.cross_entropy(
-                shifted_logits.view(-1, shifted_logits.shape[-1]).float(),
-                shifted_labels.reshape(-1),
-                ignore_index=-100,
-            )
+        # Preserve standard HF causal CE. The historical fused loss adds
+        # L2Wrap to the gradient and therefore remains a separate leaf rather
+        # than silently changing the public model loss.
+        loss = causal_cross_entropy(full_logits, labels)
 
     keep = request.get("logits_to_keep")
     logits = full_logits
@@ -103,4 +121,4 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["IMPLEMENTATION", "run_training"]
+__all__: list[str] = []

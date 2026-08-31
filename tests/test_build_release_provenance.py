@@ -2,18 +2,33 @@ from __future__ import annotations
 
 from argparse import Namespace
 import hashlib
+import io
 import json
 from pathlib import Path
+import tarfile
 
 import pytest
 
 from conftest import write_valid_hf_wheel, write_valid_kernel_wheel, write_valid_sdist
 from evaluation.build_backend_v2_compact_bundle import build_bundle
-from scripts.build_release_provenance import DEVICE_REPORT, REQUIRED_GATES, build
-from scripts.build_release_provenance import DEVICE_RUN_REPORT
+from scripts.build_release_provenance import (
+    DEVICE_REPORT,
+    DEVICE_RUN_REPORT,
+    REQUIRED_GATES,
+    build,
+    verify_existing,
+)
+from scripts.release_route_contract import (
+    ADAPTIVE_TRAINING_PROGRAM_ROUTE,
+    FORMAL_REFERENCE_BACKEND_ENVIRONMENT,
+    HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE,
+    READABLE_TRAINING_MODEL_ROUTE,
+    REQUIRED_REFERENCE_TRAINING_ROUTES,
+)
 from scripts.verify_release_assets import (
     DEVICES,
     FLA_COMMIT,
+    device_evidence_archive_name,
     expected_artifacts,
     verify,
 )
@@ -68,11 +83,13 @@ def device_report(device: str, identities: dict[str, str]) -> dict:
         "kernel_wheel_sha256": identities[f"rwkv7_kernels-{VERSION}-py3-none-any.whl"],
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
+        "training_policy": "reference",
+        "training_backend_environment": dict(FORMAL_REFERENCE_BACKEND_ENVIRONMENT),
         **{f"{gate}_status": "passed" for gate in REQUIRED_GATES},
         "actual_routes": {
             "prefill": ["native-self-chunk-prefill-v2"],
             "decode": ["native-fused-token-decode-v2"],
-            "training": ["native-nvidia-train-temp-autograd-v2"],
+            "training": sorted(REQUIRED_REFERENCE_TRAINING_ROUTES),
             "quantization": ["native-w8-linear-v1", "torchao-int4-v1"],
         },
     }
@@ -148,6 +165,20 @@ def test_builder_generates_verifiable_deterministic_release(tmp_path: Path):
     assert first == second
     assert (args.directory / "release-provenance.json").read_bytes() == first_provenance
     assert (args.directory / "SHA256SUMS").read_bytes() == first_sums
+    for device in DEVICES:
+        assert (
+            args.directory / device_evidence_archive_name(device, VERSION)
+        ).is_file()
+    rebuilt = verify_existing(
+        Namespace(
+            directory=args.directory,
+            version=VERSION,
+            source_sha=SOURCE_SHA,
+            harness_sha=None,
+            device_evidence=[],
+        )
+    )
+    assert rebuilt == first
     report = verify(
         Namespace(
             directory=args.directory,
@@ -158,6 +189,82 @@ def test_builder_generates_verifiable_deterministic_release(tmp_path: Path):
     )
     assert report["status"] == "passed"
     assert set(report["devices"]) == DEVICES
+
+
+def test_final_verifier_rejects_extra_release_asset(tmp_path: Path):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    (args.directory / "unreviewed-wheel.whl").write_bytes(b"unreviewed")
+    with pytest.raises(ValueError, match="release asset set differs.*unreviewed-wheel"):
+        verify(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                require_validation_passed=True,
+            )
+        )
+
+
+def test_final_verifier_rejects_extra_checksum_row(tmp_path: Path):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    with (args.directory / "SHA256SUMS").open("a", encoding="utf-8") as stream:
+        stream.write(f"{'0' * 64}  undeclared-artifact.bin\n")
+    with pytest.raises(ValueError, match="SHA256SUMS entry set differs.*undeclared"):
+        verify(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                require_validation_passed=True,
+            )
+        )
+
+
+def test_existing_verifier_rejects_rewritten_summary_without_bundle_evidence(
+    tmp_path: Path,
+):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    path = args.directory / "release-provenance.json"
+    declared = json.loads(path.read_text())
+    declared["validation"]["devices"]["rtx-4080"]["speed_status"] = "failed"
+    path.write_text(json.dumps(declared, indent=2, sort_keys=True) + "\n")
+    sums = (args.directory / "SHA256SUMS").read_text().splitlines()
+    sums[-1] = f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+    (args.directory / "SHA256SUMS").write_text("\n".join(sums) + "\n")
+    with pytest.raises(ValueError, match="differs from validated compact evidence"):
+        verify_existing(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                harness_sha=None,
+                device_evidence=[],
+            )
+        )
+
+
+def test_existing_verifier_rejects_unsafe_compact_archive_member(tmp_path: Path):
+    args, _, _ = setup_release(tmp_path)
+    build(args)
+    archive = args.directory / device_evidence_archive_name("rtx-4080", VERSION)
+    with tarfile.open(archive, "w:gz") as tar:
+        payload = b"escape\n"
+        member = tarfile.TarInfo("../escape.txt")
+        member.size = len(payload)
+        tar.addfile(member, io.BytesIO(payload))
+    with pytest.raises(ValueError, match="unsafe compact evidence archive member"):
+        verify_existing(
+            Namespace(
+                directory=args.directory,
+                version=VERSION,
+                source_sha=SOURCE_SHA,
+                harness_sha=None,
+                device_evidence=[],
+            )
+        )
 
 
 def rewrite_bundle(
@@ -196,6 +303,22 @@ def test_builder_rejects_missing_gate(tmp_path: Path):
     )
     replace_arg(args, device, replacement)
     with pytest.raises(ValueError, match="training gate did not pass"):
+        build(args)
+
+
+def test_builder_rejects_non_reference_training_provenance(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["training_backend_environment"].__setitem__(
+            "RWKV7_TRAINING_KERNEL_IMPL", "adaptive"
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="reference training environment differs"):
         build(args)
 
 
@@ -241,6 +364,75 @@ def test_builder_rejects_requested_selector_as_actual_route(tmp_path: Path):
         build(args)
 
 
+def test_builder_rejects_historical_whole_model_training_route(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training", [HISTORICAL_WHOLE_MODEL_TRAINING_ROUTE]
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="historical whole-model train-temp"):
+        build(args)
+
+
+def test_builder_requires_all_clean_training_boundaries(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training", [READABLE_TRAINING_MODEL_ROUTE]
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="complete reference program"):
+        build(args)
+
+
+def test_builder_requires_readable_model_training_boundary(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training",
+            sorted(
+                REQUIRED_REFERENCE_TRAINING_ROUTES
+                - {READABLE_TRAINING_MODEL_ROUTE}
+            ),
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="complete reference program"):
+        build(args)
+
+
+def test_builder_rejects_obsolete_adaptive_training_program(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "rtx-4080"
+    replacement = rewrite_bundle(
+        tmp_path,
+        device=device,
+        bundle=bundles[device],
+        mutate=lambda report: report["actual_routes"].__setitem__(
+            "training",
+            [*sorted(REQUIRED_REFERENCE_TRAINING_ROUTES), ADAPTIVE_TRAINING_PROGRAM_ROUTE],
+        ),
+    )
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="optional diagnostic routes"):
+        build(args)
+
+
 def test_builder_rejects_overlapping_device_acceptance(tmp_path: Path):
     args, bundles, _ = setup_release(tmp_path)
     device = "rtx-4090"
@@ -252,7 +444,9 @@ def test_builder_rejects_overlapping_device_acceptance(tmp_path: Path):
     run = json.loads((source / DEVICE_RUN_REPORT).read_text())
     run["started_at"] = "2026-08-28T00:30:00+00:00"
     (source / DEVICE_RUN_REPORT).write_text(json.dumps(run) + "\n")
-    replacement = build_bundle(compact_args(source, tmp_path / "overlap-bundle", device))
+    replacement = build_bundle(
+        compact_args(source, tmp_path / "overlap-bundle", device)
+    )
     replace_arg(args, device, replacement)
     with pytest.raises(ValueError, match="overlap or violate required order"):
         build(args)

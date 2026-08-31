@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==82.0.1", "wheel==0.47.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -50,13 +50,13 @@ train = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/123123213weqw/hf-adapter"
-Documentation = "https://github.com/123123213weqw/hf-adapter/tree/main/docs"
-Repository = "https://github.com/123123213weqw/hf-adapter"
-Issues = "https://github.com/123123213weqw/hf-adapter/issues"
+Homepage = "https://github.com/rwkv-rs/hf-adapter"
+Documentation = "https://github.com/rwkv-rs/hf-adapter/tree/main/docs"
+Repository = "https://github.com/rwkv-rs/hf-adapter"
+Issues = "https://github.com/rwkv-rs/hf-adapter/issues"
 
 [tool.setuptools.packages.find]
-include = ["rwkv7_hf*"]
+include = ["rwkv7_hf", "rwkv7_hf_tools"]
 
 [tool.setuptools.package-data]
 rwkv7_hf = ["chat_template.jinja"]
