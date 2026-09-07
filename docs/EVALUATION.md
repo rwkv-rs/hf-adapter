@@ -1,5 +1,26 @@
 # Evaluation
 
+## Current execution status
+
+The frozen 1.0 three-way matrix was **stopped at the user's request on
+2026-09-01**: optimized 47 successful exits / 1 OOM, FLA 48 successful exits,
+reference 43 successful exits / 1 interrupted / 4 not started. See
+[the historical stop snapshot](../results/closeout/20260908/README.md).
+This is neither a completed 144-unit gate nor a statement of equal accuracy.
+No GPU work is scheduled or resumed by this documentation update.
+
+When the user resumes validation, retrieve the original manifests/results and
+audit the actual loaded model code against the frozen artifacts first. Keep
+every failed/interrupted attempt. Only then retry the optimized OOM unit and
+complete the five unfinished reference units; retain explicit attempt
+provenance, including any graph-mode change, rather than overwriting the
+failure. Run the three-way validator on the selected, documented attempts.
+Do not reuse these results for a changed packed-prefill/kernel implementation.
+
+V100 launchers below are historical reproduction tools, **not an instruction
+to reinstate V100 in the current release gate**. Final candidate acceptance is
+RTX 4080 followed by RTX 4090 with the same immutable artifacts.
+
 ## Official RWKV checkpoint oracle
 
 Official RWKV checkpoint behavior is the model-correctness oracle. The oracle

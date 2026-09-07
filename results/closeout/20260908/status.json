@@ -1,0 +1,106 @@
+{
+  "schema": "rwkv7-paused-closeout-v1",
+  "recorded_on": "2026-09-08",
+  "last_observed_on": "2026-09-01",
+  "timezone": "Asia/Shanghai",
+  "record_kind": "historical-conversation-tool-observation",
+  "raw_remote_evidence_retrieved_this_closeout": false,
+  "current_remote_process_status": "unknown-unreachable",
+  "release_ready": false,
+  "gpu_jobs_started_this_closeout": false,
+  "source_sha": "5f4a4a25018f7567fd1b35b93fb1edf57ff86ac7",
+  "fla_sha": "80e494f6c588e091fc8316b612870df29375c5b8",
+  "source_freeze": {
+    "path": "RELEASE_SOURCE_FREEZE.json",
+    "sha256": "ebe8c79ee9b8a660aaad98d6264d58922ef21ece174159af741334c2889bd57f",
+    "file_count": 155
+  },
+  "historically_recorded_artifacts": {
+    "rwkv7_hf-1.0.0-py3-none-any.whl": "13402378207a59ac90fa69d947402a7177de69e8c77d66ab14aa7803cae25854",
+    "rwkv7_kernels-1.0.0-py3-none-any.whl": "0ff2d45e911a5cd741fd71ac956898d862fc0e7b62c984c3e36e2d755da86d11"
+  },
+  "artifact_bytes_rehashed_this_closeout": false,
+  "lanes": {
+    "optimized": {
+      "planned": 48,
+      "successful_exits": 47,
+      "failed_exits": 1,
+      "interrupted": 0,
+      "not_started": 0
+    },
+    "fla": {
+      "planned": 48,
+      "successful_exits": 48,
+      "failed_exits": 0,
+      "interrupted": 0,
+      "not_started": 0
+    },
+    "reference": {
+      "planned": 48,
+      "successful_exits": 43,
+      "failed_exits": 0,
+      "interrupted": 1,
+      "not_started": 4
+    }
+  },
+  "affected_units": [
+    {
+      "lane": "optimized",
+      "unit": "1.5b-b8-wikitext",
+      "status": "failed-oom",
+      "retry_status": "watcher-stopped-before-retry",
+      "planned_retry_environment": {
+        "RWKV7_NATIVE_PREFILL_GRAPH": "0"
+      },
+      "retry_passed": false
+    },
+    {
+      "lane": "reference",
+      "unit": "1.5b-b8-hellaswag",
+      "status": "interrupted-by-user"
+    },
+    {
+      "lane": "reference",
+      "unit": "1.5b-b8-winogrande",
+      "status": "not-started"
+    },
+    {
+      "lane": "reference",
+      "unit": "1.5b-b8-arc_easy",
+      "status": "not-started"
+    },
+    {
+      "lane": "reference",
+      "unit": "1.5b-b8-arc_challenge",
+      "status": "not-started"
+    },
+    {
+      "lane": "reference",
+      "unit": "1.5b-b8-openbookqa",
+      "status": "not-started"
+    }
+  ],
+  "remote_root": "/home/wzu/codex-run/results/rwkv7-freeze-5f4a4a25/4080",
+  "retrieval_attempts": [
+    {
+      "on": "2026-09-08",
+      "route": "WZU_Server_Tail -> RTX 4080",
+      "outcome": "ssh-connect-timeout",
+      "exit_code": 255
+    },
+    {
+      "on": "2026-09-08",
+      "route": "WZU_4080_Tail",
+      "outcome": "ssh-connect-timeout",
+      "exit_code": 255
+    }
+  ],
+  "not_established": [
+    "complete-144-unit-acceptance",
+    "current-remote-process-state",
+    "final-loaded-model-code-identity",
+    "final-4080-4090-artifact-acceptance",
+    "1.0-hub-pypi-publication"
+  ],
+  "resume_policy": "Await user instruction; retrieve/audit original evidence; preserve all attempts; run only affected/incomplete units if artifact identity remains valid."
+}

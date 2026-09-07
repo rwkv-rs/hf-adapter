@@ -4,6 +4,42 @@
 > validation session. Update the checkboxes, evidence paths, actual route,
 > commands, code SHA, and blockers before ending that session.
 
+## Current closeout — 2026-09-08
+
+**Execution is paused at the user's request. Do not resume GPU jobs or
+watchers from the historical checkboxes below.** This session closes the
+documentation/status handoff, not the hardware or publication gates.
+
+- [x] Separate the published `0.9.0` installation from the frozen `1.0`
+      candidate in `README_ZH.md`, `HF_STATUS.md` and conversion/model docs.
+- [x] Add a user-facing capability matrix to `NVIDIA_MIGRATION_AUDIT.md`:
+      migrated vs executed, masked row compaction vs packed varlen, adaptive
+      training domain vs reference fallback, and explicit quantization.
+- [x] Record the historical 2026-09-01 stop snapshot under
+      `results/closeout/20260908/`; label it a conversation/tool-observation
+      handoff, not a downloaded or machine-validated final GPU bundle.
+- [x] Keep English/package READMEs, all model/tool/kernel source,
+      `pyproject.toml` files and the source-freeze manifest unchanged.
+- [ ] Retrieve original 4080 manifests/results and audit actual loaded model
+      code, frozen wheel hashes, environment, routes and task fingerprints.
+      Both direct and V100-jump SSH checks timed out on 2026-09-08.
+- [ ] Only after the user resumes validation: rerun optimized
+      `1.5b-b8-wikitext`, finish reference `1.5b-b8-hellaswag` plus its final
+      four tasks, and run the three-way validator with transparent attempt
+      selection. Do not overwrite the OOM or interrupted logs.
+- [ ] Close final-wheel 4080 HF/training/finetune provenance, then the matching
+      4090 bundle. V100 remains excluded.
+- [ ] Close six Hub tags/download audits, GitHub CI/Release and both PyPI
+      artifacts. Current GitHub/API requests failed or timed out; no release
+      status is inferred from local branch names.
+- [ ] Separate next-version backend work: packed `cu_seqlens` prefill and
+      bounded graph residency. Do not change frozen wheel bytes or relabel
+      old results as validation of those changes.
+
+See [HF_STATUS.md](../HF_STATUS.md) for the current installation instructions
+and release checklist. All completed historical stages below retain their
+own source/artifact scope; they do not collectively prove final 1.0 acceptance.
+
 ## Fixed decisions
 
 - Initial clean base: `4bbd911e4dcb446e8c21fb795e373b4a59775ff3`.
