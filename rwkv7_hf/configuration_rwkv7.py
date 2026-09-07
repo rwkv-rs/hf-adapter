@@ -53,10 +53,6 @@ class RWKV7Config(PretrainedConfig):
                 "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
             },
         )
-        # FP8 E4M3 quantization (requires Hopper/Ada/Blackwell for _scaled_mm)
-        self.use_native_fp8 = kwargs.pop("use_native_fp8", False)
-        self.native_fp8_min_params = kwargs.pop("native_fp8_min_params", 8_000_000)
-        self.native_fp8_policy = kwargs.pop("native_fp8_policy", "memory")
         super().__init__(**kwargs)
 
         if num_heads is not None and num_attention_heads is not None:
