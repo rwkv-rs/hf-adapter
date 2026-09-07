@@ -14,7 +14,7 @@ GPU execution cannot yet resume: the RTX 4080 Tailscale peer is offline
 - The complete local suite passes **470/470**, with 409 deprecation warnings.
   All 155 frozen inputs remain byte-identical.
 - Upstream `main` is verified at
-  `2d0426e02401975606a17828ff335a349dd9871d`; its tree matches the frozen
+  `9da4163a2a5a22abd33ff6ad0b8d8d8283c2d4d9`; its tree matches the frozen
   source. Current-main [full-tests](https://github.com/rwkv-rs/hf-adapter/actions/runs/34100068161),
   [HF ecosystem CI](https://github.com/rwkv-rs/hf-adapter/actions/runs/33492973905)
   and [CPU smoke](https://github.com/rwkv-rs/hf-adapter/actions/runs/33388562778)
@@ -62,13 +62,16 @@ the [Chinese quickstart](README_ZH.md).
 ### Inspect or reproduce the 1.0 candidate
 
 The candidate source is frozen at
-`5f4a4a25018f7567fd1b35b93fb1edf57ff86ac7`. Developers can install that exact
+`fd97bdfc6915e3d0d1f0ec76e28e5c86306f9917`, the commit whose tree is
+byte-identical to the originally frozen `5f4a4a25`. The repository history was
+rewritten on 2026-10-20, so pre-rewrite SHA references no longer resolve from a
+fresh clone. Developers can install that exact
 checkout, preferably in a separate environment:
 
 ```bash
 git clone https://github.com/rwkv-rs/hf-adapter.git
 cd hf-adapter
-git checkout --detach 5f4a4a25018f7567fd1b35b93fb1edf57ff86ac7
+git checkout --detach fd97bdfc6915e3d0d1f0ec76e28e5c86306f9917
 # Install the appropriate PyTorch build first.
 python -m pip install -e .
 # Optional, for candidate backend development only:
