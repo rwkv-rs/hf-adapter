@@ -1,8 +1,31 @@
-# RWKV-7 HF: stable release and 1.0 candidate
+# RWKV-7 HF: release status
 
-**Status reviewed: 2026-09-08. The published reference release is 0.9.0;
-the frozen 1.0 source is a candidate, not a completed release.** Merging source
-into GitHub `main` does not publish a wheel or update the model repositories.
+**Status reviewed: 2026-10-20. Version 1.0.0 is tagged in this repository.
+PyPI still serves 0.9.0 and the Hub model repositories are still pinned to
+`v0.9.0`; GPU acceptance remains incomplete.** Tagging the source, publishing a
+wheel, and updating the model repositories are three separate steps, and so far
+only the first is done.
+
+## What the 1.0.0 tag does and does not claim
+
+Released on 2026-10-20 in this repository:
+
+- source tag `v1.0.0` on `main`, covering the readable `rwkv7_hf/` reference
+  model, the `rwkv7_hf_tools/` converter and CLI, and the separate
+  `rwkv7-kernels` distribution under `kernels/`;
+- CPU/framework CI green on Python 3.10, 3.11, 3.12, 3.13 and 3.14, plus
+  Transformers 4.48.3 and the `transformers<6` ceiling (verified up to 5.20.2);
+- all 155 inputs pinned by `RELEASE_SOURCE_FREEZE.json` still byte-identical.
+
+Not claimed, and still open:
+
+- **No PyPI 1.0.0 artifacts.** `pip install rwkv7-hf` still resolves to 0.9.0.
+- **No Hub `v1.0.0` tag.** All six model repositories remain pinned to
+  `v0.9.0`; converted checkpoints carry the 0.9 API.
+- **No GPU acceptance.** The RTX 4080 Tailscale peer is offline and the RTX
+  4090 SSH times out, so the device matrix has not been run for 1.0.
+- The `pyproject.toml` classifiers still list only 3.10-3.12 because that file
+  is frozen; 3.13/3.14 are covered by CI, not by package metadata.
 
 ## Acceptance resumed on 2026-09-08
 

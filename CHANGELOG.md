@@ -1,6 +1,18 @@
 # Changelog
 
-## 1.0.0
+## 1.0.0 — 2026-10-20
+
+Additions since the frozen 1.0 candidate:
+
+- CI covers Python 3.13 and 3.14 in addition to 3.10-3.12, and a
+  `transformers<6` lane on 3.14 (verified to 5.20.2).
+- Workflows moved to `actions/checkout@v6` and `actions/setup-python@v6`.
+- The native CUDA/KV-v2 benchmark suite (`bench/`, `configs/`,
+  `kernel_wheel/`) is on `main` instead of stranded on the archived
+  `perf/native-kernels-v0.8` branch, which stays available unchanged.
+
+Source release only. No PyPI 1.0.0 artifacts and no Hub `v1.0.0` tag; see
+[`HF_STATUS.md`](HF_STATUS.md) for exactly what is and is not claimed.
 
 - Limited `rwkv7_hf/` to canonical HF model modules named `*_rwkv7.py`.
 - Moved CLI, conversion, manifest, and smoke-test code into the sibling
