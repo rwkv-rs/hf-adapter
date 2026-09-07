@@ -1,0 +1,28 @@
+{
+  "rwkv7-hf": {
+    "wheel_vs_checkout": {
+      "status": "passed",
+      "matched_files": 12
+    },
+    "sdist": {
+      "status": "passed",
+      "distribution": "rwkv7-hf",
+      "version": "1.0.0",
+      "matched_package_files": 12,
+      "members": 66
+    }
+  },
+  "rwkv7-kernels": {
+    "wheel_vs_checkout": {
+      "status": "passed",
+      "matched_files": 137
+    },
+    "sdist": {
+      "status": "passed",
+      "distribution": "rwkv7-kernels",
+      "version": "1.0.0",
+      "matched_package_files": 137,
+      "members": 147
+    }
+  }
+}

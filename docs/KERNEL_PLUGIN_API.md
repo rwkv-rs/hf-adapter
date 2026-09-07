@@ -42,4 +42,12 @@ The machine-readable contract is shipped as
 `rwkv7_kernels/KERNEL_PLUGIN_API.json`. API-v4 operation names, envelope fields,
 cache layout, and failure semantics are immutable for the 1.0 release line.
 
-The exact executable inputs for the validated 1.0.0 wheel pair are recorded in [`RELEASE_SOURCE_FREEZE.json`](../RELEASE_SOURCE_FREEZE.json). CI recomputes every listed SHA-256 and rejects added, removed, or modified package files. Changing those bytes requires an explicit thaw, a new versioned manifest, and the complete hardware acceptance matrix again. Third-party and future backends remain replaceable because only this contract—not any private implementation module—is imported by the HF core.
+The exact executable and distribution inputs for the frozen 1.0.0 candidate
+are recorded in [`RELEASE_SOURCE_FREEZE.json`](../RELEASE_SOURCE_FREEZE.json).
+This includes both package READMEs, not just Python/CUDA code. CI recomputes
+every listed SHA-256 and rejects added, removed, or modified package files.
+Changing those bytes requires an explicit thaw, a new versioned manifest, and
+the complete hardware acceptance matrix again. A frozen interface is not a
+completed release: see [the current gates](../HF_STATUS.md).
+Third-party and future backends remain replaceable because only this
+contract—not any private implementation module—is imported by the HF core.

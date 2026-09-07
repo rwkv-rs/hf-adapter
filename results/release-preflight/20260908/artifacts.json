@@ -1,0 +1,52 @@
+{
+  "schema": "rwkv7-artifact-reconstruction-v1",
+  "frozen_source_sha": "5f4a4a25018f7567fd1b35b93fb1edf57ff86ac7",
+  "source_date_epoch": 1788148092,
+  "source_archive_sha256": "61565dd436ded09bdfa40de74876f83156cd50c8e08b014f829a3c49386318bb",
+  "build_python": "3.12.2",
+  "build_platform": "Linux x86_64",
+  "gpu_used": false,
+  "source_changes": false,
+  "umask": "022",
+  "archive_extraction": "GNU tar --no-same-permissions into fresh source-normalized directory",
+  "environment": {
+    "TZ": "UTC",
+    "LC_ALL": "C.UTF-8",
+    "PYTHONHASHSEED": "0",
+    "CUDA_VISIBLE_DEVICES": ""
+  },
+  "pip_version": "26.1.2",
+  "build_environment_file": "build-environment.txt",
+  "artifacts": [
+    {
+      "filename": "rwkv7_hf-1.0.0-py3-none-any.whl",
+      "sha256": "13402378207a59ac90fa69d947402a7177de69e8c77d66ab14aa7803cae25854",
+      "size": 47897,
+      "matches_historical_wheel_sha": true,
+      "historical_sdist_identity_claimed": null
+    },
+    {
+      "filename": "rwkv7_hf-1.0.0.tar.gz",
+      "sha256": "2bb4d1bf608e9307cb04381043f9c0a3751b28755e192eb1b5f93bfd6436ff86",
+      "size": 129750,
+      "matches_historical_wheel_sha": null,
+      "historical_sdist_identity_claimed": false
+    },
+    {
+      "filename": "rwkv7_kernels-1.0.0-py3-none-any.whl",
+      "sha256": "0ff2d45e911a5cd741fd71ac956898d862fc0e7b62c984c3e36e2d755da86d11",
+      "size": 530324,
+      "matches_historical_wheel_sha": true,
+      "historical_sdist_identity_claimed": null
+    },
+    {
+      "filename": "rwkv7_kernels-1.0.0.tar.gz",
+      "sha256": "c8d1853f3212355cb42663060eb30c2530516c3a1a4a9a2cb769c47b17d75965",
+      "size": 462134,
+      "matches_historical_wheel_sha": null,
+      "historical_sdist_identity_claimed": false
+    }
+  ],
+  "wheel_pair_matches_expected": true,
+  "release_ready": false
+}

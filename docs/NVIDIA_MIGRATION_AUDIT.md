@@ -5,6 +5,45 @@ This audit answers a narrow question: whether the NVIDIA implementation from
 boundary, without copying its duplicate Hugging Face model stack back into
 `rwkv7_hf`.
 
+## User-facing capability matrix
+
+Reviewed against frozen source `5f4a4a25` on 2026-09-08. **Migrated source,
+supported HF semantics, an executed optimized route, and release acceptance
+are different claims.** This table does not promote new production routes.
+
+| Workload / interface | Present in the candidate | Boundary / remaining work |
+|---|---|---|
+| HF config, model, tokenizer, cache, loss and generation | Readable PyTorch implementation | Framework tests cover specific environments, not every HF-based framework |
+| Left/right padding and unequal sequence lengths | Reference masking and native `masked_compact` path | Native masked prefill currently compacts and executes rows individually; semantic support is not fused variable-length acceleration |
+| Packed variable-length chunk prefill | Low-level vendored kernels have relevant primitives | Top-level `self_chunk_rwkv7` remains equal-length, uses `cu_seqlens=None`, head size 64 and chunk-aligned T; packed frontend/state restoration is not complete |
+| Native prefill and cached decode | Dense, fused/DPLR/self-chunk and graph implementations migrated | Device/dtype/shape gates decide execution; benchmark prefill, cached decode and lm_eval separately |
+| CUDA Graph/state pools | Implemented in the backend | Frozen 4080 `1.5b-b8-wikitext` run hit OOM; disabling prefill graph was only a planned, unexecuted retry, not a completed fix |
+| Recurrent/linear/Mix6 training leaves | Autograd-capable leaves behind the readable HF loop | Adaptive certificate fast domain is dense B4/T128; other shapes use individually gated exact-matrix/reference leaves or strict-mode rejection |
+| PEFT and TRL SFT/DPO/GRPO | Ordinary framework examples, hooks and checkpoint replay | Frozen-embedding/autograd eligibility may select a complete reference program; report actual leaf counts, not just successful loss/backward |
+| Quantization | Native W8/W4/A8W8 and other adapters are preserved | Explicit opt-in; source presence is not accuracy/performance certification for every model/device |
+| Alternative kernel implementation | API-v4 facade with canonical `[B,H,K,V]` state | Must satisfy supported/unsupported, cache mutation, outputs and gradient contracts; not arbitrary drop-in binaries |
+| Continuous request scheduling | Not supplied by the HF adapter | Generation/cache batch operations are not a continuous-batching serving scheduler |
+
+The [paused 1.0 status](../HF_STATUS.md#paused-formal-evaluation) records what
+was actually completed. Historical training and speed evidence is retained
+under its original SHA and must not be relabelled as final-wheel acceptance.
+
+### Next backend work, outside the frozen source
+
+1. Build one packed prefill path from `attention_mask` to packed tokens and
+   `cu_seqlens`, then scatter logits and restore per-sequence canonical states.
+   Cover empty rows, left/right padding, non-chunk-aligned lengths, B1/B4/B8,
+   cached continuation and actual route evidence; avoid a per-row host loop.
+2. Bound graph cache/private-pool residency and include the caller's full-vocab
+   logits/log-softmax peak in memory testing. Preserve the original OOM report
+   and distinguish a workaround from an implementation fix.
+3. On a new versioned artifact, compare the affected precision/state/greedy
+   and lm_eval units against the same pinned FLA setup. A faster fixed-shape
+   decode result cannot establish a faster variable-length evaluation run.
+
+These changes belong in the optional backend. They do not require another
+model/cache wrapper and are not implemented by this documentation closeout.
+
 ## Exact source transfer
 
 `kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json` records **102** files

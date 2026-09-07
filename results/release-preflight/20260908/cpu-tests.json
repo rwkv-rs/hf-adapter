@@ -1,0 +1,15 @@
+{
+  "schema": "rwkv7-cpu-preflight-test-v1",
+  "exit_code": 0,
+  "passed": 470,
+  "warnings": 409,
+  "elapsed_seconds": 9.7,
+  "python": "3.11.15",
+  "torch": "2.12.1",
+  "transformers": "5.12.1",
+  "pytest": "9.1.1",
+  "command": "PYTHONPATH=\"$PWD:$PWD/kernels\" CUDA_VISIBLE_DEVICES= HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m pytest -q",
+  "device": "CPU",
+  "original_log_sha256": "ac447573a2543e8dd1e7baa7084954fa2a2ba95dce8cf1d3690f4bc1e163fa89",
+  "scope": "Full local pytest suite, not GPU acceptance"
+}

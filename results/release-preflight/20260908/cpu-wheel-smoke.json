@@ -1,0 +1,47 @@
+{
+  "schema": "rwkv7-local-wheel-smoke-v1",
+  "passed": true,
+  "scope": "CPU reference execution from isolated project-wheel installs; dependencies shared with existing environment; not hermetic dependency install or GPU acceptance",
+  "python": "3.11.15",
+  "torch": "2.12.1",
+  "transformers": "5.12.1",
+  "distributions": {
+    "rwkv7-hf": "1.0.0",
+    "rwkv7-kernels": "1.0.0"
+  },
+  "imports_from_venv": true,
+  "source_checkout_on_sys_path": false,
+  "device": "cpu",
+  "backend": "reference",
+  "cached_logits_max_abs": 0.0,
+  "loss": 4.1649651527404785,
+  "finite_gradients": true,
+  "nonzero_gradients": true,
+  "checks": [
+    "forward",
+    "token_cache_equivalence",
+    "greedy_generation",
+    "beam_generation",
+    "AutoConfig",
+    "AutoModel",
+    "AutoModelForCausalLM",
+    "save_reload",
+    "causal_loss_ignore_index",
+    "backward"
+  ],
+  "saved_files": [
+    "cache_rwkv7.py",
+    "config.json",
+    "configuration_rwkv7.py",
+    "generation_config.json",
+    "model.safetensors",
+    "modeling_rwkv7.py",
+    "ops_rwkv7.py"
+  ],
+  "elapsed_seconds": 0.15350008010864258,
+  "cli_checks": {
+    "version": "rwkv7-hf 1.0.0",
+    "version_exit_code": 0,
+    "convert_help_exit_code": 0
+  }
+}
