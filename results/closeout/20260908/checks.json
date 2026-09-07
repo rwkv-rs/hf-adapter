@@ -1,0 +1,28 @@
+{
+  "schema": "rwkv7-documentation-closeout-checks-v1",
+  "checked_on": "2026-09-08",
+  "scope": "local documentation, package structure and plugin-contract checks only; not GPU or release acceptance",
+  "frozen_source_sha": "5f4a4a25018f7567fd1b35b93fb1edf57ff86ac7",
+  "frozen_input_count": 155,
+  "frozen_input_changes": 0,
+  "freeze_manifest_sha256": "ebe8c79ee9b8a660aaad98d6264d58922ef21ece174159af741334c2889bd57f",
+  "pytest": {
+    "command": "PYTHONPATH=\"$PWD:$PWD/kernels\" CUDA_VISIBLE_DEVICES='' HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m pytest -q tests/test_release_source_freeze.py tests/test_package_layout.py tests/test_kernel_plugin_contract.py",
+    "python": "3.11.15",
+    "pytest": "9.1.1",
+    "exit_code": 0,
+    "passed": 13,
+    "failed": 0,
+    "test_seconds": 0.12
+  },
+  "documentation_checks": {
+    "local_links_and_anchors_checked": 35,
+    "broken_links": 0,
+    "python_snippets_parse": true,
+    "snapshot_counts_consistent": true,
+    "git_diff_check_exit_code": 0
+  },
+  "gpu_tests_run": false,
+  "remote_raw_results_audited": false,
+  "final_release_acceptance": false
+}
