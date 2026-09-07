@@ -1,0 +1,48 @@
+{
+  "schema": "rwkv7-publication-preflight-v1",
+  "observed_at_utc": "2026-09-07T23:16:53.812272+00:00",
+  "authenticated_github_account": "123123213weqw",
+  "main_ci_runs": [
+    {
+      "id": 34100068161,
+      "name": "full-tests",
+      "head_sha": "2d0426e02401975606a17828ff335a349dd9871d",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-07T08:20:22Z",
+      "updated_at": "2026-09-07T08:22:42Z",
+      "html_url": "https://github.com/rwkv-rs/hf-adapter/actions/runs/34100068161"
+    },
+    {
+      "id": 33492973905,
+      "name": "hf-ecosystem-compat",
+      "head_sha": "2d0426e02401975606a17828ff335a349dd9871d",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-01T09:35:00Z",
+      "updated_at": "2026-09-01T09:37:19Z",
+      "html_url": "https://github.com/rwkv-rs/hf-adapter/actions/runs/33492973905"
+    },
+    {
+      "id": 33388562778,
+      "name": "cpu-smoke",
+      "head_sha": "2d0426e02401975606a17828ff335a349dd9871d",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-08-31T11:46:49Z",
+      "updated_at": "2026-08-31T11:48:57Z",
+      "html_url": "https://github.com/rwkv-rs/hf-adapter/actions/runs/33388562778"
+    }
+  ],
+  "pypi": {
+    "distribution": "rwkv7-hf",
+    "latest_version": "0.9.0",
+    "has_1_0_0": false,
+    "source_url": "https://pypi.org/pypi/rwkv7-hf/json"
+  },
+  "github_latest_release": {
+    "tag": "v0.9.0",
+    "url": "https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.9.0"
+  },
+  "publication_performed": false
+}

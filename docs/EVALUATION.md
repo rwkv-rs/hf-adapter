@@ -9,7 +9,12 @@ reference 43 successful exits / 1 interrupted / 4 not started. See
 This is neither a completed 144-unit gate nor a statement of equal accuracy.
 No GPU work is scheduled or resumed by this documentation update.
 
-When the user resumes validation, retrieve the original manifests/results and
+Update on 2026-09-08: the user subsequently requested completion of the
+acceptance criteria. CPU/preflight work has resumed, but the RTX 4080 peer is
+offline and RTX 4090 SSH times out. The original result counts are unchanged;
+this is a hardware-access block, not a cancelled validation requirement.
+
+Once hardware access is restored, retrieve the original manifests/results and
 audit the actual loaded model code against the frozen artifacts first. Keep
 every failed/interrupted attempt. Only then retry the optimized OOM unit and
 complete the five unfinished reference units; retain explicit attempt

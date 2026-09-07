@@ -4,10 +4,43 @@
 > validation session. Update the checkboxes, evidence paths, actual route,
 > commands, code SHA, and blockers before ending that session.
 
-## Current closeout — 2026-09-08
+## Current acceptance attempt — 2026-09-08
 
-**Execution is paused at the user's request. Do not resume GPU jobs or
-watchers from the historical checkboxes below.** This session closes the
+The user explicitly requested completion of the existing acceptance criteria
+after the documentation closeout below. That request supersedes the earlier
+pause for task execution; it does not lower gates or authorize a new recurring
+automation. Hardware execution awaits connectivity, not another permission.
+
+- [x] Re-run the entire local CPU suite: **470 passed**, 409 deprecation
+      warnings; confirm all 155 frozen inputs unchanged.
+- [x] Verify live upstream `main` at `2d0426e0`, with an identical source tree
+      to `5f4a4a25`; verify successful current-main full-tests, CPU smoke and
+      HF-ecosystem CI runs.
+- [x] Verify PyPI/latest GitHub release remains 0.9.0, not 1.0.0.
+- [x] Reconstruct both immutable wheel SHA256 values exactly from `5f4a4a25`
+      using CPU-only packaging and fresh `umask 022` source extraction. Pass
+      wheel inventory/RECORD, source-archive consistency and strict Twine
+      audits. Retain the first permission-mismatched build as an unpromoted
+      attempt; do not replace the expected hashes.
+- [x] Check installed-wheel CPU forward/cache, save/reload, greedy/beam and
+      loss/backward; run the installed conversion CLI on a synthetic tiny
+      checkpoint and load its self-contained directory in a process without
+      either project package. Dependencies are shared, not hermetically
+      reinstalled. Evidence: `results/release-preflight/20260908/`.
+- [x] Diagnose connectivity without starting or disturbing GPU jobs: 4080
+      Tailscale peer offline, last seen 2026-09-07 22:40 Asia/Shanghai;
+      4090 SSH timed out. V100 was used only as the existing jump/CPU-build
+      host, not reinstated as a GPU validation target.
+- [ ] Restore access to the 4080 original result root, audit artifact/model
+      identity, and complete the affected/incomplete acceptance units.
+- [ ] Complete the unchanged remaining hardware and publication gates in
+      `HF_STATUS.md`; do not publish a final release while they are pending.
+
+## Historical documentation closeout — 2026-09-08
+
+**Execution was paused at the user's request during this closeout.** Do not
+infer resumption from old checkboxes; the newer explicit request is recorded
+above. This session closed the
 documentation/status handoff, not the hardware or publication gates.
 
 - [x] Separate the published `0.9.0` installation from the frozen `1.0`
