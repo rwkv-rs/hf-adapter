@@ -19,8 +19,6 @@ Module-selection policies (shared with the other native quant backends):
   min_params`` (the historical size gate).
 * ``"speed"``  -- quantize only ``lm_head`` after the same size gate, keeping
   the cached decode path dense through the recurrent/FFN layers.
-* ``"ffn_only"`` -- a conservative scheme that quantizes only the FFN
-  key/value linears (modules whose qualified name contains ``".ffn."``).
 """
 from __future__ import annotations
 
@@ -97,8 +95,7 @@ def quantize_fp8(weight, per_channel=False):
 # --------------------------------------------------------------------------- #
 # Model integration: an FP8 (E4M3) nn.Linear drop-in + policy-gated replacement.
 # The memory policy keeps the historical size gate. The speed policy only swaps
-# lm_head. ffn_only is a conservative scheme that targets just the FFN key/value
-# linears. When _scaled_mm is unavailable the forward dequantizes on the fly and
+# lm_head. When _scaled_mm is unavailable the forward dequantizes on the fly and
 # runs a dense matmul, so the module is importable on CPU-only machines.
 # --------------------------------------------------------------------------- #
 
@@ -214,43 +211,25 @@ def quantize_model_fp8(
     """Swap eligible ``nn.Linear`` modules for :class:`FP8Linear`.
 
     ``policy="memory"`` quantizes every Linear with ``weight.numel() >=
-    min_params``. ``policy="speed"`` quantizes only ``lm_head`` after the same
-    size gate, keeping per-layer FFN/recurrent decode dense. ``policy="ffn_only"``
-    is a conservative scheme that quantizes only the FFN key/value linears
-    (modules whose qualified name contains ``".ffn."``), subject to the same
-    size gate. Returns the number of modules replaced.
+    min_params`` (the historical size gate). ``policy="speed"`` quantizes only
+    ``lm_head`` after the same size gate, keeping per-layer FFN/recurrent
+    decode dense. Set ``per_channel=True`` for per-output-channel weight scales.
+    Returns the number of modules replaced.
     """
     if torch is None:
         raise RuntimeError("quantize_model_fp8 requires torch")
 
-    # "ffn_only" is an FP8-specific conservative policy not understood by the
-    # shared normalizer; route it through a dedicated selection branch.
-    ffn_only = str(policy or "").strip().lower() == "ffn_only"
-    if ffn_only:
-        policy_norm = "memory"  # only used for the size gate below
-    else:
-        policy_norm = normalize_native_mm_policy(policy)
+    policy = normalize_native_mm_policy(policy)
 
     targets = []
     for name, mod in model.named_modules():
-        if not isinstance(mod, torch.nn.Linear):
-            continue
-        if ffn_only:
-            # Conservative scheme: only FFN key/value linears (qualified name
-            # contains ".ffn."), still subject to the historical size gate.
-            if ".ffn." not in name:
-                continue
-            if int(mod.weight.numel()) < int(min_params):
-                continue
-        else:
-            if not should_quantize_linear(
-                name,
-                int(mod.weight.numel()),
-                min_params=min_params,
-                policy=policy_norm,
-            ):
-                continue
-        targets.append(name)
+        if isinstance(mod, torch.nn.Linear) and should_quantize_linear(
+            name,
+            int(mod.weight.numel()),
+            min_params=min_params,
+            policy=policy,
+        ):
+            targets.append(name)
 
     for full_name in targets:
         parent_name, _, attr = full_name.rpartition(".")
