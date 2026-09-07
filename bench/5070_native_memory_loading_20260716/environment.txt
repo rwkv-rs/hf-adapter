@@ -1,0 +1,13 @@
+captured_at=2026-07-16T15:13:00+08:00
+source_base=a14ca6c17d6218662c7e039f33d72ca42d2679ea
+branch=wangyue/native-memory-quant-loading
+os=Windows-11-10.0.26200-SP0
+python=3.12.4
+torch=2.11.0+cu128
+transformers=5.12.1
+cuda_runtime=12.8
+gpu=NVIDIA GeForce RTX 5070 Laptop GPU
+compute_capability=12.0
+driver=582.05
+visible_vram_mb=8151
+model=rwkv7-g1d-0.4b-hf

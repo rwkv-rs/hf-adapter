@@ -1,0 +1,41 @@
+{
+  "axis": "musa_s70_optional_wkv_paired_speed_memory",
+  "coverage": {
+    "expected_pairs": 3,
+    "complete_pairs": 3,
+    "complete": true
+  },
+  "eager": {
+    "prefill_tokps": {"min": 64.4, "median": 66.8, "max": 66.9},
+    "decode_tokps": {"min": 64.6, "median": 65.9, "max": 66.2},
+    "peak_allocated_mib": {"min": 406.0, "median": 406.0, "max": 406.0}
+  },
+  "wkv": {
+    "prefill_tokps": {"min": 81.0, "median": 81.0, "max": 81.1},
+    "decode_tokps": {"min": 65.9, "median": 66.0, "max": 66.1},
+    "peak_allocated_mib": {"min": 406.0, "median": 406.0, "max": 406.0}
+  },
+  "paired_ratios": {
+    "prefill_wkv_over_eager": {"min": 1.210762, "median": 1.214072, "max": 1.257764},
+    "decode_wkv_over_eager": {"min": 0.998489, "median": 1.0, "max": 1.021672},
+    "peak_allocated_wkv_over_eager": {"min": 1.0, "median": 1.0, "max": 1.0}
+  },
+  "route_assertions": {
+    "all_eager_rows_disabled_and_unloaded": true,
+    "all_wkv_rows_enabled_loaded_without_error": true
+  },
+  "correctness_dependencies": {
+    "standalone_kernel_parity_pass": true,
+    "model_short_trace_generated_ids_equal": true,
+    "model_long_trace_generated_ids_equal": true,
+    "model_long_trace_logits_cosine": 0.9999946355819702,
+    "autograd_eager_fallback_backward_pass": true
+  },
+  "conclusion": {
+    "prefill": "The optional WKV route improved median prefill throughput by 1.214072x for this exact MTT S70, 0.1B, batch-1, prompt-128 configuration.",
+    "decode": "Median decode throughput was 1.000000x; this evidence does not support a decode-acceleration claim.",
+    "memory": "Peak allocated MUSA memory was 406.0 MiB in both modes; this evidence does not support a memory-reduction claim.",
+    "scope": "Exact-device narrow evidence only; do not generalize to other MUSA cards, models, batches, sequence lengths, bf16, quantization, graph capture, multi-device, or training kernels."
+  },
+  "overall_pass": true
+}

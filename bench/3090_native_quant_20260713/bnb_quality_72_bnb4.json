@@ -1,0 +1,460 @@
+{
+  "axis": "uncheatable_logit_compression_alignment",
+  "status": "pass",
+  "dataset": "bench/data/rwkv7_quant_quality_smoke.jsonl",
+  "num_texts": 8,
+  "max_tokens_per_text": 256,
+  "add_bos": false,
+  "text_field": "text",
+  "text_template": null,
+  "reference": {
+    "name": "hf:rwkv7-g1g-7.2b-hf:none",
+    "total_bits": 3845.0380249023438,
+    "total_tokens": 950,
+    "bits_per_token": 4.047408447265625,
+    "by_position": {
+      "1": {
+        "bits": 11.411464929580688,
+        "tokens": 8,
+        "bits_per_token": 1.426433116197586
+      },
+      "2-8": {
+        "bits": 383.90978604462,
+        "tokens": 56,
+        "bits_per_token": 6.855531893653928
+      },
+      "9-16": {
+        "bits": 352.64923726802226,
+        "tokens": 64,
+        "bits_per_token": 5.510144332312848
+      },
+      "17-32": {
+        "bits": 486.0821482138708,
+        "tokens": 128,
+        "bits_per_token": 3.797516782920866
+      },
+      "33-64": {
+        "bits": 1039.871531271041,
+        "tokens": 256,
+        "bits_per_token": 4.061998169027504
+      },
+      "65-128": {
+        "bits": 1416.9500942923187,
+        "tokens": 377,
+        "bits_per_token": 3.7584883137727285
+      },
+      "129-256": {
+        "bits": 154.16372779590893,
+        "tokens": 61,
+        "bits_per_token": 2.5272742261624415
+      }
+    },
+    "per_text": [
+      {
+        "index": 0,
+        "line_no": 1,
+        "unique_id": "0",
+        "tokens_scored": 120,
+        "bits": 519.4893798828125,
+        "bits_per_token": 4.329078165690104,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 1,
+        "line_no": 2,
+        "unique_id": "1",
+        "tokens_scored": 189,
+        "bits": 614.5885009765625,
+        "bits_per_token": 3.251791010458003,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 2,
+        "line_no": 3,
+        "unique_id": "2",
+        "tokens_scored": 110,
+        "bits": 312.7455139160156,
+        "bits_per_token": 2.843141035600142,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 3,
+        "line_no": 4,
+        "unique_id": "3",
+        "tokens_scored": 119,
+        "bits": 550.7968139648438,
+        "bits_per_token": 4.628544655166754,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 4,
+        "line_no": 5,
+        "unique_id": "4",
+        "tokens_scored": 115,
+        "bits": 266.18524169921875,
+        "bits_per_token": 2.3146542756453803,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 5,
+        "line_no": 6,
+        "unique_id": "5",
+        "tokens_scored": 111,
+        "bits": 537.1204833984375,
+        "bits_per_token": 4.838923273859797,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 6,
+        "line_no": 7,
+        "unique_id": "6",
+        "tokens_scored": 87,
+        "bits": 419.1802062988281,
+        "bits_per_token": 4.818163290791128,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 7,
+        "line_no": 8,
+        "unique_id": "7",
+        "tokens_scored": 99,
+        "bits": 624.931884765625,
+        "bits_per_token": 6.312443280460859,
+        "subject": "",
+        "level": ""
+      }
+    ]
+  },
+  "candidate": {
+    "name": "hf:rwkv7-g1g-7.2b-hf:bnb4",
+    "total_bits": 3851.0533142089844,
+    "total_tokens": 950,
+    "bits_per_token": 4.053740330746299,
+    "by_position": {
+      "1": {
+        "bits": 24.949451208114624,
+        "tokens": 8,
+        "bits_per_token": 3.118681401014328
+      },
+      "2-8": {
+        "bits": 376.9972435235977,
+        "tokens": 56,
+        "bits_per_token": 6.732093634349959
+      },
+      "9-16": {
+        "bits": 347.2425245983177,
+        "tokens": 64,
+        "bits_per_token": 5.425664446848714
+      },
+      "17-32": {
+        "bits": 490.3285301178694,
+        "tokens": 128,
+        "bits_per_token": 3.8306916415458545
+      },
+      "33-64": {
+        "bits": 1039.427983287831,
+        "tokens": 256,
+        "bits_per_token": 4.06026555971809
+      },
+      "65-128": {
+        "bits": 1423.4554544598723,
+        "tokens": 377,
+        "bits_per_token": 3.775743911034144
+      },
+      "129-256": {
+        "bits": 148.65221902600024,
+        "tokens": 61,
+        "bits_per_token": 2.436921623377053
+      }
+    },
+    "per_text": [
+      {
+        "index": 0,
+        "line_no": 1,
+        "unique_id": "0",
+        "tokens_scored": 120,
+        "bits": 525.6240234375,
+        "bits_per_token": 4.3802001953125,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 1,
+        "line_no": 2,
+        "unique_id": "1",
+        "tokens_scored": 189,
+        "bits": 603.0083618164062,
+        "bits_per_token": 3.1905204328910384,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 2,
+        "line_no": 3,
+        "unique_id": "2",
+        "tokens_scored": 110,
+        "bits": 304.0663757324219,
+        "bits_per_token": 2.7642397793856532,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 3,
+        "line_no": 4,
+        "unique_id": "3",
+        "tokens_scored": 119,
+        "bits": 544.7979125976562,
+        "bits_per_token": 4.578133719308036,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 4,
+        "line_no": 5,
+        "unique_id": "4",
+        "tokens_scored": 115,
+        "bits": 272.4876403808594,
+        "bits_per_token": 2.3694577424422554,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 5,
+        "line_no": 6,
+        "unique_id": "5",
+        "tokens_scored": 111,
+        "bits": 541.509521484375,
+        "bits_per_token": 4.878464157516892,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 6,
+        "line_no": 7,
+        "unique_id": "6",
+        "tokens_scored": 87,
+        "bits": 421.6506652832031,
+        "bits_per_token": 4.8465593710713,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 7,
+        "line_no": 8,
+        "unique_id": "7",
+        "tokens_scored": 99,
+        "bits": 637.9088134765625,
+        "bits_per_token": 6.443523368450126,
+        "subject": "",
+        "level": ""
+      }
+    ]
+  },
+  "comparison": {
+    "reference_bits_per_token": 4.047408447265625,
+    "candidate_bits_per_token": 4.053740330746299,
+    "candidate_over_reference_bits_ratio": 1.0015644290817625,
+    "candidate_minus_reference_bits_per_token": 0.006331883480673817,
+    "tokens": 950,
+    "by_position": {
+      "1": {
+        "reference_bits_per_token": 1.426433116197586,
+        "candidate_bits_per_token": 3.118681401014328,
+        "candidate_over_reference_bits_ratio": 2.186349549516723,
+        "tokens": 8
+      },
+      "2-8": {
+        "reference_bits_per_token": 6.855531893653928,
+        "candidate_bits_per_token": 6.732093634349959,
+        "candidate_over_reference_bits_ratio": 0.981994357079976,
+        "tokens": 56
+      },
+      "9-16": {
+        "reference_bits_per_token": 5.510144332312848,
+        "candidate_bits_per_token": 5.425664446848714,
+        "candidate_over_reference_bits_ratio": 0.9846682989828918,
+        "tokens": 64
+      },
+      "17-32": {
+        "reference_bits_per_token": 3.797516782920866,
+        "candidate_bits_per_token": 3.8306916415458545,
+        "candidate_over_reference_bits_ratio": 1.0087359346966394,
+        "tokens": 128
+      },
+      "33-64": {
+        "reference_bits_per_token": 4.061998169027504,
+        "candidate_bits_per_token": 4.06026555971809,
+        "candidate_over_reference_bits_ratio": 0.9995734588649928,
+        "tokens": 256
+      },
+      "65-128": {
+        "reference_bits_per_token": 3.7584883137727285,
+        "candidate_bits_per_token": 3.775743911034144,
+        "candidate_over_reference_bits_ratio": 1.004591100416139,
+        "tokens": 377
+      },
+      "129-256": {
+        "reference_bits_per_token": 2.5272742261624415,
+        "candidate_bits_per_token": 2.436921623377053,
+        "candidate_over_reference_bits_ratio": 0.9642489913243071,
+        "tokens": 61
+      }
+    },
+    "worst_texts_by_ratio": [
+      {
+        "index": 4,
+        "line_no": 5,
+        "unique_id": "4",
+        "tokens": 115,
+        "reference_bits_per_token": 2.3146542756453803,
+        "candidate_bits_per_token": 2.3694577424422554,
+        "candidate_over_reference_bits_ratio": 1.0236767397073132,
+        "candidate_minus_reference_bits_per_token": 0.05480346679687509,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 7,
+        "line_no": 8,
+        "unique_id": "7",
+        "tokens": 99,
+        "reference_bits_per_token": 6.312443280460859,
+        "candidate_bits_per_token": 6.443523368450126,
+        "candidate_over_reference_bits_ratio": 1.0207653490360864,
+        "candidate_minus_reference_bits_per_token": 0.1310800879892673,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 0,
+        "line_no": 1,
+        "unique_id": "0",
+        "tokens": 120,
+        "reference_bits_per_token": 4.329078165690104,
+        "candidate_bits_per_token": 4.3802001953125,
+        "candidate_over_reference_bits_ratio": 1.0118089874254432,
+        "candidate_minus_reference_bits_per_token": 0.05112202962239554,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 5,
+        "line_no": 6,
+        "unique_id": "5",
+        "tokens": 111,
+        "reference_bits_per_token": 4.838923273859797,
+        "candidate_bits_per_token": 4.878464157516892,
+        "candidate_over_reference_bits_ratio": 1.0081714219092288,
+        "candidate_minus_reference_bits_per_token": 0.03954088365709474,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 6,
+        "line_no": 7,
+        "unique_id": "6",
+        "tokens": 87,
+        "reference_bits_per_token": 4.818163290791128,
+        "candidate_bits_per_token": 4.8465593710713,
+        "candidate_over_reference_bits_ratio": 1.005893548758392,
+        "candidate_minus_reference_bits_per_token": 0.02839608028017171,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 3,
+        "line_no": 4,
+        "unique_id": "3",
+        "tokens": 119,
+        "reference_bits_per_token": 4.628544655166754,
+        "candidate_bits_per_token": 4.578133719308036,
+        "candidate_over_reference_bits_ratio": 0.9891086854261099,
+        "candidate_minus_reference_bits_per_token": -0.05041093585871881,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 1,
+        "line_no": 2,
+        "unique_id": "1",
+        "tokens": 189,
+        "reference_bits_per_token": 3.251791010458003,
+        "candidate_bits_per_token": 3.1905204328910384,
+        "candidate_over_reference_bits_ratio": 0.981157898102949,
+        "candidate_minus_reference_bits_per_token": -0.06127057756696441,
+        "subject": "",
+        "level": ""
+      },
+      {
+        "index": 2,
+        "line_no": 3,
+        "unique_id": "2",
+        "tokens": 110,
+        "reference_bits_per_token": 2.843141035600142,
+        "candidate_bits_per_token": 2.7642397793856532,
+        "candidate_over_reference_bits_ratio": 0.9722485605791152,
+        "candidate_minus_reference_bits_per_token": -0.07890125621448885,
+        "subject": "",
+        "level": ""
+      }
+    ]
+  },
+  "elapsed_sec": 152.13282411899127,
+  "config": {
+    "dataset": "bench/data/rwkv7_quant_quality_smoke.jsonl",
+    "tokenizer_dir": "",
+    "text_field": "text",
+    "text_template": "User: {problem}\n\nAssistant: The final answer is \\boxed{{{answer}}}.",
+    "limit": 8,
+    "max_tokens_per_text": 256,
+    "add_bos": false,
+    "bos_token_id": 0,
+    "device": "cuda",
+    "position_bins": "1,8,16,32,64,128,256,512,1024,2048,4096,8192",
+    "logit_chunk_size": 64,
+    "progress_every": 2,
+    "out_json": "/tmp/bnb_quality_72_bnb4.json",
+    "out_md": "/tmp/bnb_quality_72_bnb4.md",
+    "reference_kind": "hf",
+    "reference_hf_dir": "/data/models/rwkv7-g1g-7.2b-hf",
+    "reference_dtype": "fp16",
+    "reference_fast_token_backend": "auto",
+    "reference_quantization": "none",
+    "reference_quant_min_params": 8000000,
+    "reference_quant_policy": "memory",
+    "reference_albatross_dir": "",
+    "reference_albatross_model": "",
+    "reference_albatross_module": "rwkv7_fast_v3a",
+    "reference_albatross_wkv": "fp32io16",
+    "reference_albatross_emb": "cpu",
+    "reference_albatross_batched_rkv": "off",
+    "reference_albatross_cmix_sparse": "no-fc",
+    "reference_albatross_lowrank_weight": "both",
+    "reference_albatross_orig_linear_groups": "att_c2c,ffn_key,head",
+    "reference_chdir_albatross": false,
+    "candidate_kind": "hf",
+    "candidate_hf_dir": "/data/models/rwkv7-g1g-7.2b-hf",
+    "candidate_dtype": "fp16",
+    "candidate_fast_token_backend": "auto",
+    "candidate_quantization": "bnb4",
+    "candidate_quant_min_params": 8000000,
+    "candidate_quant_policy": "memory",
+    "candidate_albatross_dir": "",
+    "candidate_albatross_model": "",
+    "candidate_albatross_module": "rwkv7_fast_v3a",
+    "candidate_albatross_wkv": "fp32io16",
+    "candidate_albatross_emb": "cpu",
+    "candidate_albatross_batched_rkv": "off",
+    "candidate_albatross_cmix_sparse": "no-fc",
+    "candidate_albatross_lowrank_weight": "both",
+    "candidate_albatross_orig_linear_groups": "att_c2c,ffn_key,head",
+    "candidate_chdir_albatross": false
+  }
+}

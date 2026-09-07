@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "protocol": "qwen35_3090_paired_pd_v2",
+  "repository_commit": "c0c743af251763a8be7669f8b7fa319435b4c766",
+  "runtime": {
+    "python": "3.10.12",
+    "torch": "2.7.1+cu126",
+    "torch_cuda": "12.6",
+    "triton": "3.3.1",
+    "transformers": "5.12.1",
+    "fla": "0.5.1",
+    "causal_conv1d": "1.6.2.post1"
+  },
+  "pip_freeze_sha256": "cd7f4a1e7b032a39285e757c214e7846ffcc9c32411d379da455bc16cfbed0ee",
+  "torch_cuda_arch_list": "8.6"
+}

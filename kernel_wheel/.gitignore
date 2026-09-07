@@ -1,0 +1,5 @@
+.generated/
+build/
+dist/
+*.egg-info/
+rwkv7_kernels/_manifest.json

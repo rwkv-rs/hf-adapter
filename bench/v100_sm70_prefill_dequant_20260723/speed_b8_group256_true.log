@@ -1,0 +1,123 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]
+Loading weights:   4%|▎         | 28/795 [00:00<00:02, 260.82it/s]
+Loading weights:  12%|█▏        | 95/795 [00:00<00:01, 467.19it/s]
+Loading weights:  19%|█▉        | 150/795 [00:00<00:01, 497.70it/s]
+Loading weights:  29%|██▊       | 227/795 [00:00<00:00, 583.58it/s]
+Loading weights:  37%|███▋      | 295/795 [00:00<00:00, 586.95it/s]
+Loading weights:  45%|████▌     | 360/795 [00:00<00:00, 595.85it/s]
+Loading weights:  53%|█████▎    | 420/795 [00:00<00:00, 564.54it/s]
+Loading weights:  60%|██████    | 477/795 [00:00<00:00, 519.97it/s]
+Loading weights:  67%|██████▋   | 530/795 [00:01<00:00, 518.64it/s]
+Loading weights:  74%|███████▍  | 592/795 [00:01<00:00, 525.42it/s]
+Loading weights:  83%|████████▎ | 658/795 [00:01<00:00, 562.46it/s]
+Loading weights:  91%|█████████ | 724/795 [00:01<00:00, 583.85it/s]
+Loading weights:  99%|█████████▉| 790/795 [00:01<00:00, 601.31it/s]
+Loading weights: 100%|██████████| 795/795 [00:01<00:00, 558.55it/s]
+{
+  "axis": "native_quant_e2e_decode",
+  "backend": "hf_adapter",
+  "code_source": "repo",
+  "effective_hf_dir": "/home/data/wangyue/models/rwkv7/rwkv7_native_quant_repo_code_lc35qs0o",
+  "status": "pass",
+  "quantization": "mm4",
+  "native_mm4_group_size": 256,
+  "native_mm4_group_policy": "lm_head",
+  "sm70_w4_tuning_policy": "exact_v100_auto_20260716",
+  "sm70_w4_fused_epilogue": false,
+  "sm70_w4_block_n": null,
+  "sm70_w4_thread_n": null,
+  "sm70_w4_group_block_n": null,
+  "sm70_w4_group_thread_n": null,
+  "dtype": "fp16",
+  "device": "Tesla V100-PCIE-32GB",
+  "model_name": "rwkv7-g1g-1.5b-hf",
+  "model_size_label": "1.5b",
+  "hf_model_dir": "/home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-hf",
+  "hidden_size": 2048,
+  "intermediate_size": 8192,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 32,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "batch_size": 8,
+  "prompt_tokens": 128,
+  "decode_tokens": 128,
+  "min_params": 8000000,
+  "quant_group_size": 128,
+  "quantized_head": false,
+  "marlin_skip_last_layers": 0,
+  "native_mm_policy": "speed",
+  "paired_baseline": true,
+  "quantize_before_device": false,
+  "replaced_modules": 1,
+  "module_counts": {
+    "linear_dense": 334,
+    "mm8": 0,
+    "mm4": 1,
+    "a8w8": 0,
+    "marlin_w4": 0,
+    "torchao_w8": 0,
+    "torchao_w4": 0
+  },
+  "native_mm_kernel": "sm7x_dp4a_w4_group256",
+  "fused_relu2_ffn_modules": 0,
+  "model_footprint_mb": 2722.3,
+  "baseline_prefill_tokps_total": 19312.2,
+  "baseline_decode_tokps_total": 818.8,
+  "baseline_model_footprint_mb": 2913.3,
+  "footprint_ratio_vs_fp16": 0.9344,
+  "prefill_speed_ratio_vs_fp16": 1.0032,
+  "decode_speed_ratio_vs_fp16": 1.0011,
+  "prompt_logits_cos_vs_fp16": 0.99977553,
+  "final_logits_cos_vs_fp16": 0.9997834,
+  "same_next_token_as_fp16": true,
+  "same_greedy_tokens_as_fp16": true,
+  "first_greedy_mismatch_flat_index": null,
+  "peak_vram_mb": 2969.6,
+  "prefill_sec": 0.052855491638183594,
+  "prefill_tokps_total": 19373.6,
+  "decode_sec": 1.2491698265075684,
+  "decode_tokps_total": 819.7,
+  "decode_tokps_per_seq": 102.5,
+  "decode_ms_per_step": 9.759,
+  "next_token": 21551,
+  "fast_token_backend_effective": "native_graph",
+  "native_model_decode_backend_effective": "native_graph",
+  "native_model_prefill_backend_effective": "native_prefill_graph",
+  "cache_type": "NativeRWKV7Cache",
+  "timing_repeats": 7,
+  "prefill_tokps_samples": [
+    19381.7,
+    19373.6,
+    19369.0,
+    19373.6,
+    19370.3,
+    19400.7,
+    19375.1
+  ],
+  "decode_tokps_samples": [
+    818.4,
+    818.9,
+    820.1,
+    819.7,
+    820.1,
+    818.7,
+    820.0
+  ],
+  "greedy_tokens_sha256": "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e",
+  "greedy_repeat_sha256": [
+    "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e",
+    "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e",
+    "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e",
+    "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e",
+    "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e",
+    "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e",
+    "13463489098125fc5e76e98ba227647ab6d101a5a34e884f9b51348e9bddcd6e"
+  ],
+  "greedy_repeat_deterministic": true
+}
+appended 1 row -> /home/wzu/rwkv7-v100-performance-clean-20260723/speed_b8_group256_true.jsonl

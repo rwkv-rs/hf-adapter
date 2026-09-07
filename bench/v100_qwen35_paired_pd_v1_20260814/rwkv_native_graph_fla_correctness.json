@@ -1,0 +1,431 @@
+{
+  "schema_version": 1,
+  "protocol": "rwkv_native_graph_fla_correctness_v100_v1",
+  "benchmark_repository_commit": "2b4359e43448ed657dfd96bb084385a3c49a8b19",
+  "model_hashes_sha256": "dde0456e07c4298b87583d20ca6fa9a3d02d9960fd6d8fe111d6cf9e2cd2a2c4",
+  "runtime": {
+    "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/runtime-lock.json",
+    "sha256": "80f8b53d1498041b1e434e61aac3423e329f1ccccf921e06f4e745d795f261d7"
+  },
+  "coverage": {
+    "models": 4,
+    "batch_sizes": [
+      1,
+      8
+    ],
+    "entries": 8,
+    "baseline_fresh_gpu_processes": 8,
+    "candidate_additional_gpu_processes": 1,
+    "candidate_formal_lane_processes": 8,
+    "targeted_native_eager_fresh_gpu_processes": 1,
+    "prompt_tokens": 2048,
+    "decode_tokens": 512,
+    "probe_tokens": 512,
+    "targeted_closure_entries": 1
+  },
+  "reference_contract": {
+    "rwkv_implementation": "wrapper_repo",
+    "RWKV7_FAST_TOKEN_BACKEND": "fla",
+    "RWKV7_NATIVE_MODEL_BACKEND": "eager",
+    "RWKV7_FAST_PREFILL": "0",
+    "RWKV7_NATIVE_PREFILL_GRAPH": "0",
+    "TORCHDYNAMO_DISABLE": "1",
+    "TORCH_COMPILE_DISABLE": "1",
+    "performance_role": false
+  },
+  "gates": {
+    "greedy_tokens": "exact_all_512",
+    "prompt_logits_min_row_cosine": 0.9999,
+    "final_logits_min_row_cosine": 0.9999,
+    "decode_logits_all_finite": true,
+    "b8_distinct_prompts": true
+  },
+  "targeted_same_implementation_closure": {
+    "model_pair": "rwkv-7.2b__qwen3.5-9b",
+    "model_size_label": "7.2b",
+    "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1i-7.2b-hf",
+    "batch_size": 8,
+    "prompt_tokens": 128,
+    "decode_tokens": 128,
+    "probe_tokens": 512,
+    "reference_contract": {
+      "rwkv_implementation": "native_model",
+      "effective_backend": "eager",
+      "RWKV7_FAST_TOKEN_BACKEND": "module_call",
+      "RWKV7_NATIVE_MODEL_BACKEND": "eager",
+      "RWKV7_FAST_PREFILL": "0",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "0"
+    },
+    "candidate_contract": {
+      "rwkv_implementation": "native_model",
+      "effective_backend": "native_graph",
+      "rkv_policy": "vkwr_auto",
+      "state_dtype": "torch.float16",
+      "triton_fp16_state": true,
+      "fused_norm_mix_num_warps": 8,
+      "fused_wavg_lora": false
+    },
+    "native_eager_reference": {
+      "row": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_p128_native_eager.jsonl",
+        "sha256": "dd2195b657da646fb79a874168071bc02f11f5f0a776fbb52e0f09d0ce42bdd5"
+      },
+      "probe": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_p128_native_eager.pt",
+        "sha256": "d71d3c7a41d45a09d56297554a44e3fd0b313cad4faab113ea65fd917f9ef524"
+      }
+    },
+    "native_graph_candidate": {
+      "row": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_p128_native_graph.jsonl",
+        "sha256": "01731dcb71c27ccd0ce0237b0812ec75857691e64e5b77850c252982f3645f5d"
+      },
+      "probe": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_p128_native_graph.pt",
+        "sha256": "8a2aaadea978b1308b56fcdd97022ce91d6852f16d7fef63a555bcdd18e7df98"
+      }
+    },
+    "comparison": {
+      "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_p128_native_eager_compare.json",
+      "sha256": "538086620342d649af6d56240f6f4b12b607b0401a6dfc4f8754ee1f56b94746"
+    }
+  },
+  "entries": [
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "model_size_label": "0.4b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1d-0.4b-hf",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b1_fla.jsonl",
+          "sha256": "bcf4d9316deb4fa4002eadcd2817244dbae4a56d9e3ce9a7de33dc388d30b8ec"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b1_fla.pt",
+          "sha256": "b7a332f2fbc6b5c1069ccf343efaad5bb8e45506b48f68004a8018e9333bb387"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b1_native.jsonl",
+          "sha256": "91a1bd070785590231ebe4339cbf50fd551ff6ccbe8a06f32eebc3d6083caff8"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b1_native.pt",
+          "sha256": "8b1742cb5f23d0c2d35d1e08d9f7c0d46d0922ce31da1f535ed0385eae337f83"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_0p4_b1.jsonl",
+          "sha256": "63136692ef75e6bd96b79a53cd9843d0768f2f4d1197a33f77e68636fab5828d"
+        },
+        "source_cell": {
+          "batch_size": 1,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b1_compare.json",
+        "sha256": "03631c2647c467a1685e543685afb63553a436093bacb14886acbff334453c59"
+      }
+    },
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "model_size_label": "0.4b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1d-0.4b-hf",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b8_fla.jsonl",
+          "sha256": "dd51d21a2a0d36474e84f02e5ed05353098e346a7edae03b5529aeea14dc266d"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b8_fla.pt",
+          "sha256": "9f49e7dd83ca97596f88076f7ce0b7a13545e3dd6bb4ab6215c9ead5d189ac3e"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b8_native.jsonl",
+          "sha256": "53d67d9f5b309bb8aca00cfff104550ce80fb1bda335c3de5769e5f5d7bf0e42"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b8_native.pt",
+          "sha256": "ddf9c02d0df7fe67041d3df88b9302748d64e164641124f546b60391752e76d7"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_0p4_b8.jsonl",
+          "sha256": "d00326fdf08434b8584dc5281c05e3e679fc495cc472a2c972acd5a04da188a6"
+        },
+        "source_cell": {
+          "batch_size": 8,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_0p4_b8_compare.json",
+        "sha256": "c3d59ae489c50d6fa39e998e69b665d6f43f2a7bbfe9c1187af44c62a7fcafa3"
+      }
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "model_size_label": "1.5b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1i-1.5b-hf",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b1_fla.jsonl",
+          "sha256": "4e047b0b9a8c9ec1d93f65a9743355149531e5defddc722def87cc88fb8701a5"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b1_fla.pt",
+          "sha256": "08f0de4a2f725c3366dba2c02da19e558f6dc28d17960c23e89ad6745cd6005f"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b1_native.jsonl",
+          "sha256": "628b687184aba893e0b1f441d4417e78e3e47eabc31831a052d265c434e075d3"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b1_native.pt",
+          "sha256": "e129061bc79cacda9807a257838b8243db8ee6ac29f976a4b3193917e281fc58"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_1p5_b1.jsonl",
+          "sha256": "6ec4174c47444683c61c97697fce8e79a6939fb650229799a7945b25034bdf30"
+        },
+        "source_cell": {
+          "batch_size": 1,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b1_compare.json",
+        "sha256": "789f48168116d5beea9662e7267862b43c8f252022d658b5cbdc803cffe02e1e"
+      }
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "model_size_label": "1.5b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1i-1.5b-hf",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b8_fla.jsonl",
+          "sha256": "07872a948f44ddfc7631bcf1a2b7c827cc5fabdb90f4c84fec6a206293a225af"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b8_fla.pt",
+          "sha256": "712082fe96725eb4b6bc01fa080942f703a4fe66346cd93978bb8eff71697c12"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b8_native.jsonl",
+          "sha256": "2205c59812f296b424e371ce5802aacf6b5eff3e04cf2214aad711bdf9f63c89"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b8_native.pt",
+          "sha256": "8930d0f2924db366fe3d51dd7a4b3a26bb18ff2957af7cf3d0fc817c9cc348b6"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_1p5_b8.jsonl",
+          "sha256": "a2c61fc9ed8ed6051909c1ccf58f2a54b1fa48483cdd45b0d210a71b9936d84d"
+        },
+        "source_cell": {
+          "batch_size": 8,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_1p5_b8_compare.json",
+        "sha256": "7b470d3d794659c518a27a0f4308a7710b774daed1711b42c5d051aba885ff33"
+      }
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "model_size_label": "2.9b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1i-2.9b-hf",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b1_fla.jsonl",
+          "sha256": "83b08443b1783263f538318c03188cc98bba69628ece4c5fb877190183102ede"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b1_fla.pt",
+          "sha256": "5a88f0dbafc796632d42afcc02be255e29360782def833f49b145fb697e539dc"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b1_native.jsonl",
+          "sha256": "5672873ef23529da2d1ab4df68a25662de81c00fdf9a63320b11f876ed079984"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b1_native.pt",
+          "sha256": "ad3bb9b19d3525c91c9fc7f016cd899c6cef245b7fb931fec2fe905369036ad9"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_2p9_b1.jsonl",
+          "sha256": "82178502051c83d053082abec8af2287c835ae51f54f7fc096853a7d88b2f175"
+        },
+        "source_cell": {
+          "batch_size": 1,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b1_compare.json",
+        "sha256": "81a6407106aaaff31ee521dda71e669498b2d35b9b273760b215369864667750"
+      }
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "model_size_label": "2.9b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1i-2.9b-hf",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b8_fla.jsonl",
+          "sha256": "272da13a1edf69e3f8b08582bffd18b017dd801b5571e10c5e0f41c7450cf4a3"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b8_fla.pt",
+          "sha256": "817b7c4a644ab69a92e8f3ce453a99afad0799a27b34496d570609665f4af135"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b8_native.jsonl",
+          "sha256": "c24d2a818498793896829a3ee8dfe3ccae625894251a80b7f9ec8a53d37ccef0"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b8_native.pt",
+          "sha256": "04762f5f7390de026f09aa8f39147eec427b98bf0d3cf767e7837f15cefa0d9d"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_2p9_b8.jsonl",
+          "sha256": "9c8d40f416f94e9a7d5c7bbb55916ebb5d3b3f4ba1acd7fe3335df484c5f703c"
+        },
+        "source_cell": {
+          "batch_size": 8,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_2p9_b8_compare.json",
+        "sha256": "5041eb8286d0d3b19a860cb07b08d1553fb0ec29e31a4ccdc49a887b63be60ca"
+      }
+    },
+    {
+      "model_pair": "rwkv-7.2b__qwen3.5-9b",
+      "model_size_label": "7.2b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1i-7.2b-hf",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b1_fla.jsonl",
+          "sha256": "9f47e3d68c6ab1b3c56c5b0b16dcb7160d57db1c89ce8c188ab3e6d5362a25bd"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b1_fla.pt",
+          "sha256": "c747b95d2ef2ab5bacf4cc11039f935671952daf5560bda275416be537420340"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b1_native.jsonl",
+          "sha256": "6ea5f0631ba42b040f718e8bf4e9c027b9403aa7037a209614d783574e0f17b4"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b1_native.pt",
+          "sha256": "59884194612fd0350a116d2ec3996a03624e5c17670ae58cb54b042aaef78ec9"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_7p2_b1.jsonl",
+          "sha256": "310153ddab7a02ee1ed26313ce36477946bd21992331b505a09cf19c5b696d0f"
+        },
+        "source_cell": {
+          "batch_size": 1,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b1_compare.json",
+        "sha256": "d561eb2534deb33c6e853f5b518f006a120b1dcc5642534ccc9be13384817539"
+      }
+    },
+    {
+      "model_pair": "rwkv-7.2b__qwen3.5-9b",
+      "model_size_label": "7.2b",
+      "model_path": "/home/data/wangyue/models/rwkv7/strict-v1-e818337/rwkv7-g1i-7.2b-hf",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_reference": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_fla.jsonl",
+          "sha256": "3a854aa841bda4fec3a185d9c8cce62c173c61092b01d2f469c0c75a86ceabf2"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_fla.pt",
+          "sha256": "dca13427a99cce523b5256b0b94e860b2861c5fbca510766c5279ca205de348a"
+        }
+      },
+      "native_candidate": {
+        "row": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_native.jsonl",
+          "sha256": "56898ddd9a2d2c62944b3b1f817099399c1131cf115ab87c6efcd3aa429c6134"
+        },
+        "probe": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_native.pt",
+          "sha256": "210e8179ed8372ca111467c92eb873eadf9a4a122c546f90011661961159e1dd"
+        },
+        "source_lane": {
+          "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/rwkv_7p2_b8.jsonl",
+          "sha256": "14b5d1b15248f8b362c04928d313f535804fe663fb5c26281c04dbdca6ec1dbc"
+        },
+        "source_cell": {
+          "batch_size": 8,
+          "prompt_tokens": 2048,
+          "decode_tokens": 512
+        }
+      },
+      "comparison": {
+        "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-2b4359e/decode_correctness_7p2_b8_compare.json",
+        "sha256": "6d7a642a2a6d11e8bcf8d02b0a42c20770b1d401f590f932bdafc6a41b42b9d4"
+      }
+    }
+  ]
+}

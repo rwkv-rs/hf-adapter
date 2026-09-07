@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+# coding=utf-8
+"""A/B benchmark for native_graph with fused W/A/G/V-gate LoRA enabled.
+
+`bench_fused_wavg_lora.py` shows isolated W/A/G/V-gate grouping is profitable
+on V100. This script checks the production-facing question: after capture
+inside the HF native_graph fast-token backend, does enabling
+`RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA=1` preserve logits/greedy behavior and move
+end-to-end decode latency on top of the current recurrent-output default?
+"""
+from __future__ import annotations
+
+# Support direct ``python bench/<category>/<script>.py`` execution.
+if __package__ in {None, ""}:
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+
+from bench.benchlib.paths import DEFAULT_RESULTS_PATH
+
+import argparse
+import json
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+os.environ.setdefault("RWKV_V7_ON", "1")
+os.environ.setdefault("RWKV7_FAST_TOKEN_BACKEND", "native_graph")
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+
+DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+SEED = "The quick brown fox jumps over the lazy dog. " * 128
+_FALSE_VALUES = {"0", "false", "False", "no", "off"}
+
+
+def cuda_sync(device: str) -> None:
+    if device.startswith("cuda"):
+        torch.cuda.synchronize()
+
+
+def device_name(device: str) -> str:
+    return torch.cuda.get_device_name(0) if device.startswith("cuda") else device
+
+
+def peak_mb(device: str) -> float | None:
+    if not device.startswith("cuda"):
+        return None
+    return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
+
+
+def set_attn_mode(model, attn_mode: str) -> None:
+    model.config.attn_mode = attn_mode
+    for layer in getattr(model.model, "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = attn_mode
+
+
+def load_model(args: argparse.Namespace, dtype: torch.dtype):
+    if args.fast_cache != "auto":
+        os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
+    os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_graph"
+    os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = str(args.native_graph_cache_size)
+    model_cls = (
+        NativeRWKV7ForCausalLM if args.code_source == "repo" else AutoModelForCausalLM
+    )
+    load_kwargs = {
+        "torch_dtype": dtype,
+        "device_map": args.device if args.device.startswith("cuda") else None,
+    }
+    if args.code_source == "model":
+        load_kwargs["trust_remote_code"] = True
+    model = model_cls.from_pretrained(
+        args.hf_dir,
+        **load_kwargs,
+    ).eval()
+    if args.fuse_norm != "auto":
+        desired = args.fuse_norm == "true"
+        actual = bool(getattr(model.config, "fuse_norm", False))
+        if actual != desired:
+            raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
+    set_attn_mode(model, args.attn_mode)
+    for name in ("rwkv7_forward_token", "rwkv7_clear_native_graph_cache"):
+        if not hasattr(model, name):
+            raise ValueError(f"Loaded model does not expose {name}")
+    return model
+
+
+def encode(tok, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
+    ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
+    ids = ids.repeat(batch_size, 1)
+    return ids.to(device) if device.startswith("cuda") else ids
+
+
+def prefill(model, ids: torch.Tensor):
+    out = model(ids, use_cache=True, logits_to_keep=1)
+    token = out.logits[:, -1:].argmax(dim=-1)
+    return token, out.past_key_values
+
+
+def run_mode(
+    model,
+    token: torch.Tensor,
+    base_state,
+    args: argparse.Namespace,
+    *,
+    enabled: bool,
+    blocks: tuple[int, int, int],
+    num_warps: int,
+) -> dict[str, Any]:
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "1" if args.fused_recurrent else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "1" if args.fused_recurrent_output else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "0"
+    for suffix, value in zip(("BLOCK_M", "BLOCK_R", "BLOCK_K"), blocks):
+        os.environ[f"RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_{suffix}"] = str(value)
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_NUM_WARPS"] = str(num_warps)
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "1" if enabled else "0"
+    model.rwkv7_clear_native_graph_cache()
+    if hasattr(model, "rwkv7_reset_native_graph_cache_stats"):
+        model.rwkv7_reset_native_graph_cache_stats()
+    state = base_state.clone()
+    tok = token.clone()
+    with torch.inference_mode():
+        first = model.rwkv7_forward_token(tok, past_key_values=state)
+        effective_backend = getattr(model, "rwkv7_last_fast_token_backend", lambda: None)()
+        # Correctness is outside the timed window so device-to-host token
+        # copies cannot hide a small kernel delta.
+        state = base_state.clone()
+        tok = token.clone()
+        greedy_tokens: list[int] = []
+        for _ in range(args.correctness_steps):
+            out = model.rwkv7_forward_token(tok, past_key_values=state)
+            next_token = out.logits[:, -1:].argmax(dim=-1)
+            greedy_tokens.extend(int(v) for v in next_token.detach().cpu().reshape(-1))
+            tok = token if args.fixed_token else next_token
+
+        # Warmup from a fresh clone so correctness logits remain first-token.
+        state = base_state.clone()
+        tok = token.clone()
+        for _ in range(args.warmup):
+            out = model.rwkv7_forward_token(tok, past_key_values=state)
+            if not args.fixed_token:
+                tok = out.logits[:, -1:].argmax(dim=-1)
+        cuda_sync(args.device)
+        t0 = time.perf_counter()
+        for _ in range(args.steps):
+            out = model.rwkv7_forward_token(tok, past_key_values=state)
+            if not args.fixed_token:
+                tok = out.logits[:, -1:].argmax(dim=-1)
+            else:
+                tok = token
+        cuda_sync(args.device)
+    ms_per_step = (time.perf_counter() - t0) * 1000.0 / float(args.steps)
+    stats = model.rwkv7_native_graph_cache_stats() if hasattr(model, "rwkv7_native_graph_cache_stats") else {}
+    return {
+        "enabled": enabled,
+        "effective_backend": effective_backend,
+        "first_logits": first.logits.detach().clone(),
+        "ms_per_step": ms_per_step,
+        "tokps_total": 1000.0 * int(token.numel()) / ms_per_step if ms_per_step > 0 else None,
+        "greedy_tokens": greedy_tokens,
+        "cache_stats": stats,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument(
+        "--code-source",
+        choices=("model", "repo"),
+        default="model",
+        help="load checkpoint-bundled remote code or the current repository implementation",
+    )
+    ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--prompt-tokens", type=int, default=64)
+    ap.add_argument("--warmup", type=int, default=4)
+    ap.add_argument("--steps", type=int, default=32)
+    ap.add_argument("--correctness-steps", type=int, default=32)
+    ap.add_argument("--fixed-token", action="store_true")
+    ap.add_argument("--native-graph-cache-size", type=int, default=8)
+    ap.add_argument("--fused-recurrent-output", action=argparse.BooleanOptionalAction, default=True, help="Keep default fused recurrent+output prep enabled in both A/B modes.")
+    ap.add_argument("--fused-output", action=argparse.BooleanOptionalAction, default=True, help="Keep default fused output prep enabled in both A/B modes when recurrent-output is disabled.")
+    ap.add_argument("--fused-output-project", action="store_true", help="Keep RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT=1 in both A/B modes for combined probes.")
+    ap.add_argument("--fused-recurrent", action="store_true", help="Keep RWKV7_NATIVE_GRAPH_FUSED_RECURRENT=1 in both A/B modes to test combined recurrent/WAVG-LoRA integration.")
+    ap.add_argument("--block-m", type=int, default=64, help="Fused W/A/G/V-gate LoRA output tile.")
+    ap.add_argument("--block-r", type=int, default=64, help="Fused W/A/G/V-gate LoRA rank tile.")
+    ap.add_argument("--block-k", type=int, default=64, help="Fused W/A/G/V-gate LoRA hidden tile.")
+    ap.add_argument("--num-warps", type=int, choices=(1, 2, 4, 8), default=4)
+    ap.add_argument(
+        "--compare-launch",
+        action="store_true",
+        help="compare two enabled launch configurations instead of disabled vs enabled",
+    )
+    ap.add_argument("--baseline-block-m", type=int, default=32)
+    ap.add_argument("--baseline-block-r", type=int, default=64)
+    ap.add_argument("--baseline-block-k", type=int, default=256)
+    ap.add_argument("--baseline-num-warps", type=int, choices=(1, 2, 4, 8), default=8)
+    ap.add_argument("--results", default=str(DEFAULT_RESULTS_PATH))
+    args = ap.parse_args()
+
+    dtype = DTYPES[args.dtype]
+    if args.device.startswith("cuda"):
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    model = load_model(args, dtype)
+    ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
+    with torch.inference_mode():
+        # Use the normal path for prefill, then A/B only the captured decode graph.
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "1" if args.fused_recurrent else "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "1" if args.fused_recurrent_output else "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M"] = str(args.block_m)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R"] = str(args.block_r)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K"] = str(args.block_k)
+        token, base_state = prefill(model, ids)
+        baseline_blocks = (
+            args.baseline_block_m,
+            args.baseline_block_r,
+            args.baseline_block_k,
+        )
+        candidate_blocks = (args.block_m, args.block_r, args.block_k)
+        baseline = run_mode(
+            model,
+            token,
+            base_state,
+            args,
+            enabled=bool(args.compare_launch),
+            blocks=baseline_blocks,
+            num_warps=args.baseline_num_warps,
+        )
+        fused = run_mode(
+            model,
+            token,
+            base_state,
+            args,
+            enabled=True,
+            blocks=candidate_blocks,
+            num_warps=args.num_warps,
+        )
+
+    max_abs = float((baseline["first_logits"].float() - fused["first_logits"].float()).abs().max().detach().cpu())
+    cosine = float(torch.nn.functional.cosine_similarity(
+        baseline["first_logits"].float().reshape(args.batch_size, -1),
+        fused["first_logits"].float().reshape(args.batch_size, -1),
+        dim=-1,
+    ).min().detach().cpu())
+    greedy_total = min(len(baseline["greedy_tokens"]), len(fused["greedy_tokens"]))
+    greedy_match = sum(int(a == b) for a, b in zip(baseline["greedy_tokens"], fused["greedy_tokens"], strict=False))
+    correctness_pass = bool(greedy_match == greedy_total and cosine >= 0.999)
+    row = {
+        "axis": "native_graph_fused_wavg_lora",
+        "backend": "hf_adapter",
+        "status": "pass" if correctness_pass else "fail",
+        "dtype": args.dtype,
+        "device": device_name(args.device),
+        "code_source": args.code_source,
+        "attn_mode": args.attn_mode,
+        "fuse_norm": getattr(model.config, "fuse_norm", None),
+        "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
+        "batch_size": args.batch_size,
+        "prompt_tokens": int(ids.shape[1]),
+        "steps": args.steps,
+        "correctness_steps": args.correctness_steps,
+        "fixed_token": args.fixed_token,
+        "fused_recurrent_enabled": bool(args.fused_recurrent),
+        "fused_recurrent_output_enabled": bool(args.fused_recurrent_output),
+        "fused_output_enabled": bool(args.fused_output),
+        "fused_output_project_enabled": bool(args.fused_output_project),
+        "block_m": int(args.block_m),
+        "block_r": int(args.block_r),
+        "block_k": int(args.block_k),
+        "num_warps": int(args.num_warps),
+        "compare_launch": bool(args.compare_launch),
+        "baseline_block_m": int(args.baseline_block_m),
+        "baseline_block_r": int(args.baseline_block_r),
+        "baseline_block_k": int(args.baseline_block_k),
+        "baseline_num_warps": int(args.baseline_num_warps),
+        "baseline_effective_backend": baseline["effective_backend"],
+        "fused_effective_backend": fused["effective_backend"],
+        "baseline_fused_wavg_lora": bool(args.compare_launch),
+        "fused_wavg_lora": True,
+        "baseline_ms_per_step": round(float(baseline["ms_per_step"]), 4),
+        "fused_ms_per_step": round(float(fused["ms_per_step"]), 4),
+        "speedup": round(float(baseline["ms_per_step"]) / float(fused["ms_per_step"]), 4) if fused["ms_per_step"] else None,
+        "baseline_tokps_total": round(float(baseline["tokps_total"]), 1) if baseline["tokps_total"] else None,
+        "fused_tokps_total": round(float(fused["tokps_total"]), 1) if fused["tokps_total"] else None,
+        "max_abs_diff_first_step": round(max_abs, 6),
+        "min_cosine_first_step": cosine,
+        "greedy_match": greedy_match,
+        "greedy_total": greedy_total,
+        "correctness_pass": correctness_pass,
+        "baseline_cache_stats": baseline["cache_stats"],
+        "fused_cache_stats": fused["cache_stats"],
+        "peak_vram_mb": peak_mb(args.device),
+    }
+    print(json.dumps(row, indent=2, ensure_ascii=False), flush=True)
+    if args.results:
+        out = Path(args.results)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print(f"\nappended 1 row -> {out}", flush=True)
+    return 0 if correctness_pass else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

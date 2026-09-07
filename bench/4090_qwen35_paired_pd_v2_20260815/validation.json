@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "benchmark_matrix": "qwen35_best_optimized_hf_v1",
+  "optimization_lane": "qwen_best_optimized_hf",
+  "status": "pass",
+  "reference_rows": 48,
+  "expected_rows": 48,
+  "expected_model_pairs": [
+    "rwkv-0.4b__qwen3.5-0.8b",
+    "rwkv-1.5b__qwen3.5-2b",
+    "rwkv-2.9b__qwen3.5-4b",
+    "rwkv-7.2b__qwen3.5-9b"
+  ],
+  "devices": [
+    "NVIDIA GeForce RTX 4090"
+  ],
+  "runtime_fields": [
+    "torch_version",
+    "torch_cuda_version",
+    "triton_version",
+    "transformers_version",
+    "fla_version",
+    "causal_conv1d_version"
+  ],
+  "runtime_signature_count": 1,
+  "benchmark_repository_commits": [
+    "bdb0e4a66aa0b97d06d7fee5a4b304aeaf8923d0"
+  ],
+  "compile_modes_by_model": {
+    "0.8b": [
+      "max-autotune"
+    ],
+    "2b": [
+      "max-autotune"
+    ],
+    "4b": null,
+    "9b": null
+  },
+  "decode_routes_by_model": {
+    "0.8b": [
+      "static_cache_inductor_cudagraph"
+    ],
+    "2b": [
+      "static_cache_inductor_cudagraph"
+    ],
+    "4b": [
+      "static_cache_raw_cudagraph"
+    ],
+    "9b": [
+      "static_cache_raw_cudagraph"
+    ]
+  },
+  "qwen_contract": "official_fla_causal_conv1d_static_cache_cudagraph_same_cache_v2",
+  "reference_lane_eligible": true,
+  "unified_main_table_eligible": false,
+  "unified_main_table_reason": "RWKV candidate rows were not rerun under this runtime, and the Qwen numbers are an independent best-Prefill/best-Decode axis envelope",
+  "errors": []
+}

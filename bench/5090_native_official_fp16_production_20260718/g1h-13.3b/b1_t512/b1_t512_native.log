@@ -1,0 +1,36 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/2016 [00:00<?, ?it/s]Loading weights:   3%|▎         | 62/2016 [00:00<00:03, 575.01it/s]Loading weights:   6%|▌         | 120/2016 [00:00<00:03, 550.89it/s]Loading weights:   9%|▊         | 176/2016 [00:00<00:03, 523.05it/s]Loading weights:  11%|█▏        | 229/2016 [00:00<00:03, 477.02it/s]Loading weights:  15%|█▍        | 294/2016 [00:00<00:03, 480.14it/s]Loading weights:  18%|█▊        | 355/2016 [00:00<00:03, 479.15it/s]Loading weights:  21%|██        | 424/2016 [00:00<00:03, 528.84it/s]Loading weights:  24%|██▎       | 478/2016 [00:00<00:02, 530.79it/s]Loading weights:  26%|██▋       | 532/2016 [00:01<00:02, 519.21it/s]Loading weights:  29%|██▉       | 591/2016 [00:01<00:02, 499.33it/s]Loading weights:  33%|███▎      | 656/2016 [00:01<00:02, 510.88it/s]Loading weights:  36%|███▌      | 723/2016 [00:01<00:02, 519.70it/s]Loading weights:  39%|███▉      | 789/2016 [00:01<00:02, 547.64it/s]Loading weights:  42%|████▏     | 845/2016 [00:01<00:02, 545.61it/s]Loading weights:  45%|████▍     | 900/2016 [00:01<00:02, 538.75it/s]Loading weights:  47%|████▋     | 955/2016 [00:01<00:02, 506.90it/s]Loading weights:  50%|█████     | 1017/2016 [00:01<00:01, 532.64it/s]Loading weights:  53%|█████▎    | 1073/2016 [00:02<00:01, 535.43it/s]Loading weights:  56%|█████▌    | 1127/2016 [00:02<00:01, 532.73it/s]Loading weights:  59%|█████▊    | 1182/2016 [00:02<00:01, 503.44it/s]Loading weights:  62%|██████▏   | 1249/2016 [00:02<00:01, 511.97it/s]Loading weights:  65%|██████▌   | 1316/2016 [00:02<00:01, 520.65it/s]Loading weights:  69%|██████▊   | 1383/2016 [00:02<00:01, 526.44it/s]Loading weights:  72%|███████▏  | 1448/2016 [00:02<00:01, 528.12it/s]Loading weights:  75%|███████▌  | 1515/2016 [00:02<00:00, 557.25it/s]Loading weights:  78%|███████▊  | 1572/2016 [00:02<00:00, 547.08it/s]Loading weights:  81%|████████  | 1627/2016 [00:03<00:00, 542.42it/s]Loading weights:  83%|████████▎ | 1682/2016 [00:03<00:00, 510.30it/s]Loading weights:  87%|████████▋ | 1744/2016 [00:03<00:00, 534.17it/s]Loading weights:  89%|████████▉ | 1800/2016 [00:03<00:00, 534.81it/s]Loading weights:  92%|█████████▏| 1854/2016 [00:03<00:00, 527.08it/s]Loading weights:  95%|█████████▍| 1909/2016 [00:03<00:00, 503.31it/s]Loading weights:  98%|█████████▊| 1976/2016 [00:03<00:00, 519.42it/s]Loading weights: 100%|██████████| 2016/2016 [00:03<00:00, 524.72it/s]
+{
+  "engine": "native_hf_sequence",
+  "batch_size": 1,
+  "prompt_tokens": 512,
+  "timing": {
+    "times_ms": [
+      90.54713439941406,
+      90.46310424804688,
+      90.45977783203125,
+      90.4417953491211,
+      90.44140625,
+      90.46300506591797,
+      90.44841766357422,
+      90.478271484375,
+      90.45414733886719,
+      90.45417785644531,
+      90.44390106201172,
+      90.51302337646484,
+      90.45638275146484,
+      90.52623748779297,
+      90.70697784423828,
+      90.71158599853516,
+      90.70674896240234,
+      90.6998062133789,
+      90.70559692382812,
+      90.68319702148438,
+      90.69664001464844
+    ],
+    "median_ms": 90.478271484375,
+    "aggregate_tokps": 5658.817212134949
+  },
+  "peak_vram_mb": 25953.55322265625
+}

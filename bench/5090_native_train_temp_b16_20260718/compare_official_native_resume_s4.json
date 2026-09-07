@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_convergence_compare",
+  "status": "pass",
+  "reference_backend": "official_train_temp",
+  "candidate_backend": "hf_native_train_temp_cuda",
+  "steps": 4,
+  "provenance_mismatches": [],
+  "optimizer_groups_match": true,
+  "train_steps_match": true,
+  "validation_steps_match": true,
+  "train_loss_auc_reference": 7.167517304420471,
+  "train_loss_auc_candidate": 7.167517989873886,
+  "train_loss_auc_relative_diff": 9.563331148070586e-08,
+  "grad_norm_auc_reference": 311.25,
+  "grad_norm_auc_candidate": 311.25,
+  "grad_norm_auc_relative_diff": 0.0,
+  "max_reference_grad_norm": 544.0,
+  "max_candidate_grad_norm": 544.0,
+  "max_grad_norm_ratio": 1.0,
+  "validation_loss_auc_reference": 6.218478012084961,
+  "validation_loss_auc_candidate": 6.218483352661133,
+  "validation_loss_auc_relative_diff": 8.588236803328816e-07,
+  "final_validation_loss_reference": 2.4222395420074463,
+  "final_validation_loss_candidate": 2.4222769737243652,
+  "final_validation_relative_diff": 1.5453350616150682e-05,
+  "final_validation_abs_diff": 3.743171691894531e-05,
+  "max_validation_relative_diff": 1.5453350616150682e-05,
+  "max_validation_scaled_diff": 1.5453350616150682e-05,
+  "validation_threshold_steps": [
+    {
+      "loss_threshold": 10.0,
+      "reference_step": 1,
+      "candidate_step": 1,
+      "step_diff": 0,
+      "comparable": true
+    },
+    {
+      "loss_threshold": 5.0,
+      "reference_step": 2,
+      "candidate_step": 2,
+      "step_diff": 0,
+      "comparable": true
+    },
+    {
+      "loss_threshold": 1.0,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    },
+    {
+      "loss_threshold": 0.1,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    },
+    {
+      "loss_threshold": 0.01,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    }
+  ],
+  "max_validation_threshold_step_diff": 0,
+  "targets": {
+    "max_train_auc_relative_diff": 0.02,
+    "max_validation_auc_relative_diff": 0.02,
+    "max_final_validation_abs_diff": 0.01,
+    "max_final_validation_relative_diff": 0.03,
+    "max_validation_threshold_step_diff": 10,
+    "max_grad_norm_ratio": 2.0
+  },
+  "failures": []
+}

@@ -1,0 +1,1738 @@
+{
+  "schema_version": 1,
+  "policy": "Every executable benchmark script is classified; obsolete scripts are deleted rather than accumulated in a legacy directory.",
+  "scripts": [
+    {
+      "path": "bench/analyzers/analyze_math500_gap.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "analyze_math500_gap",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/analyze_math500_sampling_variance.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "analyze_math500_sampling_variance",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/analyze_results.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "analyze_results",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compare_albatross_logits.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compare_albatross_logits",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compare_fast_token_layouts.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compare_fast_token_layouts",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compare_math500_summaries.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compare_math500_summaries",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compare_qwen35_apple_baseline.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compare_qwen35_apple_baseline",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compare_qwen35_backend_probe.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compare_qwen35_backend_probe",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compare_qwen35_speed_matrix.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compare_qwen35_speed_matrix",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compare_rwkv_prefill_probe.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compare_rwkv_prefill_probe",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/compose_qwen35_quant_routes.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "compose_qwen35_quant_routes",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/extract_jsonl_from_log.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "extract_jsonl_from_log",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/plot_train_temp_alignment.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "plot_train_temp_alignment",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/render_apple_production_acceptance.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "render_apple_production_acceptance",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/rerun_qwen35_red_candidates.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "rerun_qwen35_red_candidates",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/score_qwen35_quality.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "score_qwen35_quality",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/select_qwen35_graph_route_v1.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "select_qwen35_graph_route_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/summarize_4090_4080_routes.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "summarize_4090_4080_routes",
+      "hardware": [
+        "RTX 4080",
+        "RTX 4090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/summarize_blackwell_quant_matrix.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "summarize_blackwell_quant_matrix",
+      "hardware": [
+        "NVIDIA Blackwell"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/summarize_native_official_decode.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "summarize_native_official_decode",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/summarize_qwen35_best_optimized_hf_v1.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "summarize_qwen35_best_optimized_hf_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/analyzers/summarize_results.py",
+      "kind": "analyzer",
+      "status": "support",
+      "scope": "summarize_results",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_albatross.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_albatross",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_albatross_linear_orig_layout.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_albatross_linear_orig_layout",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_albatross_projection_layout.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_albatross_projection_layout",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_batch.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_batch",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_chunked_prefill.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_chunked_prefill",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_decode_breakdown.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_decode_breakdown",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_decode_components.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_decode_components",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_decode_micro.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_decode_micro",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_dplr_prefill_scan.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_dplr_prefill_scan",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_dynamic_batch.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_dynamic_batch",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fast_token_warmup.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fast_token_warmup",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_forward_fast_path.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_forward_fast_path",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_attn_output.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_attn_output",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_attn_output_project.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_attn_output_project",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_ffn.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_ffn",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_projection.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_projection",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_recurrent.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_recurrent",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_recurrent_output.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_recurrent_output",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_recurrent_scan.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_recurrent_scan",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_rkv_wag_projection.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_rkv_wag_projection",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_shift_mix.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_shift_mix",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_wa_lora.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_wa_lora",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_wag_lora.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_wag_lora",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_fused_wavg_lora.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_fused_wavg_lora",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_generate_fast_path.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_generate_fast_path",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_hf_capacity_probe.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_hf_capacity_probe",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_larger_model_smoke.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_larger_model_smoke",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_logit_compression_alignment.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_logit_compression_alignment",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_marlin_bn_tn.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_marlin_bn_tn",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_marlin_bn_tn_contract.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_marlin_bn_tn_contract",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_marlin_relu2.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_marlin_relu2",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_decode.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_decode",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_ada_linear.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_ada_linear",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_ada_sparse_ffn.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_ada_sparse_ffn",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_ada_wagv_lora.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_ada_wagv_lora",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_norm_mix.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_norm_mix",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_output.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_output",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_output_project.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_output_project",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_projection.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_projection",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_recurrent.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_recurrent",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_recurrent_output.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_recurrent_output",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_recurrent_raw.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_recurrent_raw",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_wag_lora.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_wag_lora",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_fused_wavg_lora.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_fused_wavg_lora",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_policy_ab.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_policy_ab",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_sm70_linear.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_sm70_linear",
+      "hardware": [
+        "CUDA sm70"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_state_dtype.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_state_dtype",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_graph_vkwr_rkv_policy.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_graph_vkwr_rkv_policy",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_model_decode.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_model_decode",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_model_decode_alignment.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_model_decode_alignment",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_prefill_accum_ab.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_prefill_accum_ab",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_prefill_accum_correctness.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_prefill_accum_correctness",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_prefill_breakdown.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_prefill_breakdown",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_prefill_self_chunk_ab.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_prefill_self_chunk_ab",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_gemv.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_gemv",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_mm4.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_mm4",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_mm4_tuning.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_mm4_tuning",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_mm8.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_mm8",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_prefill_paired.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_prefill_paired",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_rkv.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_rkv",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_rkv_sweep.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_rkv_sweep",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_transition.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_transition",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_w4_gemv.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_w4_gemv",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_quant_w4_rkv.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_quant_w4_rkv",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_native_v3a_ops_probe.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_native_v3a_ops_probe",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_projection_lora.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_projection_lora",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_quant_bn_tn.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_quant_bn_tn",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_quantization.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_quantization",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_sm70_linear.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_sm70_linear",
+      "hardware": [
+        "CUDA sm70"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_sm70_rkv.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_sm70_rkv",
+      "hardware": [
+        "CUDA sm70"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_speculative_decode.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_speculative_decode",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_speed.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_speed",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_torchao_w4_role_sweep.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_torchao_w4_role_sweep",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/bench_ttft_tpot.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "bench_ttft_tpot",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/eval_math500_hf.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "eval_math500_hf",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/probe_sm120_b8_dense_ffn_compile.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "probe_sm120_b8_dense_ffn_compile",
+      "hardware": [
+        "CUDA sm120"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/profile_decode.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "profile_decode",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/profile_mlx_components.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "profile_mlx_components",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/profile_native_graph_kernels.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "profile_native_graph_kernels",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/profile_native_prefill_dispatch.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "profile_native_prefill_dispatch",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/profile_native_sequence_prefill.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "profile_native_sequence_prefill",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/profile_official_sequence_prefill.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "profile_official_sequence_prefill",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/profile_official_v3a_graph_kernels.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "profile_official_v3a_graph_kernels",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/probes/qwen35_fla_triton_conv.py",
+      "kind": "probe",
+      "status": "probe",
+      "scope": "qwen35_fla_triton_conv",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_3090_qwen35_best_optimized_hf.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_3090_qwen35_best_optimized_hf",
+      "hardware": [
+        "RTX 3090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_3090_rwkv_paired_pd_v2.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_3090_rwkv_paired_pd_v2",
+      "hardware": [
+        "RTX 3090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_4080_dynamic_prefill_matrix.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_4080_dynamic_prefill_matrix",
+      "hardware": [
+        "RTX 4080"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_4080_qwen35_best_optimized_hf_v1.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_4080_qwen35_best_optimized_hf_v1",
+      "hardware": [
+        "RTX 4080"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_4080_qwen35_paired_pd_v1.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_4080_qwen35_paired_pd_v1",
+      "hardware": [
+        "RTX 4080"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_4080_rwkv_paired_pd_v1.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_4080_rwkv_paired_pd_v1",
+      "hardware": [
+        "RTX 4080"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_4090_rwkv_paired_pd_v2.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_4090_rwkv_paired_pd_v2",
+      "hardware": [
+        "RTX 4090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_5090_qwen35_best_optimized_hf.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_5090_qwen35_best_optimized_hf",
+      "hardware": [
+        "RTX 5090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_5090_rwkv_paired_decode_v1.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_5090_rwkv_paired_decode_v1",
+      "hardware": [
+        "RTX 5090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_v100_qwen35_best_optimized_hf_v1.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_v100_qwen35_best_optimized_hf_v1",
+      "hardware": [
+        "Tesla V100"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_v100_qwen35_paired_pd_v1.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_v100_qwen35_paired_pd_v1",
+      "hardware": [
+        "Tesla V100"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/run_v100_rwkv_paired_pd_v1.sh",
+      "kind": "runner",
+      "status": "current",
+      "scope": "run_v100_rwkv_paired_pd_v1",
+      "hardware": [
+        "Tesla V100"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "bench",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_batch_sweep.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_batch_sweep",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_cross_model_speed.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_cross_model_speed",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_cross_model_speed_resident.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_cross_model_speed_resident",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_native_graph_overhead.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_native_graph_overhead",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_native_mm_quant_decode.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_native_mm_quant_decode",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_native_prefill_scan.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_native_prefill_scan",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_native_quant_e2e_decode.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_native_quant_e2e_decode",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_sm70_w4_bn_tn.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_sm70_w4_bn_tn",
+      "hardware": [
+        "CUDA sm70"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/bench_train_temp_alignment.py",
+      "kind": "runner",
+      "status": "current",
+      "scope": "bench_train_temp_alignment",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/build_hf_fast_path_v1_extensions.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "build_hf_fast_path_v1_extensions",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_3090_qwen35_pair.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_3090_qwen35_pair",
+      "hardware": [
+        "RTX 3090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_3090_qwen35_pair_acceptance.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_3090_qwen35_pair_acceptance",
+      "hardware": [
+        "RTX 3090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_3090_qwen35_pair_resident.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_3090_qwen35_pair_resident",
+      "hardware": [
+        "RTX 3090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_3090_qwen_graph_route_probe_v1.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_3090_qwen_graph_route_probe_v1",
+      "hardware": [
+        "RTX 3090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_4090_fused_backend_validation.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_4090_fused_backend_validation",
+      "hardware": [
+        "RTX 4090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_4090_quant_validation.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_4090_quant_validation",
+      "hardware": [
+        "RTX 4090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_4090_qwen35_pair_acceptance.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_4090_qwen35_pair_acceptance",
+      "hardware": [
+        "RTX 4090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_5090_g1h_13b_acceptance.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_5090_g1h_13b_acceptance",
+      "hardware": [
+        "RTX 5090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_5090_hf_validation.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_5090_hf_validation",
+      "hardware": [
+        "RTX 5090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_a6000_hf_validation.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_a6000_hf_validation",
+      "hardware": [
+        "RTX A6000"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_amd_rocm_hf_validation.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_amd_rocm_hf_validation",
+      "hardware": [
+        "AMD ROCm"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_apple_bsz8_active_compare.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_apple_bsz8_active_compare",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_blackwell_quant_matrix.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_blackwell_quant_matrix",
+      "hardware": [
+        "NVIDIA Blackwell"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_clean_install_acceptance.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_clean_install_acceptance",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_coreml_apple_baseline.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_coreml_apple_baseline",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_hf_fast_path_v1.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_hf_fast_path_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_math500_final_acceptance.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_math500_final_acceptance",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_mlx_quant_quality.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_mlx_quant_quality",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_official_native_prefill_matrix.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_official_native_prefill_matrix",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_qwen35_apple_baseline.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_qwen35_apple_baseline",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_qwen35_speed_matrix.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_qwen35_speed_matrix",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_rkv_policy_ab.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_rkv_policy_ab",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_t4_hf_validation.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_t4_hf_validation",
+      "hardware": [
+        "Tesla T4"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_v100_fast_decode_validation.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_v100_fast_decode_validation",
+      "hardware": [
+        "Tesla V100"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_v100_fast_token_layout_ab.sh",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_v100_fast_token_layout_ab",
+      "hardware": [
+        "Tesla V100"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/runners/run_v100_sm70_mm4_production_matrix.py",
+      "kind": "runner",
+      "status": "support",
+      "scope": "run_v100_sm70_mm4_production_matrix",
+      "hardware": [
+        "Tesla V100",
+        "CUDA sm70"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/tools/build_marlin_autotune_profile.py",
+      "kind": "tool",
+      "status": "support",
+      "scope": "build_marlin_autotune_profile",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/tools/capture_hf_fast_path_v1_environment.py",
+      "kind": "tool",
+      "status": "support",
+      "scope": "capture_hf_fast_path_v1_environment",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/tools/make_math500_stratified_subset.py",
+      "kind": "tool",
+      "status": "support",
+      "scope": "make_math500_stratified_subset",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/audit_qwen35_apple_goal.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "audit_qwen35_apple_goal",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/check_apple_production_acceptance.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "check_apple_production_acceptance",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/check_dynamic_prefill_matrix.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "check_dynamic_prefill_matrix",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/check_exact_gpu.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "check_exact_gpu",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/check_results.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "check_results",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/check_v100_production_close.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "check_v100_production_close",
+      "hardware": [
+        "Tesla V100"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_apple_bsz8_fidelity.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_apple_bsz8_fidelity",
+      "hardware": [
+        "Apple Silicon"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_hf_fast_path_v1.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_hf_fast_path_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_qwen35_3090_paired_pd_v2.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_qwen35_3090_paired_pd_v2",
+      "hardware": [
+        "RTX 3090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_qwen35_4090_paired_pd_v2.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_qwen35_4090_paired_pd_v2",
+      "hardware": [
+        "RTX 4090"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_qwen35_best_optimized_hf_v1.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_qwen35_best_optimized_hf_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_qwen35_paired_decode_v1.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_qwen35_paired_decode_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_qwen35_paired_pd_bundle_v1.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_qwen35_paired_pd_bundle_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_qwen35_paired_pd_v1.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_qwen35_paired_pd_v1",
+      "hardware": [
+        "generic"
+      ],
+      "replacement": null
+    },
+    {
+      "path": "bench/validators/validate_qwen35_v100_paired_pd_v1.py",
+      "kind": "validator",
+      "status": "support",
+      "scope": "validate_qwen35_v100_paired_pd_v1",
+      "hardware": [
+        "Tesla V100"
+      ],
+      "replacement": null
+    }
+  ]
+}

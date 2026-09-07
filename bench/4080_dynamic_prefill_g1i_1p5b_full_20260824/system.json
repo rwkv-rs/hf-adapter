@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "mode": "full",
+  "batches": "1,2,3,4,5,6,7,8",
+  "prompts": "31,32,33,63,64,65,127,128,129,255,256,257,511,512,513,1023,1024,1025,2047,2048,2049",
+  "python": "3.11.15",
+  "torch": "2.6.0+cu124",
+  "torch_cuda": "12.4",
+  "transformers": "5.12.1",
+  "triton": "3.2.0",
+  "device": "NVIDIA GeForce RTX 4080",
+  "compute_capability": [
+    8,
+    9
+  ]
+}

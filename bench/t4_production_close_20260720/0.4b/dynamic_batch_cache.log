@@ -1,0 +1,20 @@
+ids_shape=(4, 32) modes=['forward', 'fast_token']
+forward prefill batch-vs-individual max_abs_diff=0.0625
+forward heterogeneous decode step=1 max_abs_diff=0.125
+forward heterogeneous decode step=2 max_abs_diff=0.0625
+forward heterogeneous decode step=3 max_abs_diff=0.0625
+forward heterogeneous decode step=4 max_abs_diff=0.0625
+forward reordered decode max_abs_diff=0.0625
+forward inplace-reordered decode max_abs_diff=0.046875
+forward compacted decode max_abs_diff=0.0625
+forward PASS cache_type=NativeRWKV7Cache perm=[2, 1, 0, 3]
+fast_token prefill batch-vs-individual max_abs_diff=0.0625
+fast_token heterogeneous decode step=1 max_abs_diff=0.125
+fast_token heterogeneous decode step=2 max_abs_diff=0.0625
+fast_token heterogeneous decode step=3 max_abs_diff=0.0625
+fast_token heterogeneous decode step=4 max_abs_diff=0.0625
+fast_token reordered decode max_abs_diff=0.0625
+fast_token inplace-reordered decode max_abs_diff=0.046875
+fast_token compacted decode max_abs_diff=0.0625
+fast_token PASS cache_type=NativeRWKV7Cache perm=[2, 1, 0, 3]
+PASS

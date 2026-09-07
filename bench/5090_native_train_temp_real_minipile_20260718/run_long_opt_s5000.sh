@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source /home/ubuntu/venv-rwkv5090/bin/activate
+export PYTHONPATH=/home/ubuntu/rwkv7-hf-native-width:${PYTHONPATH:-}
+export CUDA_HOME=/usr/local/cuda-12.8
+export TORCH_EXTENSIONS_DIR=/home/ubuntu/bench/train_temp_alignment_20260717/integrated_backend/torch_extensions
+export MAX_JOBS=2
+export RWKV7_TRAIN_TEMP_CHECKPOINT_BACKEND=deepspeed
+cd /home/ubuntu/rwkv7-hf-native-width
+BASE=/home/ubuntu/bench/native_train_temp_real_minipile_20260718
+COMMON=(--precision bf16 --device cuda --learning-rate 0.0006 --learning-rate-final 0.00006 --schedule-total-steps 182888 --warmup-steps 10 --weight-decay 0.001 --beta1 0.9 --beta2 0.99 --adam-eps 1e-18 --grad-clip 1.0 --eval-interval 50 --optimizer fused_adam)
+python bench/bench_train_temp_alignment.py converge-hf --sequence "$BASE/train_epoch3_s5000.safetensors" --validation-batch "$BASE/validation_epoch100.safetensors" --output-json "$BASE/native_opt_epoch3_seed444_s5000.json" --seed 444 "${COMMON[@]}" --model /home/ubuntu/bench/train_temp_alignment_20260717/rwkv-init-12x768-hf --checkpoint-sha256 5fcb1f16231626f0fde51c30c2d51994ef1ec80e6f737735afe83093c253b943 --native --train-temp-cuda --gradient-checkpointing > "$BASE/native_opt_epoch3_seed444_s5000.log" 2>&1
+python bench/bench_train_temp_alignment.py compare-convergence --reference-json "$BASE/official_epoch3_seed444_s5000.json" --candidate-json "$BASE/native_opt_epoch3_seed444_s5000.json" --output "$BASE/compare_opt_epoch3_seed444_s5000.json" --max-final-validation-abs-diff 0.05 --max-final-validation-relative-diff 0.02 --max-validation-threshold-step-diff 50 --min-candidate-over-reference-throughput-ratio 1.0 > "$BASE/compare_opt_epoch3_seed444_s5000.log" 2>&1
+python bench/bench_train_temp_alignment.py converge-hf --sequence "$BASE/train_epoch3_s5000.safetensors" --validation-batch "$BASE/validation_epoch100.safetensors" --output-json "$BASE/native_opt_epoch3_seed444_resume_partial_s2500.json" --seed 444 "${COMMON[@]}" --model /home/ubuntu/bench/train_temp_alignment_20260717/rwkv-init-12x768-hf --checkpoint-sha256 5fcb1f16231626f0fde51c30c2d51994ef1ec80e6f737735afe83093c253b943 --native --train-temp-cuda --gradient-checkpointing --checkpoint-out "$BASE/native_opt_epoch3_seed444_resume.pt" --checkpoint-every 500 --stop-after-step 2500 > "$BASE/native_opt_epoch3_seed444_resume_partial_s2500.log" 2>&1
+python bench/bench_train_temp_alignment.py converge-hf --sequence "$BASE/train_epoch3_s5000.safetensors" --validation-batch "$BASE/validation_epoch100.safetensors" --output-json "$BASE/native_opt_epoch3_seed444_resume_final_s5000.json" --seed 444 "${COMMON[@]}" --model /home/ubuntu/bench/train_temp_alignment_20260717/rwkv-init-12x768-hf --checkpoint-sha256 5fcb1f16231626f0fde51c30c2d51994ef1ec80e6f737735afe83093c253b943 --native --train-temp-cuda --gradient-checkpointing --resume-from "$BASE/native_opt_epoch3_seed444_resume.pt" --checkpoint-out "$BASE/native_opt_epoch3_seed444_resume.pt" --checkpoint-every 500 > "$BASE/native_opt_epoch3_seed444_resume_final_s5000.log" 2>&1
+python bench/bench_train_temp_alignment.py compare-convergence --reference-json "$BASE/native_opt_epoch3_seed444_s5000.json" --candidate-json "$BASE/native_opt_epoch3_seed444_resume_final_s5000.json" --output "$BASE/compare_native_opt_epoch3_seed444_resume_s5000.json" --max-final-validation-abs-diff 0.05 --max-final-validation-relative-diff 0.02 --max-validation-threshold-step-diff 50 > "$BASE/compare_native_opt_epoch3_seed444_resume_s5000.log" 2>&1
+echo 0 > "$BASE/long_opt_exit_code.txt"

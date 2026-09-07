@@ -1,0 +1,2 @@
+name, uuid, pci.bus_id, compute_cap, driver_version, memory.total [MiB], power.limit [W], clocks.current.sm [MHz], clocks.max.sm [MHz], clocks.current.memory [MHz], clocks.max.memory [MHz]
+NVIDIA GeForce RTX 4080, GPU-7bed2c9a-80fc-1e9d-ca67-a8a9ee33d000, 00000000:01:00.0, 8.9, 595.71.05, 16376 MiB, 320.00 W, 210 MHz, 3105 MHz, 405 MHz, 11201 MHz

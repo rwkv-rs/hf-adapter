@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "protocol": "qwen35_v100_best_optimized_hf_v1",
+  "benchmark_repository_commit": "47ee4104b07e35e85a0a54df2aaa8b4e87db1dc8",
+  "repository_clean_pre_and_post": true,
+  "model_pair": "rwkv-7.2b__qwen3.5-9b",
+  "model_size_label": "9b",
+  "model_path": "/home/data/wangyue/dependencies/cache/huggingface/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+  "result": {
+    "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_9b.jsonl",
+    "sha256": "19bea4d6de02e39ec5515b51b6e4c5a623909db4d6b567e58721484d71dc12fe"
+  },
+  "model_hash_contract": {
+    "algorithm": "sha256",
+    "scope": "every recursive regular file",
+    "before": {
+      "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_9b_model_hashes.sha256",
+      "sha256": "6c4538aacc56e6ca8d355ffcec3ca1e8f945e05ebf98435f794ef539a6e24501"
+    },
+    "after": {
+      "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_9b_model_hashes.after.sha256",
+      "sha256": "6c4538aacc56e6ca8d355ffcec3ca1e8f945e05ebf98435f794ef539a6e24501"
+    },
+    "byte_identical": true
+  },
+  "decode_route": "static_cache_raw_cudagraph",
+  "sdpa_policy": "math_only",
+  "compile_mode": null,
+  "forced_environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+    "PYTHONPATH": "/home/data/wangyue/projects/worktrees/rwkv7-hf-v100-strict-v1-47ee410:/home/data/wangyue/dependencies/python/v100-qwen35-strict-v1-triton34:/home/data/wangyue/dependencies/python/v100-qwen35-strict-v1-e818337",
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "TORCH_CUDA_ARCH_LIST": "7.0",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "CACHE_ROOT": "/home/data/wangyue/dependencies/cache/v100-qwen35-paired-pd-v1-47ee410/qwen_9b"
+  }
+}

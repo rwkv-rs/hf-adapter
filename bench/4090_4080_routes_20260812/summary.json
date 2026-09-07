@@ -1,0 +1,244 @@
+{
+  "axis": "rtx4090_rtx4080_route_transfer",
+  "block_fp16_accumulation": {
+    "pass": true,
+    "rows": 108,
+    "shapes": [
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.010997,
+        "block_speedup_min": 1.005662,
+        "minimum_decode_cosine": 0.999994,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "0.4b",
+        "pass": true,
+        "prompt_tokens": 128
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.059702,
+        "block_speedup_min": 1.038795,
+        "minimum_decode_cosine": 0.999997,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "0.4b",
+        "pass": true,
+        "prompt_tokens": 512
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.154079,
+        "block_speedup_min": 1.152744,
+        "minimum_decode_cosine": 0.999994,
+        "minimum_prompt_cosine": 0.999997,
+        "model": "0.4b",
+        "pass": true,
+        "prompt_tokens": 2048
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.116366,
+        "block_speedup_min": 1.115098,
+        "minimum_decode_cosine": 0.999994,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "0.4b",
+        "pass": true,
+        "prompt_tokens": 128
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.213955,
+        "block_speedup_min": 1.21061,
+        "minimum_decode_cosine": 0.999997,
+        "minimum_prompt_cosine": 0.999994,
+        "model": "0.4b",
+        "pass": true,
+        "prompt_tokens": 512
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.151279,
+        "block_speedup_min": 1.150138,
+        "minimum_decode_cosine": 0.999993,
+        "minimum_prompt_cosine": 0.999996,
+        "model": "0.4b",
+        "pass": true,
+        "prompt_tokens": 2048
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.068116,
+        "block_speedup_min": 1.06196,
+        "minimum_decode_cosine": 0.999995,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "1.5b",
+        "pass": true,
+        "prompt_tokens": 128
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.120167,
+        "block_speedup_min": 1.114974,
+        "minimum_decode_cosine": 0.999995,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "1.5b",
+        "pass": true,
+        "prompt_tokens": 512
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.187623,
+        "block_speedup_min": 1.18591,
+        "minimum_decode_cosine": 0.999994,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "1.5b",
+        "pass": true,
+        "prompt_tokens": 2048
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.234539,
+        "block_speedup_min": 1.231897,
+        "minimum_decode_cosine": 0.999995,
+        "minimum_prompt_cosine": 0.999994,
+        "model": "1.5b",
+        "pass": true,
+        "prompt_tokens": 128
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.274342,
+        "block_speedup_min": 1.271795,
+        "minimum_decode_cosine": 0.999995,
+        "minimum_prompt_cosine": 0.999994,
+        "model": "1.5b",
+        "pass": true,
+        "prompt_tokens": 512
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.288528,
+        "block_speedup_min": 1.285344,
+        "minimum_decode_cosine": 0.999994,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "1.5b",
+        "pass": true,
+        "prompt_tokens": 2048
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.035541,
+        "block_speedup_min": 1.024779,
+        "minimum_decode_cosine": 0.999996,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "2.9b",
+        "pass": true,
+        "prompt_tokens": 128
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.100245,
+        "block_speedup_min": 1.100115,
+        "minimum_decode_cosine": 0.999995,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "2.9b",
+        "pass": true,
+        "prompt_tokens": 512
+      },
+      {
+        "batch_size": 1,
+        "block_speedup_median": 1.222879,
+        "block_speedup_min": 1.220281,
+        "minimum_decode_cosine": 0.999993,
+        "minimum_prompt_cosine": 0.999996,
+        "model": "2.9b",
+        "pass": true,
+        "prompt_tokens": 2048
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.286888,
+        "block_speedup_min": 1.282574,
+        "minimum_decode_cosine": 0.999995,
+        "minimum_prompt_cosine": 0.999995,
+        "model": "2.9b",
+        "pass": true,
+        "prompt_tokens": 128
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.300661,
+        "block_speedup_min": 1.297166,
+        "minimum_decode_cosine": 0.999995,
+        "minimum_prompt_cosine": 0.999996,
+        "model": "2.9b",
+        "pass": true,
+        "prompt_tokens": 512
+      },
+      {
+        "batch_size": 8,
+        "block_speedup_median": 1.288702,
+        "block_speedup_min": 1.286404,
+        "minimum_decode_cosine": 0.999991,
+        "minimum_prompt_cosine": 0.999994,
+        "model": "2.9b",
+        "pass": true,
+        "prompt_tokens": 2048
+      }
+    ]
+  },
+  "bmm": {
+    "groups": [
+      {
+        "greedy_match": 3072,
+        "greedy_total": 3072,
+        "hidden_size": 1024,
+        "minimum_cosine": 1.0,
+        "model": "0.4b",
+        "pass": true,
+        "runs": 3,
+        "speedup_max": 1.2002,
+        "speedup_median": 1.2002,
+        "speedup_min": 1.1992,
+        "vram_delta_mb": 27.0
+      },
+      {
+        "greedy_match": 3072,
+        "greedy_total": 3072,
+        "hidden_size": 2048,
+        "minimum_cosine": 1.0,
+        "model": "1.5b",
+        "pass": true,
+        "runs": 3,
+        "speedup_max": 1.1426,
+        "speedup_median": 1.1426,
+        "speedup_min": 1.142,
+        "vram_delta_mb": 280.8
+      },
+      {
+        "greedy_match": 3072,
+        "greedy_total": 3072,
+        "hidden_size": 2560,
+        "minimum_cosine": 1.0,
+        "model": "2.9b",
+        "pass": true,
+        "runs": 3,
+        "speedup_max": 1.1266,
+        "speedup_median": 1.1259,
+        "speedup_min": 1.1258,
+        "vram_delta_mb": 709.5
+      }
+    ],
+    "pass": true,
+    "rows": 9
+  },
+  "default_policy_prefill": {
+    "minimum_decode_cosine": 0.999997,
+    "minimum_prefill_cosine": 0.999998,
+    "pass": true,
+    "rows": 18
+  },
+  "device": "NVIDIA GeForce RTX 4090",
+  "errors": [],
+  "min_cosine_gate": 0.9999,
+  "status": "pass"
+}

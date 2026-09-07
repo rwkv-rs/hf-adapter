@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "protocol": "qwen35_paired_decode_v1",
+  "benchmark_repository_commit": "32c054208b4bd9b9b5c8eca6340e2fba1bd4b533",
+  "repository_root": "/home/ubuntu/rwkv7-hf-adapter-formal-32c0542",
+  "repository_clean_pre_and_post": true,
+  "candidate_rows": 48,
+  "candidate_result": {
+    "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/rwkv_candidate.jsonl",
+    "sha256": "e24fda2db1f467eab5cbcac7da17ea3adf5a924c45c04c44e01fcae9af91b7af"
+  },
+  "candidate_sha256_sidecar": {
+    "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/rwkv_candidate.sha256",
+    "sha256": "1ae9cd1f35f18d2c8a25f22327471a1ab298fff820311ee8155d0400aec6e1e3"
+  },
+  "qwen_rerun": false,
+  "rwkv_implementation_requested": "auto",
+  "rwkv_implementation_effective": "native_model",
+  "forced_environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+    "PYTHONPATH": "/home/ubuntu/rwkv7-hf-adapter-formal-32c0542",
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "TORCH_CUDA_ARCH_LIST": "12.0",
+    "TORCHDYNAMO_DISABLE": "0",
+    "TORCH_COMPILE_DISABLE": "0",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "RWKV7_FAST_TOKEN_BACKEND": "native_graph",
+    "RWKV7_NATIVE_MODEL_BACKEND": "native_graph",
+    "RWKV7_NATIVE_PREFILL_GRAPH": "unset_exact_card_policy"
+  },
+  "model_hash_contract": {
+    "algorithm": "sha256",
+    "scope": "every recursive regular file",
+    "before": {
+      "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/model_hashes.sha256",
+      "sha256": "f2db21d5cfdc0ec40b76f4cb3dd807e82205d2f3fa1719f74296a4d79ee0d9e5"
+    },
+    "after": {
+      "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/model_hashes.after.sha256",
+      "sha256": "f2db21d5cfdc0ec40b76f4cb3dd807e82205d2f3fa1719f74296a4d79ee0d9e5"
+    },
+    "byte_identical": true
+  },
+  "sm120_b8_ab_manifest": {
+    "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/rwkv_sm120_b8_ab.json",
+    "sha256": "0ae0b46bbd5fc7e6e9e089b3dffc05580e504dd79f27543ab7cbcf0db1833bd6"
+  },
+  "native_graph_fla_correctness_manifest": {
+    "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/rwkv_native_graph_fla_correctness.json",
+    "sha256": "d1b4b1f8f899f6a10ee759a6d7d03419c8e95cbcc48b7d0e9edb997abd3a62ad"
+  },
+  "runtime_lock": {
+    "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/runtime-lock.json",
+    "sha256": "2f5d97b0aabdc5c6f9483bd488769ce71f6011afb3e128a59b8f6fb996ca2b1e"
+  },
+  "pip_freeze": {
+    "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/pip-freeze.txt",
+    "sha256": "f5bf8ef181f2c1b29b79d6fae5c8019fa85008df120569b9e18646bd09eee5cf"
+  },
+  "system_identity": {
+    "path": "/home/ubuntu/rwkv-paired-formal-32c0542-v2/system.csv",
+    "sha256": "ec9130840f9ff37e57a67c72c652dc52c232ed003b0136f6c3dedea5636c6906"
+  },
+  "lanes": [
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "model_size_label": "0.4b",
+      "model_path": "/mnt/qwen-data/rwkv-stage/models/rwkv7-g1d-0.4b-hf",
+      "batch_size": 1,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 0,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": null,
+      "RWKV7_BLACKWELL_TORCH_COMPILE": null,
+      "compile_cache": null
+    },
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "model_size_label": "0.4b",
+      "model_path": "/mnt/qwen-data/rwkv-stage/models/rwkv7-g1d-0.4b-hf",
+      "batch_size": 8,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 1,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 1,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 1,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": "vkwr_auto",
+      "RWKV7_BLACKWELL_TORCH_COMPILE": 1,
+      "compile_cache": "fresh_unique_directory"
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "model_size_label": "1.5b",
+      "model_path": "/mnt/qwen-data/rwkv-stage/models/rwkv7-g1i-1.5b-hf",
+      "batch_size": 1,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 0,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": null,
+      "RWKV7_BLACKWELL_TORCH_COMPILE": null,
+      "compile_cache": null
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "model_size_label": "1.5b",
+      "model_path": "/mnt/qwen-data/rwkv-stage/models/rwkv7-g1i-1.5b-hf",
+      "batch_size": 8,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 1,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 1,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 1,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": "vkwr_auto",
+      "RWKV7_BLACKWELL_TORCH_COMPILE": 1,
+      "compile_cache": "fresh_unique_directory"
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "model_size_label": "2.9b",
+      "model_path": "/home/ubuntu/rwkv7-g1i-2.9b-hf",
+      "batch_size": 1,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 0,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": null,
+      "RWKV7_BLACKWELL_TORCH_COMPILE": null,
+      "compile_cache": null
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "model_size_label": "2.9b",
+      "model_path": "/home/ubuntu/rwkv7-g1i-2.9b-hf",
+      "batch_size": 8,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 0,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": null,
+      "RWKV7_BLACKWELL_TORCH_COMPILE": null,
+      "compile_cache": null
+    },
+    {
+      "model_pair": "rwkv-7.2b__qwen3.5-9b",
+      "model_size_label": "7.2b",
+      "model_path": "/mnt/qwen-data/rwkv-stage/models/rwkv7-g1i-7.2b-hf",
+      "batch_size": 1,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 0,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": null,
+      "RWKV7_BLACKWELL_TORCH_COMPILE": null,
+      "compile_cache": null
+    },
+    {
+      "model_pair": "rwkv-7.2b__qwen3.5-9b",
+      "model_size_label": "7.2b",
+      "model_path": "/mnt/qwen-data/rwkv-stage/models/rwkv7-g1i-7.2b-hf",
+      "batch_size": 8,
+      "cells": 6,
+      "fresh_process": true,
+      "rwkv_implementation_requested": "auto",
+      "rwkv_implementation_effective": "native_model",
+      "RWKV7_NATIVE_PREFILL_GRAPH": "exact_card_policy",
+      "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": 0,
+      "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": 0,
+      "RWKV7_NATIVE_GRAPH_RKV_POLICY": null,
+      "RWKV7_BLACKWELL_TORCH_COMPILE": null,
+      "compile_cache": null
+    }
+  ]
+}

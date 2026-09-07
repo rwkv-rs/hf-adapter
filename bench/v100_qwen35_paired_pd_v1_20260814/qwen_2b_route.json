@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "protocol": "qwen35_v100_best_optimized_hf_v1",
+  "benchmark_repository_commit": "47ee4104b07e35e85a0a54df2aaa8b4e87db1dc8",
+  "repository_clean_pre_and_post": true,
+  "model_pair": "rwkv-1.5b__qwen3.5-2b",
+  "model_size_label": "2b",
+  "model_path": "/home/data/wangyue/models/qwen/Qwen3.5-2B",
+  "result": {
+    "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_2b.jsonl",
+    "sha256": "e174b3be9e9070d643c0b2ccb80a40e0ba6ef85da229872dde8f858a519c4505"
+  },
+  "model_hash_contract": {
+    "algorithm": "sha256",
+    "scope": "every recursive regular file",
+    "before": {
+      "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_2b_model_hashes.sha256",
+      "sha256": "fb086c569cdf1eaa04219b7773271badeeee67bb10b1f7e98130e56889de9d2c"
+    },
+    "after": {
+      "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_2b_model_hashes.after.sha256",
+      "sha256": "fb086c569cdf1eaa04219b7773271badeeee67bb10b1f7e98130e56889de9d2c"
+    },
+    "byte_identical": true
+  },
+  "decode_route": "static_cache_raw_cudagraph",
+  "sdpa_policy": "auto",
+  "compile_mode": null,
+  "forced_environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+    "PYTHONPATH": "/home/data/wangyue/projects/worktrees/rwkv7-hf-v100-strict-v1-47ee410:/home/data/wangyue/dependencies/python/v100-qwen35-strict-v1-triton34:/home/data/wangyue/dependencies/python/v100-qwen35-strict-v1-e818337",
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "TORCH_CUDA_ARCH_LIST": "7.0",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "CACHE_ROOT": "/home/data/wangyue/dependencies/cache/v100-qwen35-paired-pd-v1-47ee410/qwen_2b"
+  }
+}

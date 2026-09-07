@@ -1,0 +1,41 @@
+{
+  "status": "passed",
+  "mode": "full",
+  "model_id": "wangyue114514/rwkv7-g1d-0.1b-hf",
+  "revision": "v0.7.0",
+  "resolved_commit": "a5d124a4697978f4461d84d849b0aae5937da522",
+  "python": "3.10.12",
+  "torch": "2.12.1+cu130",
+  "transformers": "5.13.0",
+  "rwkv7_hf": "0.7.0",
+  "config_class": "rwkv7_hf.native_model.NativeRWKV7Config",
+  "tokenizer_class": "rwkv7_hf.tokenization_rwkv7.RWKV7Tokenizer",
+  "vocabulary_size": 65538,
+  "parameter_count_manifest": 191034624,
+  "remote_weights": {
+    "layout": "single",
+    "files": 1,
+    "size_bytes": 382110672
+  },
+  "device": "cpu",
+  "model_class": "rwkv7_hf.native_model.NativeRWKV7ForCausalLM",
+  "parameter_count_loaded": 191034624,
+  "missing_keys": 0,
+  "unexpected_keys": 0,
+  "mismatched_keys": 0,
+  "logits_shape": [
+    1,
+    1,
+    65536
+  ],
+  "logits_all_finite": true,
+  "generated_token_ids": [
+    33155,
+    45,
+    308,
+    459,
+    332
+  ],
+  "generated_text": "Hello, I'm a",
+  "elapsed_seconds": 35.896
+}

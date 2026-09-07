@@ -1,0 +1,47 @@
+{
+  "captured_at": "2026-08-11T00:23:51+08:00",
+  "repository": {
+    "base_commit": "8e31a9dbcc81e39762360a5b4a50657714b08270",
+    "branch": "btlqql/exact-card-max-performance"
+  },
+  "host": {
+    "os": "Windows 11 10.0.26200",
+    "manufacturer": "LENOVO",
+    "model": "83NN",
+    "cpu": "Intel(R) Core(TM) i9-14900HX",
+    "logical_processors": 32,
+    "physical_memory_bytes": 16890322944
+  },
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 5070 Laptop GPU",
+    "compute_capability": "sm_120",
+    "driver_model": "WDDM",
+    "driver_version": "582.05",
+    "nvidia_smi_cuda": "13.0",
+    "memory_total_mib": 8151,
+    "initial_background_memory_mib": 1413,
+    "initial_temperature_c": 68,
+    "power_default_w": 50.0,
+    "power_min_w": 5.0,
+    "power_max_w": 115.0,
+    "notes": "The WDDM laptop used its normal dynamic power policy. The device reports a 50 W default and 115 W hardware maximum; no fixed power lock was applied. Windows desktop and Codex remained resident, so accepted claims rely on paired same-session measurements rather than an unrestricted power-ceiling claim."
+  },
+  "software": {
+    "python": "3.12.4",
+    "pytorch": "2.11.0+cu128",
+    "pytorch_cuda": "12.8",
+    "cudnn": 91900,
+    "transformers": "5.12.1",
+    "triton": "3.7.1",
+    "bitsandbytes": "0.49.2"
+  },
+  "matrix": {
+    "dtype": "fp16",
+    "backend": "native_graph",
+    "code_source": "repo",
+    "models": ["0.4B", "1.5B", "2.9B"],
+    "batch_sizes": [1, 2, 4, 8],
+    "prompt_tokens": [128, 512],
+    "decode_tokens": 128
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_convergence_compare",
+  "status": "pass",
+  "reference_backend": "hf_native_train_temp_cuda",
+  "candidate_backend": "hf_native_train_temp_cuda",
+  "steps": 5000,
+  "provenance_mismatches": [],
+  "optimizer_groups_match": true,
+  "train_steps_match": true,
+  "validation_steps_match": true,
+  "train_loss_auc_reference": 4.491817964267731,
+  "train_loss_auc_candidate": 4.492440205526352,
+  "train_loss_auc_relative_diff": 0.00013852771051073103,
+  "grad_norm_auc_reference": 2.3597390625,
+  "grad_norm_auc_candidate": 2.148978125,
+  "grad_norm_auc_relative_diff": 0.08931535729917167,
+  "max_reference_grad_norm": 298.0,
+  "max_candidate_grad_norm": 194.0,
+  "max_grad_norm_ratio": 0.6510067114093959,
+  "candidate_over_reference_max_grad_norm_ratio": 0.6510067114093959,
+  "reference_over_candidate_max_grad_norm_ratio": 1.5360824742268042,
+  "bidirectional_max_grad_norm_ratio": 1.5360824742268042,
+  "reference_runtime_s": 411.9752606700058,
+  "candidate_runtime_s": 409.8611433729675,
+  "candidate_over_reference_throughput_ratio": 1.00515813057964,
+  "validation_loss_auc_reference": 4.3812024876622875,
+  "validation_loss_auc_candidate": 4.3801577728573635,
+  "validation_loss_auc_relative_diff": 0.0002384538965879661,
+  "final_validation_loss_reference": 3.805224895477295,
+  "final_validation_loss_candidate": 3.809389114379883,
+  "final_validation_relative_diff": 0.001094342388944548,
+  "final_validation_abs_diff": 0.004164218902587891,
+  "max_validation_relative_diff": 0.008598566724791515,
+  "max_validation_scaled_diff": 0.008598566724791515,
+  "validation_threshold_steps": [
+    {
+      "loss_threshold": 10.0,
+      "reference_step": 50,
+      "candidate_step": 50,
+      "step_diff": 0,
+      "comparable": true
+    },
+    {
+      "loss_threshold": 5.0,
+      "reference_step": 600,
+      "candidate_step": 600,
+      "step_diff": 0,
+      "comparable": true
+    },
+    {
+      "loss_threshold": 1.0,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    },
+    {
+      "loss_threshold": 0.1,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    },
+    {
+      "loss_threshold": 0.01,
+      "reference_step": null,
+      "candidate_step": null,
+      "step_diff": null,
+      "comparable": false
+    }
+  ],
+  "max_validation_threshold_step_diff": 0,
+  "targets": {
+    "max_train_auc_relative_diff": 0.02,
+    "max_validation_auc_relative_diff": 0.02,
+    "max_final_validation_abs_diff": 0.01,
+    "max_final_validation_relative_diff": 0.03,
+    "max_validation_threshold_step_diff": 10,
+    "max_grad_norm_ratio": 2.0,
+    "min_candidate_over_reference_throughput_ratio": 0.99
+  },
+  "failures": []
+}
