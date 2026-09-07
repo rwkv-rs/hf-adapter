@@ -2,7 +2,7 @@
 """Module-selection policies for native MM8/MM4 quantization."""
 from __future__ import annotations
 
-NATIVE_MM_POLICIES = ("memory", "speed")
+NATIVE_MM_POLICIES = ("memory", "speed", "ffn_only")
 
 
 def normalize_native_mm_policy(policy: str | None) -> str:

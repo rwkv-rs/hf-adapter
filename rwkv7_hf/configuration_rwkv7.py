@@ -109,6 +109,10 @@ class RWKV7HFAdapterConfig(_RWKV7Config):
         self.native_mm4_policy = kwargs.pop("native_mm4_policy", "memory")
         self.native_mm4_group_size = kwargs.pop("native_mm4_group_size", 0)
         self.native_mm4_group_policy = kwargs.pop("native_mm4_group_policy", "all")
+        # FP8 E4M3 quantization (requires Hopper/Ada/Blackwell for _scaled_mm)
+        self.use_native_fp8 = kwargs.pop("use_native_fp8", False)
+        self.native_fp8_min_params = kwargs.pop("native_fp8_min_params", 8_000_000)
+        self.native_fp8_policy = kwargs.pop("native_fp8_policy", "memory")
         super().__init__(*args, **kwargs)
         requested_attention_width = kwargs.get("attention_hidden_size", None)
         num_heads = int(

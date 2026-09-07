@@ -198,12 +198,16 @@ class _NativeQuantizationMixin:
 
         use_mm8 = bool(getattr(self.config, "use_native_mm8", False))
         use_mm4 = bool(getattr(self.config, "use_native_mm4", False))
-        if not (use_mm8 or use_mm4):
+        use_fp8 = bool(getattr(self.config, "use_native_fp8", False))
+        if not (use_mm8 or use_mm4 or use_fp8):
             setattr(self, "_rwkv7_native_mm_quantization", None)
             setattr(self, "_rwkv7_native_mm_replaced_modules", 0)
             return 0
-        if use_mm8 and use_mm4:
-            raise ValueError("use_native_mm8 and use_native_mm4 are mutually exclusive")
+        active = sum([use_mm8, use_mm4, use_fp8])
+        if active > 1:
+            raise ValueError(
+                "use_native_mm8, use_native_mm4, and use_native_fp8 are mutually exclusive"
+            )
         if use_mm8:
             from .native_quant_mm8 import quantize_model_mm8
 
@@ -230,6 +234,17 @@ class _NativeQuantizationMixin:
                 )
             )
             quantization = "mm4"
+        if use_fp8:
+            from .native_quant_fp8 import quantize_model_fp8
+
+            replaced = int(
+                quantize_model_fp8(
+                    self,
+                    min_params=int(getattr(self.config, "native_fp8_min_params", 8_000_000)),
+                    policy=str(getattr(self.config, "native_fp8_policy", "memory")),
+                )
+            )
+            quantization = "fp8"
         setattr(self, "_rwkv7_native_mm_quantization", quantization)
         setattr(self, "_rwkv7_native_mm_replaced_modules", replaced)
         # Existing JIT packs are dense-weight dependent; invalidate them after
