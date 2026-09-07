@@ -1,5 +1,11 @@
 # Published model repositories
 
+**Published reference tag: `v0.9.0`. Planned candidate tag: `v1.0.0` (not
+declared published by this document).** Pin `revision="v0.9.0"` for both the
+tokenizer and model when reproducing the stable release. The table lists
+existing repositories, not proof that their `main` branches contain the 1.0
+candidate. Current installation and acceptance status: [HF_STATUS.md](../HF_STATUS.md).
+
 | Model | Parameters | Repository |
 |---|---:|---|
 | G1d 0.1B | 191M | [wangyue114514/rwkv7-g1d-0.1b-hf](https://huggingface.co/wangyue114514/rwkv7-g1d-0.1b-hf) |
@@ -9,21 +15,22 @@
 | G1g 7.2B | 7.20B | [wangyue114514/rwkv7-g1g-7.2b-hf](https://huggingface.co/wangyue114514/rwkv7-g1g-7.2b-hf) |
 | G1g 13.3B | 13.27B | [wangyue114514/rwkv7-g1g-13.3b-hf](https://huggingface.co/wangyue114514/rwkv7-g1g-13.3b-hf) |
 
-Each size is an independent HF repository. Release `v1.0.0` updates the
+Each size is an independent HF repository. The planned release `v1.0.0` will update the
 self-contained reference code, model card and architecture-only configuration
 in place; old tags and weight revisions stay immutable. Safetensors are not
 uploaded again when SHA256 matches the frozen pre-release baseline.
 
-Every repository remains package-free for normal Transformers inference. The
-optional performance path is installed separately and does not change the Hub
-files or model class:
+The published reference repositories are package-free for normal Transformers
+inference. For the candidate, the optional performance path is installed
+separately, but the loaded model must already contain the candidate API-v4
+boundary. Installing `rwkv7-kernels` does not rewrite a model pinned to
+`v0.9.0`. Use candidate-converted local directories for development; do not
+advertise `==1.0.0` PyPI installation before its artifacts are published.
 
-```bash
-python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
-```
+## Maintainer-only candidate publication procedure
 
-The equivalent single requirement is
-`python -m pip install "rwkv7-hf[kernels]==1.0.0"`.
+The commands below are a future release procedure, **not completed actions**.
+Do not run `--publish` or create Hub tags while the required gates remain open.
 
 The final release process stages all six repositories from the same tagged
 source SHA, commits code/config/model-card changes, creates Hub tag `v1.0.0`,
@@ -31,6 +38,9 @@ then redownloads every repository through a new empty cache. Weight hashes,
 resolved Hub revisions, finite forward/cache-generation results and the exact
 reference class names are retained in the release audit. Hub blob caches and
 Transformers remote-code module caches are distinct and empty for every model.
+Compare the code actually loaded by `from_pretrained`, not only installed-wheel
+metadata; stale `kernel_bridge.py` or other old adapter files cannot establish
+the candidate's canonical package-free layout.
 
 The stage manifest is also the publication transaction record: it binds every
 small file to SHA256, every existing safetensors shard to its Hub LFS

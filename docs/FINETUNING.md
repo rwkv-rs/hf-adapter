@@ -1,5 +1,20 @@
 # LoRA fine-tuning
 
+These examples belong to the source checkout. The published 0.9.0 reference
+release and the frozen 1.0 candidate are separate installation targets; see
+[HF_STATUS.md](../HF_STATUS.md) before installing. Environment recipes below
+record their own validation scope and are not a claim that all Torch,
+Transformers, TRL and PEFT combinations work.
+
+**Compatibility is not an acceleration result.** A successful SFT/DPO/GRPO run
+can include reference fallbacks. For a performance claim, retain the actual
+training-program and leaf implementation counts, shape/dtype, artifact SHA,
+forward/backward timing and numerical comparison. The candidate's adaptive
+fast domain and PEFT fallback conditions are summarized in the
+[capability matrix](NVIDIA_MIGRATION_AUDIT.md#user-facing-capability-matrix).
+Final immutable-wheel evidence is still subject to the paused release gate;
+older successful runs remain valid only for their recorded revisions.
+
 The three examples are direct TRL programs rather than a private training
 framework. They all use the 0.1B model, seed 42, sequence length 512, LoRA
 r=8 / alpha=16 / dropout=0.05 and target

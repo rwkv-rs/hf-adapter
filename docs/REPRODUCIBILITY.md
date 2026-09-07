@@ -92,6 +92,9 @@ Build the four distribution archives from a clean detached checkout with the
 same pinned backend versions declared by both `pyproject.toml` files:
 
 ```bash
+# Set this BEFORE creating/extracting the clean source directory. Wheel ZIP
+# metadata includes file modes, not only file content and timestamps.
+umask 022
 python3.12 -m venv /tmp/rwkv7-release-build
 PY=/tmp/rwkv7-release-build/bin/python
 $PY -m pip install --only-binary=:all: \
@@ -105,6 +108,21 @@ $PY -m build --no-isolation --wheel --sdist \
   --outdir /artifacts/rwkv7-v1.0.0 kernels
 $PY -m twine check --strict /artifacts/rwkv7-v1.0.0/*.{whl,tar.gz}
 ```
+
+For a source archive instead of a fresh Git checkout, extract into a new
+directory with `umask 022` and GNU tar's `--no-same-permissions`; do not build
+from a reused tree with group-writable package files. `umask` alone does not
+change permissions on already-existing files. Keep Git executable bits intact.
+
+The [2026-09-08 reconstruction audit](../results/release-preflight/20260908/README.md)
+reproduced both original wheel SHA256 values exactly from `5f4a4a25` with
+Python 3.12.2 and the pinned tools above. An initial archive extraction under
+`umask 002` produced identical source payloads but different wheel hashes due
+to ZIP file modes (`100664` instead of `100644`); that attempt was not promoted.
+The corrected build used fresh extraction under `umask 022` without changing
+source bytes. Its new sdists passed source/wheel audits, but no historical
+sdist byte identity is claimed. Reconstructing matching wheel bytes does not
+replace the remaining GPU acceptance or authorize publication.
 
 The GitHub release is prepared as a draft after the final wheel pair completes
 the RTX 4080 and RTX 4090 gates. The exact wheel/source archives, two compact
