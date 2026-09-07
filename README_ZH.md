@@ -95,7 +95,8 @@ HF cache 使用 `[B,H,K,V]`；后端只通过 `rwkv7_kernels.execute_optional_v4
 
 9 月 1 日按用户要求停止时：Optimized 47 项成功、1 项 OOM；FLA 48 项成功；
 Reference 43 项成功、1 项中止、4 项未开始。不是三路 144 项全部通过。
-本次只整理文档，没有恢复 GPU 任务。停止记录、证据限制和剩余发布条件见
+9 月 8 日已按用户要求继续验收：本地完整测试 470/470、上游 main 的 CPU/HF CI
+通过；4080 离线、4090 SSH 超时，尚未恢复 GPU 任务。停止记录、证据限制和剩余发布条件见
 [状态页](HF_STATUS.md#paused-formal-evaluation)。
 
 ## 文档入口

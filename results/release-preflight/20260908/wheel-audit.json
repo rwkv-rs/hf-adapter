@@ -1,0 +1,121 @@
+{
+  "hf": {
+    "canonical_files": 7,
+    "dist_info": {
+      "console_scripts": {
+        "rwkv7-hf": "rwkv7_hf_tools.cli:cli"
+      },
+      "dist_info": "rwkv7_hf-1.0.0.dist-info",
+      "extras": [
+        "kernels",
+        "test",
+        "train"
+      ],
+      "record": {
+        "members": 18,
+        "status": "passed"
+      },
+      "requirements": 14,
+      "status": "passed",
+      "tag": "py3-none-any",
+      "top_levels": [
+        "rwkv7_hf",
+        "rwkv7_hf_tools"
+      ]
+    },
+    "expected_kernel_api": 4,
+    "kernel_extra": "rwkv7-kernels==1.0.0; extra == \"kernels\"",
+    "members": 18,
+    "status": "passed",
+    "tool_files": 5
+  },
+  "kernels": {
+    "capability_inventory": {
+      "capabilities": 16,
+      "mapped_migration_files": 102,
+      "policy_flags": 46,
+      "runtime_files": 35,
+      "status": "passed"
+    },
+    "dependencies": [
+      "ninja",
+      "numpy",
+      "packaging",
+      "torch"
+    ],
+    "dist_info": {
+      "console_scripts": {},
+      "dist_info": "rwkv7_kernels-1.0.0.dist-info",
+      "extras": [],
+      "record": {
+        "members": 142,
+        "status": "passed"
+      },
+      "requirements": 4,
+      "status": "passed",
+      "tag": "py3-none-any",
+      "top_levels": [
+        "rwkv7_kernels"
+      ]
+    },
+    "license": {
+      "expression": "MIT",
+      "file": "LICENSE",
+      "member": "rwkv7_kernels-1.0.0.dist-info/licenses/LICENSE"
+    },
+    "members": 142,
+    "migrated_files": 102,
+    "public_protocol": {
+      "api_version": 4,
+      "contract_schema": "rwkv7-kernel-plugin-api-v1",
+      "operations": [
+        "training_program",
+        "model_forward",
+        "linear_training",
+        "mix6_training",
+        "recurrent"
+      ],
+      "optional_backend_entrypoint": "execute_optional_v4",
+      "status": "passed"
+    },
+    "recurrent_source_scope": {
+      "adapted_protocol_files": 4,
+      "byte_identical_implementations": 2,
+      "dispositions": {
+        "adapted_protocol": 1,
+        "byte_migrated_nvidia": 2
+      },
+      "historical_files": 3,
+      "reconstructed_git_tree": "7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb",
+      "status": "passed"
+    },
+    "runtime_files": 31,
+    "source_scope": {
+      "adapted_kernel_files": 24,
+      "dispositions": {
+        "adapted_protocol": 26,
+        "byte_migrated_nvidia": 86,
+        "canonical_reference": 7,
+        "non_kernel_feature_retired": 1,
+        "separate_hardware_distribution": 27,
+        "tooling_relocated_or_retired": 6
+      },
+      "historical_files": 153,
+      "reconstructed_git_tree": "1bb1fe1cd64662bbd6d29f72c9002a8513af3691",
+      "separate_hardware_families": [
+        "apple_mlx",
+        "ascend",
+        "biren",
+        "metax",
+        "musa"
+      ],
+      "status": "passed"
+    },
+    "status": "passed",
+    "transfers": {
+      "adapted_clean_boundary": 16,
+      "byte_identical": 86
+    }
+  },
+  "status": "passed"
+}

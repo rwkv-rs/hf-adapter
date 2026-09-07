@@ -1,0 +1,12 @@
+Checking
+/home/data/wangyue/codex-build/rwkv7-release-5f4a4a25-20260908/artifacts-normali
+zed/rwkv7_hf-1.0.0-py3-none-any.whl: [32mPASSED[0m
+Checking
+/home/data/wangyue/codex-build/rwkv7-release-5f4a4a25-20260908/artifacts-normali
+zed/rwkv7_kernels-1.0.0-py3-none-any.whl: [32mPASSED[0m
+Checking
+/home/data/wangyue/codex-build/rwkv7-release-5f4a4a25-20260908/artifacts-normali
+zed/rwkv7_hf-1.0.0.tar.gz: [32mPASSED[0m
+Checking
+/home/data/wangyue/codex-build/rwkv7-release-5f4a4a25-20260908/artifacts-normali
+zed/rwkv7_kernels-1.0.0.tar.gz: [32mPASSED[0m

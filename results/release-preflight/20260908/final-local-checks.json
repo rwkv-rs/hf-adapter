@@ -1,0 +1,15 @@
+{
+  "schema": "rwkv7-preflight-final-local-checks-v1",
+  "cpu_suite_repeat": {
+    "exit_code": 0,
+    "passed": 470,
+    "warnings": 409,
+    "elapsed_seconds": 8.06,
+    "log_sha256": "e849de277623bb6ba91679e41e8510c7bcafd351ce24f35770e60719deb9ebd9"
+  },
+  "frozen_inputs_unchanged": 155,
+  "local_markdown_targets_checked": 39,
+  "secret_pattern_scan": "passed",
+  "git_diff_check": "passed",
+  "scope": "docs and preflight evidence; not GPU or release acceptance"
+}

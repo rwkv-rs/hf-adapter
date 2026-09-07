@@ -1,0 +1,30 @@
+{
+  "schema": "rwkv7-preflight-attempt-history-v1",
+  "attempts": [
+    {
+      "stage": "remote build dependency installation",
+      "attempt": 1,
+      "status": "interrupted after network failures",
+      "cause": "CPU packaging host could not fetch dependencies; only this newly started installation process was stopped",
+      "resolution": "downloaded prebuilt binary wheels and installed offline in the same isolated build venv; no GPU work or local Rust build"
+    },
+    {
+      "stage": "wheel reconstruction",
+      "attempt": 1,
+      "status": "not promoted",
+      "cause": "archive extracted under umask 002; wheel ZIP external file modes 100664 rather than historical 100644",
+      "hf_wheel_sha256": "ef008eeccfa0aa77e74137a4bd64841d535cb21278a34aad3d8191fd5401bf68",
+      "kernel_wheel_sha256": "397a34ca76866a6367ae9b34255cc06a336416d45874b914a5d3015273702736",
+      "resolution": "fresh extraction under umask 022 and tar --no-same-permissions; both wheel hashes match original acceptance identities"
+    },
+    {
+      "stage": "installed-wheel CPU smoke",
+      "attempt": 1,
+      "status": "exit 1 before model execution",
+      "cause": "venv --system-site-packages exposed the incomplete base interpreter dependencies rather than the existing test venv; missing idna",
+      "original_log_sha256": "3f2b1329dd9ccced0aceb7b57cd1dcb72322c7eb266f92764608b58e8fa3fe84",
+      "resolution": "explicit existing dependency path overlay; new wheel package paths asserted inside the installation venv; rerun passed. Do not call this a hermetic dependency install"
+    }
+  ],
+  "original_attempts_retained_outside_git": true
+}

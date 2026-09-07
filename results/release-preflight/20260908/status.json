@@ -1,0 +1,41 @@
+{
+  "schema": "rwkv7-release-preflight-v1",
+  "observed_at_utc": "2026-09-07T23:16:53.812272+00:00",
+  "release_ready": false,
+  "scope": "CPU/package/publication preflight only; not a final device or end-to-end release validator report",
+  "frozen_source_sha": "5f4a4a25018f7567fd1b35b93fb1edf57ff86ac7",
+  "upstream_main_sha": "2d0426e02401975606a17828ff335a349dd9871d",
+  "source_trees_equal": true,
+  "local_harness_sha": "8155172e9c0725a1133ce3d9de3bbd8c0ffe14ba",
+  "freeze_manifest_sha256": "ebe8c79ee9b8a660aaad98d6264d58922ef21ece174159af741334c2889bd57f",
+  "frozen_files_checked": 155,
+  "frozen_files_changed": [],
+  "gpu_jobs_started": 0,
+  "recurring_monitor_created": false,
+  "devices": {
+    "rtx-4080": {
+      "state": "unreachable",
+      "tailscale_online": false,
+      "last_seen_utc": "2026-09-07T14:40:00.1Z",
+      "ssh": "timeout via existing jump host"
+    },
+    "rtx-4090": {
+      "state": "unreachable",
+      "ssh": "timeout"
+    },
+    "v100": {
+      "gpu_acceptance": "excluded by user",
+      "used_as": "existing SSH jump and isolated CPU-only packaging host"
+    }
+  },
+  "remaining": [
+    "retrieve original RTX 4080 evidence and verify loaded-code/artifact/model identities",
+    "retry optimized 1.5B/B8/Wikitext and complete five interrupted/not-started reference units with transparent attempt selection",
+    "validate full 144-unit three-way metrics and final-artifact HF/training/finetune/routes",
+    "complete RTX 4090 acceptance with the same wheel pair after RTX 4080",
+    "six tagged Hub repositories and package-free redownload smokes",
+    "GitHub final release provenance/assets, both PyPI distributions, download audits"
+  ],
+  "historical_gpu_counts_source": "../../closeout/20260908/status.json",
+  "local_artifacts_location_policy": "retained in gitignored .release and CPU build directory; binaries and model weights excluded from this bundle"
+}

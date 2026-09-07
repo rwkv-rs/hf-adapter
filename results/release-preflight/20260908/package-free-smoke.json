@@ -1,0 +1,17 @@
+{
+  "schema": "rwkv7-local-package-free-smoke-v1",
+  "passed": true,
+  "scope": "Tiny synthetic converted local directory, CPU fp32; dependencies shared via dependency symlinks; not Hub redownload or official-model acceptance",
+  "project_distributions_absent": true,
+  "project_imports_absent_before_model_load": true,
+  "source_checkout_absent": true,
+  "logits_max_abs": 0.0,
+  "finite_logits": true,
+  "cached_generation_tokens": 3,
+  "tokenizer_roundtrip": true,
+  "model_class": "RWKV7ForCausalLM",
+  "module": "transformers_modules.model.3b24b774eac5aee0.modeling_rwkv7",
+  "python": "3.11.15",
+  "torch": "2.12.1",
+  "transformers": "5.12.1"
+}
