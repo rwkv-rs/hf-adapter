@@ -1,0 +1,69 @@
+{
+  "schema": "rwkv7-resumption-closeout-v1",
+  "recorded_on": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "record_kind": "acceptance-resumption-record",
+  "release_ready": false,
+  "gpu_jobs_running_at_record_time": true,
+  "source_sha": "5f4a4a25018f7567fd1b35b93fb1edf57ff86ac7",
+  "fla_sha": "80e494f6c588e091fc8316b612870df29375c5b8",
+  "source_freeze": {
+    "path": "RELEASE_SOURCE_FREEZE.json",
+    "sha256": "ebe8c79ee9b8a660aaad98d6264d58922ef21ece174159af741334c2889bd57f",
+    "file_count": 155
+  },
+  "historically_recorded_artifacts": {
+    "rwkv7_hf-1.0.0-py3-none-any.whl": "13402378207a59ac90fa69d947402a7177de69e8c77d66ab14aa7803cae25854",
+    "rwkv7_kernels-1.0.0-py3-none-any.whl": "0ff2d45e911a5cd741fd71ac956898d862fc0e7b62c984c3e36e2d755da86d11"
+  },
+  "artifact_bytes_rehashed_this_closeout": true,
+  "raw_remote_evidence_retrieved_this_closeout": true,
+  "raw_evidence_root": "/home/wzu/codex-run/results/rwkv7-freeze-5f4a4a25/4080",
+  "lanes_as_last_observed_20260901": {
+    "optimized": { "planned": 48, "successful_exits": 47, "failed_exits": 1, "interrupted": 0, "not_started": 0 },
+    "fla": { "planned": 48, "successful_exits": 48, "failed_exits": 0, "interrupted": 0, "not_started": 0 },
+    "reference": { "planned": 48, "successful_exits": 43, "failed_exits": 0, "interrupted": 1, "not_started": 4 }
+  },
+  "repair_run_20261025": {
+    "orchestrator": "/home/wzu/codex-run/run-freeze-repair-20261025.sh",
+    "evidence_dir": "/home/wzu/codex-run/results/rwkv7-freeze-5f4a4a25/4080/lm-eval-rerun-evidence/reference-1.5b-b8-20261025",
+    "units_in_flight": [
+      "reference 1.5b-b8-hellaswag",
+      "reference 1.5b-b8-winogrande",
+      "reference 1.5b-b8-arc_easy",
+      "reference 1.5b-b8-arc_challenge",
+      "reference 1.5b-b8-openbookqa",
+      "optimized 1.5b-b8-wikitext (graph-disabled retry, RWKV7_NATIVE_PREFILL_GRAPH=0)"
+    ],
+    "post_run_steps": [
+      "evaluation/validate_lm_eval_three_way.py --require-model-routes (corrected)"
+    ],
+    "environment_deviations_from_20260831_formal_run": [
+      "HF_ENDPOINT=https://hf-mirror.com instead of default hub endpoint (huggingface.co unreachable from the host); the 2026-08-31 formal run resolved datasets online",
+      "dataset caches for hellaswag/ai2_arc/wikitext_document_level re-fetched through the mirror before the rerun"
+    ],
+    "claimed_results": false
+  },
+  "model_directory_recovery": {
+    "incident": "The 2026-09-23 model cleanup deleted /home/wzu/codex-run/models/native-v010-530d935, which the freeze-5f4a4a25 clean model directories symlinked; 7 of 13 files per directory were dangling at resumption time.",
+    "recovery": "All 39 files across the three freeze directories (0.1b/0.4b/1.5b x 13) were restored byte-identical and verified against the file SHA-256 set recorded in the 2026-08-31 lane models.json provenance.",
+    "verification": {
+      "0.1b": "OK (13/13 byte-identical)",
+      "0.4b": "OK (13/13 byte-identical)",
+      "1.5b": "OK (13/13 byte-identical)"
+    },
+    "sources": {
+      "model.safetensors": "Hub v0.9.0 snapshots for 0.1b/0.4b (sha-verified) and a deterministic shard merge for 1.5b (merged bytes match the recorded d580d0c6... single-file digest)",
+      "rwkv_vocab_v20230424.txt and special_tokens_map.json": "Hub v0.9.0 snapshots (sha-verified)",
+      "tokenizer_config.json and generation_config.json": "regenerated with the native-v010 converter at 530d935b under transformers 5.8.0 (sha-verified)",
+      "config.json": "regenerated as above with adapter_layout=reference (sha-verified)",
+      "kernel_bridge.py": "copy of the rwkv7_hf package file (sha-verified caaeb39e...)",
+      "adapter .py files": "already present in the freeze directories as real files (sha-verified)"
+    }
+  },
+  "open_items": [
+    "training-adaptive b4-t128 cases fail the gradient gate with the atomic optimized program enabled (global relative_l2 0.0283 vs 0.025 contract, cosine 0.9996 passes; 10 of 12 cases pass). Frozen-kernel numerical property; any code fix requires a source thaw and a new version.",
+    "fla three-way trailing OOM after both report JSONs were written (passed): same CUDA-graph private-pool family as the lm-eval OOM unit; rerunnable with graphs disabled.",
+    "RTX 4090 device matrix has never run for 1.0.0 (SSH unreachable)."
+  ]
+}
